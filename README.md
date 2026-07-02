@@ -60,6 +60,55 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/access` | Shareable LAN/Tailscale URLs (+ the token, loopback only) |
 | `ANY /studio/{id}/{path}` | **Gateway** — proxies to that studio's API (streams/SSE included) |
 | `POST /api/hub/registry/reload` | Re-read `studios.json` without restarting |
+| `GET /api/hub/metrics?minutes=60` | Time-series (host memory/CPU + per-studio RSS, 15s samples, 24h) |
+| `GET /api/hub/watchdog` · `POST /api/hub/studios/{id}/watchdog` | Auto-restart-if-down per studio (`{"enabled": true}`; 2-min cooldown, auto-off after 5 failed revives) |
+| `POST /api/hub/broadcast/download` | `{repo, studios?}` — start the same model download on many studios |
+| `POST /api/hub/broadcast/env` | `{key, value, studios?}` — set an env var in studios' ENVIRONMENT files (restart to apply) |
+| `POST /api/hub/jobs` | **Swarm Batch** — submit a batch (envelope below) |
+| `GET /api/hub/jobs` · `GET /api/hub/jobs/{batch}` · `DELETE /api/hub/jobs/{batch}` | Track / cancel batches |
+| `GET /api/hub/assets` · `POST /api/hub/assets/scan` | Asset ledger (query: `q`, `modality`, `studio`, `batch_id`) |
+| `POST /api/hub/recipes/run` | Run a recipe chain (`{recipe, brief}`) |
+| `GET /api/hub/recipes/runs[/{id}]` | Recipe run status |
+| `POST /api/hub/director` | `{brief, auto_run?}` — LLM plans a recipe from plain English |
+
+## Swarm Batch
+
+Submit N independent prompts; the Hub queues them and free studios of that
+modality pull the next item (work-stealing — a second machine in `studios.json`
+automatically joins the pool). Failed items are retried up to 3 times. Every
+result lands in the asset ledger with full provenance (prompt, model, resolved
+seed, params, batch id) — reproducible by construction.
+
+```bash
+curl -X POST http://localhost:47873/api/hub/jobs \
+  -H "Content-Type: application/json" -d '{
+  "modality": "voice",
+  "model": "hexgrad/Kokoro-82M",
+  "items": [{"prompt": "Line one."}, {"prompt": "Line two."}],
+  "sharedParams": {}
+}'
+```
+
+The **memory governor** guards local dispatch: a model whose
+`min_unified_memory_gb` exceeds the machine fails fast; one whose size doesn't
+fit in currently-free memory waits (visible as `governor_note` on the batch).
+Cloud-backed models bypass the governor entirely.
+
+## Recipes & director
+
+A recipe chains steps; `{{brief}}`, `{{prev.text}}`, `{{prev.artifact}}` carry
+context forward. Chat steps produce text; generation steps run through the
+broker (governor, retries, ledger included).
+
+```bash
+curl -X POST http://localhost:47873/api/hub/director \
+  -H "Content-Type: application/json" \
+  -d '{"brief": "a short spoken welcome message", "auto_run": true}'
+```
+
+The director uses your local Chat Studio to write the recipe, validates every
+model against the live catalog (with one self-repair retry), and only runs it
+when `auto_run` is set.
 
 Lifecycle control works for **local** studios only (pterm talks to this machine's
 Pinokio kernel); remote studios are controlled by their own machine's Hub. The

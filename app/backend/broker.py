@@ -1,0 +1,252 @@
+"""Job broker + Swarm Batch — pull-based worker pools per modality (SPEC §5).
+
+An N-item batch is a work queue. Each UP studio of the right modality is a
+worker slot (one concurrent generation each — heavy models on unified
+memory). Free workers pull the next queued item, so faster machines naturally
+do more and everyone finishes together; a failed item is requeued (max
+MAX_TRIES). With one machine today the pool has one worker per modality —
+the moment a second machine joins the registry, the same code fans out.
+
+Memory governor (local models only, SPEC §7 two-lane decision): before
+dispatching to a LOCAL studio, the model's min_unified_memory_gb (from that
+studio's own catalog) is checked against the host's available memory; the item
+waits rather than OOMing the box. Cloud models bypass the check.
+
+Params stay opaque: item params + sharedParams merge over {repo, prompt-field}
+and are forwarded verbatim to the studio's own generate endpoint.
+"""
+
+import asyncio
+import time
+import uuid
+
+import httpx
+
+from . import ledger
+from .registry import base_url
+from .resources import host_stats
+
+# modality -> (generate endpoint, prompt field name, artifact suffix)
+MODALITY = {
+    "image": ("/api/generate/txt2img", "prompt", "image"),
+    "music": ("/api/generate/txt2music", "prompt", "audio"),
+    "voice": ("/api/generate/txt2speech", "text", "audio"),
+    "video": ("/api/generate/txt2video", "prompt", "video"),
+}
+
+MAX_TRIES = 3
+POLL_S = 2.0
+MEMORY_HEADROOM_GB = 1.0  # keep at least this much free beyond the model's need
+
+batches: dict[str, dict] = {}
+_busy: set[str] = set()  # studio ids currently running an item for us
+_wakeup = asyncio.Event()
+
+
+def _monitor():
+    from .main import monitor
+    return monitor
+
+
+async def _model_memory(studio: dict, model: str) -> dict | None:
+    """Memory facts from the studio's own catalog. Semantics matter here:
+    min_unified_memory_gb = 'needs a machine with ≥N GB TOTAL' (capability),
+    size_gb ≈ the incremental footprint when loaded (what must fit in FREE
+    memory). None if unknown or cloud-backed (cloud lane bypasses governor)."""
+    catalog = await _monitor().get_catalog(studio)
+    for m in (catalog or {}).get("models", []):
+        if m.get("repo") == model or model in (m.get("aliases") or []):
+            if m.get("is_cloud"):
+                return None
+            return {"min_total": m.get("min_unified_memory_gb"),
+                    "size": m.get("size_gb")}
+    return None
+
+
+def submit_batch(envelope: dict) -> dict:
+    modality = envelope.get("modality")
+    if modality not in MODALITY:
+        return {"error": f"modality must be one of {sorted(MODALITY)}"}
+    items_in = envelope.get("items") or []
+    if not items_in:
+        return {"error": "items must be a non-empty list"}
+    if not envelope.get("model"):
+        return {"error": "model (repo) is required"}
+    batch_id = uuid.uuid4().hex[:10]
+    batches[batch_id] = {
+        "id": batch_id,
+        "modality": modality,
+        "model": envelope["model"],
+        "shared_params": envelope.get("sharedParams") or {},
+        "routing": envelope.get("routing", "pool"),
+        "created_at": time.time(),
+        "cancelled": False,
+        "items": [{
+            "index": i,
+            "prompt": it.get("prompt") or it.get("text") or "",
+            "seed": it.get("seed"),
+            "params": it.get("params") or {},
+            "state": "queued",       # queued|running|done|error|cancelled
+            "tries": 0,
+            "studio": None,
+            "studio_job_id": None,
+            "artifact_path": None,
+            "artifact_url": None,
+            "asset_id": None,
+            "error": None,
+        } for i, it in enumerate(items_in)],
+    }
+    _wakeup.set()
+    return {"batch_id": batch_id, "items": len(items_in)}
+
+
+def batch_summary(b: dict) -> dict:
+    states = [i["state"] for i in b["items"]]
+    return {
+        "id": b["id"], "modality": b["modality"], "model": b["model"],
+        "created_at": b["created_at"], "cancelled": b["cancelled"],
+        "governor_note": b.get("governor_note"),
+        "total": len(states),
+        "queued": states.count("queued"),
+        "running": states.count("running"),
+        "done": states.count("done"),
+        "error": states.count("error"),
+        "cancelled_items": states.count("cancelled"),
+    }
+
+
+def cancel_batch(batch_id: str) -> bool:
+    b = batches.get(batch_id)
+    if b is None:
+        return False
+    b["cancelled"] = True
+    for it in b["items"]:
+        if it["state"] == "queued":
+            it["state"] = "cancelled"
+    return True
+
+
+def _eligible_studios(modality: str, routing: str) -> list[dict]:
+    mon = _monitor()
+    out = []
+    for s in mon.registry:
+        if routing.startswith("studio:") and s["id"] != routing.split(":", 1)[1]:
+            continue
+        if s["modality"] != modality or s["id"] in _busy:
+            continue
+        if mon.status.get(s["id"], {}).get("status") == "up":
+            out.append(s)
+    return out
+
+
+async def _dispatch_loop():
+    """The scheduler: match queued items to free studios, forever."""
+    client = httpx.AsyncClient(timeout=httpx.Timeout(connect=5, read=60, write=30, pool=5))
+    while True:
+        try:
+            assigned = False
+            for b in list(batches.values()):
+                if b["cancelled"]:
+                    continue
+                queued = [i for i in b["items"] if i["state"] == "queued"]
+                if not queued:
+                    continue
+                for studio in _eligible_studios(b["modality"], b["routing"]):
+                    if not queued:
+                        break
+                    # ── memory governor (local models only) ──
+                    mem = await _model_memory(studio, b["model"])
+                    if mem is not None and studio.get("machine", "local") == "local":
+                        host = host_stats()
+                        if mem["min_total"] and host["total_gb"] < mem["min_total"]:
+                            # machine can never run this — fail fast, don't wait
+                            for it in queued:
+                                it["state"] = "error"
+                                it["error"] = (f"model needs a {mem['min_total']}GB machine; "
+                                               f"host has {host['total_gb']}GB")
+                            queued.clear()
+                            break
+                        need_free = (mem["size"] or 0) + MEMORY_HEADROOM_GB
+                        if host["available_gb"] < need_free:
+                            b["governor_note"] = (
+                                f"waiting for memory: needs ~{need_free:.1f}GB free, "
+                                f"{host['available_gb']:.1f}GB available")
+                            continue  # defer rather than OOM
+                        b["governor_note"] = None
+                    item = queued.pop(0)
+                    item["state"] = "running"
+                    item["studio"] = studio["id"]
+                    item["tries"] += 1
+                    _busy.add(studio["id"])
+                    asyncio.create_task(_run_item(client, b, item, studio))
+                    assigned = True
+            _wakeup.clear()
+            try:  # idle until new work or a worker frees up (or 3s heartbeat)
+                await asyncio.wait_for(_wakeup.wait(), timeout=3.0 if not assigned else 0.1)
+            except asyncio.TimeoutError:
+                pass
+        except Exception:
+            await asyncio.sleep(3)  # the scheduler must never die
+
+
+async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict):
+    endpoint, prompt_field, artifact_kind = MODALITY[b["modality"]]
+    body = dict(b["shared_params"])
+    body.update(item["params"])
+    body["repo"] = b["model"]
+    body[prompt_field] = item["prompt"]
+    if item["seed"] is not None:
+        body["seed"] = item["seed"]
+    try:
+        r = await client.post(f"{base_url(studio)}{endpoint}", json=body)
+        if r.status_code >= 400:
+            detail = (r.json().get("detail")
+                      if "json" in r.headers.get("content-type", "") else r.text)
+            raise RuntimeError(f"HTTP {r.status_code}: {detail}")
+        job = r.json()["job"]
+        item["studio_job_id"] = job["id"]
+        # poll the studio's async job until terminal
+        while True:
+            await asyncio.sleep(POLL_S)
+            jr = await client.get(
+                f"{base_url(studio)}/api/generate/jobs/{job['id']}")
+            j = jr.json()["job"]
+            state = j.get("state")
+            if state in ("queued", "running"):
+                if b["cancelled"]:
+                    await client.delete(
+                        f"{base_url(studio)}/api/generate/jobs/{job['id']}")
+                    item["state"] = "cancelled"
+                    return
+                continue
+            if j.get("error") or state in ("error", "cancelled"):
+                raise RuntimeError(j.get("error") or f"studio job {state}")
+            # terminal + no error = success
+            item["artifact_path"] = j.get("output_path")
+            item["artifact_url"] = (
+                f"{base_url(studio)}{j['output_url']}" if j.get("output_url") else None)
+            item["state"] = "done"
+            item["asset_id"] = ledger.record_asset(
+                source="job", modality=b["modality"], studio=studio["id"],
+                machine=studio.get("machine", "local"), model=b["model"],
+                seed=j.get("resolved_seed") or item["seed"],
+                prompt=item["prompt"], params=body,
+                artifact_path=item["artifact_path"],
+                artifact_url=item["artifact_url"],
+                batch_id=b["id"], item_index=item["index"],
+            )
+            return
+    except Exception as e:
+        if item["tries"] < MAX_TRIES and not b["cancelled"]:
+            item["state"] = "queued"  # work-stealing retry, possibly elsewhere
+            item["error"] = f"try {item['tries']} failed: {e}"
+        else:
+            item["state"] = "error"
+            item["error"] = str(e)
+    finally:
+        _busy.discard(studio["id"])
+        _wakeup.set()
+
+
+def start_dispatcher():
+    asyncio.create_task(_dispatch_loop())

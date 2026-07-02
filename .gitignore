@@ -20,3 +20,5 @@ GEMINI.md
 QWEN.md
 ENVIRONMENT
 .hub_token
+hub.db
+hub_state.json

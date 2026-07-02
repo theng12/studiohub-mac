@@ -62,7 +62,16 @@
   .toolbar input { flex: 1; min-width: 200px; }
   .muted { color: var(--dim); }
   .empty { color: var(--dim); padding: 30px; text-align: center; }
-  #tab-models, #tab-resources, #tab-remote { display: none; }
+  #tab-models, #tab-resources, #tab-remote, #tab-jobs, #tab-assets { display: none; }
+  .wd { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--dim); margin-left: auto; cursor: pointer; }
+  .sub { font-size: 12px; color: var(--dim); }
+  .jform input, .jform select, .jform textarea { background: var(--panel2); border: 1px solid var(--border);
+    color: var(--text); border-radius: 7px; padding: 7px 10px; font: inherit; width: 100%; margin-bottom: 8px; }
+  .jform textarea { min-height: 90px; font-family: ui-monospace, monospace; font-size: 12.5px; }
+  .jform button { background: var(--accent); border: none; color: #08131f; font-weight: 600;
+    border-radius: 7px; padding: 8px 18px; cursor: pointer; font: inherit; }
+  .prog { height: 6px; background: var(--panel2); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+  .prog i { display: block; height: 100%; background: var(--up); transition: width .5s; }
 </style>
 </head>
 <body>
@@ -77,6 +86,8 @@
   <button class="active" data-tab="overview">Overview</button>
   <button data-tab="models">Models</button>
   <button data-tab="resources">Resources</button>
+  <button data-tab="jobs">Jobs</button>
+  <button data-tab="assets">Assets</button>
   <button data-tab="remote">Remote</button>
 </nav>
 <main>
@@ -107,6 +118,42 @@
       <table><thead><tr>
         <th>Model</th><th>Studio</th><th>Family</th><th>Size</th><th>Min RAM</th><th>State</th>
       </tr></thead><tbody id="m-body"></tbody></table>
+    </div>
+  </section>
+
+  <section id="tab-jobs">
+    <div class="card jform" style="margin-bottom:16px">
+      <div class="top"><span class="emoji">🐝</span><h3>Swarm Batch — one prompt per line</h3></div>
+      <div style="display:flex;gap:10px">
+        <select id="j-modality" style="max-width:160px">
+          <option value="image">image</option><option value="voice">voice</option>
+          <option value="music">music</option><option value="video">video</option>
+        </select>
+        <select id="j-model"><option value="">— pick a downloaded model —</option></select>
+      </div>
+      <textarea id="j-prompts" placeholder="a lighthouse at dawn, oil painting&#10;a red fox in the snow&#10;…one prompt per line"></textarea>
+      <button onclick="submitBatch()">Submit batch</button>
+      <span class="sub" id="j-status" style="margin-left:10px"></span>
+    </div>
+    <div id="j-batches"></div>
+  </section>
+
+  <section id="tab-assets">
+    <div class="toolbar">
+      <input id="a-search" placeholder="Search prompts / models / paths…">
+      <select id="a-modality">
+        <option value="">All types</option>
+        <option value="image">image</option><option value="audio">audio</option>
+        <option value="video">video</option><option value="voice">voice</option>
+        <option value="music">music</option>
+      </select>
+      <button onclick="scanAssets()" style="background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:7px 14px;cursor:pointer">Scan studio outputs</button>
+    </div>
+    <div id="a-count" class="muted" style="margin-bottom:8px"></div>
+    <div style="max-height:70vh;overflow:auto">
+      <table><thead><tr>
+        <th>Asset</th><th>Type</th><th>Studio</th><th>Model</th><th>Seed</th><th>Source</th><th></th>
+      </tr></thead><tbody id="a-body"></tbody></table>
     </div>
   </section>
 
@@ -144,6 +191,11 @@
       <div class="row" id="host-stats"></div>
       <div class="bar"><i id="host-mem-bar"></i></div>
       <div class="muted" id="host-mem-label" style="font-size:12px"></div>
+      <svg id="mem-spark" viewBox="0 0 600 80" preserveAspectRatio="none"
+           style="width:100%;height:80px;margin-top:12px">
+        <polyline id="mem-line" fill="none" stroke="var(--accent)" stroke-width="1.5" points=""/>
+      </svg>
+      <div class="muted" style="font-size:11px">memory % — last hour</div>
     </div>
     <table><thead><tr>
       <th>Studio</th><th>Status</th><th>PID</th><th>Memory (RSS)</th><th>CPU %</th><th>Procs</th>
@@ -181,12 +233,110 @@ document.querySelectorAll("nav button").forEach(btn => {
   btn.onclick = () => {
     document.querySelectorAll("nav button").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
-    ["overview", "models", "resources", "remote"].forEach(t =>
+    ["overview", "models", "resources", "remote", "jobs", "assets"].forEach(t =>
       $("#tab-" + t).style.display = (t === btn.dataset.tab ? "block" : "none"));
     if (btn.dataset.tab === "models") loadModels();
     if (btn.dataset.tab === "remote") loadAccess();
+    if (btn.dataset.tab === "jobs") { loadJobModels(); loadBatches(); }
+    if (btn.dataset.tab === "assets") loadAssets();
+    if (btn.dataset.tab === "resources") loadSpark();
   };
 });
+
+// ── jobs tab ──────────────────────────────────────────────────────────────
+async function loadJobModels() {
+  const mod = $("#j-modality").value;
+  const r = await api(`/api/hub/catalog?modality=${mod}&downloaded=true&cloud=false`)
+    .then(x => x.json()).catch(() => null);
+  const sel = $("#j-model");
+  sel.innerHTML = (r?.models || []).map(m =>
+    `<option value="${m.repo}">${m.label || m.repo}</option>`).join("")
+    || `<option value="">no downloaded ${mod} models</option>`;
+}
+$("#j-modality").addEventListener("input", loadJobModels);
+
+async function submitBatch() {
+  const prompts = $("#j-prompts").value.split("\n").map(s => s.trim()).filter(Boolean);
+  const model = $("#j-model").value;
+  if (!prompts.length || !model) { $("#j-status").textContent = "need a model and at least one prompt"; return; }
+  $("#j-status").textContent = "submitting…";
+  const r = await api("/api/hub/jobs", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ modality: $("#j-modality").value, model,
+                           items: prompts.map(p => ({ prompt: p })) })
+  });
+  const d = await r.json();
+  $("#j-status").textContent = r.ok ? `batch ${d.batch_id} queued (${d.items} items)` : (d.detail || "failed");
+  loadBatches();
+}
+
+async function loadBatches() {
+  const r = await api("/api/hub/jobs").then(x => x.json()).catch(() => null);
+  if (!r) return;
+  $("#j-batches").innerHTML = r.batches.map(b => {
+    const pct = b.total ? Math.round(100 * (b.done + b.error + b.cancelled_items) / b.total) : 0;
+    return `<div class="card" style="margin-bottom:10px">
+      <div class="top"><h3 style="font-size:13.5px">${b.modality} · ${b.model}</h3>
+        <span class="sub">${b.done}/${b.total} done${b.error ? ` · ${b.error} failed` : ""}${b.running ? ` · ${b.running} running` : ""}</span>
+        ${b.queued + b.running > 0 && !b.cancelled ?
+          `<button onclick="cancelBatch('${b.id}')" style="margin-left:auto;background:none;border:1px solid var(--border);color:var(--down);border-radius:6px;padding:2px 10px;cursor:pointer">Cancel</button>` : ""}
+      </div>
+      <div class="prog"><i style="width:${pct}%"></i></div>
+      <div class="sub" style="margin-top:4px">batch ${b.id}${b.cancelled ? " · cancelled" : ""}</div>
+    </div>`;
+  }).join("") || `<div class="empty">No batches yet</div>`;
+}
+async function cancelBatch(id) {
+  await api(`/api/hub/jobs/${id}`, { method: "DELETE" });
+  loadBatches();
+}
+
+// ── assets tab ────────────────────────────────────────────────────────────
+async function loadAssets() {
+  const p = new URLSearchParams();
+  const q = $("#a-search").value.trim(); if (q) p.set("q", q);
+  const m = $("#a-modality").value; if (m) p.set("modality", m);
+  const r = await api("/api/hub/assets?" + p).then(x => x.json()).catch(() => null);
+  if (!r) return;
+  $("#a-count").textContent = `${r.assets.length} assets`;
+  $("#a-body").innerHTML = r.assets.map(a => {
+    const name = (a.artifact_path || "").split("/").pop() || a.id;
+    return `<tr>
+      <td><b>${name}</b>${a.prompt ? `<br><span class="muted" style="font-size:11px">${a.prompt.slice(0, 80)}</span>` : ""}</td>
+      <td>${a.modality || "—"}</td><td>${a.studio || "—"}</td>
+      <td class="num">${a.model ? a.model.split("/").pop() : "—"}</td>
+      <td class="num">${a.seed ?? "—"}</td>
+      <td><span class="pill ${a.source === "job" ? "dl" : ""}">${a.source}</span></td>
+      <td>${a.artifact_url ? `<a class="open" style="margin:0" href="${a.artifact_url}" target="_blank">open ↗</a>` : (a.exists ? "" : '<span class="muted">missing</span>')}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="7" class="empty">No assets — generate something or hit Scan</td></tr>`;
+}
+let aTimer;
+["a-search", "a-modality"].forEach(id =>
+  $("#" + id).addEventListener("input", () => { clearTimeout(aTimer); aTimer = setTimeout(loadAssets, 250); }));
+async function scanAssets() {
+  const r = await api("/api/hub/assets/scan", { method: "POST" }).then(x => x.json());
+  $("#a-count").textContent = `scan: ${r.added} new of ${r.scanned} files`;
+  loadAssets();
+}
+
+// ── metrics sparkline ─────────────────────────────────────────────────────
+async function loadSpark() {
+  const r = await api("/api/hub/metrics?minutes=60").then(x => x.json()).catch(() => null);
+  if (!r || !r.samples.length) return;
+  const pts = r.samples.map((s, i) =>
+    `${(i / Math.max(1, r.samples.length - 1)) * 600},${80 - (s.mem_percent / 100) * 78}`);
+  $("#mem-line").setAttribute("points", pts.join(" "));
+}
+
+// ── watchdog toggle ───────────────────────────────────────────────────────
+async function toggleWatchdog(id, enabled) {
+  await api(`/api/hub/studios/${id}/watchdog`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled })
+  });
+  refresh();
+}
 
 // ── remote access tab ─────────────────────────────────────────────────────
 async function loadAccess() {
@@ -292,6 +442,11 @@ function renderOverview(sum) {
         <dt>Last seen</dt><dd>${fmtAgo(s.last_seen)}</dd>
       </dl>
       ${actions}
+      ${controllable ? `<label class="wd" style="margin-top:8px">
+        <input type="checkbox" ${sum.watchdog?.[s.id]?.enabled ? "checked" : ""}
+          onchange="toggleWatchdog('${s.id}', this.checked)">
+        auto-restart if down${sum.watchdog?.[s.id]?.failures ? ` (${sum.watchdog[s.id].failures} attempts)` : ""}
+      </label>` : ""}
     `;
     grid.appendChild(card);
   }

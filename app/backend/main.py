@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from . import gateway
+from . import broadcast, broker, gateway, ledger, metrics, recipes
 from .auth import is_loopback, load_token, make_middleware
 from .control import control_studio
 from .monitor import StudioMonitor
@@ -42,6 +42,7 @@ monitor = StudioMonitor()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     monitor.start()
+    broker.start_dispatcher()
     yield
     await monitor.stop()
 
@@ -154,6 +155,8 @@ def hub_summary():
         "hub": {"title": TITLE, "app_version": _app_version()},
         "studios": studios()["studios"],
         "resources": hub_resources(),
+        "watchdog": metrics.watchdog_status(),
+        "jobs": [broker.batch_summary(b) for b in broker.batches.values()],
     }
 
 
@@ -184,6 +187,141 @@ def hub_access(request: Request):
     if is_loopback(request):
         out["token"] = HUB_TOKEN
     return out
+
+
+# ── metrics + watchdog ─────────────────────────────────────────────────────
+@app.get("/api/hub/metrics")
+def hub_metrics(minutes: int = Query(60, ge=1, le=1440)):
+    return metrics.get_metrics(minutes)
+
+
+@app.get("/api/hub/watchdog")
+def hub_watchdog():
+    return metrics.watchdog_status()
+
+
+# NOTE: defined before the generic {action} route so it wins the match.
+@app.post("/api/hub/studios/{studio_id}/watchdog")
+def studio_watchdog(studio_id: str, body: dict):
+    if not any(s["id"] == studio_id for s in monitor.registry):
+        raise HTTPException(404, f"unknown studio: {studio_id}")
+    metrics.set_watchdog(studio_id, bool(body.get("enabled")))
+    return {"ok": True, "studio": studio_id,
+            "watchdog": metrics.watchdog_status().get(studio_id)}
+
+
+# ── broadcaster ────────────────────────────────────────────────────────────
+def _pick_studios(ids: list | None) -> list[dict]:
+    if not ids:
+        return monitor.registry
+    return [s for s in monitor.registry if s["id"] in ids]
+
+
+@app.post("/api/hub/broadcast/download")
+async def hub_broadcast_download(body: dict):
+    repo = body.get("repo")
+    if not repo:
+        raise HTTPException(400, "repo is required")
+    import httpx
+    async with httpx.AsyncClient() as client:
+        results = await broadcast.broadcast_download(
+            client, _pick_studios(body.get("studios")), repo, body.get("token"))
+    return {"repo": repo, "results": results}
+
+
+@app.post("/api/hub/broadcast/env")
+def hub_broadcast_env(body: dict):
+    key, value = body.get("key"), body.get("value")
+    if not key or value is None:
+        raise HTTPException(400, "key and value are required")
+    out = broadcast.broadcast_env(_pick_studios(body.get("studios")), key, str(value))
+    if "error" in out:
+        raise HTTPException(400, out["error"])
+    return out
+
+
+# ── job broker / Swarm Batch ───────────────────────────────────────────────
+@app.post("/api/hub/jobs")
+def hub_submit_jobs(envelope: dict):
+    result = broker.submit_batch(envelope)
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    return result
+
+
+@app.get("/api/hub/jobs")
+def hub_list_jobs():
+    return {"batches": [broker.batch_summary(b)
+                        for b in sorted(broker.batches.values(),
+                                        key=lambda x: -x["created_at"])]}
+
+
+@app.get("/api/hub/jobs/{batch_id}")
+def hub_get_batch(batch_id: str):
+    b = broker.batches.get(batch_id)
+    if b is None:
+        raise HTTPException(404, "unknown batch")
+    return {**broker.batch_summary(b), "items": b["items"]}
+
+
+@app.delete("/api/hub/jobs/{batch_id}")
+def hub_cancel_batch(batch_id: str):
+    if not broker.cancel_batch(batch_id):
+        raise HTTPException(404, "unknown batch")
+    return {"ok": True}
+
+
+# ── asset ledger ───────────────────────────────────────────────────────────
+@app.get("/api/hub/assets")
+def hub_assets(q: str | None = None, modality: str | None = None,
+               studio: str | None = None, batch_id: str | None = None,
+               limit: int = Query(100, ge=1, le=500)):
+    return {"assets": ledger.query_assets(q, modality, studio, batch_id, limit)}
+
+
+@app.post("/api/hub/assets/scan")
+def hub_assets_scan():
+    return ledger.scan_outputs(monitor.registry)
+
+
+# ── recipes + director ─────────────────────────────────────────────────────
+@app.post("/api/hub/recipes/run")
+async def hub_run_recipe(body: dict):
+    recipe = body.get("recipe")
+    if not recipe:
+        raise HTTPException(400, "recipe is required")
+    try:
+        run_id = await recipes.run_recipe(recipe, body.get("brief", ""))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"run_id": run_id}
+
+
+@app.get("/api/hub/recipes/runs")
+def hub_recipe_runs():
+    return {"runs": sorted(recipes.runs.values(),
+                           key=lambda r: -r["created_at"])}
+
+
+@app.get("/api/hub/recipes/runs/{run_id}")
+def hub_recipe_run(run_id: str):
+    run = recipes.runs.get(run_id)
+    if run is None:
+        raise HTTPException(404, "unknown run")
+    return run
+
+
+@app.post("/api/hub/director")
+async def hub_director(body: dict):
+    brief = body.get("brief")
+    if not brief:
+        raise HTTPException(400, "brief is required")
+    result = await recipes.direct(brief, body.get("chat_model"))
+    if "error" in result:
+        return result  # director failures are data, not HTTP errors
+    if body.get("auto_run"):
+        result["run_id"] = await recipes.run_recipe(result["recipe"], brief)
+    return result
 
 
 @app.post("/api/hub/studios/{studio_id}/{action}")

@@ -242,10 +242,15 @@ untouched to the target studio. The Hub surfaces each model's own parameter sche
 | Phase | Plane | Deliverable |
 |---|---|---|
 | **1 (now)** | Control | Monitoring dashboard: host-aware registry, health grid, aggregated catalog, host + per-studio memory (psutil), read-only memory-governor foundation. |
-| **2** | Control | ✅ **SHIPPED v1.1.0** — Lifecycle control (start/stop via pterm) with dashboard buttons. Remaining in this plane: watchdog/auto-restart; time-series metrics. |
-| **3** | Data | ✅ **Gateway + auth + remote access SHIPPED v1.2.0** — `/studio/{id}/*` streaming proxy; token auth (loopback exempt, `.hub_token`); `/api/hub/access` + dashboard Remote tab with Tailscale/LAN URLs. Remaining in this plane: config/model broadcaster; asset ledger (index/link). |
-| **4** | Data/Intel | Job broker (single + batch envelope); **Swarm Batch** across federated machines. |
-| **5** | Intelligence | Recipe/pipeline engine; then agentic director; smart scheduler. |
+| **2** | Control | ✅ **SHIPPED v1.1.0** — Lifecycle control (start/stop via pterm) with dashboard buttons. ✅ **v1.6.0**: watchdog/auto-restart (cooldown + crash-loop cutoff) and time-series metrics (15s samples, 24h, dashboard sparkline). |
+| **3** | Data | ✅ **Gateway + auth + remote access SHIPPED v1.2.0**; ✅ **v1.6.0**: config/model broadcaster (downloads over HTTP to any studio; env writes local-only) and SQLite asset ledger (index/link, `hub.db`, scan + job provenance). |
+| **4** | Data/Intel | ✅ **SHIPPED v1.6.0** — Job broker with batch-first envelope, pull-based per-modality worker pools (work-stealing, 3-try retry), memory-governor admission (total-RAM capability check + free-RAM fit check, `governor_note` visibility), full ledger provenance. Verified with a real 3-item Kokoro TTS batch. Multi-machine fan-out activates by adding registry entries — no code changes. |
+| **5** | Intelligence | ✅ **SHIPPED v1.6.0** — Recipe chains (`{{brief}}`/`{{prev.text}}`/`{{prev.artifact}}`; chat steps sync, generation steps via broker) verified with a live chat→voice run. Agentic director: modality-grouped inventory prompt + catalog pairing validation + one self-repair retry (grouped inventory was required for small local LLMs — flat lists caused music/voice mispairing). Smart scheduler = governor inside the broker; overnight scheduling / predictive preload remain future ideas. |
+
+## 12. Post-v1.6 future ideas (not scheduled)
+- Second-machine federation in practice (registry entries exist; needs a real second Mac to validate).
+- Credential pool / key rotation for cloud lanes (§4) — becomes relevant when cloud Swarm Batch is used in anger.
+- Update orchestration, log aggregation, webhooks, per-client API keys, predictive model preloading.
 
 Story Studio KH is retrofitted to consume the Hub's canonical API as those phases land.
 
