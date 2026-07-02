@@ -20,18 +20,25 @@ from pathlib import Path
 LAUNCHER_ROOT = Path(__file__).resolve().parents[2]
 REGISTRY_FILE = LAUNCHER_ROOT / "studios.json"
 
-# The five sibling studios and their fixed family ports.
+# The five sibling studios and their fixed family ports. `app` is the Pinokio
+# launcher folder name under PINOKIO_HOME/api — used by lifecycle control
+# (pterm --ref). Override in studios.json if your folder names differ.
 DEFAULT_STUDIOS = [
     {"id": "image", "title": "Image Studio KH", "modality": "image",
-     "host": "127.0.0.1", "port": 47868, "machine": "local", "emoji": "🎨"},
+     "host": "127.0.0.1", "port": 47868, "machine": "local", "emoji": "🎨",
+     "app": "imagestudio-mac"},
     {"id": "music", "title": "Music Studio KH", "modality": "music",
-     "host": "127.0.0.1", "port": 47869, "machine": "local", "emoji": "🎵"},
+     "host": "127.0.0.1", "port": 47869, "machine": "local", "emoji": "🎵",
+     "app": "musicstudio-mac"},
     {"id": "voice", "title": "Voice Studio KH", "modality": "voice",
-     "host": "127.0.0.1", "port": 47870, "machine": "local", "emoji": "🎙️"},
+     "host": "127.0.0.1", "port": 47870, "machine": "local", "emoji": "🎙️",
+     "app": "voicestudio-mac.git"},
     {"id": "chat", "title": "Chat Studio KH", "modality": "chat",
-     "host": "127.0.0.1", "port": 47871, "machine": "local", "emoji": "💬"},
+     "host": "127.0.0.1", "port": 47871, "machine": "local", "emoji": "💬",
+     "app": "chatstudio-mac.git"},
     {"id": "video", "title": "Video Studio KH", "modality": "video",
-     "host": "127.0.0.1", "port": 47872, "machine": "local", "emoji": "🎬"},
+     "host": "127.0.0.1", "port": 47872, "machine": "local", "emoji": "🎬",
+     "app": "videostudio-mac.git"},
 ]
 
 

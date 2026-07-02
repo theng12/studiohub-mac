@@ -14,10 +14,11 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
+from .control import control_studio
 from .monitor import StudioMonitor
 from .registry import LAUNCHER_ROOT, base_url
 from .resources import host_stats, studio_process_stats
@@ -145,6 +146,23 @@ def hub_summary():
         "studios": studios()["studios"],
         "resources": hub_resources(),
     }
+
+
+@app.post("/api/hub/studios/{studio_id}/{action}")
+async def studio_lifecycle(studio_id: str, action: str):
+    """Start or stop a local studio via Pinokio's pterm CLI. Returns
+    immediately; the health poller reflects the change within seconds."""
+    if action not in ("start", "stop"):
+        raise HTTPException(400, "action must be 'start' or 'stop'")
+    studio = next((s for s in monitor.registry if s["id"] == studio_id), None)
+    if studio is None:
+        raise HTTPException(404, f"unknown studio: {studio_id}")
+    result = control_studio(studio, action)
+    if not result["ok"]:
+        raise HTTPException(409, result["error"])
+    # Re-poll soon so the dashboard sees the transition quickly.
+    await monitor.poll_all()
+    return result
 
 
 @app.post("/api/hub/registry/reload")

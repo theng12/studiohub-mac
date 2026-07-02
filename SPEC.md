@@ -242,7 +242,7 @@ untouched to the target studio. The Hub surfaces each model's own parameter sche
 | Phase | Plane | Deliverable |
 |---|---|---|
 | **1 (now)** | Control | Monitoring dashboard: host-aware registry, health grid, aggregated catalog, host + per-studio memory (psutil), read-only memory-governor foundation. |
-| **2** | Control | Lifecycle control (start/stop/restart) once the Pinokio control API is verified; watchdog/auto-restart; time-series metrics. |
+| **2** | Control | ✅ **SHIPPED v1.1.0** — Lifecycle control (start/stop via pterm) with dashboard buttons. Remaining in this plane: watchdog/auto-restart; time-series metrics. |
 | **3** | Data | Unified gateway + token auth + Tailscale share; config/model broadcaster; asset ledger (index/link). |
 | **4** | Data/Intel | Job broker (single + batch envelope); **Swarm Batch** across federated machines. |
 | **5** | Intelligence | Recipe/pipeline engine; then agentic director; smart scheduler. |
@@ -307,8 +307,17 @@ lifecycle control — foundations only in Phase 1 (host-aware registry + batch-r
 - **Self-consistency**: the Hub exposes its own `/api/health` + `/api/version` in the same shape
   as the siblings, so the Hub itself is monitorable by the same convention (federation-friendly).
 
-**Still open (not blocking Phase 1):**
-1. Confirm whether the **Pinokio kernel** (`:42000`) exposes an HTTP endpoint to trigger
-   script start/stop from the Hub backend — gating for Phase 2 lifecycle control (§7).
-2. When exposing over Tailscale: auth model (single shared token vs per-client keys). Deferred to
-   the gateway phase; default local-first until then.
+**Resolved in Phase 2 (2026-07-02):**
+- **External lifecycle control mechanism = `pterm` CLI** (PTERM.md):
+  `pterm start|stop start.js --ref pinokio://127.0.0.1:42000/api/<app>`. Resolved from PATH or
+  `PINOKIO_HOME/bin/npm/bin/pterm`. Critical caveat learned in testing: the pterm client streams
+  the script's early output and must be spawned **detached and never killed mid-stream** —
+  cutting it during the handshake aborts the launch. Verified live: Music Studio started (~9s to
+  healthy) and stopped through the Hub API, and the Hub restarted itself with the same mechanism.
+- Lifecycle is **local-machine only** by design (pterm talks to the local kernel); remote studios
+  will be controlled by their own machine's Hub when federation lands.
+
+**Still open:**
+1. When exposing over Tailscale: auth model (single shared token vs per-client keys). Deferred to
+   the gateway phase; default local-first until then. Note: lifecycle endpoints share the
+   LAN-open trust model of the studios until then.

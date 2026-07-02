@@ -55,7 +55,16 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/catalog` | Unified model catalog. Query params: `q`, `modality`, `downloaded`, `cloud`, `force` |
 | `GET /api/hub/resources` | Host memory/CPU + per-studio process stats |
 | `GET /api/hub/summary` | One-shot dashboard payload (studios + resources) |
+| `POST /api/hub/studios/{id}/start` | Start a local studio (via Pinokio's `pterm` CLI) |
+| `POST /api/hub/studios/{id}/stop` | Stop a local studio |
 | `POST /api/hub/registry/reload` | Re-read `studios.json` without restarting |
+
+Lifecycle control works for **local** studios only (pterm talks to this machine's
+Pinokio kernel); remote studios are controlled by their own machine's Hub. The
+call returns immediately — poll `/api/hub/studios` to watch the status change.
+Note the Hub binds on all interfaces like its siblings, so anyone who can reach
+port 47873 on your LAN/tailnet can start/stop studios — same trust model as the
+studios themselves (token auth arrives with the gateway phase).
 
 ### curl
 
@@ -68,6 +77,10 @@ curl "http://localhost:47873/api/hub/catalog?modality=image&downloaded=true&clou
 
 # Memory picture
 curl http://localhost:47873/api/hub/resources
+
+# Start / stop a studio
+curl -X POST http://localhost:47873/api/hub/studios/music/start
+curl -X POST http://localhost:47873/api/hub/studios/music/stop
 ```
 
 ### JavaScript

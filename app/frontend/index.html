@@ -35,6 +35,13 @@
   .kv dd { text-align: right; font-variant-numeric: tabular-nums; }
   .card a.open { display: inline-block; margin-top: 10px; color: var(--accent); text-decoration: none; font-size: 12.5px; }
   .card a.open:hover { text-decoration: underline; }
+  .card .actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+  .card .actions button { background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 7px; padding: 5px 14px; font: inherit; font-size: 12.5px; cursor: pointer; }
+  .card .actions button:hover { border-color: var(--accent); }
+  .card .actions button.stop:hover { border-color: var(--down); color: var(--down); }
+  .card .actions button:disabled { opacity: .5; cursor: default; }
+  .card .actions .pending { color: var(--warn); font-size: 12px; }
   .bar { height: 8px; background: var(--panel2); border-radius: 4px; overflow: hidden; margin: 6px 0 2px; }
   .bar i { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width .4s; }
   .bar i.hot { background: var(--warn); }
@@ -147,13 +154,58 @@ function studioUrl(s) {
   return `http://${host}:${s.port}`;
 }
 
+// Studios with an in-flight start/stop: id -> {action, since}
+const pendingActions = new Map();
+
+async function lifecycle(id, action) {
+  if (action === "stop" && !confirm(`Stop ${id} studio?`)) return;
+  pendingActions.set(id, { action, since: Date.now() });
+  renderOverview(lastSummary);
+  try {
+    const r = await fetch(`/api/hub/studios/${id}/${action}`, { method: "POST" });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      alert(`${action} failed: ${err.detail || r.status}`);
+      pendingActions.delete(id);
+    }
+  } catch (e) {
+    alert(`${action} failed: ${e}`);
+    pendingActions.delete(id);
+  }
+  refresh();
+}
+
 function renderOverview(sum) {
+  if (!sum) return;
   $("#hub-ver").textContent = "v" + sum.hub.app_version;
   const grid = $("#studio-grid");
   grid.innerHTML = "";
   for (const s of sum.studios) {
     const res = sum.resources.studios[s.id];
     const cls = s.status === "up" ? "up" : (s.status === "unknown" ? "unknown" : "down");
+    // Clear the pending marker once the studio reaches the requested state
+    // (or after 3 minutes, in case a start fails silently).
+    const pending = pendingActions.get(s.id);
+    if (pending) {
+      const arrived = (pending.action === "start" && s.status === "up")
+                   || (pending.action === "stop" && s.status !== "up");
+      if (arrived || Date.now() - pending.since > 180000) pendingActions.delete(s.id);
+    }
+    const p = pendingActions.get(s.id);
+    const controllable = (s.machine || "local") === "local" && s.app;
+    let actions = "";
+    if (p) {
+      actions = `<div class="actions"><button disabled>${p.action}…</button>
+                 <span class="pending">${p.action === "start" ? "starting" : "stopping"}…</span></div>`;
+    } else if (controllable && s.status === "up") {
+      actions = `<div class="actions">
+        <a class="open" style="margin-top:0" href="${studioUrl(s)}" target="_blank">Open UI ↗</a>
+        <button class="stop" onclick="lifecycle('${s.id}','stop')">Stop</button></div>`;
+    } else if (controllable) {
+      actions = `<div class="actions"><button onclick="lifecycle('${s.id}','start')">Start</button></div>`;
+    } else if (s.status === "up") {
+      actions = `<a class="open" href="${studioUrl(s)}" target="_blank">Open UI ↗</a>`;
+    }
     const card = document.createElement("div");
     card.className = "card";
     card.innerHTML = `
@@ -163,7 +215,7 @@ function renderOverview(sum) {
         <span class="dot ${cls}" title="${s.status}"></span>
       </div>
       <dl class="kv">
-        <dt>Status</dt><dd>${s.status}</dd>
+        <dt>Status</dt><dd>${p ? p.action + "ing…" : s.status}</dd>
         <dt>Version</dt><dd>${s.app_version || "—"}</dd>
         <dt>Address</dt><dd>${s.host}:${s.port}</dd>
         <dt>Machine</dt><dd>${s.machine || "local"}</dd>
@@ -171,7 +223,7 @@ function renderOverview(sum) {
         <dt>Memory</dt><dd>${res ? res.rss_gb + " GB" : "—"}</dd>
         <dt>Last seen</dt><dd>${fmtAgo(s.last_seen)}</dd>
       </dl>
-      ${s.status === "up" ? `<a class="open" href="${studioUrl(s)}" target="_blank">Open UI ↗</a>` : ""}
+      ${actions}
     `;
     grid.appendChild(card);
   }
