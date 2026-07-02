@@ -351,6 +351,26 @@ def reload_registry():
     return {"ok": True, "studios": len(monitor.registry)}
 
 
+@app.delete("/api/hub/registry/machines/{machine}")
+def remove_machine_route(machine: str):
+    """Unregister a previously discovered machine's studios."""
+    from .registry import remove_machine
+
+    if machine == "local":
+        raise HTTPException(400, "the local machine's studios can't be removed")
+    removed = remove_machine(machine)
+    if not removed:
+        raise HTTPException(404, f"no registered studios for machine {machine!r}")
+    # Drop them from live status too, not just the file.
+    monitor.reload_registry()
+    monitor.registry = [s for s in monitor.registry
+                        if s.get("machine") != machine]
+    for sid in list(monitor.status):
+        if not any(s["id"] == sid for s in monitor.registry):
+            del monitor.status[sid]
+    return {"ok": True, "removed": removed}
+
+
 @app.post("/api/hub/registry/discover")
 async def discover_machine(body: dict):
     """Probe another Mac (LAN/Tailscale IP) for the studio family ports and

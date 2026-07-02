@@ -80,6 +80,21 @@ MODALITY_EMOJI = {"image": "🎨", "music": "🎵", "voice": "🎙️",
                   "chat": "💬", "video": "🎬"}
 
 
+def remove_machine(machine: str) -> int:
+    """Drop all studios.json entries for a machine (defaults are untouchable)."""
+    if not REGISTRY_FILE.exists():
+        return 0
+    try:
+        existing = json.loads(REGISTRY_FILE.read_text())
+    except (json.JSONDecodeError, OSError):
+        return 0
+    kept = [e for e in existing if e.get("machine") != machine]
+    removed = len(existing) - len(kept)
+    if removed:
+        REGISTRY_FILE.write_text(json.dumps(kept, indent=2) + "\n")
+    return removed
+
+
 def add_user_entries(entries: list[dict]) -> int:
     """Append/merge entries into studios.json (per-machine registry state)."""
     existing = []

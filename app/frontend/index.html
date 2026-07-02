@@ -185,9 +185,19 @@
       <div style="display:flex;gap:10px">
         <input id="d-host" placeholder="100.x.y.z" style="max-width:200px">
         <input id="d-name" placeholder="machine name (e.g. mac-studio)" style="max-width:240px">
-        <button onclick="discoverMachine()" style="white-space:nowrap">Discover</button>
+        <button onclick="discoverMachine()" style="white-space:nowrap">Discover &amp; Add</button>
       </div>
       <div class="sub" id="d-result"></div>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="top"><span class="emoji">🗂️</span><h3>Registered machines</h3></div>
+      <p class="muted" style="font-size:13px;margin-bottom:10px">
+        Added machines are saved permanently (in <code>studios.json</code>) and
+        polled like local studios — they stay listed here and on the Overview
+        even while the machine is off.
+      </p>
+      <table><thead><tr><th>Machine</th><th>Studios</th><th></th></tr></thead>
+        <tbody id="mach-body"></tbody></table>
     </div>
     <div class="card">
       <div class="top"><span class="emoji">🔀</span><h3>Gateway — one address for every studio API</h3></div>
@@ -363,12 +373,33 @@ async function discoverMachine() {
     body: JSON.stringify({ host, machine: $("#d-name").value.trim() || undefined })
   }).then(x => x.json()).catch(e => ({ note: String(e) }));
   $("#d-result").textContent = r.found?.length
-    ? `found ${r.found.map(f => f.modality).join(", ")} — ${r.registered} newly registered`
+    ? `found ${r.found.map(f => f.modality).join(", ")} — ${r.registered} newly added (saved permanently)`
     : (r.note || r.detail || "nothing found");
+  loadMachines();
   refresh();
 }
 
+async function loadMachines() {
+  const r = await api("/api/hub/studios").then(x => x.json()).catch(() => null);
+  if (!r) return;
+  const byMachine = {};
+  for (const s of r.studios)
+    (byMachine[s.machine || "local"] = byMachine[s.machine || "local"] || []).push(s);
+  $("#mach-body").innerHTML = Object.entries(byMachine).map(([m, list]) => `<tr>
+    <td><b>${m}</b><br><span class="muted" style="font-size:11px">${list[0].host}</span></td>
+    <td>${list.map(s => `<span class="pill ${s.status === "up" ? "dl" : ""}" style="margin-right:4px">${s.emoji || ""} ${s.modality} · ${s.status}</span>`).join(" ")}</td>
+    <td>${m !== "local" ? `<button onclick="removeMachine('${m}')"
+      style="background:none;border:1px solid var(--border);color:var(--down);border-radius:6px;padding:3px 10px;cursor:pointer">Remove</button>` : '<span class="muted" style="font-size:11px">this Mac</span>'}</td>
+  </tr>`).join("");
+}
+async function removeMachine(m) {
+  if (!confirm(`Remove all of ${m}'s studios from the Hub? (The machine itself is untouched.)`)) return;
+  await api(`/api/hub/registry/machines/${encodeURIComponent(m)}`, { method: "DELETE" });
+  loadMachines(); refresh();
+}
+
 async function loadAccess() {
+  loadMachines();
   const r = await api("/api/hub/access").then(x => x.json()).catch(() => null);
   if (!r) return;
   $("#acc-body").innerHTML = r.addresses.map(a => `<tr>
