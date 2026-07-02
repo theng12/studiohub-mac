@@ -14,10 +14,12 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
+from . import gateway
+from .auth import is_loopback, load_token, make_middleware
 from .control import control_studio
 from .monitor import StudioMonitor
 from .registry import LAUNCHER_ROOT, base_url
@@ -54,6 +56,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Token auth: loopback is exempt; remote clients need the Hub token.
+HUB_TOKEN = load_token()
+app.middleware("http")(make_middleware(HUB_TOKEN))
+
+# Unified gateway: {HUB}/studio/{id}/{path} -> the right studio.
+app.include_router(gateway.router)
 
 
 # ── sibling-convention endpoints (Hub is monitorable like a studio) ────────
@@ -146,6 +155,35 @@ def hub_summary():
         "studios": studios()["studios"],
         "resources": hub_resources(),
     }
+
+
+@app.get("/api/hub/access")
+def hub_access(request: Request):
+    """Shareable remote URLs for this Hub. The token itself is only revealed
+    to loopback clients — read it on the Hub machine, use it everywhere else."""
+    import ipaddress
+    import socket
+
+    import psutil as _ps
+
+    port = request.url.port or 47873
+    addresses = []
+    for ifname, addrs in _ps.net_if_addrs().items():
+        for a in addrs:
+            if a.family != socket.AF_INET or a.address.startswith("127."):
+                continue
+            ip = ipaddress.ip_address(a.address)
+            kind = "tailscale" if ip in ipaddress.ip_network("100.64.0.0/10") \
+                else ("lan" if ip.is_private else "public")
+            addresses.append({
+                "interface": ifname, "ip": a.address, "kind": kind,
+                "url": f"http://{a.address}:{port}",
+            })
+    addresses.sort(key=lambda x: {"tailscale": 0, "lan": 1, "public": 2}[x["kind"]])
+    out = {"addresses": addresses, "auth": "token required for non-loopback clients"}
+    if is_loopback(request):
+        out["token"] = HUB_TOKEN
+    return out
 
 
 @app.post("/api/hub/studios/{studio_id}/{action}")

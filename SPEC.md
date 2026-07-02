@@ -243,7 +243,7 @@ untouched to the target studio. The Hub surfaces each model's own parameter sche
 |---|---|---|
 | **1 (now)** | Control | Monitoring dashboard: host-aware registry, health grid, aggregated catalog, host + per-studio memory (psutil), read-only memory-governor foundation. |
 | **2** | Control | ✅ **SHIPPED v1.1.0** — Lifecycle control (start/stop via pterm) with dashboard buttons. Remaining in this plane: watchdog/auto-restart; time-series metrics. |
-| **3** | Data | Unified gateway + token auth + Tailscale share; config/model broadcaster; asset ledger (index/link). |
+| **3** | Data | ✅ **Gateway + auth + remote access SHIPPED v1.2.0** — `/studio/{id}/*` streaming proxy; token auth (loopback exempt, `.hub_token`); `/api/hub/access` + dashboard Remote tab with Tailscale/LAN URLs. Remaining in this plane: config/model broadcaster; asset ledger (index/link). |
 | **4** | Data/Intel | Job broker (single + batch envelope); **Swarm Batch** across federated machines. |
 | **5** | Intelligence | Recipe/pipeline engine; then agentic director; smart scheduler. |
 
@@ -317,7 +317,11 @@ lifecycle control — foundations only in Phase 1 (host-aware registry + batch-r
 - Lifecycle is **local-machine only** by design (pterm talks to the local kernel); remote studios
   will be controlled by their own machine's Hub when federation lands.
 
-**Still open:**
-1. When exposing over Tailscale: auth model (single shared token vs per-client keys). Deferred to
-   the gateway phase; default local-first until then. Note: lifecycle endpoints share the
-   LAN-open trust model of the studios until then.
+**Resolved in Phase 3 (2026-07-02):**
+- **Auth model = single shared token** (`.hub_token`, auto-generated, gitignored). Loopback is
+  exempt so local UX is frictionless; all remote API calls require the token (Bearer /
+  X-Hub-Token / `?token=`). Dashboard page + `/api/health` + `/api/version` stay public.
+  Per-client keys deferred until there's a second real client beyond Story Studio.
+- **"Control from anywhere" = Tailscale, not a cloud host.** The studios physically run on this
+  Mac, so the Hub cannot move to a cloud VM; instead any Tailscale-connected device reaches the
+  Hub directly (`/api/hub/access` lists the URLs). No third-party middleman.

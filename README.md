@@ -57,14 +57,41 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/summary` | One-shot dashboard payload (studios + resources) |
 | `POST /api/hub/studios/{id}/start` | Start a local studio (via Pinokio's `pterm` CLI) |
 | `POST /api/hub/studios/{id}/stop` | Stop a local studio |
+| `GET /api/hub/access` | Shareable LAN/Tailscale URLs (+ the token, loopback only) |
+| `ANY /studio/{id}/{path}` | **Gateway** — proxies to that studio's API (streams/SSE included) |
 | `POST /api/hub/registry/reload` | Re-read `studios.json` without restarting |
 
 Lifecycle control works for **local** studios only (pterm talks to this machine's
 Pinokio kernel); remote studios are controlled by their own machine's Hub. The
 call returns immediately — poll `/api/hub/studios` to watch the status change.
-Note the Hub binds on all interfaces like its siblings, so anyone who can reach
-port 47873 on your LAN/tailnet can start/stop studios — same trust model as the
-studios themselves (token auth arrives with the gateway phase).
+
+## Remote access & auth
+
+- **Local (this machine)** — no token needed; everything works as before.
+- **Remote (LAN / Tailscale)** — every API call requires the Hub token via
+  `Authorization: Bearer <token>`, `X-Hub-Token: <token>`, or `?token=`.
+  The dashboard page and `/api/health`/`/api/version` stay public; the
+  dashboard prompts for the token once and remembers it.
+- The token is auto-generated into `.hub_token` (gitignored). See it in the
+  dashboard's **Remote** tab (only shown when viewed on the Hub machine).
+  Rotate it by deleting the file and restarting the Hub.
+- **Control from anywhere:** install Tailscale on your phone/laptop, then open
+  the Tailscale URL shown in the Remote tab. Your Mac stays the server; no
+  cloud middleman.
+
+## Gateway
+
+One base URL for every studio API — clients store the Hub address instead of
+five studio addresses:
+
+```
+{HUB}/studio/image/api/catalog          → Image Studio
+{HUB}/studio/chat/v1/chat/completions   → Chat Studio (OpenAI-compatible)
+{HUB}/studio/video/api/generate/stream  → Video Studio (SSE streams fine)
+```
+
+Works for local and remote registry entries alike. Intended for API traffic;
+for browsing a studio's web UI, use the dashboard's direct "Open UI" links.
 
 ### curl
 

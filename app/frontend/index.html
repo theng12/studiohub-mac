@@ -62,7 +62,7 @@
   .toolbar input { flex: 1; min-width: 200px; }
   .muted { color: var(--dim); }
   .empty { color: var(--dim); padding: 30px; text-align: center; }
-  #tab-models, #tab-resources { display: none; }
+  #tab-models, #tab-resources, #tab-remote { display: none; }
 </style>
 </head>
 <body>
@@ -77,6 +77,7 @@
   <button class="active" data-tab="overview">Overview</button>
   <button data-tab="models">Models</button>
   <button data-tab="resources">Resources</button>
+  <button data-tab="remote">Remote</button>
 </nav>
 <main>
   <section id="tab-overview"><div class="grid" id="studio-grid"></div></section>
@@ -109,6 +110,34 @@
     </div>
   </section>
 
+  <section id="tab-remote">
+    <div class="card" style="margin-bottom:16px">
+      <div class="top"><span class="emoji">🌐</span><h3>Reach this Hub from other devices</h3></div>
+      <p class="muted" style="font-size:13px;margin-bottom:10px">
+        Any device on your Tailscale network can use these URLs — dashboard,
+        API, and the <code>/studio/&lt;id&gt;/…</code> gateway. Remote clients
+        must send the token (<code>Authorization: Bearer …</code>,
+        <code>X-Hub-Token</code>, or <code>?token=</code>).
+      </p>
+      <table><thead><tr><th>Network</th><th>URL</th><th></th></tr></thead>
+        <tbody id="acc-body"></tbody></table>
+      <div id="acc-token-wrap" style="margin-top:14px;display:none">
+        <div class="muted" style="font-size:12px;margin-bottom:4px">Hub token (only shown on the Hub machine — keep it private):</div>
+        <code id="acc-token" style="background:var(--panel2);padding:6px 10px;border-radius:6px;font-size:12.5px;user-select:all"></code>
+        <button id="acc-copy" style="margin-left:8px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px 12px;cursor:pointer">Copy</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="top"><span class="emoji">🔀</span><h3>Gateway — one address for every studio API</h3></div>
+      <p class="muted" style="font-size:13px">
+        <code>{hub}/studio/image/api/catalog</code> → Image Studio ·
+        <code>{hub}/studio/chat/v1/chat/completions</code> → Chat Studio ·
+        same pattern for every studio and endpoint. Clients (like Story Studio)
+        only ever store the Hub address.
+      </p>
+    </div>
+  </section>
+
   <section id="tab-resources">
     <div class="card hostcard">
       <div class="top"><span class="emoji">🍏</span><h3>Host — unified memory</h3></div>
@@ -126,16 +155,55 @@
 const $ = (s) => document.querySelector(s);
 let lastSummary = null;
 
+// ── auth: token stored locally, attached to every API call ───────────────
+// Loopback access never needs it; remote access gets a 401 → prompt once.
+let hubToken = localStorage.getItem("hub_token") || "";
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({}, opts.headers,
+    hubToken ? { "X-Hub-Token": hubToken } : {});
+  let r = await fetch(path, opts);
+  if (r.status === 401) {
+    const entered = prompt(
+      "This Hub requires a token for remote access.\n" +
+      "Open the dashboard on the Hub machine (Remote tab) to see it.");
+    if (entered) {
+      hubToken = entered.trim();
+      localStorage.setItem("hub_token", hubToken);
+      opts.headers["X-Hub-Token"] = hubToken;
+      r = await fetch(path, opts);
+    }
+  }
+  return r;
+}
+
 // ── tabs ──────────────────────────────────────────────────────────────────
 document.querySelectorAll("nav button").forEach(btn => {
   btn.onclick = () => {
     document.querySelectorAll("nav button").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
-    ["overview", "models", "resources"].forEach(t =>
+    ["overview", "models", "resources", "remote"].forEach(t =>
       $("#tab-" + t).style.display = (t === btn.dataset.tab ? "block" : "none"));
     if (btn.dataset.tab === "models") loadModels();
+    if (btn.dataset.tab === "remote") loadAccess();
   };
 });
+
+// ── remote access tab ─────────────────────────────────────────────────────
+async function loadAccess() {
+  const r = await api("/api/hub/access").then(x => x.json()).catch(() => null);
+  if (!r) return;
+  $("#acc-body").innerHTML = r.addresses.map(a => `<tr>
+    <td><span class="pill ${a.kind === "tailscale" ? "cloud" : ""}">${a.kind}</span> <span class="muted">${a.interface}</span></td>
+    <td><code>${a.url}</code></td>
+    <td><button onclick="navigator.clipboard.writeText('${a.url}')"
+        style="background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:3px 10px;cursor:pointer">Copy</button></td>
+  </tr>`).join("") || `<tr><td colspan="3" class="empty">No non-loopback interfaces found</td></tr>`;
+  if (r.token) {
+    $("#acc-token-wrap").style.display = "block";
+    $("#acc-token").textContent = r.token;
+    $("#acc-copy").onclick = () => navigator.clipboard.writeText(r.token);
+  }
+}
 
 // ── overview ──────────────────────────────────────────────────────────────
 function fmtAgo(ts) {
@@ -162,7 +230,7 @@ async function lifecycle(id, action) {
   pendingActions.set(id, { action, since: Date.now() });
   renderOverview(lastSummary);
   try {
-    const r = await fetch(`/api/hub/studios/${id}/${action}`, { method: "POST" });
+    const r = await api(`/api/hub/studios/${id}/${action}`, { method: "POST" });
     if (!r.ok) {
       const err = await r.json().catch(() => ({}));
       alert(`${action} failed: ${err.detail || r.status}`);
@@ -264,7 +332,7 @@ async function loadModels() {
   const mod = $("#m-modality").value; if (mod) p.set("modality", mod);
   const lane = $("#m-lane").value; if (lane) p.set("cloud", lane);
   const dl = $("#m-dl").value; if (dl) p.set("downloaded", dl);
-  const res = await fetch("/api/hub/catalog?" + p).then(r => r.json()).catch(() => null);
+  const res = await api("/api/hub/catalog?" + p).then(r => r.json()).catch(() => null);
   const body = $("#m-body");
   if (!res) { body.innerHTML = `<tr><td colspan="6" class="empty">Catalog unavailable</td></tr>`; return; }
   $("#m-count").textContent = `${res.count} of ${res.total_unfiltered} models`;
@@ -284,7 +352,7 @@ let mTimer;
 // ── poll loop ─────────────────────────────────────────────────────────────
 async function refresh() {
   try {
-    const sum = await fetch("/api/hub/summary").then(r => r.json());
+    const sum = await api("/api/hub/summary").then(r => r.json());
     lastSummary = sum;
     renderOverview(sum);
     renderResources(sum);
