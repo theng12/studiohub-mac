@@ -71,3 +71,28 @@ def load_registry() -> list[dict]:
 
 def base_url(studio: dict) -> str:
     return f"http://{studio['host']}:{studio['port']}"
+
+
+# Family port convention — used by discovery to infer modality.
+FAMILY_PORTS = {47868: "image", 47869: "music", 47870: "voice",
+                47871: "chat", 47872: "video"}
+MODALITY_EMOJI = {"image": "🎨", "music": "🎵", "voice": "🎙️",
+                  "chat": "💬", "video": "🎬"}
+
+
+def add_user_entries(entries: list[dict]) -> int:
+    """Append/merge entries into studios.json (per-machine registry state)."""
+    existing = []
+    if REGISTRY_FILE.exists():
+        try:
+            existing = json.loads(REGISTRY_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            existing = []
+    by_id = {e.get("id"): e for e in existing if e.get("id")}
+    added = 0
+    for entry in entries:
+        if entry.get("id") and entry["id"] not in by_id:
+            by_id[entry["id"]] = entry
+            added += 1
+    REGISTRY_FILE.write_text(json.dumps(list(by_id.values()), indent=2) + "\n")
+    return added

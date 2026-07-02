@@ -247,10 +247,24 @@ untouched to the target studio. The Hub surfaces each model's own parameter sche
 | **4** | Data/Intel | ✅ **SHIPPED v1.6.0** — Job broker with batch-first envelope, pull-based per-modality worker pools (work-stealing, 3-try retry), memory-governor admission (total-RAM capability check + free-RAM fit check, `governor_note` visibility), full ledger provenance. Verified with a real 3-item Kokoro TTS batch. Multi-machine fan-out activates by adding registry entries — no code changes. |
 | **5** | Intelligence | ✅ **SHIPPED v1.6.0** — Recipe chains (`{{brief}}`/`{{prev.text}}`/`{{prev.artifact}}`; chat steps sync, generation steps via broker) verified with a live chat→voice run. Agentic director: modality-grouped inventory prompt + catalog pairing validation + one self-repair retry (grouped inventory was required for small local LLMs — flat lists caused music/voice mispairing). Smart scheduler = governor inside the broker; overnight scheduling / predictive preload remain future ideas. |
 
-## 12. Post-v1.6 future ideas (not scheduled)
-- Second-machine federation in practice (registry entries exist; needs a real second Mac to validate).
+## 12. v1.7.0 — persistence + client contract + federation (2026-07-02)
+- **Persistent queues**: batches write-through to `hub.db`; unfinished batches restore on
+  startup (in-flight items re-queued and redone); finished batches queryable after restarts.
+  Verified: batch survived a Hub restart with items queued and completed after.
+- **Client contract for Story Studio KH**: envelope gains `label` + `webhook`; the Hub POSTs the
+  batch summary (with per-item artifact URLs) to the webhook on completion. Verified live with a
+  local listener. Story Studio stores exactly two values: Hub URL + token.
+- **Federation for heterogeneous Macs**: `POST /api/hub/registry/discover {host, machine}` probes
+  the family ports on any Tailscale/LAN IP and registers what answers (dashboard: Remote → Add
+  another Mac). **Model-aware dispatch**: a studio only receives jobs for models its own catalog
+  shows as downloaded — this is what makes different-models-per-Mac work; `governor_note`
+  explains any stalled dispatch. Remote studios bypass the local RAM governor (their own backend
+  paces them; 1 concurrent job per studio).
+
+## 13. Post-v1.7 future ideas (not scheduled)
+- Real second-Mac validation of federation (code path exists; probe logic verified against localhost).
 - Credential pool / key rotation for cloud lanes (§4) — becomes relevant when cloud Swarm Batch is used in anger.
-- Update orchestration, log aggregation, webhooks, per-client API keys, predictive model preloading.
+- Update orchestration, log aggregation, per-client API keys, predictive model preloading.
 
 Story Studio KH is retrofitted to consume the Hub's canonical API as those phases land.
 

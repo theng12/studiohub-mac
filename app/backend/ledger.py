@@ -28,6 +28,12 @@ MEDIA_EXT = {
 }
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS batches (
+  id TEXT PRIMARY KEY,
+  created_at REAL NOT NULL,
+  finished INTEGER NOT NULL DEFAULT 0,
+  payload TEXT NOT NULL              -- full batch dict as JSON (write-through)
+);
 CREATE TABLE IF NOT EXISTS assets (
   id TEXT PRIMARY KEY,
   created_at REAL NOT NULL,
@@ -55,6 +61,33 @@ def _conn() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
     return conn
+
+
+def save_batch(batch: dict):
+    """Write-through persistence for the broker queue (SPEC: restart-safe)."""
+    states = {i["state"] for i in batch["items"]}
+    finished = int(not (states & {"queued", "running"}))
+    with _conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO batches (id, created_at, finished, payload) "
+            "VALUES (?,?,?,?)",
+            (batch["id"], batch["created_at"], finished, json.dumps(batch)))
+
+
+def load_unfinished_batches() -> list[dict]:
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT payload FROM batches WHERE finished = 0").fetchall()
+    return [json.loads(r[0]) for r in rows]
+
+
+def load_batch(batch_id: str) -> dict | None:
+    """Fetch any persisted batch — lets clients query batches that finished
+    before a Hub restart (they're no longer in broker memory)."""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT payload FROM batches WHERE id = ?", (batch_id,)).fetchone()
+    return json.loads(row[0]) if row else None
 
 
 def record_asset(**fields) -> str:

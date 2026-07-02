@@ -42,6 +42,9 @@ monitor = StudioMonitor()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     monitor.start()
+    restored = broker.restore_batches()
+    if restored:
+        print(f"[hub] resumed {restored} unfinished batch(es) from hub.db")
     broker.start_dispatcher()
     yield
     await monitor.stop()
@@ -258,7 +261,7 @@ def hub_list_jobs():
 
 @app.get("/api/hub/jobs/{batch_id}")
 def hub_get_batch(batch_id: str):
-    b = broker.batches.get(batch_id)
+    b = broker.batches.get(batch_id) or ledger.load_batch(batch_id)
     if b is None:
         raise HTTPException(404, "unknown batch")
     return {**broker.batch_summary(b), "items": b["items"]}
@@ -346,6 +349,48 @@ def reload_registry():
     """Re-read studios.json after editing it — no restart needed."""
     monitor.reload_registry()
     return {"ok": True, "studios": len(monitor.registry)}
+
+
+@app.post("/api/hub/registry/discover")
+async def discover_machine(body: dict):
+    """Probe another Mac (LAN/Tailscale IP) for the studio family ports and
+    register whatever answers. Each Mac only runs some studios — the registry
+    reflects exactly what exists where."""
+    import httpx
+
+    from .registry import FAMILY_PORTS, MODALITY_EMOJI, add_user_entries
+
+    host = body.get("host")
+    if not host:
+        raise HTTPException(400, "host is required (LAN or Tailscale IP)")
+    machine = body.get("machine") or host.replace(".", "-")
+    known = {(s["host"], s["port"]) for s in monitor.registry}
+    found, entries = [], []
+    async with httpx.AsyncClient() as client:
+        for port, modality in FAMILY_PORTS.items():
+            try:
+                r = await client.get(f"http://{host}:{port}/api/health", timeout=4.0)
+                if not r.json().get("ok"):
+                    continue
+                v = await client.get(f"http://{host}:{port}/api/version", timeout=4.0)
+                title = v.json().get("title", f"{modality} @ {machine}")
+            except Exception:
+                continue
+            found.append({"port": port, "modality": modality, "title": title})
+            if (host, port) in known:
+                continue  # already registered (e.g. this Hub's own locals)
+            entries.append({
+                "id": f"{modality}@{machine}", "title": f"{title} ({machine})",
+                "modality": modality, "host": host, "port": port,
+                "machine": machine, "emoji": MODALITY_EMOJI[modality],
+            })
+    added = add_user_entries(entries) if entries else 0
+    if added:
+        monitor.reload_registry()
+    return {"host": host, "machine": machine, "found": found,
+            "registered": added,
+            "note": None if found else
+            "nothing answered — is the machine on and reachable over Tailscale?"}
 
 
 # ── dashboard ──────────────────────────────────────────────────────────────

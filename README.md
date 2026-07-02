@@ -71,6 +71,53 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/recipes/runs[/{id}]` | Recipe run status |
 | `POST /api/hub/director` | `{brief, auto_run?}` — LLM plans a recipe from plain English |
 
+## Client integration (Story Studio KH)
+
+External apps never talk to studios directly — they talk to the Hub:
+
+1. Store two values: the Hub URL (`http://<tailscale-ip>:47873`) and the token.
+2. Submit work: `POST /api/hub/jobs` with `label` (your app's name) and,
+   ideally, `webhook` — the Hub POSTs the batch summary (incl. per-item
+   `artifact_url`) to that URL the moment the batch finishes. No polling.
+3. Or poll `GET /api/hub/jobs/{batch_id}` — this survives Hub restarts
+   (batches are persisted in `hub.db` and unfinished work resumes
+   automatically; in-flight items are re-queued and redone).
+
+```javascript
+// Story Studio side
+await fetch(`${HUB}/api/hub/jobs`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", "X-Hub-Token": TOKEN },
+  body: JSON.stringify({
+    modality: "image", model: "flux-schnell-repo",
+    label: "storystudio-kh",
+    webhook: "http://my-host:PORT/hub-callback",
+    items: scenes.map(s => ({ prompt: s.prompt, seed: s.seed }))
+  })
+});
+```
+
+## Multiple Macs (federation)
+
+Every Mac keeps running its own studios; ONE Hub coordinates them all:
+
+1. On each other Mac, install whichever studios it should serve (2, 3, or 5).
+2. On the Hub Mac, open **Remote → Add another Mac's studios**, enter that
+   Mac's Tailscale IP and a name — the Hub probes ports 47868-47872 and
+   registers what it finds (or `POST /api/hub/registry/discover`).
+3. Remote studios join the health grid, catalog, gateway and **worker pools**
+   automatically.
+
+Heterogeneity is handled per-dispatch:
+- **Different models per Mac** — a job is only sent to a studio whose own
+  catalog shows that model *downloaded*. A one-model Mac only ever receives
+  jobs for that model. Distribute models deliberately with
+  `POST /api/hub/broadcast/download {"repo": ..., "studios": ["image@mac-b"]}`.
+- **Different specs** — pull-based dispatch means fast Macs simply complete
+  more items; nothing is statically split.
+- **Memory** — the local machine is guarded by the Hub's governor; remote
+  studios are paced by their own backends (one concurrent job each).
+
 ## Swarm Batch
 
 Submit N independent prompts; the Hub queues them and free studios of that

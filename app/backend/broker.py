@@ -48,19 +48,34 @@ def _monitor():
     return monitor
 
 
-async def _model_memory(studio: dict, model: str) -> dict | None:
-    """Memory facts from the studio's own catalog. Semantics matter here:
-    min_unified_memory_gb = 'needs a machine with ≥N GB TOTAL' (capability),
-    size_gb ≈ the incremental footprint when loaded (what must fit in FREE
-    memory). None if unknown or cloud-backed (cloud lane bypasses governor)."""
+async def _catalog_entry(studio: dict, model: str) -> dict | None:
+    """The studio's own catalog entry for a model (verbatim, per SPEC §6.2).
+    Carries cache state for model-aware dispatch and memory facts for the
+    governor: min_unified_memory_gb = 'needs ≥N GB TOTAL machine' (capability),
+    size_gb ≈ incremental footprint (what must fit in FREE memory)."""
     catalog = await _monitor().get_catalog(studio)
     for m in (catalog or {}).get("models", []):
         if m.get("repo") == model or model in (m.get("aliases") or []):
-            if m.get("is_cloud"):
-                return None
-            return {"min_total": m.get("min_unified_memory_gb"),
-                    "size": m.get("size_gb")}
+            return m
     return None
+
+
+def restore_batches():
+    """Reload unfinished batches from hub.db after a Hub restart. Items that
+    were mid-flight ('running') go back to 'queued' — their studio-side job is
+    orphaned but the work is simply redone (generation is idempotent-enough;
+    the ledger keys on the new artifact)."""
+    for b in ledger.load_unfinished_batches():
+        for it in b["items"]:
+            if it["state"] == "running":
+                it["state"] = "queued"
+                it["studio"] = None
+                it["studio_job_id"] = None
+        batches[b["id"]] = b
+        ledger.save_batch(b)
+    if batches:
+        _wakeup.set()
+    return len(batches)
 
 
 def submit_batch(envelope: dict) -> dict:
@@ -79,6 +94,9 @@ def submit_batch(envelope: dict) -> dict:
         "model": envelope["model"],
         "shared_params": envelope.get("sharedParams") or {},
         "routing": envelope.get("routing", "pool"),
+        "label": envelope.get("label"),        # who submitted (e.g. "storystudio")
+        "webhook": envelope.get("webhook"),    # POSTed the summary on completion
+        "webhook_sent": False,
         "created_at": time.time(),
         "cancelled": False,
         "items": [{
@@ -96,6 +114,7 @@ def submit_batch(envelope: dict) -> dict:
             "error": None,
         } for i, it in enumerate(items_in)],
     }
+    ledger.save_batch(batches[batch_id])
     _wakeup.set()
     return {"batch_id": batch_id, "items": len(items_in)}
 
@@ -106,6 +125,7 @@ def batch_summary(b: dict) -> dict:
         "id": b["id"], "modality": b["modality"], "model": b["model"],
         "created_at": b["created_at"], "cancelled": b["cancelled"],
         "governor_note": b.get("governor_note"),
+        "label": b.get("label"),
         "total": len(states),
         "queued": states.count("queued"),
         "running": states.count("running"),
@@ -123,7 +143,29 @@ def cancel_batch(batch_id: str) -> bool:
     for it in b["items"]:
         if it["state"] == "queued":
             it["state"] = "cancelled"
+    ledger.save_batch(b)
     return True
+
+
+async def _maybe_finish(client: httpx.AsyncClient, b: dict):
+    """Persist state; when the batch just reached a terminal state, fire the
+    client's webhook (Story Studio et al) once, best-effort."""
+    ledger.save_batch(b)
+    if b.get("webhook") and not b.get("webhook_sent"):
+        states = {i["state"] for i in b["items"]}
+        if not (states & {"queued", "running"}):
+            b["webhook_sent"] = True
+            ledger.save_batch(b)
+            try:
+                await client.post(b["webhook"], json={
+                    **batch_summary(b),
+                    "items": [{k: it[k] for k in
+                               ("index", "state", "artifact_url",
+                                "artifact_path", "asset_id", "error")}
+                              for it in b["items"]],
+                }, timeout=10.0)
+            except httpx.HTTPError:
+                pass  # client unreachable — batch state is still queryable
 
 
 def _eligible_studios(modality: str, routing: str) -> list[dict]:
@@ -154,8 +196,23 @@ async def _dispatch_loop():
                 for studio in _eligible_studios(b["modality"], b["routing"]):
                     if not queued:
                         break
+                    # ── model-aware dispatch (heterogeneous machines) ──
+                    # A studio only gets work for models it actually has. This
+                    # is what lets a 3-model Mac and a 1-model Mac share pools.
+                    entry = await _catalog_entry(studio, b["model"])
+                    if entry is None:
+                        b["governor_note"] = (
+                            f"'{b['model']}' not in {studio['id']}'s catalog")
+                        continue
+                    if not entry.get("is_cloud") and not entry.get("cache"):
+                        b["governor_note"] = (
+                            f"'{b['model']}' not downloaded on any available "
+                            f"{b['modality']} studio — use /api/hub/broadcast/download")
+                        continue
                     # ── memory governor (local models only) ──
-                    mem = await _model_memory(studio, b["model"])
+                    mem = None if entry.get("is_cloud") else {
+                        "min_total": entry.get("min_unified_memory_gb"),
+                        "size": entry.get("size_gb")}
                     if mem is not None and studio.get("machine", "local") == "local":
                         host = host_stats()
                         if mem["min_total"] and host["total_gb"] < mem["min_total"]:
@@ -165,6 +222,7 @@ async def _dispatch_loop():
                                 it["error"] = (f"model needs a {mem['min_total']}GB machine; "
                                                f"host has {host['total_gb']}GB")
                             queued.clear()
+                            ledger.save_batch(b)
                             break
                         need_free = (mem["size"] or 0) + MEMORY_HEADROOM_GB
                         if host["available_gb"] < need_free:
@@ -172,7 +230,7 @@ async def _dispatch_loop():
                                 f"waiting for memory: needs ~{need_free:.1f}GB free, "
                                 f"{host['available_gb']:.1f}GB available")
                             continue  # defer rather than OOM
-                        b["governor_note"] = None
+                    b["governor_note"] = None
                     item = queued.pop(0)
                     item["state"] = "running"
                     item["studio"] = studio["id"]
@@ -245,6 +303,7 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             item["error"] = str(e)
     finally:
         _busy.discard(studio["id"])
+        await _maybe_finish(client, b)
         _wakeup.set()
 
 
