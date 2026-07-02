@@ -1,0 +1,21 @@
+conda_env/
+cache/
+logs/
+__pycache__/
+app/backend/__pycache__/
+*.pyc
+.DS_Store
+
+# Per-machine studio registry overrides (machine state, like siblings' settings.json)
+studios.json
+
+# AI assistant rules (local-only, contain absolute paths)
+.clinerules
+.cursorrules
+.windsurfrules
+.geminiignore
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+QWEN.md
+ENVIRONMENT
