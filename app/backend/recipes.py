@@ -172,7 +172,12 @@ def _check_pairing(recipe: dict, downloaded: list[dict]) -> str | None:
 async def direct(brief: str, chat_model: str | None = None) -> dict:
     mon = _monitor()
     agg = await mon.aggregate_catalog()
-    downloaded = [m for m in agg["models"] if m.get("cache") and not m.get("is_cloud")]
+    # only models actually downloaded somewhere (hub_cached), deduped by repo
+    seen, downloaded = set(), []
+    for m in agg["models"]:
+        if (m.get("hub_cached") or m.get("is_cloud")) and m["repo"] not in seen:
+            seen.add(m["repo"])
+            downloaded.append(m)
     if chat_model is None:
         chat_models = [m["repo"] for m in downloaded if m["hub_modality"] == "chat"]
         if not chat_models:

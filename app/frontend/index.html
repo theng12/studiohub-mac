@@ -12,16 +12,32 @@
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, "SF Pro Text", "Segoe UI", sans-serif; }
+  code { font-family: ui-monospace, "SF Mono", monospace; font-size: .92em; }
   header { display: flex; align-items: center; gap: 12px; padding: 14px 22px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); z-index: 5; }
   header h1 { font-size: 17px; font-weight: 700; }
   header .ver { color: var(--dim); font-size: 12px; }
   header .spacer { flex: 1; }
-  .updot { width: 8px; height: 8px; border-radius: 50%; background: var(--up); display: inline-block; }
-  nav { display: flex; gap: 4px; padding: 10px 22px 0; border-bottom: 1px solid var(--border); }
-  nav button { background: none; border: none; color: var(--dim); font: inherit; padding: 8px 14px; cursor: pointer; border-bottom: 2px solid transparent; }
+  header .summary { color: var(--dim); font-size: 12.5px; }
+  nav { display: flex; gap: 4px; padding: 10px 22px 0; border-bottom: 1px solid var(--border); overflow-x: auto; }
+  nav button { background: none; border: none; color: var(--dim); font: inherit; padding: 8px 14px; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
   nav button.active { color: var(--text); border-bottom-color: var(--accent); }
-  main { padding: 20px 22px; max-width: 1200px; margin: 0 auto; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+  main { padding: 20px 22px; max-width: 1240px; margin: 0 auto; }
+
+  /* segmented toggles */
+  .controls { display: flex; gap: 16px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { background: var(--panel); border: none; color: var(--dim); font: inherit; font-size: 12.5px; padding: 6px 13px; cursor: pointer; }
+  .seg button.on { background: var(--accent); color: #08131f; font-weight: 600; }
+  .controls label { color: var(--dim); font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; margin-right: -8px; }
+
+  /* group headings */
+  .group-head { display: flex; align-items: baseline; gap: 10px; margin: 22px 0 10px; }
+  .group-head:first-child { margin-top: 0; }
+  .group-head h2 { font-size: 14px; font-weight: 700; }
+  .group-head .meta { color: var(--dim); font-size: 12px; }
+
+  /* cards */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
   .card .top { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
   .card .emoji { font-size: 22px; }
@@ -33,45 +49,54 @@
   .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; font-size: 12.5px; }
   .kv dt { color: var(--dim); }
   .kv dd { text-align: right; font-variant-numeric: tabular-nums; }
-  .card a.open { display: inline-block; margin-top: 10px; color: var(--accent); text-decoration: none; font-size: 12.5px; }
-  .card a.open:hover { text-decoration: underline; }
-  .card .actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
-  .card .actions button { background: var(--panel2); border: 1px solid var(--border); color: var(--text);
-    border-radius: 7px; padding: 5px 14px; font: inherit; font-size: 12.5px; cursor: pointer; }
-  .card .actions button:hover { border-color: var(--accent); }
-  .card .actions button.stop:hover { border-color: var(--down); color: var(--down); }
-  .card .actions button:disabled { opacity: .5; cursor: default; }
-  .card .actions .pending { color: var(--warn); font-size: 12px; }
+  a.open { color: var(--accent); text-decoration: none; font-size: 12.5px; }
+  a.open:hover { text-decoration: underline; }
+  .actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; flex-wrap: wrap; }
+  .btn { background: var(--panel2); border: 1px solid var(--border); color: var(--text); border-radius: 7px; padding: 5px 13px; font: inherit; font-size: 12.5px; cursor: pointer; }
+  .btn:hover { border-color: var(--accent); }
+  .btn.stop:hover { border-color: var(--down); color: var(--down); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .pending { color: var(--warn); font-size: 12px; }
+  .wd { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--dim); cursor: pointer; margin-top: 8px; }
+
+  /* list rows */
+  .rows { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .lrow { display: grid; grid-template-columns: 22px 1.6fr 1fr .8fr .8fr auto; gap: 12px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: 13px; }
+  .lrow:last-child { border-bottom: none; }
+  .lrow .name { font-weight: 600; }
+  .lrow .sub, .sub { color: var(--dim); font-size: 11.5px; }
+  .lrow .st { display: flex; align-items: center; gap: 7px; }
+
   .bar { height: 8px; background: var(--panel2); border-radius: 4px; overflow: hidden; margin: 6px 0 2px; }
   .bar i { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width .4s; }
-  .bar i.hot { background: var(--warn); }
-  .bar i.crit { background: var(--down); }
+  .bar i.hot { background: var(--warn); } .bar i.crit { background: var(--down); }
   .hostcard { margin-bottom: 18px; }
   .hostcard .row { display: flex; gap: 30px; flex-wrap: wrap; }
   .hostcard .stat b { font-size: 20px; font-weight: 700; }
   .hostcard .stat span { color: var(--dim); font-size: 12px; display: block; }
+
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
   th { color: var(--dim); font-weight: 600; font-size: 12px; position: sticky; top: 0; background: var(--bg); }
-  td.num { font-variant-numeric: tabular-nums; }
-  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--border); color: var(--dim); }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--border); color: var(--dim); margin: 1px 2px 1px 0; }
   .pill.dl { color: var(--up); border-color: var(--up); }
   .pill.cloud { color: var(--accent); border-color: var(--accent); }
+  .pill.no { color: var(--dim); border-color: var(--border); opacity: .7; }
+
   .toolbar { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
-  .toolbar input, .toolbar select { background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 7px 12px; font: inherit; }
+  .toolbar input, .toolbar select, .jform input, .jform select, .jform textarea {
+    background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 7px 12px; font: inherit; }
   .toolbar input { flex: 1; min-width: 200px; }
-  .muted { color: var(--dim); }
-  .empty { color: var(--dim); padding: 30px; text-align: center; }
-  #tab-models, #tab-resources, #tab-remote, #tab-jobs, #tab-assets { display: none; }
-  .wd { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--dim); margin-left: auto; cursor: pointer; }
-  .sub { font-size: 12px; color: var(--dim); }
-  .jform input, .jform select, .jform textarea { background: var(--panel2); border: 1px solid var(--border);
-    color: var(--text); border-radius: 7px; padding: 7px 10px; font: inherit; width: 100%; margin-bottom: 8px; }
-  .jform textarea { min-height: 90px; font-family: ui-monospace, monospace; font-size: 12.5px; }
-  .jform button { background: var(--accent); border: none; color: #08131f; font-weight: 600;
-    border-radius: 7px; padding: 8px 18px; cursor: pointer; font: inherit; }
+  .muted { color: var(--dim); } .empty { color: var(--dim); padding: 30px; text-align: center; }
+  .card.section { margin-bottom: 16px; }
+  .card .top .emoji { font-size: 20px; }
+  .jform textarea { min-height: 90px; font-family: ui-monospace, monospace; font-size: 12.5px; width: 100%; margin-bottom: 8px; }
+  .jform input, .jform select { margin-bottom: 8px; }
+  .jform .go { background: var(--accent); border: none; color: #08131f; font-weight: 600; border-radius: 7px; padding: 8px 18px; cursor: pointer; font: inherit; }
   .prog { height: 6px; background: var(--panel2); border-radius: 3px; overflow: hidden; margin-top: 6px; }
   .prog i { display: block; height: 100%; background: var(--up); transition: width .5s; }
+  .hide { display: none !important; }
 </style>
 </head>
 <body>
@@ -80,7 +105,8 @@
   <h1>Studio Hub KH</h1>
   <span class="ver" id="hub-ver"></span>
   <div class="spacer"></div>
-  <span class="muted" id="last-refresh"></span>
+  <span class="summary" id="hub-summary"></span>
+  <span class="muted" id="last-refresh" style="font-size:12px"></span>
 </header>
 <nav>
   <button class="active" data-tab="overview">Overview</button>
@@ -91,9 +117,32 @@
   <button data-tab="remote">Remote</button>
 </nav>
 <main>
-  <section id="tab-overview"><div class="grid" id="studio-grid"></div></section>
+  <!-- OVERVIEW -->
+  <section id="tab-overview">
+    <div class="controls">
+      <label>Group</label>
+      <div class="seg" id="grp">
+        <button data-v="all">All</button>
+        <button data-v="app">By app</button>
+        <button data-v="machine">By machine</button>
+      </div>
+      <label>View</label>
+      <div class="seg" id="disp">
+        <button data-v="cards">Cards</button>
+        <button data-v="list">List</button>
+      </div>
+    </div>
+    <div id="ov-body"></div>
+  </section>
 
-  <section id="tab-models">
+  <!-- MODELS -->
+  <section id="tab-models" class="hide">
+    <p class="muted" style="margin-bottom:12px;font-size:13px">
+      Every model across <b>all your machines</b>, deduped. <b>Availability</b>
+      shows which machines have each model downloaded — a model can live on your
+      media server but not on this Mac. Jobs are only dispatched to machines that
+      actually have the model.
+    </p>
     <div class="toolbar">
       <input id="m-search" placeholder="Search models…">
       <select id="m-modality">
@@ -102,52 +151,66 @@
         <option value="voice">Voice</option><option value="music">Music</option>
         <option value="video">Video</option>
       </select>
-      <select id="m-lane">
-        <option value="">Local + Cloud</option>
-        <option value="false">Local only</option>
-        <option value="true">Cloud only</option>
-      </select>
       <select id="m-dl">
-        <option value="">Any state</option>
-        <option value="true">Downloaded</option>
-        <option value="false">Not downloaded</option>
+        <option value="">Any availability</option>
+        <option value="true">Downloaded somewhere</option>
+        <option value="false">Not downloaded anywhere</option>
       </select>
     </div>
     <div id="m-count" class="muted" style="margin-bottom:8px"></div>
     <div style="max-height:70vh;overflow:auto">
       <table><thead><tr>
-        <th>Model</th><th>Studio</th><th>Family</th><th>Size</th><th>Min RAM</th><th>State</th>
+        <th>Model</th><th>Type</th><th>Family</th><th>Size</th><th>Min RAM</th><th>Availability</th>
       </tr></thead><tbody id="m-body"></tbody></table>
     </div>
   </section>
 
-  <section id="tab-jobs">
-    <div class="card jform" style="margin-bottom:16px">
+  <!-- RESOURCES -->
+  <section id="tab-resources" class="hide">
+    <div class="card hostcard">
+      <div class="top"><span class="emoji">🍏</span><h3>This Mac — unified memory</h3></div>
+      <div class="row" id="host-stats"></div>
+      <div class="bar"><i id="host-mem-bar"></i></div>
+      <div class="muted" id="host-mem-label" style="font-size:12px"></div>
+      <svg id="mem-spark" viewBox="0 0 600 80" preserveAspectRatio="none" style="width:100%;height:80px;margin-top:12px">
+        <polyline id="mem-line" fill="none" stroke="#58a6ff" stroke-width="1.5" points=""/>
+      </svg>
+      <div class="muted" style="font-size:11px">memory % — last hour</div>
+    </div>
+    <table><thead><tr>
+      <th>Studio</th><th>Machine</th><th>Status</th><th>PID</th><th>Memory (RSS)</th><th>CPU %</th>
+    </tr></thead><tbody id="r-body"></tbody></table>
+    <p class="muted" style="font-size:11.5px;margin-top:8px">Per-process memory is shown for local studios only; remote Macs report their own memory on their own Hub.</p>
+  </section>
+
+  <!-- JOBS -->
+  <section id="tab-jobs" class="hide">
+    <div class="card jform section">
       <div class="top"><span class="emoji">🐝</span><h3>Swarm Batch — one prompt per line</h3></div>
-      <div style="display:flex;gap:10px">
-        <select id="j-modality" style="max-width:160px">
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <select id="j-modality" style="max-width:150px">
           <option value="image">image</option><option value="voice">voice</option>
           <option value="music">music</option><option value="video">video</option>
         </select>
-        <select id="j-model"><option value="">— pick a downloaded model —</option></select>
+        <select id="j-model" style="flex:1;min-width:220px"><option value="">— pick a downloaded model —</option></select>
       </div>
       <textarea id="j-prompts" placeholder="a lighthouse at dawn, oil painting&#10;a red fox in the snow&#10;…one prompt per line"></textarea>
-      <button onclick="submitBatch()">Submit batch</button>
+      <button class="go" onclick="submitBatch()">Submit batch</button>
       <span class="sub" id="j-status" style="margin-left:10px"></span>
     </div>
     <div id="j-batches"></div>
   </section>
 
-  <section id="tab-assets">
+  <!-- ASSETS -->
+  <section id="tab-assets" class="hide">
     <div class="toolbar">
       <input id="a-search" placeholder="Search prompts / models / paths…">
       <select id="a-modality">
         <option value="">All types</option>
         <option value="image">image</option><option value="audio">audio</option>
-        <option value="video">video</option><option value="voice">voice</option>
-        <option value="music">music</option>
+        <option value="video">video</option><option value="voice">voice</option><option value="music">music</option>
       </select>
-      <button onclick="scanAssets()" style="background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:7px 14px;cursor:pointer">Scan studio outputs</button>
+      <button class="btn" onclick="scanAssets()">Scan studio outputs</button>
     </div>
     <div id="a-count" class="muted" style="margin-bottom:8px"></div>
     <div style="max-height:70vh;overflow:auto">
@@ -157,95 +220,69 @@
     </div>
   </section>
 
-  <section id="tab-remote">
-    <div class="card" style="margin-bottom:16px">
+  <!-- REMOTE -->
+  <section id="tab-remote" class="hide">
+    <div class="card section">
       <div class="top"><span class="emoji">🌐</span><h3>Reach this Hub from other devices</h3></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        Any device on your Tailscale network can use these URLs — dashboard,
-        API, and the <code>/studio/&lt;id&gt;/…</code> gateway. Remote clients
-        must send the token (<code>Authorization: Bearer …</code>,
-        <code>X-Hub-Token</code>, or <code>?token=</code>).
+        Any device on your Tailscale network can use these URLs. Remote clients
+        must send the token (<code>Authorization: Bearer …</code>, <code>X-Hub-Token</code>, or <code>?token=</code>).
       </p>
-      <table><thead><tr><th>Network</th><th>URL</th><th></th></tr></thead>
-        <tbody id="acc-body"></tbody></table>
+      <table><thead><tr><th>Network</th><th>URL</th><th></th></tr></thead><tbody id="acc-body"></tbody></table>
       <div id="acc-token-wrap" style="margin-top:14px;display:none">
-        <div class="muted" style="font-size:12px;margin-bottom:4px">Hub token (only shown on the Hub machine — keep it private):</div>
-        <code id="acc-token" style="background:var(--panel2);padding:6px 10px;border-radius:6px;font-size:12.5px;user-select:all"></code>
-        <button id="acc-copy" style="margin-left:8px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px 12px;cursor:pointer">Copy</button>
+        <div class="muted" style="font-size:12px;margin-bottom:4px">Hub token (shown only on the Hub machine — keep private):</div>
+        <code id="acc-token" style="background:var(--panel2);padding:6px 10px;border-radius:6px;user-select:all"></code>
+        <button class="btn" id="acc-copy" style="margin-left:8px">Copy</button>
       </div>
     </div>
-    <div class="card jform" style="margin-bottom:16px">
+
+    <div class="card jform section">
       <div class="top"><span class="emoji">🖥️</span><h3>Add another Mac's studios</h3></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        Enter a Tailscale (or LAN) IP. The Hub probes the family ports
-        (47868–47872), registers whichever studios that Mac runs — 2, 3 or all
-        5 — and they join the worker pools automatically. Jobs are only sent to
-        machines that actually have the requested model downloaded.
+        Enter a Tailscale (or LAN) IP. The Hub probes the family ports (47868–47872),
+        <b>permanently adds</b> whichever studios that Mac runs, and they join the worker pools.
       </p>
-      <div style="display:flex;gap:10px">
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
         <input id="d-host" placeholder="100.x.y.z" style="max-width:200px">
         <input id="d-name" placeholder="machine name (e.g. mac-studio)" style="max-width:240px">
-        <button onclick="discoverMachine()" style="white-space:nowrap">Discover &amp; Add</button>
+        <button class="go" onclick="discoverMachine()" style="white-space:nowrap">Discover &amp; Add</button>
       </div>
-      <div class="sub" id="d-result"></div>
+      <div class="sub" id="d-result" style="margin-top:8px"></div>
     </div>
-    <div class="card" style="margin-bottom:16px">
+
+    <div class="card section">
       <div class="top"><span class="emoji">🗂️</span><h3>Registered machines</h3></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        Added machines are saved permanently (in <code>studios.json</code>) and
-        polled like local studios — they stay listed here and on the Overview
-        even while the machine is off.
+        Saved permanently in <code>studios.json</code> and polled like local studios — they stay
+        listed here and on Overview even while a machine is off.
       </p>
-      <table><thead><tr><th>Machine</th><th>Studios</th><th></th></tr></thead>
-        <tbody id="mach-body"></tbody></table>
+      <table><thead><tr><th>Machine</th><th>Address</th><th>Studios</th><th></th></tr></thead><tbody id="mach-body"></tbody></table>
     </div>
-    <div class="card">
+
+    <div class="card section">
       <div class="top"><span class="emoji">🔀</span><h3>Gateway — one address for every studio API</h3></div>
       <p class="muted" style="font-size:13px">
         <code>{hub}/studio/image/api/catalog</code> → Image Studio ·
-        <code>{hub}/studio/chat/v1/chat/completions</code> → Chat Studio ·
-        same pattern for every studio and endpoint. Clients (like Story Studio)
-        only ever store the Hub address.
+        <code>{hub}/studio/chat/v1/chat/completions</code> → Chat Studio. Clients like Story Studio store only the Hub address.
       </p>
     </div>
-  </section>
-
-  <section id="tab-resources">
-    <div class="card hostcard">
-      <div class="top"><span class="emoji">🍏</span><h3>Host — unified memory</h3></div>
-      <div class="row" id="host-stats"></div>
-      <div class="bar"><i id="host-mem-bar"></i></div>
-      <div class="muted" id="host-mem-label" style="font-size:12px"></div>
-      <svg id="mem-spark" viewBox="0 0 600 80" preserveAspectRatio="none"
-           style="width:100%;height:80px;margin-top:12px">
-        <polyline id="mem-line" fill="none" stroke="var(--accent)" stroke-width="1.5" points=""/>
-      </svg>
-      <div class="muted" style="font-size:11px">memory % — last hour</div>
-    </div>
-    <table><thead><tr>
-      <th>Studio</th><th>Status</th><th>PID</th><th>Memory (RSS)</th><th>CPU %</th><th>Procs</th>
-    </tr></thead><tbody id="r-body"></tbody></table>
   </section>
 </main>
 
 <script>
 const $ = (s) => document.querySelector(s);
 let lastSummary = null;
+const MOD_ORDER = ["image", "chat", "voice", "music", "video"];
 
-// ── auth: token stored locally, attached to every API call ───────────────
-// Loopback access never needs it; remote access gets a 401 → prompt once.
+// ── auth ──────────────────────────────────────────────────────────────────
 let hubToken = localStorage.getItem("hub_token") || "";
 async function api(path, opts = {}) {
-  opts.headers = Object.assign({}, opts.headers,
-    hubToken ? { "X-Hub-Token": hubToken } : {});
+  opts.headers = Object.assign({}, opts.headers, hubToken ? { "X-Hub-Token": hubToken } : {});
   let r = await fetch(path, opts);
   if (r.status === 401) {
-    const entered = prompt(
-      "This Hub requires a token for remote access.\n" +
-      "Open the dashboard on the Hub machine (Remote tab) to see it.");
+    const entered = prompt("This Hub needs a token for remote access.\nOpen the dashboard on the Hub machine (Remote tab) to see it.");
     if (entered) {
-      hubToken = entered.trim();
-      localStorage.setItem("hub_token", hubToken);
+      hubToken = entered.trim(); localStorage.setItem("hub_token", hubToken);
       opts.headers["X-Hub-Token"] = hubToken;
       r = await fetch(path, opts);
     }
@@ -254,107 +291,60 @@ async function api(path, opts = {}) {
 }
 
 // ── tabs ──────────────────────────────────────────────────────────────────
+const TABS = ["overview", "models", "resources", "jobs", "assets", "remote"];
 document.querySelectorAll("nav button").forEach(btn => {
   btn.onclick = () => {
     document.querySelectorAll("nav button").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
-    ["overview", "models", "resources", "remote", "jobs", "assets"].forEach(t =>
-      $("#tab-" + t).style.display = (t === btn.dataset.tab ? "block" : "none"));
+    TABS.forEach(t => $("#tab-" + t).classList.toggle("hide", t !== btn.dataset.tab));
     if (btn.dataset.tab === "models") loadModels();
-    if (btn.dataset.tab === "remote") loadAccess();
+    if (btn.dataset.tab === "remote") { loadAccess(); loadMachines(); }
     if (btn.dataset.tab === "jobs") { loadJobModels(); loadBatches(); }
     if (btn.dataset.tab === "assets") loadAssets();
     if (btn.dataset.tab === "resources") loadSpark();
   };
 });
 
-// ── jobs tab ──────────────────────────────────────────────────────────────
-async function loadJobModels() {
-  const mod = $("#j-modality").value;
-  const r = await api(`/api/hub/catalog?modality=${mod}&downloaded=true&cloud=false`)
-    .then(x => x.json()).catch(() => null);
-  const sel = $("#j-model");
-  sel.innerHTML = (r?.models || []).map(m =>
-    `<option value="${m.repo}">${m.label || m.repo}</option>`).join("")
-    || `<option value="">no downloaded ${mod} models</option>`;
-}
-$("#j-modality").addEventListener("input", loadJobModels);
-
-async function submitBatch() {
-  const prompts = $("#j-prompts").value.split("\n").map(s => s.trim()).filter(Boolean);
-  const model = $("#j-model").value;
-  if (!prompts.length || !model) { $("#j-status").textContent = "need a model and at least one prompt"; return; }
-  $("#j-status").textContent = "submitting…";
-  const r = await api("/api/hub/jobs", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ modality: $("#j-modality").value, model,
-                           items: prompts.map(p => ({ prompt: p })) })
+// ── overview view-mode state ──────────────────────────────────────────────
+let groupBy = localStorage.getItem("ov_group") || "app";
+let display = localStorage.getItem("ov_display") || "cards";
+function initSeg(id, val, setter) {
+  const seg = $("#" + id);
+  seg.querySelectorAll("button").forEach(b => {
+    b.classList.toggle("on", b.dataset.v === val);
+    b.onclick = () => {
+      seg.querySelectorAll("button").forEach(x => x.classList.remove("on"));
+      b.classList.add("on"); setter(b.dataset.v);
+      renderOverview(lastSummary);
+    };
   });
-  const d = await r.json();
-  $("#j-status").textContent = r.ok ? `batch ${d.batch_id} queued (${d.items} items)` : (d.detail || "failed");
-  loadBatches();
 }
+initSeg("grp", groupBy, v => { groupBy = v; localStorage.setItem("ov_group", v); });
+initSeg("disp", display, v => { display = v; localStorage.setItem("ov_display", v); });
 
-async function loadBatches() {
-  const r = await api("/api/hub/jobs").then(x => x.json()).catch(() => null);
-  if (!r) return;
-  $("#j-batches").innerHTML = r.batches.map(b => {
-    const pct = b.total ? Math.round(100 * (b.done + b.error + b.cancelled_items) / b.total) : 0;
-    return `<div class="card" style="margin-bottom:10px">
-      <div class="top"><h3 style="font-size:13.5px">${b.modality} · ${b.model}</h3>
-        <span class="sub">${b.done}/${b.total} done${b.error ? ` · ${b.error} failed` : ""}${b.running ? ` · ${b.running} running` : ""}</span>
-        ${b.queued + b.running > 0 && !b.cancelled ?
-          `<button onclick="cancelBatch('${b.id}')" style="margin-left:auto;background:none;border:1px solid var(--border);color:var(--down);border-radius:6px;padding:2px 10px;cursor:pointer">Cancel</button>` : ""}
-      </div>
-      <div class="prog"><i style="width:${pct}%"></i></div>
-      <div class="sub" style="margin-top:4px">batch ${b.id}${b.label ? " · from " + b.label : ""}${b.cancelled ? " · cancelled" : ""}${b.governor_note ? " · ⏳ " + b.governor_note : ""}</div>
-    </div>`;
-  }).join("") || `<div class="empty">No batches yet</div>`;
+function fmtAgo(ts) {
+  if (!ts) return "never";
+  const s = Math.max(0, Date.now() / 1000 - ts);
+  if (s < 90) return Math.round(s) + "s ago";
+  if (s < 5400) return Math.round(s / 60) + "m ago";
+  return Math.round(s / 3600) + "h ago";
 }
-async function cancelBatch(id) {
-  await api(`/api/hub/jobs/${id}`, { method: "DELETE" });
-  loadBatches();
+function studioUrl(s) {
+  const host = (s.host === "127.0.0.1" || s.host === "0.0.0.0") ? location.hostname : s.host;
+  return `http://${host}:${s.port}`;
 }
+const pendingActions = new Map();
 
-// ── assets tab ────────────────────────────────────────────────────────────
-async function loadAssets() {
-  const p = new URLSearchParams();
-  const q = $("#a-search").value.trim(); if (q) p.set("q", q);
-  const m = $("#a-modality").value; if (m) p.set("modality", m);
-  const r = await api("/api/hub/assets?" + p).then(x => x.json()).catch(() => null);
-  if (!r) return;
-  $("#a-count").textContent = `${r.assets.length} assets`;
-  $("#a-body").innerHTML = r.assets.map(a => {
-    const name = (a.artifact_path || "").split("/").pop() || a.id;
-    return `<tr>
-      <td><b>${name}</b>${a.prompt ? `<br><span class="muted" style="font-size:11px">${a.prompt.slice(0, 80)}</span>` : ""}</td>
-      <td>${a.modality || "—"}</td><td>${a.studio || "—"}</td>
-      <td class="num">${a.model ? a.model.split("/").pop() : "—"}</td>
-      <td class="num">${a.seed ?? "—"}</td>
-      <td><span class="pill ${a.source === "job" ? "dl" : ""}">${a.source}</span></td>
-      <td>${a.artifact_url ? `<a class="open" style="margin:0" href="${a.artifact_url}" target="_blank">open ↗</a>` : (a.exists ? "" : '<span class="muted">missing</span>')}</td>
-    </tr>`;
-  }).join("") || `<tr><td colspan="7" class="empty">No assets — generate something or hit Scan</td></tr>`;
+async function lifecycle(id, action) {
+  if (action === "stop" && !confirm(`Stop ${id}?`)) return;
+  pendingActions.set(id, { action, since: Date.now() });
+  renderOverview(lastSummary);
+  try {
+    const r = await api(`/api/hub/studios/${id}/${action}`, { method: "POST" });
+    if (!r.ok) { const e = await r.json().catch(() => ({})); alert(`${action} failed: ${e.detail || r.status}`); pendingActions.delete(id); }
+  } catch (e) { alert(`${action} failed: ${e}`); pendingActions.delete(id); }
+  refresh();
 }
-let aTimer;
-["a-search", "a-modality"].forEach(id =>
-  $("#" + id).addEventListener("input", () => { clearTimeout(aTimer); aTimer = setTimeout(loadAssets, 250); }));
-async function scanAssets() {
-  const r = await api("/api/hub/assets/scan", { method: "POST" }).then(x => x.json());
-  $("#a-count").textContent = `scan: ${r.added} new of ${r.scanned} files`;
-  loadAssets();
-}
-
-// ── metrics sparkline ─────────────────────────────────────────────────────
-async function loadSpark() {
-  const r = await api("/api/hub/metrics?minutes=60").then(x => x.json()).catch(() => null);
-  if (!r || !r.samples.length) return;
-  const pts = r.samples.map((s, i) =>
-    `${(i / Math.max(1, r.samples.length - 1)) * 600},${80 - (s.mem_percent / 100) * 78}`);
-  $("#mem-line").setAttribute("points", pts.join(" "));
-}
-
-// ── watchdog toggle ───────────────────────────────────────────────────────
 async function toggleWatchdog(id, enabled) {
   await api(`/api/hub/studios/${id}/watchdog`, {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -363,154 +353,115 @@ async function toggleWatchdog(id, enabled) {
   refresh();
 }
 
-// ── remote access tab ─────────────────────────────────────────────────────
-async function discoverMachine() {
-  const host = $("#d-host").value.trim();
-  if (!host) { $("#d-result").textContent = "enter an IP"; return; }
-  $("#d-result").textContent = "probing " + host + "…";
-  const r = await api("/api/hub/registry/discover", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ host, machine: $("#d-name").value.trim() || undefined })
-  }).then(x => x.json()).catch(e => ({ note: String(e) }));
-  $("#d-result").textContent = r.found?.length
-    ? `found ${r.found.map(f => f.modality).join(", ")} — ${r.registered} newly added (saved permanently)`
-    : (r.note || r.detail || "nothing found");
-  loadMachines();
-  refresh();
-}
-
-async function loadMachines() {
-  const r = await api("/api/hub/studios").then(x => x.json()).catch(() => null);
-  if (!r) return;
-  const byMachine = {};
-  for (const s of r.studios)
-    (byMachine[s.machine || "local"] = byMachine[s.machine || "local"] || []).push(s);
-  $("#mach-body").innerHTML = Object.entries(byMachine).map(([m, list]) => `<tr>
-    <td><b>${m}</b><br><span class="muted" style="font-size:11px">${list[0].host}</span></td>
-    <td>${list.map(s => `<span class="pill ${s.status === "up" ? "dl" : ""}" style="margin-right:4px">${s.emoji || ""} ${s.modality} · ${s.status}</span>`).join(" ")}</td>
-    <td>${m !== "local" ? `<button onclick="removeMachine('${m}')"
-      style="background:none;border:1px solid var(--border);color:var(--down);border-radius:6px;padding:3px 10px;cursor:pointer">Remove</button>` : '<span class="muted" style="font-size:11px">this Mac</span>'}</td>
-  </tr>`).join("");
-}
-async function removeMachine(m) {
-  if (!confirm(`Remove all of ${m}'s studios from the Hub? (The machine itself is untouched.)`)) return;
-  await api(`/api/hub/registry/machines/${encodeURIComponent(m)}`, { method: "DELETE" });
-  loadMachines(); refresh();
-}
-
-async function loadAccess() {
-  loadMachines();
-  const r = await api("/api/hub/access").then(x => x.json()).catch(() => null);
-  if (!r) return;
-  $("#acc-body").innerHTML = r.addresses.map(a => `<tr>
-    <td><span class="pill ${a.kind === "tailscale" ? "cloud" : ""}">${a.kind}</span> <span class="muted">${a.interface}</span></td>
-    <td><code>${a.url}</code></td>
-    <td><button onclick="navigator.clipboard.writeText('${a.url}')"
-        style="background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:3px 10px;cursor:pointer">Copy</button></td>
-  </tr>`).join("") || `<tr><td colspan="3" class="empty">No non-loopback interfaces found</td></tr>`;
-  if (r.token) {
-    $("#acc-token-wrap").style.display = "block";
-    $("#acc-token").textContent = r.token;
-    $("#acc-copy").onclick = () => navigator.clipboard.writeText(r.token);
+function studioActionsHTML(s, sum) {
+  const p = pendingActions.get(s.id);
+  if (p) {
+    const arrived = (p.action === "start" && s.status === "up") || (p.action === "stop" && s.status !== "up");
+    if (arrived || Date.now() - p.since > 180000) pendingActions.delete(s.id);
   }
+  const pend = pendingActions.get(s.id);
+  const controllable = (s.machine || "local") === "local" && s.app;
+  let html = "";
+  if (pend) html = `<button class="btn" disabled>${pend.action}…</button><span class="pending">${pend.action === "start" ? "starting" : "stopping"}…</span>`;
+  else if (s.status === "up") html = `<a class="open" href="${studioUrl(s)}" target="_blank">Open UI ↗</a>` + (controllable ? ` <button class="btn stop" onclick="lifecycle('${s.id}','stop')">Stop</button>` : "");
+  else if (controllable) html = `<button class="btn" onclick="lifecycle('${s.id}','start')">Start</button>`;
+  return { html, controllable, pend };
 }
 
-// ── overview ──────────────────────────────────────────────────────────────
-function fmtAgo(ts) {
-  if (!ts) return "never";
-  const s = Math.max(0, (Date.now() / 1000) - ts);
-  if (s < 90) return Math.round(s) + "s ago";
-  if (s < 5400) return Math.round(s / 60) + "m ago";
-  return Math.round(s / 3600) + "h ago";
+function studioCard(s, sum) {
+  const res = sum.resources.studios[s.id];
+  const cls = s.status === "up" ? "up" : (s.status === "unknown" ? "unknown" : "down");
+  const a = studioActionsHTML(s, sum);
+  const wd = a.controllable ? `<label class="wd"><input type="checkbox" ${sum.watchdog?.[s.id]?.enabled ? "checked" : ""} onchange="toggleWatchdog('${s.id}', this.checked)"> auto-restart if down</label>` : "";
+  return `<div class="card">
+    <div class="top"><span class="emoji">${s.emoji || "🧩"}</span><h3>${s.title}</h3><span class="dot ${cls}"></span></div>
+    <dl class="kv">
+      <dt>Status</dt><dd>${a.pend ? a.pend.action + "ing…" : s.status}</dd>
+      <dt>Machine</dt><dd>${s.machine || "local"}</dd>
+      <dt>Version</dt><dd>${s.app_version || "—"}</dd>
+      <dt>Address</dt><dd>${s.host}:${s.port}</dd>
+      <dt>Latency</dt><dd>${s.latency_ms != null ? s.latency_ms + " ms" : "—"}</dd>
+      <dt>Memory</dt><dd>${res ? res.rss_gb + " GB" : "—"}</dd>
+      <dt>Last seen</dt><dd>${fmtAgo(s.last_seen)}</dd>
+    </dl>
+    <div class="actions">${a.html}</div>${wd}
+  </div>`;
+}
+function studioRow(s, sum) {
+  const res = sum.resources.studios[s.id];
+  const cls = s.status === "up" ? "up" : (s.status === "unknown" ? "unknown" : "down");
+  const a = studioActionsHTML(s, sum);
+  return `<div class="lrow">
+    <span class="emoji" style="font-size:18px">${s.emoji || "🧩"}</span>
+    <div><span class="name">${s.title}</span><br><span class="sub">${s.host}:${s.port}</span></div>
+    <div class="sub">${s.machine || "local"}</div>
+    <div class="st"><span class="dot ${cls}"></span>${a.pend ? a.pend.action + "ing…" : s.status}</div>
+    <div class="num">${res ? res.rss_gb + " GB" : (s.app_version ? "v" + s.app_version : "—")}</div>
+    <div class="actions" style="margin:0;justify-content:flex-end">${a.html}</div>
+  </div>`;
 }
 
-function studioUrl(s) {
-  // Browser-reachable URL: the page's own hostname works for local studios
-  // when the dashboard is viewed over LAN/Tailscale too.
-  const host = (s.host === "127.0.0.1" || s.host === "0.0.0.0")
-    ? location.hostname : s.host;
-  return `http://${host}:${s.port}`;
-}
-
-// Studios with an in-flight start/stop: id -> {action, since}
-const pendingActions = new Map();
-
-async function lifecycle(id, action) {
-  if (action === "stop" && !confirm(`Stop ${id} studio?`)) return;
-  pendingActions.set(id, { action, since: Date.now() });
-  renderOverview(lastSummary);
-  try {
-    const r = await api(`/api/hub/studios/${id}/${action}`, { method: "POST" });
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}));
-      alert(`${action} failed: ${err.detail || r.status}`);
-      pendingActions.delete(id);
-    }
-  } catch (e) {
-    alert(`${action} failed: ${e}`);
-    pendingActions.delete(id);
+function renderGroups(sum) {
+  const studios = sum.studios;
+  if (groupBy === "all") return [["All studios", studios]];
+  if (groupBy === "machine") {
+    const m = {};
+    studios.forEach(s => (m[s.machine || "local"] = m[s.machine || "local"] || []).push(s));
+    // local first, then alphabetical
+    return Object.keys(m).sort((a, b) => (a === "local" ? -1 : b === "local" ? 1 : a.localeCompare(b))).map(k => [k, m[k]]);
   }
-  refresh();
+  // by app (modality)
+  const m = {};
+  studios.forEach(s => (m[s.modality] = m[s.modality] || []).push(s));
+  return MOD_ORDER.filter(k => m[k]).map(k => [k.charAt(0).toUpperCase() + k.slice(1) + " studios", m[k]]);
 }
 
 function renderOverview(sum) {
   if (!sum) return;
   $("#hub-ver").textContent = "v" + sum.hub.app_version;
-  const grid = $("#studio-grid");
-  grid.innerHTML = "";
-  for (const s of sum.studios) {
-    const res = sum.resources.studios[s.id];
-    const cls = s.status === "up" ? "up" : (s.status === "unknown" ? "unknown" : "down");
-    // Clear the pending marker once the studio reaches the requested state
-    // (or after 3 minutes, in case a start fails silently).
-    const pending = pendingActions.get(s.id);
-    if (pending) {
-      const arrived = (pending.action === "start" && s.status === "up")
-                   || (pending.action === "stop" && s.status !== "up");
-      if (arrived || Date.now() - pending.since > 180000) pendingActions.delete(s.id);
-    }
-    const p = pendingActions.get(s.id);
-    const controllable = (s.machine || "local") === "local" && s.app;
-    let actions = "";
-    if (p) {
-      actions = `<div class="actions"><button disabled>${p.action}…</button>
-                 <span class="pending">${p.action === "start" ? "starting" : "stopping"}…</span></div>`;
-    } else if (controllable && s.status === "up") {
-      actions = `<div class="actions">
-        <a class="open" style="margin-top:0" href="${studioUrl(s)}" target="_blank">Open UI ↗</a>
-        <button class="stop" onclick="lifecycle('${s.id}','stop')">Stop</button></div>`;
-    } else if (controllable) {
-      actions = `<div class="actions"><button onclick="lifecycle('${s.id}','start')">Start</button></div>`;
-    } else if (s.status === "up") {
-      actions = `<a class="open" href="${studioUrl(s)}" target="_blank">Open UI ↗</a>`;
-    }
-    const card = document.createElement("div");
-    card.className = "card";
-    card.innerHTML = `
-      <div class="top">
-        <span class="emoji">${s.emoji || "🧩"}</span>
-        <h3>${s.title}</h3>
-        <span class="dot ${cls}" title="${s.status}"></span>
-      </div>
-      <dl class="kv">
-        <dt>Status</dt><dd>${p ? p.action + "ing…" : s.status}</dd>
-        <dt>Version</dt><dd>${s.app_version || "—"}</dd>
-        <dt>Address</dt><dd>${s.host}:${s.port}</dd>
-        <dt>Machine</dt><dd>${s.machine || "local"}</dd>
-        <dt>Latency</dt><dd>${s.latency_ms != null ? s.latency_ms + " ms" : "—"}</dd>
-        <dt>Memory</dt><dd>${res ? res.rss_gb + " GB" : "—"}</dd>
-        <dt>Last seen</dt><dd>${fmtAgo(s.last_seen)}</dd>
-      </dl>
-      ${actions}
-      ${controllable ? `<label class="wd" style="margin-top:8px">
-        <input type="checkbox" ${sum.watchdog?.[s.id]?.enabled ? "checked" : ""}
-          onchange="toggleWatchdog('${s.id}', this.checked)">
-        auto-restart if down${sum.watchdog?.[s.id]?.failures ? ` (${sum.watchdog[s.id].failures} attempts)` : ""}
-      </label>` : ""}
-    `;
-    grid.appendChild(card);
-  }
+  const up = sum.studios.filter(s => s.status === "up").length;
+  const machines = new Set(sum.studios.map(s => s.machine || "local")).size;
+  $("#hub-summary").textContent = `${up}/${sum.studios.length} studios up · ${machines} machine${machines > 1 ? "s" : ""}`;
+
+  const groups = renderGroups(sum);
+  $("#ov-body").innerHTML = groups.map(([title, list]) => {
+    const upN = list.filter(s => s.status === "up").length;
+    const head = `<div class="group-head"><h2>${title}</h2><span class="meta">${upN}/${list.length} up</span></div>`;
+    const body = display === "cards"
+      ? `<div class="grid">${list.map(s => studioCard(s, sum)).join("")}</div>`
+      : `<div class="rows">${list.map(s => studioRow(s, sum)).join("")}</div>`;
+    return head + body;
+  }).join("");
 }
+
+// ── models ────────────────────────────────────────────────────────────────
+async function loadModels() {
+  const p = new URLSearchParams();
+  const q = $("#m-search").value.trim(); if (q) p.set("q", q);
+  const mod = $("#m-modality").value; if (mod) p.set("modality", mod);
+  const dl = $("#m-dl").value; if (dl) p.set("downloaded", dl);
+  const res = await api("/api/hub/models?" + p).then(r => r.json()).catch(() => null);
+  const body = $("#m-body");
+  if (!res) { body.innerHTML = `<tr><td colspan="6" class="empty">Catalog unavailable</td></tr>`; return; }
+  const dlCount = res.models.filter(m => m.downloaded && !m.is_cloud).length;
+  $("#m-count").textContent = `${res.count} distinct models · ${dlCount} downloaded on at least one machine`;
+  body.innerHTML = res.models.map(m => {
+    let avail;
+    if (m.is_cloud) avail = `<span class="pill cloud">cloud</span>`;
+    else if (m.cached_on.length) avail = m.cached_on.map(mc => `<span class="pill dl">${mc}</span>`).join("");
+    else avail = `<span class="pill no">not downloaded</span>`;
+    return `<tr>
+      <td><b>${m.label}</b><br><span class="sub">${m.repo}</span></td>
+      <td>${m.modality}</td>
+      <td>${m.family_label || "—"}</td>
+      <td class="num">${m.size_gb != null ? m.size_gb + " GB" : "—"}</td>
+      <td class="num">${m.min_unified_memory_gb != null ? m.min_unified_memory_gb + " GB" : "—"}</td>
+      <td>${avail}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="6" class="empty">No models match</td></tr>`;
+}
+let mTimer;
+["m-search", "m-modality", "m-dl"].forEach(id => $("#" + id).addEventListener("input", () => { clearTimeout(mTimer); mTimer = setTimeout(loadModels, 250); }));
 
 // ── resources ─────────────────────────────────────────────────────────────
 function renderResources(sum) {
@@ -524,45 +475,136 @@ function renderResources(sum) {
   bar.style.width = h.percent + "%";
   bar.className = h.percent > 90 ? "crit" : (h.percent > 75 ? "hot" : "");
   $("#host-mem-label").textContent = h.percent + "% of unified memory in use";
-
-  const body = $("#r-body");
-  body.innerHTML = "";
-  for (const s of sum.studios) {
+  $("#r-body").innerHTML = sum.studios.map(s => {
     const r = sum.resources.studios[s.id];
-    body.insertAdjacentHTML("beforeend", `<tr>
-      <td>${s.emoji || ""} ${s.title}</td>
-      <td>${s.status}</td>
-      <td class="num">${r ? r.pid : "—"}</td>
-      <td class="num">${r ? r.rss_gb + " GB" : "—"}</td>
-      <td class="num">${r ? r.cpu_percent : "—"}</td>
-      <td class="num">${r ? r.processes : "—"}</td>
-    </tr>`);
+    return `<tr>
+      <td>${s.emoji || ""} ${s.title}</td><td>${s.machine || "local"}</td><td>${s.status}</td>
+      <td class="num">${r ? r.pid : "—"}</td><td class="num">${r ? r.rss_gb + " GB" : "—"}</td><td class="num">${r ? r.cpu_percent : "—"}</td>
+    </tr>`;
+  }).join("");
+}
+async function loadSpark() {
+  const r = await api("/api/hub/metrics?minutes=60").then(x => x.json()).catch(() => null);
+  if (!r || !r.samples.length) return;
+  const pts = r.samples.map((s, i) => `${(i / Math.max(1, r.samples.length - 1)) * 600},${80 - (s.mem_percent / 100) * 78}`);
+  $("#mem-line").setAttribute("points", pts.join(" "));
+}
+
+// ── jobs ──────────────────────────────────────────────────────────────────
+async function loadJobModels() {
+  const mod = $("#j-modality").value;
+  const r = await api(`/api/hub/models?modality=${mod}&downloaded=true`).then(x => x.json()).catch(() => null);
+  $("#j-model").innerHTML = (r?.models || []).map(m => `<option value="${m.repo}">${m.label} — on ${m.is_cloud ? "cloud" : m.cached_on.join(", ")}</option>`).join("")
+    || `<option value="">no downloaded ${mod} models</option>`;
+}
+$("#j-modality").addEventListener("input", loadJobModels);
+async function submitBatch() {
+  const prompts = $("#j-prompts").value.split("\n").map(s => s.trim()).filter(Boolean);
+  const model = $("#j-model").value;
+  if (!prompts.length || !model) { $("#j-status").textContent = "need a model and at least one prompt"; return; }
+  $("#j-status").textContent = "submitting…";
+  const r = await api("/api/hub/jobs", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ modality: $("#j-modality").value, model, items: prompts.map(p => ({ prompt: p })) })
+  });
+  const d = await r.json();
+  $("#j-status").textContent = r.ok ? `batch ${d.batch_id} queued (${d.items} items)` : (d.detail || "failed");
+  loadBatches();
+}
+async function loadBatches() {
+  const r = await api("/api/hub/jobs").then(x => x.json()).catch(() => null);
+  if (!r) return;
+  $("#j-batches").innerHTML = r.batches.map(b => {
+    const pct = b.total ? Math.round(100 * (b.done + b.error + b.cancelled_items) / b.total) : 0;
+    const active = b.queued + b.running > 0 && !b.cancelled;
+    return `<div class="card section">
+      <div class="top"><h3 style="font-size:13.5px">${b.modality} · ${b.model}</h3>
+        <span class="sub" style="margin-left:auto">${b.done}/${b.total} done${b.error ? ` · ${b.error} failed` : ""}${b.running ? ` · ${b.running} running` : ""}</span>
+        ${active ? `<button class="btn stop" style="margin-left:10px" onclick="cancelBatch('${b.id}')">Cancel</button>` : ""}
+      </div>
+      <div class="prog"><i style="width:${pct}%"></i></div>
+      <div class="sub" style="margin-top:4px">batch ${b.id}${b.label ? " · from " + b.label : ""}${b.cancelled ? " · cancelled" : ""}${b.governor_note ? " · ⏳ " + b.governor_note : ""}</div>
+    </div>`;
+  }).join("") || `<div class="empty">No batches yet</div>`;
+}
+async function cancelBatch(id) { await api(`/api/hub/jobs/${id}`, { method: "DELETE" }); loadBatches(); }
+
+// ── assets ────────────────────────────────────────────────────────────────
+async function loadAssets() {
+  const p = new URLSearchParams();
+  const q = $("#a-search").value.trim(); if (q) p.set("q", q);
+  const m = $("#a-modality").value; if (m) p.set("modality", m);
+  const r = await api("/api/hub/assets?" + p).then(x => x.json()).catch(() => null);
+  if (!r) return;
+  $("#a-count").textContent = `${r.assets.length} assets`;
+  $("#a-body").innerHTML = r.assets.map(a => {
+    const name = (a.artifact_path || "").split("/").pop() || a.id;
+    return `<tr>
+      <td><b>${name}</b>${a.prompt ? `<br><span class="sub">${a.prompt.slice(0, 80)}</span>` : ""}</td>
+      <td>${a.modality || "—"}</td><td>${a.studio || "—"}</td>
+      <td class="num">${a.model ? a.model.split("/").pop() : "—"}</td><td class="num">${a.seed ?? "—"}</td>
+      <td><span class="pill ${a.source === "job" ? "dl" : ""}">${a.source}</span></td>
+      <td>${a.artifact_url ? `<a class="open" href="${a.artifact_url}" target="_blank">open ↗</a>` : (a.exists ? "" : '<span class="sub">missing</span>')}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="7" class="empty">No assets — generate something or hit Scan</td></tr>`;
+}
+let aTimer;
+["a-search", "a-modality"].forEach(id => $("#" + id).addEventListener("input", () => { clearTimeout(aTimer); aTimer = setTimeout(loadAssets, 250); }));
+async function scanAssets() {
+  const r = await api("/api/hub/assets/scan", { method: "POST" }).then(x => x.json());
+  $("#a-count").textContent = `scan: ${r.added} new of ${r.scanned} files`;
+  loadAssets();
+}
+
+// ── remote ────────────────────────────────────────────────────────────────
+async function loadAccess() {
+  const r = await api("/api/hub/access").then(x => x.json()).catch(() => null);
+  if (!r) return;
+  $("#acc-body").innerHTML = r.addresses.map(a => `<tr>
+    <td><span class="pill ${a.kind === "tailscale" ? "cloud" : ""}">${a.kind}</span> <span class="sub">${a.interface}</span></td>
+    <td><code>${a.url}</code></td>
+    <td><button class="btn" onclick="navigator.clipboard.writeText('${a.url}')">Copy</button></td>
+  </tr>`).join("") || `<tr><td colspan="3" class="empty">No non-loopback interfaces</td></tr>`;
+  if (r.token) {
+    $("#acc-token-wrap").style.display = "block";
+    $("#acc-token").textContent = r.token;
+    $("#acc-copy").onclick = () => navigator.clipboard.writeText(r.token);
   }
 }
-
-// ── models ────────────────────────────────────────────────────────────────
-async function loadModels() {
-  const p = new URLSearchParams();
-  const q = $("#m-search").value.trim(); if (q) p.set("q", q);
-  const mod = $("#m-modality").value; if (mod) p.set("modality", mod);
-  const lane = $("#m-lane").value; if (lane) p.set("cloud", lane);
-  const dl = $("#m-dl").value; if (dl) p.set("downloaded", dl);
-  const res = await api("/api/hub/catalog?" + p).then(r => r.json()).catch(() => null);
-  const body = $("#m-body");
-  if (!res) { body.innerHTML = `<tr><td colspan="6" class="empty">Catalog unavailable</td></tr>`; return; }
-  $("#m-count").textContent = `${res.count} of ${res.total_unfiltered} models`;
-  body.innerHTML = res.models.map(m => `<tr>
-    <td><b>${m.label || m.repo || "?"}</b><br><span class="muted" style="font-size:11px">${m.repo || ""}</span></td>
-    <td>${m.hub_studio}</td>
-    <td>${m.family_label || m.family || "—"}</td>
-    <td class="num">${m.size_gb != null ? m.size_gb + " GB" : "—"}</td>
-    <td class="num">${m.min_unified_memory_gb != null ? m.min_unified_memory_gb + " GB" : "—"}</td>
-    <td>${m.is_cloud ? '<span class="pill cloud">cloud</span>' : (m.cache ? '<span class="pill dl">downloaded</span>' : '<span class="pill">available</span>')}</td>
-  </tr>`).join("") || `<tr><td colspan="6" class="empty">No models match</td></tr>`;
+async function loadMachines() {
+  const r = await api("/api/hub/studios").then(x => x.json()).catch(() => null);
+  if (!r) return;
+  const byM = {};
+  r.studios.forEach(s => (byM[s.machine || "local"] = byM[s.machine || "local"] || []).push(s));
+  const order = Object.keys(byM).sort((a, b) => (a === "local" ? -1 : b === "local" ? 1 : a.localeCompare(b)));
+  $("#mach-body").innerHTML = order.map(m => {
+    const list = byM[m];
+    return `<tr>
+      <td><b>${m}</b></td>
+      <td class="sub">${list[0].host}</td>
+      <td>${list.map(s => `<span class="pill ${s.status === "up" ? "dl" : "no"}">${s.emoji || ""} ${s.modality} · ${s.status}</span>`).join(" ")}</td>
+      <td>${m !== "local" ? `<button class="btn stop" onclick="removeMachine('${m}')">Remove</button>` : '<span class="sub">this Mac</span>'}</td>
+    </tr>`;
+  }).join("");
 }
-let mTimer;
-["m-search", "m-modality", "m-lane", "m-dl"].forEach(id =>
-  $("#" + id).addEventListener("input", () => { clearTimeout(mTimer); mTimer = setTimeout(loadModels, 250); }));
+async function removeMachine(m) {
+  if (!confirm(`Remove all of ${m}'s studios from the Hub? (The machine itself is untouched.)`)) return;
+  await api(`/api/hub/registry/machines/${encodeURIComponent(m)}`, { method: "DELETE" });
+  loadMachines(); refresh();
+}
+async function discoverMachine() {
+  const host = $("#d-host").value.trim();
+  if (!host) { $("#d-result").textContent = "enter an IP"; return; }
+  $("#d-result").textContent = "probing " + host + "…";
+  const r = await api("/api/hub/registry/discover", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ host, machine: $("#d-name").value.trim() || undefined })
+  }).then(x => x.json()).catch(e => ({ note: String(e) }));
+  $("#d-result").textContent = r.found?.length
+    ? `found ${r.found.map(f => f.modality).join(", ")} — ${r.registered} newly added (saved permanently)`
+    : (r.note || r.detail || "nothing found");
+  loadMachines(); refresh();
+}
 
 // ── poll loop ─────────────────────────────────────────────────────────────
 async function refresh() {
@@ -572,9 +614,7 @@ async function refresh() {
     renderOverview(sum);
     renderResources(sum);
     $("#last-refresh").textContent = "updated " + new Date().toLocaleTimeString();
-  } catch (e) {
-    $("#last-refresh").textContent = "hub unreachable";
-  }
+  } catch (e) { $("#last-refresh").textContent = "hub unreachable"; }
 }
 refresh();
 setInterval(refresh, 5000);

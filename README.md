@@ -52,7 +52,9 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/version` | `{app_version, title}` |
 | `GET /api/hub/studios` | Registry + live status per studio |
 | `GET /api/hub/health` | Aggregate: totals + per-studio statuses |
-| `GET /api/hub/catalog` | Unified model catalog. Query params: `q`, `modality`, `downloaded`, `cloud`, `force` |
+| `GET /api/hub/catalog` | Raw per-studio catalog rows (annotated `hub_cached`, `hub_machine`). Query: `q`, `modality`, `downloaded`, `cloud`, `force` |
+| `GET /api/hub/models` | **Deduped by repo** with per-machine availability (`cached_on`, `machines[]`). Query: `q`, `modality`, `downloaded` |
+| `DELETE /api/hub/registry/machines/{machine}` | Unregister a discovered machine's studios |
 | `GET /api/hub/resources` | Host memory/CPU + per-studio process stats |
 | `GET /api/hub/summary` | One-shot dashboard payload (studios + resources) |
 | `POST /api/hub/studios/{id}/start` | Start a local studio (via Pinokio's `pterm` CLI) |
@@ -96,6 +98,18 @@ await fetch(`${HUB}/api/hub/jobs`, {
   })
 });
 ```
+
+## Dashboard
+
+- **Overview** — group studios **All / By app / By machine**, in **Cards** or **List** view
+  (your choice is remembered). Start/stop and auto-restart toggles per studio.
+- **Models** — every model across all machines, deduped, with an **Availability** column
+  showing exactly which machines have each one downloaded. "Downloaded" means *cached on at
+  least one machine* — a model can be on your media server but not this Mac.
+- **Resources** — this Mac's unified-memory bar + hour sparkline, per-studio process memory.
+- **Jobs / Assets** — Swarm Batch submit + progress; searchable asset ledger.
+- **Remote** — reachable URLs + token, **Discover & Add** a machine, and a permanent
+  **Registered machines** list (with Remove).
 
 ## Multiple Macs (federation)
 

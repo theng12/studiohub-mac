@@ -122,8 +122,8 @@ async def hub_catalog(
             or needle in str(m.get("label", "")).lower()
         ]
     if downloaded is not None:
-        # `cache` is each studio's downloaded-state field (verbatim pass-through).
-        models = [m for m in models if bool(m.get("cache")) == downloaded]
+        # hub_cached is the corrected download flag (cache.state == 'cached').
+        models = [m for m in models if bool(m.get("hub_cached")) == downloaded]
     if cloud is not None:
         models = [m for m in models if bool(m.get("is_cloud")) == cloud]
     return {
@@ -282,6 +282,22 @@ def hub_assets(q: str | None = None, modality: str | None = None,
     return {"assets": ledger.query_assets(q, modality, studio, batch_id, limit)}
 
 
+@app.get("/api/hub/models")
+async def hub_models(modality: str | None = None, q: str | None = None,
+                     downloaded: bool | None = None, force: bool = False):
+    """Deduped-by-repo model list with per-machine availability (Models tab)."""
+    rows = await monitor.models_by_repo(force=force)
+    if modality:
+        rows = [r for r in rows if r["modality"] == modality]
+    if q:
+        needle = q.lower()
+        rows = [r for r in rows
+                if needle in r["repo"].lower() or needle in r["label"].lower()]
+    if downloaded is not None:
+        rows = [r for r in rows if r["downloaded"] == downloaded]
+    return {"models": rows, "count": len(rows)}
+
+
 @app.post("/api/hub/assets/scan")
 def hub_assets_scan():
     return ledger.scan_outputs(monitor.registry)
@@ -416,4 +432,8 @@ async def discover_machine(body: dict):
 # ── dashboard ──────────────────────────────────────────────────────────────
 @app.get("/")
 def index():
-    return FileResponse(FRONTEND_DIR / "index.html")
+    # no-store so Pinokio's embedded webview never serves a stale build after
+    # an update — the #1 cause of "I don't see my changes".
+    return FileResponse(
+        FRONTEND_DIR / "index.html",
+        headers={"Cache-Control": "no-store, max-age=0"})

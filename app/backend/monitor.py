@@ -19,6 +19,18 @@ CATALOG_TIMEOUT_S = 10.0
 CATALOG_TTL_S = 60.0
 
 
+def is_cached(model: dict) -> bool:
+    """Whether a studio has this model fully downloaded.
+
+    Every studio reports `cache` as a dict {state: 'cached'|'absent'|'partial'}.
+    The trap: bool(cache) is True for ANY non-empty dict, so a naive truthiness
+    check marks even 'absent' models as downloaded. Only 'cached' counts."""
+    cache = model.get("cache")
+    if isinstance(cache, dict):
+        return cache.get("state") == "cached"
+    return bool(cache)  # tolerate a studio that ever uses a bool/string
+
+
 class StudioMonitor:
     def __init__(self):
         self.registry: list[dict] = load_registry()
@@ -126,6 +138,42 @@ class StudioMonitor:
                 annotated["hub_studio"] = sid
                 annotated["hub_modality"] = studio["modality"]
                 annotated["hub_machine"] = studio.get("machine", "local")
+                annotated["hub_cached"] = is_cached(m)  # correct download state
                 models.append(annotated)
             per_studio[sid] = {"ok": True, "models": len(entries)}
         return {"models": models, "per_studio": per_studio, "total": len(models)}
+
+    async def models_by_repo(self, force: bool = False) -> list[dict]:
+        """Deduped by repo across all machines, with per-machine availability.
+        This is what the Models tab needs: one row per model, showing WHICH
+        machines have it downloaded (so 'downloaded on the media server but not
+        this Mac' reads correctly instead of a blanket 'downloaded')."""
+        agg = await self.aggregate_catalog(force=force)
+        by_repo: dict[str, dict] = {}
+        for m in agg["models"]:
+            repo = m.get("repo")
+            if not repo:
+                continue
+            row = by_repo.get(repo)
+            if row is None:
+                row = by_repo[repo] = {
+                    "repo": repo,
+                    "label": m.get("label") or repo,
+                    "modality": m.get("hub_modality"),
+                    "family_label": m.get("family_label") or m.get("family"),
+                    "size_gb": m.get("size_gb"),
+                    "min_unified_memory_gb": m.get("min_unified_memory_gb"),
+                    "is_cloud": bool(m.get("is_cloud")),
+                    "machines": [],       # every studio that lists it
+                    "cached_on": [],      # machine names where it's downloaded
+                }
+            machine = m.get("hub_machine", "local")
+            row["machines"].append({"studio": m.get("hub_studio"),
+                                    "machine": machine, "cached": m.get("hub_cached")})
+            if m.get("hub_cached") and machine not in row["cached_on"]:
+                row["cached_on"].append(machine)
+        rows = list(by_repo.values())
+        for r in rows:
+            r["downloaded"] = bool(r["cached_on"]) or r["is_cloud"]
+        rows.sort(key=lambda r: (r["modality"] or "", not r["downloaded"], r["repo"]))
+        return rows

@@ -23,6 +23,7 @@ import uuid
 import httpx
 
 from . import ledger
+from .monitor import is_cached
 from .registry import base_url
 from .resources import host_stats
 
@@ -204,10 +205,10 @@ async def _dispatch_loop():
                         b["governor_note"] = (
                             f"'{b['model']}' not in {studio['id']}'s catalog")
                         continue
-                    if not entry.get("is_cloud") and not entry.get("cache"):
+                    if not entry.get("is_cloud") and not is_cached(entry):
                         b["governor_note"] = (
-                            f"'{b['model']}' not downloaded on any available "
-                            f"{b['modality']} studio — use /api/hub/broadcast/download")
+                            f"'{b['model']}' not downloaded on {studio['id']} "
+                            f"— broadcast the download or try another machine")
                         continue
                     # ── memory governor (local models only) ──
                     mem = None if entry.get("is_cloud") else {

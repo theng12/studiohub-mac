@@ -261,7 +261,21 @@ untouched to the target studio. The Hub surfaces each model's own parameter sche
   explains any stalled dispatch. Remote studios bypass the local RAM governor (their own backend
   paces them; 1 concurrent job per studio).
 
-## 13. Post-v1.7 future ideas (not scheduled)
+## 12b. v1.8.0 — download-state fix + dashboard redesign (2026-07-02)
+- **Critical bug fixed**: studios report `cache` as a dict `{state: cached|absent|partial}`;
+  the Hub checked `bool(cache)` (always true for a dict) → **everything showed "downloaded"**.
+  Real state was e.g. chat 3/41 cached. `is_cached()` (state=='cached') now used everywhere:
+  catalog filter, **broker model-aware dispatch** (was silently sending jobs to machines that
+  didn't have the model), director inventory, and the Models tab. This was a functional bug, not
+  just cosmetic.
+- **`/api/hub/models`**: deduped-by-repo with per-machine availability (`cached_on`) — the Models
+  tab now shows a model as downloaded on `local, media-server` etc. instead of a blanket flag.
+- **Dashboard redesign**: Overview group-by (All / By app / By machine) × view (Cards / List),
+  persisted; permanent Registered-machines list with Remove; "Discover & Add" naming; per-machine
+  availability pills in Models. Root cause of "I don't see my changes" fixed: `Cache-Control:
+  no-store` on `/` so the embedded webview can't serve a stale build.
+
+## 13. Post-v1.8 future ideas (not scheduled)
 - Real second-Mac validation of federation (code path exists; probe logic verified against localhost).
 - Credential pool / key rotation for cloud lanes (§4) — becomes relevant when cloud Swarm Batch is used in anger.
 - Update orchestration, log aggregation, per-client API keys, predictive model preloading.
