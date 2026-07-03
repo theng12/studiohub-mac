@@ -55,6 +55,8 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/catalog` | Raw per-studio catalog rows (annotated `hub_cached`, `hub_machine`). Query: `q`, `modality`, `downloaded`, `cloud`, `force` |
 | `GET /api/hub/models` | **Deduped by repo** with per-machine availability (`cached_on`, `machines[]`). Query: `q`, `modality`, `downloaded` |
 | `DELETE /api/hub/registry/machines/{machine}` | Unregister a discovered machine's studios |
+| `GET /api/hub/fleet` · `POST /api/hub/fleet` | Fleet token status / set (`{token}`) — enables remote specs + control |
+| `GET /api/hub/resources?local_only=true` | This machine only (peers call with this to prevent recursion) |
 | `GET /api/hub/resources` | Host memory/CPU + per-studio process stats |
 | `GET /api/hub/summary` | One-shot dashboard payload (studios + resources) |
 | `POST /api/hub/studios/{id}/start` | Start a local studio (via Pinokio's `pterm` CLI) |
@@ -111,7 +113,30 @@ await fetch(`${HUB}/api/hub/jobs`, {
 - **Remote** — reachable URLs + token, **Discover & Add** a machine, and a permanent
   **Registered machines** list (with Remove).
 
-## Multiple Macs (federation)
+## The fleet: remote specs + remote control
+
+Health and models come over HTTP, but a machine's **RAM/specs** and
+**start/stop** need OS-level access on that machine. So run a **Studio Hub on
+every Mac** — each Hub is the authority for its own machine, and your primary
+Hub aggregates them.
+
+Setup (once):
+1. Install + start Studio Hub on each Mac.
+2. On the primary, **Remote → Fleet token → Generate → Save**.
+3. Paste that **same token** into every other Mac's Hub (Remote → Fleet token).
+   (Tip: it's one value for the whole fleet — keep it somewhere handy.)
+
+Then, for any remote studio, the primary shows the machine's live **host RAM/CPU**
+(Resources tab, per-machine cards) and enables **Start/Stop** on the studio card —
+proxied to that machine's Hub, which runs `pterm` locally. Each machine's Hub
+also watchdogs its own studios. Machines without a Hub (or with the wrong token)
+still show health; specs/control read "no Studio Hub running here."
+
+Security: the fleet token is a shared credential accepted by every Hub in
+addition to its own local token. Loopback is always exempt. It lives in
+`.fleet_token` (gitignored) or `STUDIOHUB_FLEET_TOKEN`.
+
+## Multiple Macs (registry)
 
 Every Mac keeps running its own studios; ONE Hub coordinates them all:
 

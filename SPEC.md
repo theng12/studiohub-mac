@@ -275,7 +275,24 @@ untouched to the target studio. The Hub surfaces each model's own parameter sche
   availability pills in Models. Root cause of "I don't see my changes" fixed: `Cache-Control:
   no-store` on `/` so the embedded webview can't serve a stale build.
 
-## 13. Post-v1.8 future ideas (not scheduled)
+## 12c. v1.9.0 — Peer Hubs / fleet (2026-07-02)
+- Run a Hub on every Mac; each is the local authority (host RAM, per-studio RSS, pterm control).
+  The primary aggregates peers: `/api/hub/resources` now returns a `machines` map (this Mac + each
+  peer's host stats) and fills remote per-studio memory from each peer's Hub. Remote start/stop is
+  proxied to the studio's own machine's Hub (`peers.control_remote`), addressing the studio by its
+  local id (= modality). Watchdog stays local per-Hub.
+- **Fleet token** (`.fleet_token` or `STUDIOHUB_FLEET_TOKEN`): one shared credential set on every
+  Hub; accepted by auth alongside each Hub's local token; the primary presents it to peers.
+  Dashboard: generate/save in Remote tab; per-machine host cards in Resources; remote Start/Stop
+  enabled only when the peer Hub is reachable (`has_hub`).
+- **Recursion guard**: peers are queried with `?local_only=true` so a peer returns only its own
+  machine and never fans back out. Peer resources are cached (12s TTL), refreshed from the poll
+  loop, so the 5s dashboard poll never blocks on an offline peer.
+- Verified: fleet token set/accept (LAN 200 with token, 401 without), local_only returns only
+  `local`, real remote machines correctly report has_hub=false until a Hub runs there, remote
+  control returns a clear "run Studio Hub on that Mac" error.
+
+## 13. Post-v1.9 future ideas (not scheduled)
 - Real second-Mac validation of federation (code path exists; probe logic verified against localhost).
 - Credential pool / key rotation for cloud lanes (§4) — becomes relevant when cloud Swarm Batch is used in anger.
 - Update orchestration, log aggregation, per-client API keys, predictive model preloading.

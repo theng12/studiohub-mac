@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from . import broadcast, broker, gateway, ledger, metrics, recipes
+from . import broadcast, broker, gateway, ledger, metrics, peers, recipes
 from .auth import is_loopback, load_token, make_middleware
 from .control import control_studio
 from .monitor import StudioMonitor
@@ -135,20 +135,36 @@ async def hub_catalog(
 
 
 @app.get("/api/hub/resources")
-def hub_resources():
-    """Host memory/CPU + per-studio process stats (local studios only —
-    remote machines report their own resources via their own Hub later)."""
+def hub_resources(local_only: bool = Query(False)):
+    """Host memory/CPU + per-studio process stats.
+
+    Local studios are measured directly. Remote studios' stats come from each
+    machine's own peer Hub (cached by the poll loop). `local_only=true` returns
+    ONLY this machine — peers call with it to prevent recursive fan-out.
+    Remote studios are keyed by their local id (= modality) so a peer's reply
+    maps straight onto our federated ids."""
+    machines = {"local": {"host": host_stats(), "reachable": True}}
     per_studio = {}
     for s in monitor.registry:
+        machine = s.get("machine", "local")
         st = monitor.status.get(s["id"], {})
-        is_local = s.get("machine", "local") == "local" and s["host"] in (
-            "127.0.0.1", "localhost", "0.0.0.0",
-        )
-        if is_local and st.get("status") == "up":
-            per_studio[s["id"]] = studio_process_stats(s["port"])
+        if machine == "local":
+            per_studio[s["id"]] = (
+                studio_process_stats(s["port"]) if st.get("status") == "up" else None)
+        elif local_only:
+            continue
         else:
-            per_studio[s["id"]] = None
-    return {"host": host_stats(), "studios": per_studio, "ts": time.time()}
+            peer = peers.cached(machine)
+            machines[machine] = {
+                "host": peer["host"] if peer else None,
+                "reachable": bool(peer and peer.get("reachable")),
+                "has_hub": bool(peer and peer.get("host") is not None),
+            }
+            per_studio[s["id"]] = (
+                (peer.get("studios", {}) or {}).get(s["modality"]) if peer else None)
+    return {"host": machines["local"]["host"], "machines": machines,
+            "studios": per_studio, "fleet_token_set": peers.fleet_token() is not None,
+            "ts": time.time()}
 
 
 @app.get("/api/hub/summary")
@@ -352,12 +368,32 @@ async def studio_lifecycle(studio_id: str, action: str):
     studio = next((s for s in monitor.registry if s["id"] == studio_id), None)
     if studio is None:
         raise HTTPException(404, f"unknown studio: {studio_id}")
-    result = control_studio(studio, action)
+    if studio.get("machine", "local") == "local":
+        result = control_studio(studio, action)          # local: pterm
+    else:
+        result = await peers.control_remote(monitor._client, studio, action)  # remote: peer Hub
     if not result["ok"]:
         raise HTTPException(409, result["error"])
-    # Re-poll soon so the dashboard sees the transition quickly.
-    await monitor.poll_all()
+    await monitor.poll_all()  # reflect the transition quickly
     return result
+
+
+@app.get("/api/hub/fleet")
+def get_fleet(request: Request):
+    """Fleet-token status. The token itself is revealed only to loopback."""
+    token = peers.fleet_token()
+    out = {"fleet_token_set": token is not None}
+    if is_loopback(request) and token:
+        out["token"] = token
+    return out
+
+
+@app.post("/api/hub/fleet")
+def set_fleet(body: dict):
+    """Set the shared fleet token (paste the SAME value on every Mac's Hub)."""
+    token = body.get("token", "")
+    peers.set_fleet_token(token)
+    return {"ok": True, "fleet_token_set": bool(token.strip())}
 
 
 @app.post("/api/hub/registry/reload")

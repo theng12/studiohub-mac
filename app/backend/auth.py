@@ -51,12 +51,19 @@ def presented_token(request: Request) -> str | None:
 
 
 def make_middleware(token: str):
+    from . import peers
+
     async def middleware(request: Request, call_next):
         if request.url.path in PUBLIC_PATHS or is_loopback(request):
             return await call_next(request)
         offered = presented_token(request)
-        if offered is not None and secrets.compare_digest(offered, token):
-            return await call_next(request)
+        if offered is not None:
+            if secrets.compare_digest(offered, token):
+                return await call_next(request)
+            # Fleet token: lets peer Hubs on the tailnet authenticate as a fleet.
+            fleet = peers.fleet_token()
+            if fleet and secrets.compare_digest(offered, fleet):
+                return await call_next(request)
         return JSONResponse(
             {"detail": "Hub token required for remote access. "
                        "Open the dashboard on the Hub machine to see the token."},

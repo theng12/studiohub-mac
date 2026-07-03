@@ -22,3 +22,4 @@ ENVIRONMENT
 .hub_token
 hub.db
 hub_state.json
+.fleet_token

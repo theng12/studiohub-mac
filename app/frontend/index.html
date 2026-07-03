@@ -177,10 +177,11 @@
       </svg>
       <div class="muted" style="font-size:11px">memory % — last hour</div>
     </div>
+    <div id="machines-res"></div>
     <table><thead><tr>
       <th>Studio</th><th>Machine</th><th>Status</th><th>PID</th><th>Memory (RSS)</th><th>CPU %</th>
     </tr></thead><tbody id="r-body"></tbody></table>
-    <p class="muted" style="font-size:11.5px;margin-top:8px">Per-process memory is shown for local studios only; remote Macs report their own memory on their own Hub.</p>
+    <p class="muted" style="font-size:11.5px;margin-top:8px">Remote machines report their host RAM and per-studio memory via their own Hub. Studios on a machine that isn't running a Studio Hub show "—" (set up the fleet in the Remote tab).</p>
   </section>
 
   <!-- JOBS -->
@@ -234,6 +235,21 @@
         <code id="acc-token" style="background:var(--panel2);padding:6px 10px;border-radius:6px;user-select:all"></code>
         <button class="btn" id="acc-copy" style="margin-left:8px">Copy</button>
       </div>
+    </div>
+
+    <div class="card jform section">
+      <div class="top"><span class="emoji">🧩</span><h3>Fleet token — enable remote specs &amp; control</h3></div>
+      <p class="muted" style="font-size:13px;margin-bottom:10px">
+        To see another Mac's <b>RAM/specs</b> and <b>start/stop its servers</b>, run a Studio Hub on
+        that Mac too, then set the <b>same fleet token</b> on every machine's Hub. Each Hub reports its
+        own machine; this one aggregates them. Without it, remote studios show health only.
+      </p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <input id="fleet-token" placeholder="paste or generate a shared token" style="flex:1;min-width:240px">
+        <button class="go" onclick="saveFleet()">Save</button>
+        <button class="btn" onclick="genFleet()">Generate</button>
+      </div>
+      <div class="sub" id="fleet-status" style="margin-top:8px"></div>
     </div>
 
     <div class="card jform section">
@@ -376,7 +392,12 @@ function studioActionsHTML(s, sum) {
     if (arrived || Date.now() - p.since > 180000) pendingActions.delete(s.id);
   }
   const pend = pendingActions.get(s.id);
-  const controllable = (s.machine || "local") === "local" && s.app;
+  const machine = s.machine || "local";
+  // Local studios: pterm. Remote studios: controllable only if that machine
+  // runs a peer Hub (has_hub) that we can proxy start/stop to.
+  const controllable = machine === "local"
+    ? !!s.app
+    : !!(sum.resources.machines?.[machine]?.has_hub);
   let html = "";
   if (pend) html = `<button class="btn" disabled>${pend.action}…</button><span class="pending">${pend.action === "start" ? "starting" : "stopping"}…</span>`;
   else if (s.status === "up") html = `<a class="open" href="${studioUrl(s)}" target="_blank">Open UI ↗</a>` + (controllable ? ` <button class="btn stop" onclick="lifecycle('${s.id}','stop')">Stop</button>` : "");
@@ -388,7 +409,9 @@ function studioCard(s, sum) {
   const res = sum.resources.studios[s.id];
   const cls = s.status === "up" ? "up" : (s.status === "unknown" ? "unknown" : "down");
   const a = studioActionsHTML(s, sum);
-  const wd = a.controllable ? `<label class="wd"><input type="checkbox" ${sum.watchdog?.[s.id]?.enabled ? "checked" : ""} onchange="toggleWatchdog('${s.id}', this.checked)"> auto-restart if down</label>` : "";
+  // Watchdog is a local-only concept — each machine's own Hub watchdogs its studios.
+  const wd = (s.machine || "local") === "local" && s.app
+    ? `<label class="wd"><input type="checkbox" ${sum.watchdog?.[s.id]?.enabled ? "checked" : ""} onchange="toggleWatchdog('${s.id}', this.checked)"> auto-restart if down</label>` : "";
   return `<div class="card">
     <div class="top"><span class="emoji">${s.emoji || "🧩"}</span><h3>${s.title}</h3><span class="dot ${cls}"></span></div>
     <dl class="kv">
@@ -491,6 +514,17 @@ function renderResources(sum) {
   bar.style.width = h.percent + "%";
   bar.className = h.percent > 90 ? "crit" : (h.percent > 75 ? "hot" : "");
   $("#host-mem-label").textContent = h.percent + "% of unified memory in use";
+  // Per-machine host specs (this Mac + peer Hubs)
+  const machines = sum.resources.machines || {};
+  const order = Object.keys(machines).sort((a, b) => (a === "local" ? -1 : b === "local" ? 1 : a.localeCompare(b)));
+  $("#machines-res").innerHTML = order.filter(m => m !== "local").map(m => {
+    const mi = machines[m];
+    if (mi.host) return `<div class="card section"><div class="top"><span class="emoji">🖥️</span><h3>${m}</h3>
+      <span class="sub" style="margin-left:auto">${mi.host.used_gb}/${mi.host.total_gb} GB · CPU ${mi.host.cpu_percent}% · ${mi.host.cpu_count} cores</span></div>
+      <div class="bar"><i style="width:${mi.host.percent}%" class="${mi.host.percent > 90 ? "crit" : mi.host.percent > 75 ? "hot" : ""}"></i></div></div>`;
+    return `<div class="card section"><div class="top"><span class="emoji">🖥️</span><h3>${m}</h3>
+      <span class="sub" style="margin-left:auto">${mi.reachable ? "no Studio Hub running here" : "offline / unreachable"}</span></div></div>`;
+  }).join("");
   $("#r-body").innerHTML = sum.studios.map(s => {
     const r = sum.resources.studios[s.id];
     return `<tr>
@@ -573,7 +607,26 @@ async function scanAssets() {
 }
 
 // ── remote ────────────────────────────────────────────────────────────────
+async function loadFleet() {
+  const r = await api("/api/hub/fleet").then(x => x.json()).catch(() => null);
+  if (!r) return;
+  $("#fleet-status").textContent = r.fleet_token_set
+    ? "✓ fleet token is set on this Hub — set the same value on your other Macs"
+    : "no fleet token yet — remote specs & control are disabled";
+  if (r.token) $("#fleet-token").value = r.token;
+}
+function genFleet() {
+  const a = new Uint8Array(18); crypto.getRandomValues(a);
+  $("#fleet-token").value = btoa(String.fromCharCode(...a)).replace(/[+/=]/g, "").slice(0, 24);
+}
+async function saveFleet() {
+  const token = $("#fleet-token").value.trim();
+  await api("/api/hub/fleet", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
+  loadFleet(); refresh();
+}
+
 async function loadAccess() {
+  loadFleet();
   const r = await api("/api/hub/access").then(x => x.json()).catch(() => null);
   if (!r) return;
   $("#acc-body").innerHTML = r.addresses.map(a => `<tr>

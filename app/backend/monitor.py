@@ -72,8 +72,13 @@ class StudioMonitor:
     async def poll_all(self):
         await asyncio.gather(*(self._poll_one(s) for s in self.registry))
         # metrics sample + watchdog revival pass (late import: no cycle)
-        from . import metrics
+        from . import metrics, peers
         metrics.on_poll(self.registry, self.status)
+        # refresh peer-Hub resources (TTL-guarded inside)
+        try:
+            await peers.refresh(self.registry, self._client)
+        except Exception:
+            pass
 
     async def _poll_one(self, studio: dict):
         sid = studio["id"]
