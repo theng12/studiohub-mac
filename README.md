@@ -117,8 +117,13 @@ Every Mac keeps running its own studios; ONE Hub coordinates them all:
 
 1. On each other Mac, install whichever studios it should serve (2, 3, or 5).
 2. On the Hub Mac, open **Remote → Add another Mac's studios**, enter that
-   Mac's Tailscale IP and a name — the Hub probes ports 47868-47872 and
-   registers what it finds (or `POST /api/hub/registry/discover`).
+   Mac's Tailscale IP and a name. Two ways to add:
+   - **Discover & Add** — probes the machine now and registers whatever answers
+     (machine must be online). `POST /api/hub/registry/discover {host, machine}`.
+   - **Add manually (offline OK)** — pre-registers the *checked* studios without
+     probing, so you can set a machine up before it's online; it flips from
+     "down" to live automatically when reachable.
+     `POST /api/hub/registry/add {host, machine, modalities}`.
 3. Remote studios join the health grid, catalog, gateway and **worker pools**
    automatically.
 

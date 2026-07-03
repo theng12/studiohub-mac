@@ -76,8 +76,27 @@ def base_url(studio: dict) -> str:
 # Family port convention — used by discovery to infer modality.
 FAMILY_PORTS = {47868: "image", 47869: "music", 47870: "voice",
                 47871: "chat", 47872: "video"}
+MODALITY_PORT = {v: k for k, v in FAMILY_PORTS.items()}
 MODALITY_EMOJI = {"image": "🎨", "music": "🎵", "voice": "🎙️",
                   "chat": "💬", "video": "🎬"}
+
+
+def build_machine_entries(host: str, machine: str, modalities: list[str]) -> list[dict]:
+    """Construct studios.json entries for a machine WITHOUT probing it — so a
+    currently-offline machine can be pre-registered and will simply light up
+    when it comes online."""
+    entries = []
+    for mod in modalities:
+        port = MODALITY_PORT.get(mod)
+        if port is None:
+            continue
+        entries.append({
+            "id": f"{mod}@{machine}",
+            "title": f"{mod.capitalize()} Studio KH ({machine})",
+            "modality": mod, "host": host, "port": port,
+            "machine": machine, "emoji": MODALITY_EMOJI[mod],
+        })
+    return entries
 
 
 def remove_machine(machine: str) -> int:

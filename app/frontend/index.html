@@ -239,14 +239,30 @@
     <div class="card jform section">
       <div class="top"><span class="emoji">🖥️</span><h3>Add another Mac's studios</h3></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        Enter a Tailscale (or LAN) IP. The Hub probes the family ports (47868–47872),
-        <b>permanently adds</b> whichever studios that Mac runs, and they join the worker pools.
+        Enter a Tailscale (or LAN) IP and a name. Added studios are saved
+        <b>permanently</b> and join the worker pools.
       </p>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         <input id="d-host" placeholder="100.x.y.z" style="max-width:200px">
         <input id="d-name" placeholder="machine name (e.g. mac-studio)" style="max-width:240px">
-        <button class="go" onclick="discoverMachine()" style="white-space:nowrap">Discover &amp; Add</button>
       </div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin:4px 0 12px;align-items:center">
+        <span class="muted" style="font-size:12px">Studios it runs:</span>
+        <label class="wd" style="margin:0"><input type="checkbox" class="d-mod" value="image" checked> 🎨 image</label>
+        <label class="wd" style="margin:0"><input type="checkbox" class="d-mod" value="music" checked> 🎵 music</label>
+        <label class="wd" style="margin:0"><input type="checkbox" class="d-mod" value="voice" checked> 🎙️ voice</label>
+        <label class="wd" style="margin:0"><input type="checkbox" class="d-mod" value="chat" checked> 💬 chat</label>
+        <label class="wd" style="margin:0"><input type="checkbox" class="d-mod" value="video" checked> 🎬 video</label>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <button class="go" onclick="discoverMachine()" style="white-space:nowrap">Discover &amp; Add</button>
+        <button class="btn" onclick="addMachineManual()" style="white-space:nowrap">Add manually (offline OK)</button>
+      </div>
+      <p class="sub" style="margin-top:8px">
+        <b>Discover &amp; Add</b> probes the machine now and adds only studios that answer (checkboxes ignored).
+        <b>Add manually</b> pre-registers the <i>checked</i> studios without probing — use this when the
+        machine is off; it'll go from “down” to live automatically when it comes online.
+      </p>
       <div class="sub" id="d-result" style="margin-top:8px"></div>
     </div>
 
@@ -592,6 +608,9 @@ async function removeMachine(m) {
   await api(`/api/hub/registry/machines/${encodeURIComponent(m)}`, { method: "DELETE" });
   loadMachines(); refresh();
 }
+function checkedModalities() {
+  return [...document.querySelectorAll(".d-mod:checked")].map(c => c.value);
+}
 async function discoverMachine() {
   const host = $("#d-host").value.trim();
   if (!host) { $("#d-result").textContent = "enter an IP"; return; }
@@ -602,7 +621,22 @@ async function discoverMachine() {
   }).then(x => x.json()).catch(e => ({ note: String(e) }));
   $("#d-result").textContent = r.found?.length
     ? `found ${r.found.map(f => f.modality).join(", ")} — ${r.registered} newly added (saved permanently)`
-    : (r.note || r.detail || "nothing found");
+    : (r.note || r.detail || "nothing answered — if the machine is off, use “Add manually” instead");
+  loadMachines(); refresh();
+}
+async function addMachineManual() {
+  const host = $("#d-host").value.trim();
+  const modalities = checkedModalities();
+  if (!host) { $("#d-result").textContent = "enter an IP"; return; }
+  if (!modalities.length) { $("#d-result").textContent = "check at least one studio"; return; }
+  $("#d-result").textContent = "saving " + host + "…";
+  const r = await api("/api/hub/registry/add", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ host, machine: $("#d-name").value.trim() || undefined, modalities })
+  }).then(x => x.json()).catch(e => ({ detail: String(e) }));
+  $("#d-result").textContent = r.registered != null
+    ? `added ${r.registered} studio(s) for ${r.machine} — saved; they'll activate when the machine is online`
+    : (r.detail || "failed");
   loadMachines(); refresh();
 }
 

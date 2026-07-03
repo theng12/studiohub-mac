@@ -387,6 +387,32 @@ def remove_machine_route(machine: str):
     return {"ok": True, "removed": removed}
 
 
+@app.post("/api/hub/registry/add")
+def add_machine_manual(body: dict):
+    """Pre-register a machine's studios WITHOUT probing — works while the
+    machine is offline. The entries persist and turn 'up' on their own once the
+    machine is reachable. `modalities` defaults to all five."""
+    from .registry import (FAMILY_PORTS, add_user_entries,
+                           build_machine_entries)
+
+    host = body.get("host")
+    if not host:
+        raise HTTPException(400, "host is required")
+    machine = body.get("machine") or host.replace(".", "-")
+    modalities = body.get("modalities") or list(FAMILY_PORTS.values())
+    valid = set(FAMILY_PORTS.values())
+    bad = [m for m in modalities if m not in valid]
+    if bad:
+        raise HTTPException(400, f"unknown modalities: {bad}")
+    entries = build_machine_entries(host, machine, modalities)
+    added = add_user_entries(entries)
+    monitor.reload_registry()
+    return {"host": host, "machine": machine, "requested": modalities,
+            "registered": added,
+            "note": "saved — will show 'down' until the machine is reachable, "
+                    "then activate automatically"}
+
+
 @app.post("/api/hub/registry/discover")
 async def discover_machine(body: dict):
     """Probe another Mac (LAN/Tailscale IP) for the studio family ports and
