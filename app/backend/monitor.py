@@ -125,11 +125,22 @@ class StudioMonitor:
             # Serve stale on failure rather than nothing.
             return cached[1] if cached else None
 
+    async def _catalog_for_aggregate(self, studio: dict, force: bool):
+        """Fetch only from studios the poller says are UP. Down studios don't
+        get a network call at all — we reuse their last-cached catalog (or
+        contribute nothing). At fleet scale this keeps aggregation fast instead
+        of waiting on dozens of offline studios' timeouts."""
+        sid = studio["id"]
+        if self.status.get(sid, {}).get("status") != "up":
+            cached = self._catalog_cache.get(sid)
+            return cached[1] if cached else None
+        return await self.get_catalog(studio, force=force)
+
     async def aggregate_catalog(self, force: bool = False) -> dict:
         """Merge all studios' catalogs. Models pass through verbatim, annotated
         with hub_studio / hub_modality / hub_machine so clients know the source."""
         results = await asyncio.gather(
-            *(self.get_catalog(s, force=force) for s in self.registry)
+            *(self._catalog_for_aggregate(s, force) for s in self.registry)
         )
         models, per_studio = [], {}
         for studio, catalog in zip(self.registry, results):
