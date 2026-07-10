@@ -19,7 +19,8 @@ from starlette.responses import JSONResponse
 
 from .registry import LAUNCHER_ROOT
 
-TOKEN_FILE = LAUNCHER_ROOT / ".hub_token"
+from .registry import DATA_DIR
+TOKEN_FILE = DATA_DIR / ".hub_token"
 
 # Paths any client may hit without a token.
 PUBLIC_PATHS = {"/", "/api/health", "/api/version"}

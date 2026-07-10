@@ -22,7 +22,7 @@ from . import broadcast, broker, gateway, ledger, metrics, peers, recipes
 from .auth import is_loopback, load_token, make_middleware
 from .control import control_studio
 from .monitor import StudioMonitor
-from .registry import LAUNCHER_ROOT, base_url
+from .registry import DATA_DIR, LAUNCHER_ROOT, base_url
 from .resources import host_stats, studio_process_stats
 
 TITLE = "Studio Hub KH"
@@ -387,10 +387,14 @@ def hub_assets_scan():
 # Guard it so a Hub that pulled the code but hasn't re-run Install/Update still
 # BOOTS — b64/url reference images keep working; only upload-once degrades.
 try:
-    import multipart as _multipart_pkg  # python-multipart
+    import python_multipart as _multipart_pkg  # noqa: F401  (current package name)
     _HAS_MULTIPART = True
 except ImportError:
-    _HAS_MULTIPART = False
+    try:
+        import multipart as _multipart_pkg  # noqa: F401  (older name)
+        _HAS_MULTIPART = True
+    except ImportError:
+        _HAS_MULTIPART = False
 
 if _HAS_MULTIPART:
     @app.post("/api/hub/assets/upload")
@@ -404,7 +408,7 @@ if _HAS_MULTIPART:
         data = await file.read()
         if not data:
             raise HTTPException(400, "empty file")
-        uploads = LAUNCHER_ROOT / "uploads"
+        uploads = DATA_DIR / "uploads"
         uploads.mkdir(exist_ok=True)
         ext = (Path(file.filename or "").suffix or "").lower()
         if ext not in (".png", ".jpg", ".jpeg", ".webp"):

@@ -19,7 +19,8 @@ from pathlib import Path
 from .control import PINOKIO_HOME
 from .registry import LAUNCHER_ROOT
 
-DB_FILE = LAUNCHER_ROOT / "hub.db"
+from .registry import DATA_DIR
+DB_FILE = DATA_DIR / "hub.db"
 
 MEDIA_EXT = {
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image",

@@ -1,0 +1,5 @@
+# Dev/CI only — NOT installed by install.js (keeps the runtime env lean).
+# Run tests:  conda_env/bin/python -m pytest
+-r app/requirements.txt
+pytest>=8
+pytest-asyncio>=0.23

@@ -18,8 +18,19 @@ from pathlib import Path
 
 # Launcher root = two levels up from this file (app/backend/registry.py)
 LAUNCHER_ROOT = Path(__file__).resolve().parents[2]
-REGISTRY_FILE = LAUNCHER_ROOT / "studios.json"
-LABELS_FILE = LAUNCHER_ROOT / "machine_labels.json"
+
+# Where mutable per-machine STATE lives (studios.json, hub.db, .hub_token,
+# .fleet_token, machine_labels.json, hub_state.json, uploads/). Defaults to the
+# launcher root — no behavior change — but overridable via STUDIOHUB_DATA_DIR so
+# tests (and alternate deployments) can point state elsewhere. Code files
+# (VERSION, frontend, the api/ tree for control) always stay under LAUNCHER_ROOT.
+import os as _os
+DATA_DIR = (Path(_os.environ["STUDIOHUB_DATA_DIR"]).resolve()
+            if _os.environ.get("STUDIOHUB_DATA_DIR") else LAUNCHER_ROOT)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+REGISTRY_FILE = DATA_DIR / "studios.json"
+LABELS_FILE = DATA_DIR / "machine_labels.json"
 
 # machine-key -> friendly display name. The KEY (e.g. "local", "imac-pdt") is
 # the technical identity used for control routing and studio ids; the label is

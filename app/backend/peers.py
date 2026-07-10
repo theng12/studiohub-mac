@@ -24,9 +24,9 @@ import time
 
 import httpx
 
-from .registry import LAUNCHER_ROOT
+from .registry import DATA_DIR
 
-FLEET_TOKEN_FILE = LAUNCHER_ROOT / ".fleet_token"
+FLEET_TOKEN_FILE = DATA_DIR / ".fleet_token"
 DEFAULT_HUB_PORT = 47873
 PEER_TTL_S = 12.0
 PEER_TIMEOUT_S = 5.0

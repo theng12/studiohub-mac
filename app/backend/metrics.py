@@ -16,10 +16,10 @@ import time
 from collections import deque
 
 from .control import control_studio
-from .registry import LAUNCHER_ROOT
+from .registry import DATA_DIR
 from .resources import host_stats, studio_process_stats
 
-STATE_FILE = LAUNCHER_ROOT / "hub_state.json"
+STATE_FILE = DATA_DIR / "hub_state.json"
 
 SAMPLE_EVERY_S = 15
 MAX_SAMPLES = 5760  # 24h at 15s

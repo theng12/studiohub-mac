@@ -1,0 +1,77 @@
+def test_health_and_version(client):
+    h = client.get("/api/health").json()
+    assert h["ok"] is True and "app_version" in h
+    v = client.get("/api/version").json()
+    assert v["title"] == "Studio Hub KH"
+
+
+def test_hub_health_and_studios(authed):
+    hh = authed.get("/api/hub/health").json()
+    assert hh["studios_total"] == 5 and hh["studios_up"] == 0
+    studios = authed.get("/api/hub/studios").json()["studios"]
+    assert len(studios) == 5
+    assert all("machine_label" in s for s in studios)
+
+
+def test_update_status(authed):
+    d = authed.get("/api/update-status").json()
+    assert "app_version" in d and "update_available" in d
+
+
+def test_stats_empty(authed):
+    d = authed.get("/api/hub/stats").json()
+    assert d["total"] == 0 and d["by_machine"] == {}
+
+
+def test_models_empty_when_all_down(authed):
+    d = authed.get("/api/hub/models").json()
+    assert d["count"] == 0
+
+
+def test_fleet_get_set(authed):
+    assert authed.get("/api/hub/fleet").json()["fleet_token_set"] is False
+    authed.post("/api/hub/fleet", json={"token": "abc"})
+    assert authed.get("/api/hub/fleet").json()["fleet_token_set"] is True
+
+
+def test_registry_add_rename_remove(authed):
+    r = authed.post("/api/hub/registry/add",
+                    json={"host": "100.9.9.9", "machine": "mac-z",
+                          "modalities": ["image", "voice"]})
+    assert r.json()["registered"] == 2
+    studios = authed.get("/api/hub/studios").json()["studios"]
+    assert any(s["id"] == "image@mac-z" for s in studios)
+    # rename (label alias) — key stays, label changes
+    authed.post("/api/hub/registry/machines/mac-z/name", json={"name": "Zeta"})
+    studios = authed.get("/api/hub/studios").json()["studios"]
+    z = next(s for s in studios if s["machine"] == "mac-z")
+    assert z["machine_label"] == "Zeta" and z["id"] == "image@mac-z"
+    # remove
+    assert authed.request("DELETE", "/api/hub/registry/machines/mac-z").json()["removed"] == 2
+
+
+def test_cannot_remove_local(authed):
+    assert authed.request("DELETE", "/api/hub/registry/machines/local").status_code == 400
+
+
+def test_jobs_submit_list_get_cancel(authed):
+    r = authed.post("/api/hub/jobs", json={"modality": "image", "model": "a/b",
+                                           "items": [{"prompt": "x"}]})
+    bid = r.json()["batch_id"]
+    assert any(b["id"] == bid for b in authed.get("/api/hub/jobs").json()["batches"])
+    got = authed.get(f"/api/hub/jobs/{bid}").json()
+    assert got["total"] == 1 and got["items"][0]["prompt"] == "x"
+    assert authed.request("DELETE", f"/api/hub/jobs/{bid}").json()["ok"] is True
+    assert authed.get("/api/hub/jobs/does-not-exist").status_code == 404
+
+
+def test_jobs_bad_modality_400(authed):
+    r = authed.post("/api/hub/jobs", json={"modality": "nope", "model": "a/b",
+                                           "items": [{"prompt": "x"}]})
+    assert r.status_code == 400
+
+
+def test_watchdog_toggle(authed):
+    r = authed.post("/api/hub/studios/image/watchdog", json={"enabled": True})
+    assert r.json()["watchdog"]["enabled"] is True
+    assert authed.post("/api/hub/studios/bogus/watchdog", json={"enabled": True}).status_code == 404

@@ -27,3 +27,5 @@ machine_labels.json
 uploads/
 service/
 logs/service/
+.pytest_cache/
+app/tests/__pycache__/
