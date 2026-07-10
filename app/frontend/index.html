@@ -322,7 +322,18 @@
 <script>
 const $ = (s) => document.querySelector(s);
 let lastSummary = null;
+let machineLabels = {};                       // machine-key -> friendly name
 const MOD_ORDER = ["image", "chat", "voice", "music", "video"];
+const mlabel = (m) => machineLabels[m] || m;  // display name, fallback to key
+async function renameMachine(m) {
+  const cur = mlabel(m);
+  const name = prompt(`Display name for "${m}":`, cur === m ? "" : cur);
+  if (name === null) return;
+  await api(`/api/hub/registry/machines/${encodeURIComponent(m)}/name`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name })
+  });
+  refresh(); loadMachines();
+}
 
 // ── auth ──────────────────────────────────────────────────────────────────
 let hubToken = localStorage.getItem("hub_token") || "";
@@ -425,7 +436,7 @@ function studioCard(s, sum) {
     <div class="top"><span class="emoji">${s.emoji || "🧩"}</span><h3>${s.title}</h3><span class="dot ${stDot(s)}"></span></div>
     <dl class="kv">
       <dt>Status</dt><dd>${a.pend ? a.pend.action + "ing…" : (stState(s) === "generating" ? '<span class="genbadge">⚡ generating</span>' : s.status)}</dd>
-      <dt>Machine</dt><dd>${s.machine || "local"}</dd>
+      <dt>Machine</dt><dd>${mlabel(s.machine || "local")}</dd>
       <dt>Version</dt><dd>${s.app_version || "—"}</dd>
       <dt>Address</dt><dd>${s.host}:${s.port}</dd>
       <dt>Latency</dt><dd>${s.latency_ms != null ? s.latency_ms + " ms" : "—"}</dd>
@@ -441,7 +452,7 @@ function studioRow(s, sum) {
   return `<div class="lrow">
     <span class="emoji" style="font-size:18px">${s.emoji || "🧩"}</span>
     <div><span class="name">${s.title}</span><br><span class="sub">${s.host}:${s.port}</span></div>
-    <div class="sub">${s.machine || "local"}</div>
+    <div class="sub">${mlabel(s.machine || "local")}</div>
     <div class="st"><span class="dot ${stDot(s)}"></span>${a.pend ? a.pend.action + "ing…" : (stState(s) === "generating" ? '<span class="genbadge">⚡ gen</span>' : s.status)}</div>
     <div class="num">${res ? res.rss_gb + " GB" : (s.app_version ? "v" + s.app_version : "—")}</div>
     <div class="actions" style="margin:0;justify-content:flex-end">${a.html}</div>
@@ -467,7 +478,7 @@ function groupStudios(studios) {
   if (groupBy === "all") return [["All studios", studios]];
   if (groupBy === "machine") {
     const m = {}; studios.forEach(s => (m[s.machine || "local"] = m[s.machine || "local"] || []).push(s));
-    return Object.keys(m).sort((a, b) => (a === "local" ? -1 : b === "local" ? 1 : a.localeCompare(b))).map(k => [k, m[k]]);
+    return Object.keys(m).sort((a, b) => (a === "local" ? -1 : b === "local" ? 1 : a.localeCompare(b))).map(k => [mlabel(k), m[k]]);
   }
   const m = {}; studios.forEach(s => (m[s.modality] = m[s.modality] || []).push(s));
   return MOD_ORDER.filter(k => m[k]).map(k => [k.charAt(0).toUpperCase() + k.slice(1) + " studios", m[k]]);
@@ -571,10 +582,10 @@ function renderResources(sum) {
   const order = Object.keys(machines).filter(m => m !== "local").sort();
   $("#machines-res").innerHTML = order.map(m => {
     const mi = machines[m];
-    if (mi.host) return `<div class="card section mcard"><div class="top" style="margin:0"><span class="emoji">🖥️</span><h3>${m}</h3>
+    if (mi.host) return `<div class="card section mcard"><div class="top" style="margin:0"><span class="emoji">🖥️</span><h3>${mlabel(m)}</h3>
       <span class="sub" style="margin-left:auto">${mi.host.used_gb}/${mi.host.total_gb} GB · CPU ${mi.host.cpu_percent}% · ${mi.host.cpu_count} cores</span></div>
       <div class="bar" style="grid-column:1/-1"><i style="width:${mi.host.percent}%" class="${mi.host.percent > 90 ? "crit" : mi.host.percent > 75 ? "hot" : ""}"></i></div></div>`;
-    return `<div class="card section"><div class="top" style="margin:0"><span class="emoji">🖥️</span><h3>${m}</h3>
+    return `<div class="card section"><div class="top" style="margin:0"><span class="emoji">🖥️</span><h3>${mlabel(m)}</h3>
       <span class="sub" style="margin-left:auto">${mi.reachable ? "no Studio Hub running here" : "offline / unreachable"}</span></div></div>`;
   }).join("");
 
@@ -582,7 +593,7 @@ function renderResources(sum) {
   let groups;
   if (resGroup === "machine") {
     const g = {}; sum.studios.forEach(s => (g[s.machine || "local"] = g[s.machine || "local"] || []).push(s));
-    groups = Object.keys(g).sort((a, b) => (a === "local" ? -1 : b === "local" ? 1 : a.localeCompare(b))).map(k => [k, g[k]]);
+    groups = Object.keys(g).sort((a, b) => (a === "local" ? -1 : b === "local" ? 1 : a.localeCompare(b))).map(k => [mlabel(k), g[k]]);
   } else if (resGroup === "modality") {
     const g = {}; sum.studios.forEach(s => (g[s.modality] = g[s.modality] || []).push(s));
     groups = MOD_ORDER.filter(k => g[k]).map(k => [k, g[k]]);
@@ -708,12 +719,16 @@ async function loadMachines() {
     if (machSort === "studios") return b.up - a.up || a.m.localeCompare(b.m);
     return (b.up > 0) - (a.up > 0) || b.up - a.up || a.m.localeCompare(b.m); // status: any-online first
   });
-  $("#mach-body").innerHTML = entries.map((e, i) => `<tr>
+  $("#mach-body").innerHTML = entries.map((e, i) => {
+    const label = mlabel(e.m);
+    const named = label !== e.m;
+    return `<tr>
     <td class="num"><span class="numbadge">${i + 1}</span></td>
-    <td><b>${e.m}</b> <span class="sub">${e.up}/${e.total} up</span></td>
+    <td><b>${label}</b>${named ? ` <span class="sub">(${e.m})</span>` : ""}${e.m === "local" ? ' <span class="sub">· this Mac</span>' : ""}<br><span class="sub">${e.up}/${e.total} up</span></td>
     <td class="sub">${e.host}</td>
     <td>${e.list.map(s => `<span class="pill ${s.busy ? "gen" : (s.status === "up" ? "dl" : "no")}">${s.emoji || ""} ${s.modality}${s.busy ? " ⚡" : " · " + s.status}</span>`).join(" ")}</td>
-    <td>${e.m !== "local" ? `<button class="btn stop" onclick="removeMachine('${e.m}')">Remove</button>` : '<span class="sub">this Mac</span>'}</td></tr>`).join("");
+    <td style="white-space:nowrap"><button class="btn" onclick="renameMachine('${e.m}')">Rename</button>${e.m !== "local" ? ` <button class="btn stop" onclick="removeMachine('${e.m}')">Remove</button>` : ""}</td></tr>`;
+  }).join("");
 }
 async function removeMachine(m) {
   if (!confirm(`Remove all of ${m}'s studios from the Hub? (The machine itself is untouched.)`)) return;
@@ -744,6 +759,7 @@ async function refresh() {
   try {
     const sum = await api("/api/hub/summary").then(r => r.json());
     lastSummary = sum;
+    machineLabels = Object.fromEntries(sum.studios.map(s => [s.machine || "local", s.machine_label || s.machine || "local"]));
     renderOverview(sum);
     if (!$("#tab-resources").classList.contains("hide")) renderResources(sum);
     $("#last-refresh").textContent = "updated " + new Date().toLocaleTimeString();

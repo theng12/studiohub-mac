@@ -23,3 +23,4 @@ ENVIRONMENT
 hub.db
 hub_state.json
 .fleet_token
+machine_labels.json

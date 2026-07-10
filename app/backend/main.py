@@ -84,11 +84,26 @@ def version():
 @app.get("/api/hub/studios")
 def studios():
     """Registry + live status per studio."""
+    from .registry import load_labels
+
+    labels = load_labels()
     out = []
     for s in monitor.registry:
         st = monitor.status.get(s["id"], {})
-        out.append({**s, "url": base_url(s), **st})
+        machine = s.get("machine", "local")
+        out.append({**s, "url": base_url(s),
+                    "machine_label": labels.get(machine, machine), **st})
     return {"studios": out}
+
+
+@app.post("/api/hub/registry/machines/{machine}/name")
+def rename_machine(machine: str, body: dict):
+    """Set a friendly display name for a machine (the underlying key is
+    unchanged, so control/routing keep working). Works for 'local' too.
+    An empty name clears the alias."""
+    from .registry import set_label
+    set_label(machine, body.get("name", ""))
+    return {"ok": True, "machine": machine, "name": body.get("name") or machine}
 
 
 @app.get("/api/hub/health")

@@ -19,6 +19,37 @@ from pathlib import Path
 # Launcher root = two levels up from this file (app/backend/registry.py)
 LAUNCHER_ROOT = Path(__file__).resolve().parents[2]
 REGISTRY_FILE = LAUNCHER_ROOT / "studios.json"
+LABELS_FILE = LAUNCHER_ROOT / "machine_labels.json"
+
+# machine-key -> friendly display name. The KEY (e.g. "local", "imac-pdt") is
+# the technical identity used for control routing and studio ids; the label is
+# purely cosmetic, so renaming never breaks anything.
+_labels_cache: dict | None = None
+
+
+def load_labels() -> dict:
+    global _labels_cache
+    if _labels_cache is None:
+        try:
+            _labels_cache = json.loads(LABELS_FILE.read_text()) if LABELS_FILE.exists() else {}
+        except (json.JSONDecodeError, OSError):
+            _labels_cache = {}
+    return _labels_cache
+
+
+def set_label(machine: str, name: str):
+    global _labels_cache
+    labels = dict(load_labels())
+    if name and name.strip():
+        labels[machine] = name.strip()
+    else:
+        labels.pop(machine, None)  # empty name clears the alias
+    LABELS_FILE.write_text(json.dumps(labels, indent=2) + "\n")
+    _labels_cache = labels
+
+
+def label_for(machine: str) -> str:
+    return load_labels().get(machine, machine)
 
 # The five sibling studios and their fixed family ports. `app` is the Pinokio
 # launcher folder name under PINOKIO_HOME/api — used by lifecycle control
