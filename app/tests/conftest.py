@@ -20,9 +20,14 @@ from starlette.testclient import TestClient
 
 
 def _reset_state():
-    from backend import auth, broker, ledger, metrics, peers
+    from backend import alerts, auth, broker, ledger, metrics, peers
     from backend import registry as reg
     from backend.main import monitor
+    alerts._recent.clear()
+    try:
+        alerts.ALERTS_FILE.unlink()
+    except FileNotFoundError:
+        pass
     # wipe ALL persisted state between tests (incl. tokens, or one test's token
     # leaks into the next)
     for f in (ledger.DB_FILE, reg.REGISTRY_FILE, reg.LABELS_FILE,

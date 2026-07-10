@@ -18,6 +18,7 @@ and are forwarded verbatim to the studio's own generate endpoint.
 
 import asyncio
 import base64
+import logging
 import time
 import uuid
 from pathlib import Path
@@ -245,24 +246,36 @@ def cancel_batch(batch_id: str) -> bool:
 
 
 async def _maybe_finish(client: httpx.AsyncClient, b: dict):
-    """Persist state; when the batch just reached a terminal state, fire the
-    client's webhook (Story Studio et al) once, best-effort."""
+    """Persist state; when the batch just reached a terminal state, alert on any
+    failures and fire the client's webhook (Story Studio et al) once."""
     ledger.save_batch(b)
+    if b.get("done_notified"):
+        return
+    states = {i["state"] for i in b["items"]}
+    if states & {"queued", "running"}:
+        return  # not terminal yet
+    b["done_notified"] = True
+    ledger.save_batch(b)
+    summary = batch_summary(b)
+    if summary["error"]:
+        from . import alerts
+        alerts.emit("batch_failed",
+                    f"batch {b['id']} ({b['modality']}/{b['model']}): "
+                    f"{summary['error']}/{summary['total']} items failed",
+                    {"batch_id": b["id"], **{k: summary[k] for k in
+                                             ("done", "error", "total")}})
     if b.get("webhook") and not b.get("webhook_sent"):
-        states = {i["state"] for i in b["items"]}
-        if not (states & {"queued", "running"}):
-            b["webhook_sent"] = True
-            ledger.save_batch(b)
-            try:
-                await client.post(b["webhook"], json={
-                    **batch_summary(b),
-                    "items": [{k: it[k] for k in
-                               ("index", "state", "artifact_url",
-                                "artifact_path", "asset_id", "error")}
-                              for it in b["items"]],
-                }, timeout=10.0)
-            except httpx.HTTPError:
-                pass  # client unreachable — batch state is still queryable
+        b["webhook_sent"] = True
+        try:
+            await client.post(b["webhook"], json={
+                **summary,
+                "items": [{k: it[k] for k in
+                           ("index", "state", "artifact_url",
+                            "artifact_path", "asset_id", "error")}
+                          for it in b["items"]],
+            }, timeout=10.0)
+        except httpx.HTTPError:
+            pass  # client unreachable — batch state is still queryable
 
 
 def _eligible_studios(modality: str, routing: str) -> list[dict]:
@@ -336,6 +349,8 @@ async def _dispatch_loop():
             except asyncio.TimeoutError:
                 pass
         except Exception:
+            logging.getLogger("studiohub.broker").exception(
+                "dispatch loop error (continuing)")
             await asyncio.sleep(3)  # the scheduler must never die
 
 

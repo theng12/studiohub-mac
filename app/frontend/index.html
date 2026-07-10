@@ -110,6 +110,7 @@
   <h1>Studio Hub KH</h1>
   <div class="spacer"></div>
   <span class="summary" id="hub-summary"></span>
+  <span id="alert-bell" style="font-size:12.5px;cursor:pointer" title="recent alerts — click for details"></span>
   <span class="ver" id="hub-ver"></span>
   <span class="muted" id="last-refresh" style="font-size:12px"></span>
 </header>
@@ -314,6 +315,20 @@
     </div>
 
     <div class="card jform section">
+      <div class="top"><span class="emoji">🔔</span><h3>Alerts</h3></div>
+      <p class="muted" style="font-size:13px;margin-bottom:10px">
+        Get told when a studio goes down or a batch fails — instead of finding out later.
+        Optional webhook (the event is POSTed to it) and/or a desktop notification.
+      </p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <input id="alert-webhook" placeholder="notification webhook URL (optional)" style="flex:1;min-width:240px">
+        <label class="wd" style="margin:0"><input type="checkbox" id="alert-desktop"> desktop</label>
+        <button class="go" onclick="saveAlerts()">Save</button>
+      </div>
+      <div id="alert-recent" style="margin-top:12px"></div>
+    </div>
+
+    <div class="card jform section">
       <div class="top"><span class="emoji">🖥️</span><h3>Add another Mac's studios</h3></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
         Enter a Tailscale (or LAN) IP and a name. Added studios are saved <b>permanently</b> and join the worker pools.
@@ -393,7 +408,7 @@ document.querySelectorAll("nav button").forEach(btn => {
     btn.classList.add("active");
     TABS.forEach(t => $("#tab-" + t).classList.toggle("hide", t !== btn.dataset.tab));
     if (btn.dataset.tab === "models") loadModels();
-    if (btn.dataset.tab === "remote") { loadAccess(); loadMachines(); }
+    if (btn.dataset.tab === "remote") { loadAccess(); loadMachines(); loadAlerts(); }
     if (btn.dataset.tab === "jobs") { loadJobModels(); loadBatches(); }
     if (btn.dataset.tab === "assets") loadAssets();
     if (btn.dataset.tab === "stats") loadStats();
@@ -804,6 +819,31 @@ async function loadStats() {
 }
 
 // ── remote ────────────────────────────────────────────────────────────────
+const ALERT_ICON = { studio_down: "🔴", studio_recovered: "🟢", batch_failed: "⚠️" };
+async function loadAlerts() {
+  const r = await api("/api/hub/alerts?limit=30").then(x => x.json()).catch(() => null);
+  if (!r) return;
+  $("#alert-webhook").value = r.config.webhook || "";
+  $("#alert-desktop").checked = !!r.config.desktop;
+  $("#alert-recent").innerHTML = r.recent.length
+    ? `<table><thead><tr><th>When</th><th>Event</th></tr></thead><tbody>` +
+      r.recent.map(e => `<tr><td class="sub" style="white-space:nowrap">${new Date(e.ts * 1000).toLocaleString()}</td>
+        <td>${ALERT_ICON[e.kind] || "•"} ${e.message}</td></tr>`).join("") + `</tbody></table>`
+    : `<div class="sub">No alerts yet — a clean fleet.</div>`;
+}
+async function saveAlerts() {
+  await api("/api/hub/alerts", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ webhook: $("#alert-webhook").value.trim(), desktop: $("#alert-desktop").checked }) });
+  loadAlerts();
+}
+function updateBell(recent) {
+  const active = recent.filter(e => (Date.now() / 1000 - e.ts) < 3600 && e.kind !== "studio_recovered").length;
+  const bell = $("#alert-bell");
+  bell.textContent = active ? `🔔 ${active}` : "";
+  bell.style.color = active ? "var(--warn)" : "var(--dim)";
+  bell.onclick = () => document.querySelector('nav button[data-tab="remote"]').click();
+}
+
 async function loadFleet() {
   const r = await api("/api/hub/fleet").then(x => x.json()).catch(() => null);
   if (!r) return;
@@ -886,6 +926,7 @@ async function refresh() {
     machineLabels = Object.fromEntries(sum.studios.map(s => [s.machine || "local", s.machine_label || s.machine || "local"]));
     renderOverview(sum);
     if (!$("#tab-resources").classList.contains("hide")) renderResources(sum);
+    api("/api/hub/alerts?limit=50").then(x => x.json()).then(a => updateBell(a.recent)).catch(() => {});
     $("#last-refresh").textContent = "updated " + new Date().toLocaleTimeString();
   } catch (e) { $("#last-refresh").textContent = "hub unreachable"; }
 }

@@ -7,9 +7,12 @@ the source studio.
 """
 
 import asyncio
+import logging
 import time
 
 import httpx
+
+log = logging.getLogger("studiohub.monitor")
 
 from .registry import base_url, load_registry
 
@@ -66,7 +69,7 @@ class StudioMonitor:
             try:
                 await self.poll_all()
             except Exception:
-                pass  # the poller must never die
+                log.warning("poll cycle failed (continuing)", exc_info=True)
             await asyncio.sleep(POLL_INTERVAL_S)
 
     async def poll_all(self):
@@ -78,23 +81,41 @@ class StudioMonitor:
         # guarded inside) so a slow/offline fleet never stalls the health poll.
         asyncio.create_task(peers.refresh(self.registry, self._client))
 
+    def _note_transition(self, studio: dict, prev: str, new: str):
+        """Fire an alert when a studio flips up<->down (ignore first-poll
+        'unknown' so we don't alert on startup)."""
+        if prev == new or prev == "unknown":
+            return
+        from . import alerts
+        label = studio.get("title", studio["id"])
+        machine = studio.get("machine", "local")
+        if new == "up" and prev == "down":
+            alerts.emit("studio_recovered", f"{label} on {machine} is back up",
+                        {"studio": studio["id"], "machine": machine})
+        elif new != "up" and prev == "up":
+            alerts.emit("studio_down", f"{label} on {machine} went down",
+                        {"studio": studio["id"], "machine": machine})
+
     async def _poll_one(self, studio: dict):
         sid = studio["id"]
         url = f"{base_url(studio)}/api/health"
         started = time.monotonic()
         now = time.time()
+        prev_status = self.status.get(sid, {}).get("status", "unknown")
         try:
             r = await self._client.get(url, timeout=HEALTH_TIMEOUT_S)
             latency_ms = round((time.monotonic() - started) * 1000)
             health = r.json()
+            new_status = "up" if health.get("ok") else "degraded"
             self.status[sid] = {
-                "status": "up" if health.get("ok") else "degraded",
+                "status": new_status,
                 "latency_ms": latency_ms,
                 "app_version": health.get("app_version"),
                 "health": health,  # verbatim — includes chat's loaded_model etc.
                 "last_seen": now,
                 "last_checked": now,
             }
+            self._note_transition(studio, prev_status, new_status)
         except Exception:
             prev = self.status.get(sid, {})
             self.status[sid] = {
@@ -105,6 +126,7 @@ class StudioMonitor:
                 "last_seen": prev.get("last_seen"),
                 "last_checked": now,
             }
+            self._note_transition(studio, prev_status, "down")
 
     # ── catalog ──────────────────────────────────────────────────────────
     async def get_catalog(self, studio: dict, force: bool = False) -> dict | None:

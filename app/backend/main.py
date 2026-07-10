@@ -18,7 +18,7 @@ from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from . import broadcast, broker, gateway, ledger, metrics, peers, recipes
+from . import alerts, broadcast, broker, gateway, ledger, metrics, peers, recipes
 from .auth import is_loopback, load_token, make_middleware
 from .control import control_studio
 from .monitor import StudioMonitor
@@ -27,6 +27,17 @@ from .resources import host_stats, studio_process_stats
 
 TITLE = "Studio Hub KH"
 FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
+
+# Give our loggers a handler regardless of how uvicorn configures logging, so
+# structured warnings/alerts actually reach the service log.
+import logging as _logging
+_hub_log = _logging.getLogger("studiohub")
+if not _hub_log.handlers:
+    _h = _logging.StreamHandler()
+    _h.setFormatter(_logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
+    _hub_log.addHandler(_h)
+    _hub_log.setLevel(_logging.INFO)
+    _hub_log.propagate = False
 
 
 def _app_version() -> str:
@@ -424,6 +435,24 @@ else:
     def hub_asset_upload_unavailable():
         raise HTTPException(501, "upload needs python-multipart — run Update/Install "
                             "on this Hub. b64/url reference images work without it.")
+
+
+@app.get("/api/hub/alerts")
+def get_alerts(limit: int = Query(100, ge=1, le=200)):
+    """Recent alert events + current alert config (studio-down / batch-failed)."""
+    return {"config": alerts.load_config(), "recent": alerts.recent(limit)}
+
+
+@app.post("/api/hub/alerts")
+def set_alerts(body: dict):
+    """Configure alerting: {"webhook": <url|"">, "desktop": <bool>}."""
+    cfg = {}
+    if body.get("webhook"):
+        cfg["webhook"] = str(body["webhook"])
+    if body.get("desktop"):
+        cfg["desktop"] = True
+    alerts.set_config(cfg)
+    return {"ok": True, "config": cfg}
 
 
 @app.get("/api/hub/stats")
