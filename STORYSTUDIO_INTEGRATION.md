@@ -117,6 +117,39 @@ model downloaded**, across all machines. Faster machines naturally do more.
 
 ---
 
+## 4b. Reference images (img2img / edit)
+
+For continuity / style-ref renders, add `reference_images` to an image item's
+`params`. Presence of it makes the job img2img/edit instead of txt2img.
+
+```jsonc
+"items": [{
+  "prompt": "...",
+  "params": {
+    "width": 1080, "height": 1920, "steps": 28, "image_strength": 0.6,
+    "ref_mode": "img2img" | "edit",     // optional; Hub infers from model caps if omitted
+    "reference_images": [               // primary first
+      { "b64": "<base64 image>", "mime": "image/png" }
+      // OR { "asset_id": "<from /api/hub/assets/upload>" }
+      // OR { "url": "http://<tailnet>/…" }
+    ]
+  }
+}]
+```
+
+- **Single reference:** the Hub forwards `reference_images[0]` and ignores the
+  rest — pre-select your primary anchor client-side.
+- **Capability:** only models whose catalog `capabilities` include `img2img` /
+  `edit` are eligible; others return a clean item `error` (not a wrong txt2img).
+  `GET /api/hub/models` → each model's availability; capabilities come from the
+  studio catalog (`GET /studio/image/api/catalog`).
+- **Upload once, reference many** (continuity): `POST /api/hub/assets/upload`
+  (multipart `file`) → `{ asset_id }`; then reference `{ "asset_id": … }` across
+  every scene. Avoids re-sending the character-sheet megabytes per item.
+- Large base64 bodies are accepted (no small cap); prefer JPEG for refs when
+  lossless isn't needed.
+- Everything else (poll / webhook / `artifact_url`) is identical to txt2img.
+
 ## 5. Get results by polling
 
 `GET /api/hub/jobs/<batch_id>` →

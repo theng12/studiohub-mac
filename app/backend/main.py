@@ -14,7 +14,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
@@ -336,6 +336,45 @@ async def hub_models(modality: str | None = None, q: str | None = None,
 @app.post("/api/hub/assets/scan")
 def hub_assets_scan():
     return ledger.scan_outputs(monitor.registry)
+
+
+# The upload-once endpoint receives multipart, which needs python-multipart.
+# Guard it so a Hub that pulled the code but hasn't re-run Install/Update still
+# BOOTS — b64/url reference images keep working; only upload-once degrades.
+try:
+    import multipart as _multipart_pkg  # python-multipart
+    _HAS_MULTIPART = True
+except ImportError:
+    _HAS_MULTIPART = False
+
+if _HAS_MULTIPART:
+    @app.post("/api/hub/assets/upload")
+    async def hub_asset_upload(file: UploadFile = File(...)):
+        """Upload a reference image ONCE, get an asset_id, then reference it from
+        many jobs (`reference_images:[{asset_id}]`) — avoids re-sending megabytes
+        per scene for continuity. The Hub reads the file locally and forwards its
+        bytes to whichever machine runs each job."""
+        import uuid
+        from pathlib import Path
+        data = await file.read()
+        if not data:
+            raise HTTPException(400, "empty file")
+        uploads = LAUNCHER_ROOT / "uploads"
+        uploads.mkdir(exist_ok=True)
+        ext = (Path(file.filename or "").suffix or "").lower()
+        if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+            ext = ".png"
+        asset_id = uuid.uuid4().hex[:12]
+        path = uploads / (asset_id + ext)
+        path.write_bytes(data)
+        ledger.record_asset(id=asset_id, source="upload", modality="image",
+                            machine="local", artifact_path=str(path.resolve()))
+        return {"asset_id": asset_id, "bytes": len(data)}
+else:
+    @app.post("/api/hub/assets/upload")
+    def hub_asset_upload_unavailable():
+        raise HTTPException(501, "upload needs python-multipart — run Update/Install "
+                            "on this Hub. b64/url reference images work without it.")
 
 
 @app.get("/api/hub/stats")

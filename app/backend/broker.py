@@ -17,8 +17,10 @@ and are forwarded verbatim to the studio's own generate endpoint.
 """
 
 import asyncio
+import base64
 import time
 import uuid
+from pathlib import Path
 
 import httpx
 
@@ -26,6 +28,72 @@ from . import ledger
 from .monitor import is_cached
 from .registry import base_url
 from .resources import host_stats
+
+_MIME_EXT = {"image/png": ".png", "image/jpeg": ".jpg", "image/jpg": ".jpg",
+             "image/webp": ".webp"}
+
+
+def _ext(mime: str) -> str:
+    return _MIME_EXT.get((mime or "").lower(), ".png")
+
+
+def _mime_from_path(p: str) -> str:
+    s = p.lower()
+    if s.endswith((".jpg", ".jpeg")):
+        return "image/jpeg"
+    if s.endswith(".webp"):
+        return "image/webp"
+    return "image/png"
+
+
+def _multipart_fields(body: dict) -> dict:
+    """Flatten the JSON param body into the studio's img2img/edit form fields
+    (strings; CSV for lora lists). Unknown fields are ignored by the studio."""
+    out = {}
+    for k in ("repo", "prompt", "negative_prompt", "width", "height", "steps",
+              "guidance", "seed", "image_strength", "quantize"):
+        v = body.get(k)
+        if v is not None:
+            out[k] = str(v)
+    for k in ("lora_names", "lora_scales"):
+        v = body.get(k)
+        if isinstance(v, (list, tuple)):
+            out[k] = ",".join(str(x) for x in v)
+        elif v is not None:
+            out[k] = str(v)
+    return out
+
+
+async def _resolve_reference(client: httpx.AsyncClient, ref: dict):
+    """Turn a reference_images[] entry into (bytes, mime). Supports inline b64,
+    a tailnet url, or an asset_id from the Hub ledger (incl. uploaded refs).
+    Raises ValueError for permanent problems."""
+    if ref.get("b64"):
+        raw = ref["b64"].strip()
+        if raw.startswith("data:") and "," in raw:
+            raw = raw.split(",", 1)[1]  # strip data URL prefix
+        try:
+            return base64.b64decode(raw), ref.get("mime", "image/png")
+        except Exception as e:
+            raise ValueError(f"invalid base64: {e}")
+    if ref.get("url"):
+        r = await client.get(ref["url"], timeout=30.0)
+        r.raise_for_status()
+        return r.content, r.headers.get("content-type", "image/png")
+    if ref.get("asset_id"):
+        a = ledger.get_asset(ref["asset_id"])
+        if not a:
+            raise ValueError(f"asset {ref['asset_id']} not found")
+        p = a.get("artifact_path")
+        if p and Path(p).exists():
+            return Path(p).read_bytes(), _mime_from_path(p)
+        u = a.get("artifact_url")
+        if u:
+            r = await client.get(u, timeout=30.0)
+            r.raise_for_status()
+            return r.content, r.headers.get("content-type", "image/png")
+        raise ValueError("asset has no fetchable bytes")
+    raise ValueError("reference needs one of b64 / url / asset_id")
 
 # modality -> (generate endpoint, prompt field name, artifact suffix)
 MODALITY = {
@@ -262,8 +330,36 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
     body[prompt_field] = item["prompt"]
     if item["seed"] is not None:
         body["seed"] = item["seed"]
+    # Reference-image (img2img / edit) — image modality only. References live in
+    # the item params; forward reference_images[0] as multipart to the studio's
+    # img2img/edit route (single-ref: extra references are ignored — the client
+    # pre-selects its primary anchor).
+    refs = body.pop("reference_images", None) if b["modality"] == "image" else None
+    ref_mode = body.pop("ref_mode", None)
+    body.pop("reference_images", None)  # never forward as JSON on the txt2img path
     try:
-        r = await client.post(f"{base_url(studio)}{endpoint}", json=body)
+        if refs:
+            entry = await _catalog_entry(studio, b["model"])
+            caps = (entry or {}).get("capabilities") or []
+            mode = ref_mode or ("img2img" if "img2img" in caps
+                                else ("edit" if "edit" in caps else None))
+            if not mode or mode not in caps:
+                item["state"] = "error"
+                item["error"] = (f"model {b['model']} does not support reference "
+                                 f"images (needs img2img/edit capability)")
+                return  # terminal — the finally block cleans up
+            try:
+                img_bytes, mime = await _resolve_reference(client, refs[0])
+            except (ValueError, httpx.HTTPError) as e:
+                item["state"] = "error"
+                item["error"] = f"reference image could not be loaded: {e}"
+                return
+            r = await client.post(
+                f"{base_url(studio)}/api/generate/{mode}",
+                data=_multipart_fields(body),
+                files={"image": (f"reference{_ext(mime)}", img_bytes, mime)})
+        else:
+            r = await client.post(f"{base_url(studio)}{endpoint}", json=body)
         if r.status_code >= 400:
             detail = (r.json().get("detail")
                       if "json" in r.headers.get("content-type", "") else r.text)

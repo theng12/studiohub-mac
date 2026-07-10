@@ -88,6 +88,12 @@ def load_unfinished_batches() -> list[dict]:
     return [json.loads(r[0]) for r in rows]
 
 
+def get_asset(asset_id: str) -> dict | None:
+    with _conn() as conn:
+        row = conn.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)).fetchone()
+    return dict(row) if row else None
+
+
 def load_batch(batch_id: str) -> dict | None:
     """Fetch any persisted batch — lets clients query batches that finished
     before a Hub restart (they're no longer in broker memory)."""

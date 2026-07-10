@@ -71,6 +71,8 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/jobs` | **Swarm Batch** — submit a batch (envelope below) |
 | `GET /api/hub/jobs` · `GET /api/hub/jobs/{batch}` · `DELETE /api/hub/jobs/{batch}` | Track / cancel batches |
 | `GET /api/hub/assets` · `POST /api/hub/assets/scan` | Asset ledger (query: `q`, `modality`, `studio`, `batch_id`) |
+| `POST /api/hub/assets/upload` | Upload a reference image once → `{asset_id}` (for img2img continuity) |
+| `GET /api/hub/stats[?hours=N]` | Generation analytics: by machine/modality/model + timeline |
 | `POST /api/hub/recipes/run` | Run a recipe chain (`{recipe, brief}`) |
 | `GET /api/hub/recipes/runs[/{id}]` | Recipe run status |
 | `POST /api/hub/director` | `{brief, auto_run?}` — LLM plans a recipe from plain English |
