@@ -119,6 +119,7 @@
   <button data-tab="resources">Resources</button>
   <button data-tab="jobs">Jobs</button>
   <button data-tab="assets">Assets</button>
+  <button data-tab="stats">Stats</button>
   <button data-tab="remote">Remote</button>
 </nav>
 <main>
@@ -245,6 +246,32 @@
     </div>
   </section>
 
+  <!-- STATS -->
+  <section id="tab-stats" class="hide">
+    <div class="controls">
+      <div class="grp"><label>Window</label>
+        <div class="seg" id="st-win">
+          <button data-v="0">All time</button><button data-v="24">24 h</button><button data-v="1">1 h</button>
+        </div>
+      </div>
+      <span class="sub" id="st-total"></span>
+    </div>
+    <div id="st-tiles" class="grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr));margin-bottom:18px"></div>
+
+    <div class="group-head"><h2>Per machine</h2><span class="meta">who generated what, and how fast</span></div>
+    <div style="overflow:auto;margin-bottom:22px">
+      <table><thead><tr>
+        <th>Machine</th><th class="num">Total</th><th class="num">Avg speed</th><th>Breakdown by app</th>
+      </tr></thead><tbody id="st-machines"></tbody></table>
+    </div>
+
+    <div class="group-head"><h2>Machine × app matrix</h2><span class="meta">count · avg seconds</span></div>
+    <div style="overflow:auto">
+      <table><thead id="st-matrix-head"></thead><tbody id="st-matrix-body"></tbody></table>
+    </div>
+    <p class="muted" style="font-size:11.5px;margin-top:10px">Records come from the asset ledger — every generation the Hub dispatched, tagged with the machine that ran it and its generation time. Chat/LLM steps aren't timed here.</p>
+  </section>
+
   <!-- REMOTE -->
   <section id="tab-remote" class="hide">
     <div class="card section">
@@ -348,7 +375,7 @@ async function api(path, opts = {}) {
 }
 
 // ── tabs ──────────────────────────────────────────────────────────────────
-const TABS = ["overview", "models", "resources", "jobs", "assets", "remote"];
+const TABS = ["overview", "models", "resources", "jobs", "assets", "stats", "remote"];
 document.querySelectorAll("nav button").forEach(btn => {
   btn.onclick = () => {
     document.querySelectorAll("nav button").forEach(b => b.classList.remove("active"));
@@ -358,6 +385,7 @@ document.querySelectorAll("nav button").forEach(btn => {
     if (btn.dataset.tab === "remote") { loadAccess(); loadMachines(); }
     if (btn.dataset.tab === "jobs") { loadJobModels(); loadBatches(); }
     if (btn.dataset.tab === "assets") loadAssets();
+    if (btn.dataset.tab === "stats") loadStats();
     if (btn.dataset.tab === "resources") { loadSpark(); renderResources(lastSummary); }
   };
 });
@@ -677,6 +705,49 @@ let aTimer;
 async function scanAssets() {
   const r = await api("/api/hub/assets/scan", { method: "POST" }).then(x => x.json());
   $("#a-count").textContent = `scan: ${r.added} new of ${r.scanned} files`; loadAssets();
+}
+
+// ── stats ─────────────────────────────────────────────────────────────────
+const MOD_EMOJI = { image: "🎨", music: "🎵", voice: "🎙️", chat: "💬", video: "🎬" };
+let stWin = localStorage.getItem("st_win") || "0";
+initSeg("st-win", stWin, v => { stWin = v; localStorage.setItem("st_win", v); loadStats(); });
+async function loadStats() {
+  const url = "/api/hub/stats" + (stWin !== "0" ? `?hours=${stWin}` : "");
+  const d = await api(url).then(r => r.json()).catch(() => null);
+  if (!d) { $("#st-total").textContent = "stats unavailable"; return; }
+  $("#st-total").textContent = `${d.total} generations recorded${stWin !== "0" ? " in the last " + stWin + "h" : ""}`;
+
+  // tiles per modality
+  const mods = Object.keys(d.by_modality).sort((a, b) => d.by_modality[b].count - d.by_modality[a].count);
+  $("#st-tiles").innerHTML = mods.map(m => {
+    const x = d.by_modality[m];
+    return `<div class="card" style="padding:14px"><div style="font-size:22px">${MOD_EMOJI[m] || "🧩"}</div>
+      <div style="font-size:22px;font-weight:700">${x.count}</div>
+      <div class="sub">${m} · ${x.avg_s != null ? "avg " + x.avg_s + "s" : "—"}</div></div>`;
+  }).join("") || `<div class="empty">No generations recorded yet — run a batch in the Jobs tab</div>`;
+
+  // per-machine table
+  const machines = Object.keys(d.by_machine).sort((a, b) => d.by_machine[b].count - d.by_machine[a].count);
+  $("#st-machines").innerHTML = machines.map(m => {
+    const x = d.by_machine[m];
+    const breakdown = Object.entries(x.modalities).sort((a, b) => b[1] - a[1])
+      .map(([mo, c]) => `<span class="pill dl">${MOD_EMOJI[mo] || ""} ${mo} ${c}</span>`).join(" ");
+    return `<tr><td><b>${mlabel(m)}</b></td><td class="num">${x.count}</td>
+      <td class="num">${x.avg_s != null ? x.avg_s + "s" : "—"}</td><td>${breakdown}</td></tr>`;
+  }).join("") || `<tr><td colspan="4" class="empty">No data</td></tr>`;
+
+  // machine × modality matrix
+  const cellMap = {};
+  d.matrix.forEach(c => { cellMap[c.machine + "|" + c.modality] = c; });
+  const colMods = mods;
+  $("#st-matrix-head").innerHTML = `<tr><th>Machine</th>${colMods.map(m => `<th class="num">${MOD_EMOJI[m] || ""} ${m}</th>`).join("")}</tr>`;
+  $("#st-matrix-body").innerHTML = machines.map(m => {
+    const cells = colMods.map(mo => {
+      const c = cellMap[m + "|" + mo];
+      return `<td class="num">${c ? `<b>${c.count}</b>${c.avg_s != null ? `<br><span class="sub">${c.avg_s}s</span>` : ""}` : "·"}</td>`;
+    }).join("");
+    return `<tr><td>${mlabel(m)}</td>${cells}</tr>`;
+  }).join("") || `<tr><td class="empty">No data</td></tr>`;
 }
 
 // ── remote ────────────────────────────────────────────────────────────────

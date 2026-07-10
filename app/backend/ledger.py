@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS assets (
   artifact_url TEXT,
   batch_id TEXT,
   item_index INTEGER,
-  recipe_id TEXT
+  recipe_id TEXT,
+  duration_s REAL                 -- generation time in seconds (analytics)
 );
 CREATE INDEX IF NOT EXISTS idx_assets_created ON assets(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_assets_batch ON assets(batch_id);
@@ -60,6 +61,12 @@ def _conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
+    # Migration for DBs created before duration_s existed.
+    try:
+        conn.execute("ALTER TABLE assets ADD COLUMN duration_s REAL")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # column already present
     return conn
 
 
@@ -107,6 +114,7 @@ def record_asset(**fields) -> str:
         "batch_id": fields.pop("batch_id", None),
         "item_index": fields.pop("item_index", None),
         "recipe_id": fields.pop("recipe_id", None),
+        "duration_s": fields.pop("duration_s", None),
     }
     with _conn() as conn:
         conn.execute(
@@ -146,6 +154,57 @@ def scan_outputs(registry: list[dict]) -> dict:
                 )
                 added += 1
     return {"scanned": seen, "added": added}
+
+
+def stats(since_s: float | None = None) -> dict:
+    """Generation analytics from the ledger (job-sourced assets only — scanned
+    pre-existing files have no timing/provenance). Returns per-machine and
+    per-modality counts, average/min/max generation seconds, and a
+    machine×modality matrix for spotting who does what and how fast."""
+    where = "source = 'job'"
+    args: list = []
+    if since_s:
+        where += " AND created_at >= ?"
+        args.append(since_s)
+    with _conn() as conn:
+        cells = conn.execute(
+            f"SELECT machine, modality, COUNT(*) c, "
+            f"AVG(duration_s) avg_s, MIN(duration_s) min_s, MAX(duration_s) max_s, "
+            f"SUM(COALESCE(duration_s,0)) sum_s "
+            f"FROM assets WHERE {where} GROUP BY machine, modality", args).fetchall()
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM assets WHERE {where}", args).fetchone()[0]
+
+    def _round(x):
+        return round(x, 2) if x is not None else None
+
+    by_machine: dict = {}
+    by_modality: dict = {}
+    matrix = []
+    for r in cells:
+        machine = r["machine"] or "unknown"
+        modality = r["modality"] or "unknown"
+        matrix.append({"machine": machine, "modality": modality, "count": r["c"],
+                       "avg_s": _round(r["avg_s"]), "min_s": _round(r["min_s"]),
+                       "max_s": _round(r["max_s"])})
+        bm = by_machine.setdefault(machine, {"count": 0, "sum_s": 0.0, "timed": 0,
+                                             "modalities": {}})
+        bm["count"] += r["c"]
+        bm["sum_s"] += r["sum_s"] or 0
+        bm["timed"] += r["c"] if r["avg_s"] is not None else 0
+        bm["modalities"][modality] = r["c"]
+        md = by_modality.setdefault(modality, {"count": 0, "sum_s": 0.0, "timed": 0,
+                                               "machines": {}})
+        md["count"] += r["c"]
+        md["sum_s"] += r["sum_s"] or 0
+        md["timed"] += r["c"] if r["avg_s"] is not None else 0
+        md["machines"][machine] = r["c"]
+    for d in (*by_machine.values(), *by_modality.values()):
+        d["avg_s"] = _round(d["sum_s"] / d["timed"]) if d["timed"] else None
+        d.pop("sum_s", None)
+        d.pop("timed", None)
+    return {"total": total, "by_machine": by_machine, "by_modality": by_modality,
+            "matrix": matrix}
 
 
 def query_assets(q: str | None = None, modality: str | None = None,

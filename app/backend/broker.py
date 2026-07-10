@@ -255,6 +255,7 @@ async def _dispatch_loop():
 
 async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict):
     endpoint, prompt_field, artifact_kind = MODALITY[b["modality"]]
+    t_start = time.time()  # wall-clock fallback for generation duration
     body = dict(b["shared_params"])
     body.update(item["params"])
     body["repo"] = b["model"]
@@ -290,6 +291,11 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             item["artifact_url"] = (
                 f"{base_url(studio)}{j['output_url']}" if j.get("output_url") else None)
             item["state"] = "done"
+            # Prefer the studio's own generation time; fall back to wall-clock.
+            duration = j.get("duration_seconds")
+            if duration is None:
+                duration = round(time.time() - t_start, 2)
+            item["duration_s"] = duration
             item["asset_id"] = ledger.record_asset(
                 source="job", modality=b["modality"], studio=studio["id"],
                 machine=studio.get("machine", "local"), model=b["model"],
@@ -298,6 +304,7 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
                 artifact_path=item["artifact_path"],
                 artifact_url=item["artifact_url"],
                 batch_id=b["id"], item_index=item["index"],
+                duration_s=duration,
             )
             return
     except Exception as e:

@@ -338,6 +338,13 @@ def hub_assets_scan():
     return ledger.scan_outputs(monitor.registry)
 
 
+@app.get("/api/hub/stats")
+def hub_stats(hours: int | None = Query(None, ge=1, description="limit to last N hours")):
+    """Generation analytics: per-machine and per-modality counts + speed."""
+    since = time.time() - hours * 3600 if hours else None
+    return ledger.stats(since_s=since)
+
+
 # ── recipes + director ─────────────────────────────────────────────────────
 @app.post("/api/hub/recipes/run")
 async def hub_run_recipe(body: dict):
