@@ -340,9 +340,13 @@ def hub_assets_scan():
 
 @app.get("/api/hub/stats")
 def hub_stats(hours: int | None = Query(None, ge=1, description="limit to last N hours")):
-    """Generation analytics: per-machine and per-modality counts + speed."""
+    """Generation analytics: per-machine/modality/model counts + speed, plus a
+    time-bucketed throughput series (bucket sized to the window)."""
     since = time.time() - hours * 3600 if hours else None
-    return ledger.stats(since_s=since)
+    bucket = 300 if hours == 1 else (3600 if hours == 24 else 86400)
+    result = ledger.stats(since_s=since)
+    result["timeline"] = ledger.timeline(since, bucket)
+    return result
 
 
 # ── recipes + director ─────────────────────────────────────────────────────

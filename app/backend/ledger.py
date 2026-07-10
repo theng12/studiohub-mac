@@ -174,6 +174,9 @@ def stats(since_s: float | None = None) -> dict:
             f"FROM assets WHERE {where} GROUP BY machine, modality", args).fetchall()
         total = conn.execute(
             f"SELECT COUNT(*) FROM assets WHERE {where}", args).fetchone()[0]
+        model_rows = conn.execute(
+            f"SELECT model, modality, COUNT(*) c, AVG(duration_s) avg_s "
+            f"FROM assets WHERE {where} GROUP BY model", args).fetchall()
 
     def _round(x):
         return round(x, 2) if x is not None else None
@@ -203,8 +206,39 @@ def stats(since_s: float | None = None) -> dict:
         d["avg_s"] = _round(d["sum_s"] / d["timed"]) if d["timed"] else None
         d.pop("sum_s", None)
         d.pop("timed", None)
+    by_model = {r["model"]: {"count": r["c"], "avg_s": _round(r["avg_s"]),
+                             "modality": r["modality"]}
+                for r in model_rows if r["model"]}
     return {"total": total, "by_machine": by_machine, "by_modality": by_modality,
-            "matrix": matrix}
+            "by_model": by_model, "matrix": matrix}
+
+
+def timeline(since_s: float | None, bucket_s: int) -> dict:
+    """Generations bucketed over time, split by modality — for a throughput
+    chart. Returns bucket start-times (unix s) and a count series per modality."""
+    where = "source = 'job'"
+    args: list = []
+    if since_s:
+        where += " AND created_at >= ?"
+        args.append(since_s)
+    bucket_s = int(bucket_s)
+    with _conn() as conn:
+        rows = conn.execute(
+            f"SELECT CAST(created_at / {bucket_s} AS INTEGER) b, modality, COUNT(*) c "
+            f"FROM assets WHERE {where} GROUP BY b, modality ORDER BY b", args).fetchall()
+    if not rows:
+        return {"bucket_s": bucket_s, "buckets": [], "series": {}}
+    bmin = rows[0]["b"]
+    bmax = max(r["b"] for r in rows)
+    n = min(bmax - bmin + 1, 400)  # safety cap
+    series: dict = {}
+    for r in rows:
+        idx = r["b"] - bmin
+        if idx >= n:
+            continue
+        series.setdefault(r["modality"] or "unknown", [0] * n)[idx] += r["c"]
+    buckets = [(bmin + i) * bucket_s for i in range(n)]
+    return {"bucket_s": bucket_s, "buckets": buckets, "series": series}
 
 
 def query_assets(q: str | None = None, modality: str | None = None,
