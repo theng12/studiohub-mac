@@ -16,7 +16,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from . import alerts, broadcast, broker, gateway, ledger, metrics, peers, recipes
 from .auth import is_loopback, load_token, make_middleware
@@ -238,20 +238,61 @@ def hub_resources(local_only: bool = Query(False)):
             "ts": time.time()}
 
 
-@app.get("/api/hub/summary")
-def hub_summary():
-    """One-shot payload for the dashboard poll loop."""
+def _build_summary() -> dict:
     busy = broker.busy_studios()
     studio_list = studios()["studios"]
     for s in studio_list:
         s["busy"] = s["id"] in busy  # 'generating' when up + busy
+    now = time.time()
+    active_alerts = sum(1 for e in alerts.recent(100)
+                        if now - e["ts"] < 3600 and e["kind"] != "studio_recovered")
     return {
         "hub": {"title": TITLE, "app_version": _app_version()},
         "studios": studio_list,
         "resources": hub_resources(),
         "watchdog": metrics.watchdog_status(),
         "jobs": [broker.batch_summary(b) for b in broker.batches.values()],
+        "alerts_active": active_alerts,
     }
+
+
+@app.get("/api/hub/summary")
+def hub_summary():
+    """One-shot dashboard payload (polling fallback)."""
+    return _build_summary()
+
+
+async def _sse_summary(request, interval: float = 2.0):
+    """Yield the summary as SSE frames until the client disconnects. Extracted
+    from the endpoint so it's unit-testable without an endless HTTP stream."""
+    import asyncio
+    import json
+    try:
+        while True:
+            try:
+                if await request.is_disconnected():
+                    break
+            except Exception:
+                break
+            try:
+                yield f"data: {json.dumps(_build_summary())}\n\n"
+            except Exception:
+                yield ": error\n\n"  # keep the stream alive on a transient hiccup
+            await asyncio.sleep(interval)
+    except asyncio.CancelledError:  # client went away mid-sleep
+        pass
+
+
+@app.get("/api/hub/stream")
+async def hub_stream(request: Request):
+    """Server-Sent Events: pushes the summary every ~2s so the dashboard updates
+    live instead of polling. Falls back gracefully — the dashboard reverts to
+    /api/hub/summary polling if the stream drops. Auth: loopback exempt, remote
+    passes ?token= (EventSource can't set headers)."""
+    return StreamingResponse(_sse_summary(request), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "Connection": "keep-alive",
+                                      "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/hub/access")

@@ -409,6 +409,10 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.17.0", date: "2026-07-10", items: [
+    "Dashboard now updates <b>live</b> (Server-Sent Events) instead of polling — faster, lighter; auto-falls back to polling if the stream drops.",
+    "Hardening: fixed a memory-governor batch-error bug, a memory race, and a gateway connection leak — all regression-tested (68 tests).",
+  ] },
   { v: "1.16.1", date: "2026-07-10", items: [
     "This <b>What's New</b> panel + a <code>CHANGELOG.md</code>.",
   ] },
@@ -936,8 +940,7 @@ async function saveAlerts() {
     body: JSON.stringify({ webhook: $("#alert-webhook").value.trim(), desktop: $("#alert-desktop").checked }) });
   loadAlerts();
 }
-function updateBell(recent) {
-  const active = recent.filter(e => (Date.now() / 1000 - e.ts) < 3600 && e.kind !== "studio_recovered").length;
+function updateBell(active) {
   const bell = $("#alert-bell");
   bell.textContent = active ? `🔔 ${active}` : "";
   bell.style.color = active ? "var(--warn)" : "var(--dim)";
@@ -1018,20 +1021,41 @@ async function addMachineManual() {
   loadMachines(); refresh();
 }
 
-// ── poll loop ─────────────────────────────────────────────────────────────
-async function refresh() {
-  try {
-    const sum = await api("/api/hub/summary").then(r => r.json());
-    lastSummary = sum;
-    machineLabels = Object.fromEntries(sum.studios.map(s => [s.machine || "local", s.machine_label || s.machine || "local"]));
-    renderOverview(sum);
-    if (!$("#tab-resources").classList.contains("hide")) renderResources(sum);
-    api("/api/hub/alerts?limit=50").then(x => x.json()).then(a => updateBell(a.recent)).catch(() => {});
-    $("#last-refresh").textContent = "updated " + new Date().toLocaleTimeString();
-  } catch (e) { $("#last-refresh").textContent = "hub unreachable"; }
+// ── live updates (SSE) with a polling fallback ─────────────────────────────
+function applySummary(sum) {
+  lastSummary = sum;
+  machineLabels = Object.fromEntries(sum.studios.map(s => [s.machine || "local", s.machine_label || s.machine || "local"]));
+  renderOverview(sum);
+  if (!$("#tab-resources").classList.contains("hide")) renderResources(sum);
+  updateBell(sum.alerts_active || 0);
+  $("#last-refresh").textContent = "updated " + new Date().toLocaleTimeString();
 }
-refresh();
-setInterval(refresh, 5000);
+async function pollOnce() {
+  try { applySummary(await api("/api/hub/summary").then(r => r.json())); }
+  catch (e) { $("#last-refresh").textContent = "hub unreachable"; }
+}
+// keep the name 'refresh' — lifecycle/registry actions call it for an instant update
+const refresh = pollOnce;
+
+let _es = null, _pollTimer = null;
+function _startPolling() { if (!_pollTimer) { pollOnce(); _pollTimer = setInterval(pollOnce, 5000); } }
+function _stopPolling() { if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; } }
+function startStream() {
+  if (typeof EventSource === "undefined") { _startPolling(); return; }
+  try { if (_es) _es.close(); } catch (e) {}
+  const url = "/api/hub/stream" + (hubToken ? "?token=" + encodeURIComponent(hubToken) : "");
+  _es = new EventSource(url);
+  _es.onopen = () => _stopPolling();                 // stream live → stop polling
+  _es.onmessage = (e) => { try { applySummary(JSON.parse(e.data)); } catch (x) {} };
+  _es.onerror = () => {                               // stream dropped
+    try { _es.close(); } catch (e) {}
+    _es = null;
+    _startPolling();                                 // fall back to polling…
+    setTimeout(startStream, 8000);                   // …and retry the stream later
+  };
+}
+pollOnce();      // instant first paint
+startStream();   // then go live
 </script>
   <!-- ── KH auto-update banner (self-contained; mirrors the studios) ── -->
   <script>

@@ -12,6 +12,20 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.17.0] — 2026-07-10
+
+### Added — live dashboard updates (SSE)
+
+- The dashboard now updates **live over a Server-Sent Events stream** (`GET /api/hub/stream`) instead of polling every 5s — updates in ~2s and lighter on the Hub at fleet scale. If the stream drops it **falls back to polling automatically** and retries the stream.
+
+### Fixed / hardened (all regression-tested)
+
+- **Memory governor:** a too-small *local* machine no longer errors the whole batch when a bigger **remote** studio in the pool could run the model — it skips/waits instead.
+- **Memory race:** two concurrent local jobs could read the same free-RAM snapshot and OOM together; added reservation accounting so the governor accounts for in-flight local dispatches.
+- **Gateway connection leak:** streamed upstream responses are now closed after the proxy response finishes — previously they leaked and could exhaust the connection pool over a long-running service.
+- **Peer refresh** is non-blocking, so a slow/offline fleet never stalls the local health poll.
+- Test suite is now **68 tests** (adds gateway, peers, alerts, SSE) and runs in CI on every push.
+
 ## [1.16.1] — 2026-07-10
 
 ### Added — CHANGELOG + in-app "What's New"
