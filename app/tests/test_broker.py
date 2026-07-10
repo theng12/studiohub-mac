@@ -84,6 +84,37 @@ async def test_resolve_reference_errors(reset):
             await broker._resolve_reference(c, {"asset_id": "missing"})
 
 
+def test_local_gate_skip_when_machine_too_small(reset):
+    # BUG FIX: a too-small LOCAL machine must SKIP (so a bigger remote can take
+    # the job), never error the whole batch.
+    mem = {"min_total": 32, "size": 10}
+    host = {"total_gb": 16, "available_gb": 12}
+    decision, note = broker._local_gate(mem, host)
+    assert decision == "skip" and "32GB" in note
+
+
+def test_local_gate_run_when_fits(reset):
+    decision, _ = broker._local_gate({"min_total": 8, "size": 2},
+                                     {"total_gb": 16, "available_gb": 10})
+    assert decision == "run"
+
+
+def test_local_gate_wait_when_not_enough_free(reset):
+    decision, _ = broker._local_gate({"min_total": 8, "size": 10},
+                                     {"total_gb": 16, "available_gb": 5})
+    assert decision == "wait"
+
+
+def test_local_gate_reservation_prevents_double_load(reset):
+    mem = {"min_total": 8, "size": 6}
+    host = {"total_gb": 16, "available_gb": 10}  # 10 free, model needs 6+1=7
+    assert broker._local_gate(mem, host)[0] == "run"
+    # simulate one in-flight local dispatch reserving 6GB
+    broker._reserved["gb"] = 6.0
+    # now only ~4GB effectively free -> the second must WAIT, not double-load
+    assert broker._local_gate(mem, host)[0] == "wait"
+
+
 def test_restore_batches_requeues_running(reset):
     b = {"id": "bx", "modality": "image", "model": "a/b", "created_at": 1.0,
          "cancelled": False, "shared_params": {}, "routing": "pool",

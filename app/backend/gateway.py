@@ -15,6 +15,7 @@ links (direct host:port) for that.
 import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import Response, StreamingResponse
+from starlette.background import BackgroundTask
 
 from .registry import base_url
 
@@ -63,9 +64,9 @@ async def proxy(studio_id: str, path: str, request: Request):
     )
     try:
         upstream_resp = await _client.send(req, stream=True)
-    except httpx.ConnectError:
+    except httpx.HTTPError as e:
         return Response(
-            f"studio '{studio_id}' unreachable at {base_url(studio)}",
+            f"studio '{studio_id}' unreachable at {base_url(studio)} ({e})",
             status_code=502,
         )
 
@@ -73,9 +74,12 @@ async def proxy(studio_id: str, path: str, request: Request):
         k: v for k, v in upstream_resp.headers.items()
         if k.lower() not in HOP_HEADERS
     }
+    # CRITICAL: close the upstream streamed response when this response finishes
+    # (or the client disconnects), or the httpx connection leaks — over a long-
+    # running service that exhausts the pool and hangs the gateway.
     return StreamingResponse(
         upstream_resp.aiter_raw(),
         status_code=upstream_resp.status_code,
         headers=resp_headers,
-        background=None,
+        background=BackgroundTask(upstream_resp.aclose),
     )

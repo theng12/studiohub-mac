@@ -65,15 +65,32 @@ def _remote_machines(registry: list[dict]) -> dict[str, list[dict]]:
     return out
 
 
+# Guard so overlapping refreshes never pile up (the poll loop fires this every
+# few seconds; a slow/offline fleet must not stack N in-flight refreshes).
+_inflight = {"v": False}
+
+
 async def refresh(registry: list[dict], client: httpx.AsyncClient):
     """Refresh each remote machine's host+studio stats from its peer Hub.
-    TTL-guarded so it only actually hits the network every PEER_TTL_S."""
+    TTL-guarded so it only actually hits the network every PEER_TTL_S. Safe to
+    fire-and-forget: an in-flight guard prevents overlap, and per-peer errors
+    are swallowed so one slow machine can't break the sweep."""
+    if _inflight["v"]:
+        return
     machines = _remote_machines(registry)
     now = time.time()
     stale = [m for m, studios in machines.items()
              if now - _cache.get(m, (0, None))[0] >= PEER_TTL_S]
     if not stale:
         return
+    _inflight["v"] = True
+    try:
+        await _refresh_stale(machines, stale, client, now)
+    finally:
+        _inflight["v"] = False
+
+
+async def _refresh_stale(machines, stale, client, now):
 
     async def one(machine: str, studios: list[dict]):
         s0 = studios[0]

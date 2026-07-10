@@ -74,11 +74,9 @@ class StudioMonitor:
         # metrics sample + watchdog revival pass (late import: no cycle)
         from . import metrics, peers
         metrics.on_poll(self.registry, self.status)
-        # refresh peer-Hub resources (TTL-guarded inside)
-        try:
-            await peers.refresh(self.registry, self._client)
-        except Exception:
-            pass
+        # refresh peer-Hub resources in the background (TTL-guarded + in-flight
+        # guarded inside) so a slow/offline fleet never stalls the health poll.
+        asyncio.create_task(peers.refresh(self.registry, self._client))
 
     async def _poll_one(self, studio: dict):
         sid = studio["id"]

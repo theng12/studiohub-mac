@@ -110,6 +110,29 @@ MEMORY_HEADROOM_GB = 1.0  # keep at least this much free beyond the model's need
 batches: dict[str, dict] = {}
 _busy: set[str] = set()  # studio ids currently running an item for us
 _wakeup = asyncio.Event()
+# Sum of size_gb reserved by in-flight LOCAL dispatches. The memory governor
+# subtracts this from free RAM so two concurrent local dispatches (e.g. image +
+# voice at once) don't both read the same free-RAM snapshot and OOM together.
+_reserved = {"gb": 0.0}
+
+
+def _local_gate(mem: dict, host: dict) -> tuple[str, str | None]:
+    """Memory-governor decision for a LOCAL studio. Returns one of:
+      ("skip", note) — this machine can't run the model at all → try another
+                       studio (a bigger remote may qualify); never errors the batch
+      ("wait", note) — could run, but not enough free RAM right now → defer
+      ("run",  None) — clear to dispatch
+    Remote studios bypass this entirely (paced by their own backend)."""
+    min_total = mem.get("min_total")
+    if min_total and host["total_gb"] < min_total:
+        return ("skip", f"needs a ~{min_total}GB machine; this one has "
+                        f"{host['total_gb']}GB — trying other machines")
+    need_free = (mem.get("size") or 0) + MEMORY_HEADROOM_GB
+    effective_free = host["available_gb"] - _reserved["gb"]
+    if effective_free < need_free:
+        return ("wait", f"waiting for memory: needs ~{need_free:.1f}GB, "
+                        f"~{max(0.0, effective_free):.1f}GB free")
+    return ("run", None)
 
 
 def _monitor():
@@ -283,32 +306,27 @@ async def _dispatch_loop():
                             f"'{b['model']}' not downloaded on {studio['id']} "
                             f"— broadcast the download or try another machine")
                         continue
-                    # ── memory governor (local models only) ──
+                    # ── memory governor (LOCAL studios only; remotes bypass) ──
+                    is_local = studio.get("machine", "local") == "local"
                     mem = None if entry.get("is_cloud") else {
                         "min_total": entry.get("min_unified_memory_gb"),
                         "size": entry.get("size_gb")}
-                    if mem is not None and studio.get("machine", "local") == "local":
-                        host = host_stats()
-                        if mem["min_total"] and host["total_gb"] < mem["min_total"]:
-                            # machine can never run this — fail fast, don't wait
-                            for it in queued:
-                                it["state"] = "error"
-                                it["error"] = (f"model needs a {mem['min_total']}GB machine; "
-                                               f"host has {host['total_gb']}GB")
-                            queued.clear()
-                            ledger.save_batch(b)
-                            break
-                        need_free = (mem["size"] or 0) + MEMORY_HEADROOM_GB
-                        if host["available_gb"] < need_free:
-                            b["governor_note"] = (
-                                f"waiting for memory: needs ~{need_free:.1f}GB free, "
-                                f"{host['available_gb']:.1f}GB available")
-                            continue  # defer rather than OOM
+                    reserve = 0.0
+                    if mem is not None and is_local:
+                        decision, note = _local_gate(mem, host_stats())
+                        if decision != "run":
+                            # skip → another (maybe bigger/remote) studio may take
+                            # it; wait → defer. NEVER errors the whole batch.
+                            b["governor_note"] = f"{studio['id']}: {note}"
+                            continue
+                        reserve = mem.get("size") or 0.0
                     b["governor_note"] = None
                     item = queued.pop(0)
                     item["state"] = "running"
                     item["studio"] = studio["id"]
                     item["tries"] += 1
+                    item["_reserved"] = reserve
+                    _reserved["gb"] += reserve
                     _busy.add(studio["id"])
                     asyncio.create_task(_run_item(client, b, item, studio))
                     assigned = True
@@ -412,6 +430,8 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             item["error"] = str(e)
     finally:
         _busy.discard(studio["id"])
+        _reserved["gb"] = max(0.0, _reserved["gb"] - item.get("_reserved", 0.0))
+        item["_reserved"] = 0.0
         await _maybe_finish(client, b)
         _wakeup.set()
 
