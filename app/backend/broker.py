@@ -120,6 +120,11 @@ def submit_batch(envelope: dict) -> dict:
     return {"batch_id": batch_id, "items": len(items_in)}
 
 
+def busy_studios() -> set:
+    """Studio ids currently running a batch item (i.e. 'generating')."""
+    return set(_busy)
+
+
 def batch_summary(b: dict) -> dict:
     states = [i["state"] for i in b["items"]]
     return {

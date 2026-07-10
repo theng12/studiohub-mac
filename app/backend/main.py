@@ -170,9 +170,13 @@ def hub_resources(local_only: bool = Query(False)):
 @app.get("/api/hub/summary")
 def hub_summary():
     """One-shot payload for the dashboard poll loop."""
+    busy = broker.busy_studios()
+    studio_list = studios()["studios"]
+    for s in studio_list:
+        s["busy"] = s["id"] in busy  # 'generating' when up + busy
     return {
         "hub": {"title": TITLE, "app_version": _app_version()},
-        "studios": studios()["studios"],
+        "studios": studio_list,
         "resources": hub_resources(),
         "watchdog": metrics.watchdog_status(),
         "jobs": [broker.batch_summary(b) for b in broker.batches.values()],

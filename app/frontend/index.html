@@ -8,7 +8,7 @@
   :root {
     --bg: #0d1117; --panel: #161b22; --panel2: #1c2129; --border: #2d333b;
     --text: #e6edf3; --dim: #8b949e; --accent: #58a6ff;
-    --up: #3fb950; --down: #f85149; --warn: #d29922;
+    --up: #3fb950; --down: #f85149; --warn: #d29922; --gen: #d29922;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, "SF Pro Text", "Segoe UI", sans-serif; }
@@ -23,20 +23,20 @@
   nav button.active { color: var(--text); border-bottom-color: var(--accent); }
   main { padding: 20px 22px; max-width: 1240px; margin: 0 auto; }
 
-  /* segmented toggles */
-  .controls { display: flex; gap: 16px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+  /* control bar */
+  .controls { display: flex; gap: 8px 16px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+  .controls .grp { display: flex; align-items: center; gap: 7px; }
   .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-  .seg button { background: var(--panel); border: none; color: var(--dim); font: inherit; font-size: 12.5px; padding: 6px 13px; cursor: pointer; }
+  .seg button { background: var(--panel); border: none; color: var(--dim); font: inherit; font-size: 12.5px; padding: 6px 12px; cursor: pointer; }
   .seg button.on { background: var(--accent); color: #08131f; font-weight: 600; }
-  .controls label { color: var(--dim); font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; margin-right: -8px; }
+  .controls label { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .selctl { background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 12.5px; }
 
-  /* group headings */
   .group-head { display: flex; align-items: baseline; gap: 10px; margin: 22px 0 10px; }
   .group-head:first-child { margin-top: 0; }
   .group-head h2 { font-size: 14px; font-weight: 700; }
   .group-head .meta { color: var(--dim); font-size: 12px; }
 
-  /* cards */
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
   .card .top { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
@@ -46,6 +46,9 @@
   .dot.up { background: var(--up); box-shadow: 0 0 6px var(--up); }
   .dot.down { background: var(--down); }
   .dot.unknown { background: var(--dim); }
+  .dot.gen { background: var(--gen); box-shadow: 0 0 7px var(--gen); animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  .genbadge { color: var(--gen); font-size: 11px; }
   .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; font-size: 12.5px; }
   .kv dt { color: var(--dim); }
   .kv dd { text-align: right; font-variant-numeric: tabular-nums; }
@@ -59,9 +62,8 @@
   .pending { color: var(--warn); font-size: 12px; }
   .wd { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--dim); cursor: pointer; margin-top: 8px; }
 
-  /* list rows */
   .rows { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-  .lrow { display: grid; grid-template-columns: 22px 1.6fr 1fr .8fr .8fr auto; gap: 12px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: 13px; }
+  .lrow { display: grid; grid-template-columns: 22px 1.6fr 1fr .9fr .8fr auto; gap: 12px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: 13px; }
   .lrow:last-child { border-bottom: none; }
   .lrow .name { font-weight: 600; }
   .lrow .sub, .sub { color: var(--dim); font-size: 11.5px; }
@@ -74,20 +76,23 @@
   .hostcard .row { display: flex; gap: 30px; flex-wrap: wrap; }
   .hostcard .stat b { font-size: 20px; font-weight: 700; }
   .hostcard .stat span { color: var(--dim); font-size: 12px; display: block; }
+  .mcard { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; align-items: center; }
 
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
-  th { color: var(--dim); font-weight: 600; font-size: 12px; position: sticky; top: 0; background: var(--bg); }
-  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  th { color: var(--dim); font-weight: 600; font-size: 12px; position: sticky; top: 0; background: var(--bg); cursor: default; }
+  td.num, th.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
   .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--border); color: var(--dim); margin: 1px 2px 1px 0; }
   .pill.dl { color: var(--up); border-color: var(--up); }
   .pill.cloud { color: var(--accent); border-color: var(--accent); }
   .pill.no { color: var(--dim); border-color: var(--border); opacity: .7; }
+  .pill.gen { color: var(--gen); border-color: var(--gen); }
+  .numbadge { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: var(--panel2); border: 1px solid var(--border); font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
 
-  .toolbar { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+  .toolbar { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
   .toolbar input, .toolbar select, .jform input, .jform select, .jform textarea {
     background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 7px 12px; font: inherit; }
-  .toolbar input { flex: 1; min-width: 200px; }
+  .toolbar input.grow { flex: 1; min-width: 200px; }
   .muted { color: var(--dim); } .empty { color: var(--dim); padding: 30px; text-align: center; }
   .card.section { margin-bottom: 16px; }
   .card .top .emoji { font-size: 20px; }
@@ -120,16 +125,25 @@
   <!-- OVERVIEW -->
   <section id="tab-overview">
     <div class="controls">
-      <label>Group</label>
-      <div class="seg" id="grp">
-        <button data-v="all">All</button>
-        <button data-v="app">By app</button>
-        <button data-v="machine">By machine</button>
+      <div class="grp"><label>Status</label>
+        <div class="seg" id="statusf">
+          <button data-v="all">All</button><button data-v="online">Online</button>
+          <button data-v="generating">Generating</button><button data-v="offline">Offline</button>
+        </div>
       </div>
-      <label>View</label>
-      <div class="seg" id="disp">
-        <button data-v="cards">Cards</button>
-        <button data-v="list">List</button>
+      <div class="grp"><label>Group</label>
+        <div class="seg" id="grp">
+          <button data-v="all">None</button><button data-v="app">App</button><button data-v="machine">Machine</button>
+        </div>
+      </div>
+      <div class="grp"><label>Sort</label>
+        <select class="selctl" id="ov-sort">
+          <option value="status">Status</option><option value="name">Name</option>
+          <option value="machine">Machine</option><option value="memory">Memory</option>
+        </select>
+      </div>
+      <div class="grp"><label>View</label>
+        <div class="seg" id="disp"><button data-v="cards">Cards</button><button data-v="list">List</button></div>
       </div>
     </div>
     <div id="ov-body"></div>
@@ -138,29 +152,31 @@
   <!-- MODELS -->
   <section id="tab-models" class="hide">
     <p class="muted" style="margin-bottom:12px;font-size:13px">
-      Every model across <b>all your machines</b>, deduped. <b>Availability</b>
-      shows which machines have each model downloaded — a model can live on your
-      media server but not on this Mac. Jobs are only dispatched to machines that
-      actually have the model.
+      Every model across <b>all your machines</b>, deduped. <b>Availability</b> shows which machines
+      have each downloaded — a model can live on your media server but not this Mac.
     </p>
     <div class="toolbar">
-      <input id="m-search" placeholder="Search models…">
-      <select id="m-modality">
+      <input id="m-search" class="grow" placeholder="Search models…">
+      <select id="m-modality" class="selctl">
         <option value="">All modalities</option>
         <option value="image">Image</option><option value="chat">Chat</option>
-        <option value="voice">Voice</option><option value="music">Music</option>
-        <option value="video">Video</option>
+        <option value="voice">Voice</option><option value="music">Music</option><option value="video">Video</option>
       </select>
-      <select id="m-dl">
+      <select id="m-machine" class="selctl"><option value="">All machines</option></select>
+      <select id="m-dl" class="selctl">
         <option value="">Any availability</option>
-        <option value="true">Downloaded somewhere</option>
-        <option value="false">Not downloaded anywhere</option>
+        <option value="true">Downloaded</option><option value="false">Not downloaded</option>
+      </select>
+      <select id="m-sort" class="selctl">
+        <option value="modality">Sort: Modality</option><option value="name">Sort: Name</option>
+        <option value="avail">Sort: Availability</option><option value="size">Sort: Size</option>
+        <option value="ram">Sort: Min RAM</option>
       </select>
     </div>
     <div id="m-count" class="muted" style="margin-bottom:8px"></div>
     <div style="max-height:70vh;overflow:auto">
       <table><thead><tr>
-        <th>Model</th><th>Type</th><th>Family</th><th>Size</th><th>Min RAM</th><th>Availability</th>
+        <th>Model</th><th>Type</th><th>Family</th><th class="num">Size</th><th class="num">Min RAM</th><th>Availability</th>
       </tr></thead><tbody id="m-body"></tbody></table>
     </div>
   </section>
@@ -178,10 +194,18 @@
       <div class="muted" style="font-size:11px">memory % — last hour</div>
     </div>
     <div id="machines-res"></div>
-    <table><thead><tr>
-      <th>Studio</th><th>Machine</th><th>Status</th><th>PID</th><th>Memory (RSS)</th><th>CPU %</th>
-    </tr></thead><tbody id="r-body"></tbody></table>
-    <p class="muted" style="font-size:11.5px;margin-top:8px">Remote machines report their host RAM and per-studio memory via their own Hub. Studios on a machine that isn't running a Studio Hub show "—" (set up the fleet in the Remote tab).</p>
+    <div class="controls">
+      <div class="grp"><label>Group studios</label>
+        <div class="seg" id="res-grp">
+          <button data-v="machine">Machine</button><button data-v="modality">App</button><button data-v="flat">None</button>
+        </div>
+      </div>
+      <div class="grp"><label>Sort</label>
+        <select class="selctl" id="res-sort"><option value="memory">Memory</option><option value="name">Name</option></select>
+      </div>
+    </div>
+    <div id="res-studios"></div>
+    <p class="muted" style="font-size:11.5px;margin-top:8px">Remote machines report host RAM + per-studio memory via their own Hub. Studios on a machine without a Studio Hub show "—" (set up the fleet in the Remote tab).</p>
   </section>
 
   <!-- JOBS -->
@@ -205,8 +229,8 @@
   <!-- ASSETS -->
   <section id="tab-assets" class="hide">
     <div class="toolbar">
-      <input id="a-search" placeholder="Search prompts / models / paths…">
-      <select id="a-modality">
+      <input id="a-search" class="grow" placeholder="Search prompts / models / paths…">
+      <select id="a-modality" class="selctl">
         <option value="">All types</option>
         <option value="image">image</option><option value="audio">audio</option>
         <option value="video">video</option><option value="voice">voice</option><option value="music">music</option>
@@ -216,7 +240,7 @@
     <div id="a-count" class="muted" style="margin-bottom:8px"></div>
     <div style="max-height:70vh;overflow:auto">
       <table><thead><tr>
-        <th>Asset</th><th>Type</th><th>Studio</th><th>Model</th><th>Seed</th><th>Source</th><th></th>
+        <th>Asset</th><th>Type</th><th>Studio</th><th>Model</th><th class="num">Seed</th><th>Source</th><th></th>
       </tr></thead><tbody id="a-body"></tbody></table>
     </div>
   </section>
@@ -226,8 +250,8 @@
     <div class="card section">
       <div class="top"><span class="emoji">🌐</span><h3>Reach this Hub from other devices</h3></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        Any device on your Tailscale network can use these URLs. Remote clients
-        must send the token (<code>Authorization: Bearer …</code>, <code>X-Hub-Token</code>, or <code>?token=</code>).
+        Any device on your Tailscale network can use these URLs. Remote clients must send the token
+        (<code>Authorization: Bearer …</code>, <code>X-Hub-Token</code>, or <code>?token=</code>).
       </p>
       <table><thead><tr><th>Network</th><th>URL</th><th></th></tr></thead><tbody id="acc-body"></tbody></table>
       <div id="acc-token-wrap" style="margin-top:14px;display:none">
@@ -240,9 +264,8 @@
     <div class="card jform section">
       <div class="top"><span class="emoji">🧩</span><h3>Fleet token — enable remote specs &amp; control</h3></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        To see another Mac's <b>RAM/specs</b> and <b>start/stop its servers</b>, run a Studio Hub on
-        that Mac too, then set the <b>same fleet token</b> on every machine's Hub. Each Hub reports its
-        own machine; this one aggregates them. Without it, remote studios show health only.
+        To see another Mac's <b>RAM/specs</b> and <b>start/stop its servers</b>, run a Studio Hub on that
+        Mac too, then set the <b>same fleet token</b> on every machine's Hub.
       </p>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         <input id="fleet-token" placeholder="paste or generate a shared token" style="flex:1;min-width:240px">
@@ -255,8 +278,7 @@
     <div class="card jform section">
       <div class="top"><span class="emoji">🖥️</span><h3>Add another Mac's studios</h3></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        Enter a Tailscale (or LAN) IP and a name. Added studios are saved
-        <b>permanently</b> and join the worker pools.
+        Enter a Tailscale (or LAN) IP and a name. Added studios are saved <b>permanently</b> and join the worker pools.
       </p>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         <input id="d-host" placeholder="100.x.y.z" style="max-width:200px">
@@ -274,28 +296,24 @@
         <button class="go" onclick="discoverMachine()" style="white-space:nowrap">Discover &amp; Add</button>
         <button class="btn" onclick="addMachineManual()" style="white-space:nowrap">Add manually (offline OK)</button>
       </div>
-      <p class="sub" style="margin-top:8px">
-        <b>Discover &amp; Add</b> probes the machine now and adds only studios that answer (checkboxes ignored).
-        <b>Add manually</b> pre-registers the <i>checked</i> studios without probing — use this when the
-        machine is off; it'll go from “down” to live automatically when it comes online.
-      </p>
       <div class="sub" id="d-result" style="margin-top:8px"></div>
     </div>
 
     <div class="card section">
-      <div class="top"><span class="emoji">🗂️</span><h3>Registered machines</h3></div>
-      <p class="muted" style="font-size:13px;margin-bottom:10px">
-        Saved permanently in <code>studios.json</code> and polled like local studios — they stay
-        listed here and on Overview even while a machine is off.
-      </p>
-      <table><thead><tr><th>Machine</th><th>Address</th><th>Studios</th><th></th></tr></thead><tbody id="mach-body"></tbody></table>
+      <div class="top"><span class="emoji">🗂️</span><h3>Registered machines</h3>
+        <div class="grp" style="margin-left:auto;display:flex;align-items:center;gap:7px">
+          <label style="color:var(--dim);font-size:11px;text-transform:uppercase">Sort</label>
+          <select class="selctl" id="mach-sort"><option value="status">Status</option><option value="name">Name</option><option value="studios">Studios up</option></select>
+        </div>
+      </div>
+      <table><thead><tr><th class="num">#</th><th>Machine</th><th>Address</th><th>Studios</th><th></th></tr></thead><tbody id="mach-body"></tbody></table>
     </div>
 
     <div class="card section">
       <div class="top"><span class="emoji">🔀</span><h3>Gateway — one address for every studio API</h3></div>
       <p class="muted" style="font-size:13px">
         <code>{hub}/studio/image/api/catalog</code> → Image Studio ·
-        <code>{hub}/studio/chat/v1/chat/completions</code> → Chat Studio. Clients like Story Studio store only the Hub address.
+        <code>{hub}/studio/chat/v1/chat/completions</code> → Chat Studio.
       </p>
     </div>
   </section>
@@ -313,11 +331,7 @@ async function api(path, opts = {}) {
   let r = await fetch(path, opts);
   if (r.status === 401) {
     const entered = prompt("This Hub needs a token for remote access.\nOpen the dashboard on the Hub machine (Remote tab) to see it.");
-    if (entered) {
-      hubToken = entered.trim(); localStorage.setItem("hub_token", hubToken);
-      opts.headers["X-Hub-Token"] = hubToken;
-      r = await fetch(path, opts);
-    }
+    if (entered) { hubToken = entered.trim(); localStorage.setItem("hub_token", hubToken); opts.headers["X-Hub-Token"] = hubToken; r = await fetch(path, opts); }
   }
   return r;
 }
@@ -333,27 +347,20 @@ document.querySelectorAll("nav button").forEach(btn => {
     if (btn.dataset.tab === "remote") { loadAccess(); loadMachines(); }
     if (btn.dataset.tab === "jobs") { loadJobModels(); loadBatches(); }
     if (btn.dataset.tab === "assets") loadAssets();
-    if (btn.dataset.tab === "resources") loadSpark();
+    if (btn.dataset.tab === "resources") { loadSpark(); renderResources(lastSummary); }
   };
 });
 
-// ── overview view-mode state ──────────────────────────────────────────────
-let groupBy = localStorage.getItem("ov_group") || "app";
-let display = localStorage.getItem("ov_display") || "cards";
+// generic segmented-control wiring
 function initSeg(id, val, setter) {
   const seg = $("#" + id);
   seg.querySelectorAll("button").forEach(b => {
     b.classList.toggle("on", b.dataset.v === val);
-    b.onclick = () => {
-      seg.querySelectorAll("button").forEach(x => x.classList.remove("on"));
-      b.classList.add("on"); setter(b.dataset.v);
-      renderOverview(lastSummary);
-    };
+    b.onclick = () => { seg.querySelectorAll("button").forEach(x => x.classList.remove("on")); b.classList.add("on"); setter(b.dataset.v); };
   });
 }
-initSeg("grp", groupBy, v => { groupBy = v; localStorage.setItem("ov_group", v); });
-initSeg("disp", display, v => { display = v; localStorage.setItem("ov_display", v); });
 
+// ── shared helpers ────────────────────────────────────────────────────────
 function fmtAgo(ts) {
   if (!ts) return "never";
   const s = Math.max(0, Date.now() / 1000 - ts);
@@ -365,8 +372,24 @@ function studioUrl(s) {
   const host = (s.host === "127.0.0.1" || s.host === "0.0.0.0") ? location.hostname : s.host;
   return `http://${host}:${s.port}`;
 }
-const pendingActions = new Map();
+// three exclusive states
+function stState(s) { return s.status !== "up" ? "offline" : (s.busy ? "generating" : "online"); }
+function stDot(s) { const st = stState(s); return st === "generating" ? "gen" : (s.status === "up" ? "up" : (s.status === "unknown" ? "unknown" : "down")); }
+function stLabel(s) { const st = stState(s); return st === "generating" ? "generating" : s.status; }
+function rss(sum, s) { const r = sum.resources.studios[s.id]; return r ? r.rss_gb : -1; }
 
+// ── overview ──────────────────────────────────────────────────────────────
+let ovStatus = localStorage.getItem("ov_status") || "all";
+let groupBy = localStorage.getItem("ov_group") || "app";
+let ovSort = localStorage.getItem("ov_sort") || "status";
+let display = localStorage.getItem("ov_display") || "cards";
+initSeg("statusf", ovStatus, v => { ovStatus = v; localStorage.setItem("ov_status", v); renderOverview(lastSummary); });
+initSeg("grp", groupBy, v => { groupBy = v; localStorage.setItem("ov_group", v); renderOverview(lastSummary); });
+initSeg("disp", display, v => { display = v; localStorage.setItem("ov_display", v); renderOverview(lastSummary); });
+$("#ov-sort").value = ovSort;
+$("#ov-sort").onchange = e => { ovSort = e.target.value; localStorage.setItem("ov_sort", ovSort); renderOverview(lastSummary); };
+
+const pendingActions = new Map();
 async function lifecycle(id, action) {
   if (action === "stop" && !confirm(`Stop ${id}?`)) return;
   pendingActions.set(id, { action, since: Date.now() });
@@ -378,44 +401,30 @@ async function lifecycle(id, action) {
   refresh();
 }
 async function toggleWatchdog(id, enabled) {
-  await api(`/api/hub/studios/${id}/watchdog`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ enabled })
-  });
+  await api(`/api/hub/studios/${id}/watchdog`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) });
   refresh();
 }
-
 function studioActionsHTML(s, sum) {
   const p = pendingActions.get(s.id);
-  if (p) {
-    const arrived = (p.action === "start" && s.status === "up") || (p.action === "stop" && s.status !== "up");
-    if (arrived || Date.now() - p.since > 180000) pendingActions.delete(s.id);
-  }
+  if (p) { const arr = (p.action === "start" && s.status === "up") || (p.action === "stop" && s.status !== "up"); if (arr || Date.now() - p.since > 180000) pendingActions.delete(s.id); }
   const pend = pendingActions.get(s.id);
   const machine = s.machine || "local";
-  // Local studios: pterm. Remote studios: controllable only if that machine
-  // runs a peer Hub (has_hub) that we can proxy start/stop to.
-  const controllable = machine === "local"
-    ? !!s.app
-    : !!(sum.resources.machines?.[machine]?.has_hub);
+  const controllable = machine === "local" ? !!s.app : !!(sum.resources.machines?.[machine]?.has_hub);
   let html = "";
   if (pend) html = `<button class="btn" disabled>${pend.action}…</button><span class="pending">${pend.action === "start" ? "starting" : "stopping"}…</span>`;
   else if (s.status === "up") html = `<a class="open" href="${studioUrl(s)}" target="_blank">Open UI ↗</a>` + (controllable ? ` <button class="btn stop" onclick="lifecycle('${s.id}','stop')">Stop</button>` : "");
   else if (controllable) html = `<button class="btn" onclick="lifecycle('${s.id}','start')">Start</button>`;
   return { html, controllable, pend };
 }
-
 function studioCard(s, sum) {
   const res = sum.resources.studios[s.id];
-  const cls = s.status === "up" ? "up" : (s.status === "unknown" ? "unknown" : "down");
   const a = studioActionsHTML(s, sum);
-  // Watchdog is a local-only concept — each machine's own Hub watchdogs its studios.
   const wd = (s.machine || "local") === "local" && s.app
     ? `<label class="wd"><input type="checkbox" ${sum.watchdog?.[s.id]?.enabled ? "checked" : ""} onchange="toggleWatchdog('${s.id}', this.checked)"> auto-restart if down</label>` : "";
   return `<div class="card">
-    <div class="top"><span class="emoji">${s.emoji || "🧩"}</span><h3>${s.title}</h3><span class="dot ${cls}"></span></div>
+    <div class="top"><span class="emoji">${s.emoji || "🧩"}</span><h3>${s.title}</h3><span class="dot ${stDot(s)}"></span></div>
     <dl class="kv">
-      <dt>Status</dt><dd>${a.pend ? a.pend.action + "ing…" : s.status}</dd>
+      <dt>Status</dt><dd>${a.pend ? a.pend.action + "ing…" : (stState(s) === "generating" ? '<span class="genbadge">⚡ generating</span>' : s.status)}</dd>
       <dt>Machine</dt><dd>${s.machine || "local"}</dd>
       <dt>Version</dt><dd>${s.app_version || "—"}</dd>
       <dt>Address</dt><dd>${s.host}:${s.port}</dd>
@@ -428,82 +437,126 @@ function studioCard(s, sum) {
 }
 function studioRow(s, sum) {
   const res = sum.resources.studios[s.id];
-  const cls = s.status === "up" ? "up" : (s.status === "unknown" ? "unknown" : "down");
   const a = studioActionsHTML(s, sum);
   return `<div class="lrow">
     <span class="emoji" style="font-size:18px">${s.emoji || "🧩"}</span>
     <div><span class="name">${s.title}</span><br><span class="sub">${s.host}:${s.port}</span></div>
     <div class="sub">${s.machine || "local"}</div>
-    <div class="st"><span class="dot ${cls}"></span>${a.pend ? a.pend.action + "ing…" : s.status}</div>
+    <div class="st"><span class="dot ${stDot(s)}"></span>${a.pend ? a.pend.action + "ing…" : (stState(s) === "generating" ? '<span class="genbadge">⚡ gen</span>' : s.status)}</div>
     <div class="num">${res ? res.rss_gb + " GB" : (s.app_version ? "v" + s.app_version : "—")}</div>
     <div class="actions" style="margin:0;justify-content:flex-end">${a.html}</div>
   </div>`;
 }
-
-function renderGroups(sum) {
-  const studios = sum.studios;
+function passStatus(s) {
+  if (ovStatus === "all") return true;
+  if (ovStatus === "online") return s.status === "up";
+  if (ovStatus === "generating") return !!s.busy;
+  return s.status !== "up"; // offline
+}
+function sortStudios(list, sum) {
+  const rank = s => ({ generating: 0, online: 1, offline: 2 })[stState(s)];
+  return [...list].sort((a, b) => {
+    if (ovSort === "status") return rank(a) - rank(b) || a.title.localeCompare(b.title);
+    if (ovSort === "name") return a.title.localeCompare(b.title);
+    if (ovSort === "machine") return (a.machine || "local").localeCompare(b.machine || "local") || a.title.localeCompare(b.title);
+    if (ovSort === "memory") return rss(sum, b) - rss(sum, a);
+    return 0;
+  });
+}
+function groupStudios(studios) {
   if (groupBy === "all") return [["All studios", studios]];
   if (groupBy === "machine") {
-    const m = {};
-    studios.forEach(s => (m[s.machine || "local"] = m[s.machine || "local"] || []).push(s));
-    // local first, then alphabetical
+    const m = {}; studios.forEach(s => (m[s.machine || "local"] = m[s.machine || "local"] || []).push(s));
     return Object.keys(m).sort((a, b) => (a === "local" ? -1 : b === "local" ? 1 : a.localeCompare(b))).map(k => [k, m[k]]);
   }
-  // by app (modality)
-  const m = {};
-  studios.forEach(s => (m[s.modality] = m[s.modality] || []).push(s));
+  const m = {}; studios.forEach(s => (m[s.modality] = m[s.modality] || []).push(s));
   return MOD_ORDER.filter(k => m[k]).map(k => [k.charAt(0).toUpperCase() + k.slice(1) + " studios", m[k]]);
 }
-
 function renderOverview(sum) {
   if (!sum) return;
   $("#hub-ver").textContent = "v" + sum.hub.app_version;
   const up = sum.studios.filter(s => s.status === "up").length;
+  const gen = sum.studios.filter(s => s.busy).length;
   const machines = new Set(sum.studios.map(s => s.machine || "local")).size;
-  $("#hub-summary").textContent = `${up}/${sum.studios.length} studios up · ${machines} machine${machines > 1 ? "s" : ""}`;
-
-  const groups = renderGroups(sum);
+  $("#hub-summary").textContent = `${up}/${sum.studios.length} up${gen ? " · ⚡" + gen + " generating" : ""} · ${machines} machines`;
+  const filtered = sum.studios.filter(passStatus);
+  const groups = groupStudios(filtered);
   $("#ov-body").innerHTML = groups.map(([title, list]) => {
+    const sorted = sortStudios(list, sum);
     const upN = list.filter(s => s.status === "up").length;
-    const head = `<div class="group-head"><h2>${title}</h2><span class="meta">${upN}/${list.length} up</span></div>`;
+    const genN = list.filter(s => s.busy).length;
+    const head = `<div class="group-head"><h2>${title}</h2><span class="meta">${upN}/${list.length} up${genN ? " · ⚡" + genN : ""}</span></div>`;
     const body = display === "cards"
-      ? `<div class="grid">${list.map(s => studioCard(s, sum)).join("")}</div>`
-      : `<div class="rows">${list.map(s => studioRow(s, sum)).join("")}</div>`;
+      ? `<div class="grid">${sorted.map(s => studioCard(s, sum)).join("")}</div>`
+      : `<div class="rows">${sorted.map(s => studioRow(s, sum)).join("")}</div>`;
     return head + body;
-  }).join("");
+  }).join("") || `<div class="empty">No studios match this filter</div>`;
 }
 
 // ── models ────────────────────────────────────────────────────────────────
+let modelsData = [];
+let mMachine = localStorage.getItem("m_machine") || "";
+let mSort = localStorage.getItem("m_sort") || "modality";
 async function loadModels() {
   const p = new URLSearchParams();
   const q = $("#m-search").value.trim(); if (q) p.set("q", q);
   const mod = $("#m-modality").value; if (mod) p.set("modality", mod);
   const dl = $("#m-dl").value; if (dl) p.set("downloaded", dl);
   const res = await api("/api/hub/models?" + p).then(r => r.json()).catch(() => null);
+  modelsData = res ? res.models : null;
+  renderModels();
+}
+function renderModels() {
   const body = $("#m-body");
-  if (!res) { body.innerHTML = `<tr><td colspan="6" class="empty">Catalog unavailable</td></tr>`; return; }
-  const dlCount = res.models.filter(m => m.downloaded && !m.is_cloud).length;
-  $("#m-count").textContent = `${res.count} distinct models · ${dlCount} downloaded on at least one machine`;
-  body.innerHTML = res.models.map(m => {
+  if (!modelsData) { body.innerHTML = `<tr><td colspan="6" class="empty">Catalog unavailable</td></tr>`; return; }
+  // machine dropdown (union of cached_on), preserving selection
+  const machines = [...new Set(modelsData.flatMap(m => m.cached_on))].sort();
+  const sel = $("#m-machine");
+  if (sel.dataset.sig !== machines.join()) {
+    sel.dataset.sig = machines.join();
+    sel.innerHTML = `<option value="">All machines</option>` + machines.map(m => `<option value="${m}">${m}</option>`).join("");
+    sel.value = mMachine;
+  }
+  let rows = modelsData;
+  if (mMachine) rows = rows.filter(m => m.cached_on.includes(mMachine));
+  const cmp = {
+    modality: (a, b) => (a.modality || "").localeCompare(b.modality || "") || a.label.localeCompare(b.label),
+    name: (a, b) => a.label.localeCompare(b.label),
+    avail: (a, b) => (b.cached_on.length) - (a.cached_on.length) || a.label.localeCompare(b.label),
+    size: (a, b) => (b.size_gb || 0) - (a.size_gb || 0),
+    ram: (a, b) => (b.min_unified_memory_gb || 0) - (a.min_unified_memory_gb || 0),
+  }[mSort];
+  rows = [...rows].sort(cmp);
+  const dlCount = rows.filter(m => m.downloaded && !m.is_cloud).length;
+  $("#m-count").textContent = `${rows.length} models${mMachine ? " on " + mMachine : ""} · ${dlCount} downloaded`;
+  body.innerHTML = rows.map(m => {
     let avail;
     if (m.is_cloud) avail = `<span class="pill cloud">cloud</span>`;
-    else if (m.cached_on.length) avail = m.cached_on.map(mc => `<span class="pill dl">${mc}</span>`).join("");
+    else if (m.cached_on.length) avail = `<span class="numbadge">${m.cached_on.length}</span> ` + m.cached_on.map(mc => `<span class="pill dl">${mc}</span>`).join("");
     else avail = `<span class="pill no">not downloaded</span>`;
     return `<tr>
       <td><b>${m.label}</b><br><span class="sub">${m.repo}</span></td>
-      <td>${m.modality}</td>
-      <td>${m.family_label || "—"}</td>
+      <td>${m.modality}</td><td>${m.family_label || "—"}</td>
       <td class="num">${m.size_gb != null ? m.size_gb + " GB" : "—"}</td>
       <td class="num">${m.min_unified_memory_gb != null ? m.min_unified_memory_gb + " GB" : "—"}</td>
-      <td>${avail}</td>
-    </tr>`;
+      <td>${avail}</td></tr>`;
   }).join("") || `<tr><td colspan="6" class="empty">No models match</td></tr>`;
 }
 let mTimer;
 ["m-search", "m-modality", "m-dl"].forEach(id => $("#" + id).addEventListener("input", () => { clearTimeout(mTimer); mTimer = setTimeout(loadModels, 250); }));
+$("#m-machine").addEventListener("change", e => { mMachine = e.target.value; localStorage.setItem("m_machine", mMachine); renderModels(); });
+$("#m-sort").value = mSort;
+$("#m-sort").addEventListener("change", e => { mSort = e.target.value; localStorage.setItem("m_sort", mSort); renderModels(); });
 
 // ── resources ─────────────────────────────────────────────────────────────
+let resGroup = localStorage.getItem("res_group") || "machine";
+let resSort = localStorage.getItem("res_sort") || "memory";
+initSeg("res-grp", resGroup, v => { resGroup = v; localStorage.setItem("res_group", v); renderResources(lastSummary); });
+$("#res-sort").value = resSort;
+$("#res-sort").onchange = e => { resSort = e.target.value; localStorage.setItem("res_sort", resSort); renderResources(lastSummary); };
+
 function renderResources(sum) {
+  if (!sum) return;
   const h = sum.resources.host;
   $("#host-stats").innerHTML = `
     <div class="stat"><b>${h.used_gb} / ${h.total_gb} GB</b><span>memory used</span></div>
@@ -511,26 +564,41 @@ function renderResources(sum) {
     <div class="stat"><b>${h.cpu_percent}%</b><span>CPU (${h.cpu_count} cores)</span></div>
     <div class="stat"><b>${h.load_avg ? h.load_avg.join(" · ") : "—"}</b><span>load 1/5/15m</span></div>`;
   const bar = $("#host-mem-bar");
-  bar.style.width = h.percent + "%";
-  bar.className = h.percent > 90 ? "crit" : (h.percent > 75 ? "hot" : "");
+  bar.style.width = h.percent + "%"; bar.className = h.percent > 90 ? "crit" : (h.percent > 75 ? "hot" : "");
   $("#host-mem-label").textContent = h.percent + "% of unified memory in use";
-  // Per-machine host specs (this Mac + peer Hubs)
+
   const machines = sum.resources.machines || {};
-  const order = Object.keys(machines).sort((a, b) => (a === "local" ? -1 : b === "local" ? 1 : a.localeCompare(b)));
-  $("#machines-res").innerHTML = order.filter(m => m !== "local").map(m => {
+  const order = Object.keys(machines).filter(m => m !== "local").sort();
+  $("#machines-res").innerHTML = order.map(m => {
     const mi = machines[m];
-    if (mi.host) return `<div class="card section"><div class="top"><span class="emoji">🖥️</span><h3>${m}</h3>
+    if (mi.host) return `<div class="card section mcard"><div class="top" style="margin:0"><span class="emoji">🖥️</span><h3>${m}</h3>
       <span class="sub" style="margin-left:auto">${mi.host.used_gb}/${mi.host.total_gb} GB · CPU ${mi.host.cpu_percent}% · ${mi.host.cpu_count} cores</span></div>
-      <div class="bar"><i style="width:${mi.host.percent}%" class="${mi.host.percent > 90 ? "crit" : mi.host.percent > 75 ? "hot" : ""}"></i></div></div>`;
-    return `<div class="card section"><div class="top"><span class="emoji">🖥️</span><h3>${m}</h3>
+      <div class="bar" style="grid-column:1/-1"><i style="width:${mi.host.percent}%" class="${mi.host.percent > 90 ? "crit" : mi.host.percent > 75 ? "hot" : ""}"></i></div></div>`;
+    return `<div class="card section"><div class="top" style="margin:0"><span class="emoji">🖥️</span><h3>${m}</h3>
       <span class="sub" style="margin-left:auto">${mi.reachable ? "no Studio Hub running here" : "offline / unreachable"}</span></div></div>`;
   }).join("");
-  $("#r-body").innerHTML = sum.studios.map(s => {
-    const r = sum.resources.studios[s.id];
-    return `<tr>
-      <td>${s.emoji || ""} ${s.title}</td><td>${s.machine || "local"}</td><td>${s.status}</td>
-      <td class="num">${r ? r.pid : "—"}</td><td class="num">${r ? r.rss_gb + " GB" : "—"}</td><td class="num">${r ? r.cpu_percent : "—"}</td>
-    </tr>`;
+
+  // grouped per-studio table
+  let groups;
+  if (resGroup === "machine") {
+    const g = {}; sum.studios.forEach(s => (g[s.machine || "local"] = g[s.machine || "local"] || []).push(s));
+    groups = Object.keys(g).sort((a, b) => (a === "local" ? -1 : b === "local" ? 1 : a.localeCompare(b))).map(k => [k, g[k]]);
+  } else if (resGroup === "modality") {
+    const g = {}; sum.studios.forEach(s => (g[s.modality] = g[s.modality] || []).push(s));
+    groups = MOD_ORDER.filter(k => g[k]).map(k => [k, g[k]]);
+  } else groups = [["All studios", sum.studios]];
+
+  const sortG = list => [...list].sort((a, b) => resSort === "memory" ? rss(sum, b) - rss(sum, a) : a.title.localeCompare(b.title));
+  $("#res-studios").innerHTML = groups.map(([title, list]) => {
+    const rows = sortG(list).map(s => {
+      const r = sum.resources.studios[s.id];
+      return `<tr>
+        <td>${s.emoji || ""} ${s.title} ${stState(s) === "generating" ? '<span class="genbadge">⚡</span>' : ""}</td>
+        <td>${s.machine || "local"}</td><td>${stLabel(s)}</td>
+        <td class="num">${r ? r.pid : "—"}</td><td class="num">${r ? r.rss_gb + " GB" : "—"}</td><td class="num">${r ? r.cpu_percent : "—"}</td></tr>`;
+    }).join("");
+    return `<div class="group-head"><h2>${title}</h2></div>
+      <table><thead><tr><th>Studio</th><th>Machine</th><th>Status</th><th class="num">PID</th><th class="num">Memory</th><th class="num">CPU %</th></tr></thead><tbody>${rows}</tbody></table>`;
   }).join("");
 }
 async function loadSpark() {
@@ -553,10 +621,7 @@ async function submitBatch() {
   const model = $("#j-model").value;
   if (!prompts.length || !model) { $("#j-status").textContent = "need a model and at least one prompt"; return; }
   $("#j-status").textContent = "submitting…";
-  const r = await api("/api/hub/jobs", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ modality: $("#j-modality").value, model, items: prompts.map(p => ({ prompt: p })) })
-  });
+  const r = await api("/api/hub/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modality: $("#j-modality").value, model, items: prompts.map(p => ({ prompt: p })) }) });
   const d = await r.json();
   $("#j-status").textContent = r.ok ? `batch ${d.batch_id} queued (${d.items} items)` : (d.detail || "failed");
   loadBatches();
@@ -570,8 +635,7 @@ async function loadBatches() {
     return `<div class="card section">
       <div class="top"><h3 style="font-size:13.5px">${b.modality} · ${b.model}</h3>
         <span class="sub" style="margin-left:auto">${b.done}/${b.total} done${b.error ? ` · ${b.error} failed` : ""}${b.running ? ` · ${b.running} running` : ""}</span>
-        ${active ? `<button class="btn stop" style="margin-left:10px" onclick="cancelBatch('${b.id}')">Cancel</button>` : ""}
-      </div>
+        ${active ? `<button class="btn stop" style="margin-left:10px" onclick="cancelBatch('${b.id}')">Cancel</button>` : ""}</div>
       <div class="prog"><i style="width:${pct}%"></i></div>
       <div class="sub" style="margin-top:4px">batch ${b.id}${b.label ? " · from " + b.label : ""}${b.cancelled ? " · cancelled" : ""}${b.governor_note ? " · ⏳ " + b.governor_note : ""}</div>
     </div>`;
@@ -592,18 +656,16 @@ async function loadAssets() {
     return `<tr>
       <td><b>${name}</b>${a.prompt ? `<br><span class="sub">${a.prompt.slice(0, 80)}</span>` : ""}</td>
       <td>${a.modality || "—"}</td><td>${a.studio || "—"}</td>
-      <td class="num">${a.model ? a.model.split("/").pop() : "—"}</td><td class="num">${a.seed ?? "—"}</td>
+      <td>${a.model ? a.model.split("/").pop() : "—"}</td><td class="num">${a.seed ?? "—"}</td>
       <td><span class="pill ${a.source === "job" ? "dl" : ""}">${a.source}</span></td>
-      <td>${a.artifact_url ? `<a class="open" href="${a.artifact_url}" target="_blank">open ↗</a>` : (a.exists ? "" : '<span class="sub">missing</span>')}</td>
-    </tr>`;
+      <td>${a.artifact_url ? `<a class="open" href="${a.artifact_url}" target="_blank">open ↗</a>` : (a.exists ? "" : '<span class="sub">missing</span>')}</td></tr>`;
   }).join("") || `<tr><td colspan="7" class="empty">No assets — generate something or hit Scan</td></tr>`;
 }
 let aTimer;
 ["a-search", "a-modality"].forEach(id => $("#" + id).addEventListener("input", () => { clearTimeout(aTimer); aTimer = setTimeout(loadAssets, 250); }));
 async function scanAssets() {
   const r = await api("/api/hub/assets/scan", { method: "POST" }).then(x => x.json());
-  $("#a-count").textContent = `scan: ${r.added} new of ${r.scanned} files`;
-  loadAssets();
+  $("#a-count").textContent = `scan: ${r.added} new of ${r.scanned} files`; loadAssets();
 }
 
 // ── remote ────────────────────────────────────────────────────────────────
@@ -615,16 +677,12 @@ async function loadFleet() {
     : "no fleet token yet — remote specs & control are disabled";
   if (r.token) $("#fleet-token").value = r.token;
 }
-function genFleet() {
-  const a = new Uint8Array(18); crypto.getRandomValues(a);
-  $("#fleet-token").value = btoa(String.fromCharCode(...a)).replace(/[+/=]/g, "").slice(0, 24);
-}
+function genFleet() { const a = new Uint8Array(18); crypto.getRandomValues(a); $("#fleet-token").value = btoa(String.fromCharCode(...a)).replace(/[+/=]/g, "").slice(0, 24); }
 async function saveFleet() {
   const token = $("#fleet-token").value.trim();
   await api("/api/hub/fleet", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
   loadFleet(); refresh();
 }
-
 async function loadAccess() {
   loadFleet();
   const r = await api("/api/hub/access").then(x => x.json()).catch(() => null);
@@ -632,64 +690,52 @@ async function loadAccess() {
   $("#acc-body").innerHTML = r.addresses.map(a => `<tr>
     <td><span class="pill ${a.kind === "tailscale" ? "cloud" : ""}">${a.kind}</span> <span class="sub">${a.interface}</span></td>
     <td><code>${a.url}</code></td>
-    <td><button class="btn" onclick="navigator.clipboard.writeText('${a.url}')">Copy</button></td>
-  </tr>`).join("") || `<tr><td colspan="3" class="empty">No non-loopback interfaces</td></tr>`;
-  if (r.token) {
-    $("#acc-token-wrap").style.display = "block";
-    $("#acc-token").textContent = r.token;
-    $("#acc-copy").onclick = () => navigator.clipboard.writeText(r.token);
-  }
+    <td><button class="btn" onclick="navigator.clipboard.writeText('${a.url}')">Copy</button></td></tr>`).join("") || `<tr><td colspan="3" class="empty">No non-loopback interfaces</td></tr>`;
+  if (r.token) { $("#acc-token-wrap").style.display = "block"; $("#acc-token").textContent = r.token; $("#acc-copy").onclick = () => navigator.clipboard.writeText(r.token); }
 }
+let machSort = localStorage.getItem("mach_sort") || "status";
+$("#mach-sort").value = machSort;
+$("#mach-sort").onchange = e => { machSort = e.target.value; localStorage.setItem("mach_sort", machSort); loadMachines(); };
 async function loadMachines() {
   const r = await api("/api/hub/studios").then(x => x.json()).catch(() => null);
   if (!r) return;
   const byM = {};
   r.studios.forEach(s => (byM[s.machine || "local"] = byM[s.machine || "local"] || []).push(s));
-  const order = Object.keys(byM).sort((a, b) => (a === "local" ? -1 : b === "local" ? 1 : a.localeCompare(b)));
-  $("#mach-body").innerHTML = order.map(m => {
-    const list = byM[m];
-    return `<tr>
-      <td><b>${m}</b></td>
-      <td class="sub">${list[0].host}</td>
-      <td>${list.map(s => `<span class="pill ${s.status === "up" ? "dl" : "no"}">${s.emoji || ""} ${s.modality} · ${s.status}</span>`).join(" ")}</td>
-      <td>${m !== "local" ? `<button class="btn stop" onclick="removeMachine('${m}')">Remove</button>` : '<span class="sub">this Mac</span>'}</td>
-    </tr>`;
-  }).join("");
+  let entries = Object.entries(byM).map(([m, list]) => ({ m, list, host: list[0].host, up: list.filter(s => s.status === "up").length, total: list.length }));
+  entries.sort((a, b) => {
+    if (a.m === "local") return -1; if (b.m === "local") return 1;
+    if (machSort === "name") return a.m.localeCompare(b.m);
+    if (machSort === "studios") return b.up - a.up || a.m.localeCompare(b.m);
+    return (b.up > 0) - (a.up > 0) || b.up - a.up || a.m.localeCompare(b.m); // status: any-online first
+  });
+  $("#mach-body").innerHTML = entries.map((e, i) => `<tr>
+    <td class="num"><span class="numbadge">${i + 1}</span></td>
+    <td><b>${e.m}</b> <span class="sub">${e.up}/${e.total} up</span></td>
+    <td class="sub">${e.host}</td>
+    <td>${e.list.map(s => `<span class="pill ${s.busy ? "gen" : (s.status === "up" ? "dl" : "no")}">${s.emoji || ""} ${s.modality}${s.busy ? " ⚡" : " · " + s.status}</span>`).join(" ")}</td>
+    <td>${e.m !== "local" ? `<button class="btn stop" onclick="removeMachine('${e.m}')">Remove</button>` : '<span class="sub">this Mac</span>'}</td></tr>`).join("");
 }
 async function removeMachine(m) {
   if (!confirm(`Remove all of ${m}'s studios from the Hub? (The machine itself is untouched.)`)) return;
   await api(`/api/hub/registry/machines/${encodeURIComponent(m)}`, { method: "DELETE" });
   loadMachines(); refresh();
 }
-function checkedModalities() {
-  return [...document.querySelectorAll(".d-mod:checked")].map(c => c.value);
-}
+function checkedModalities() { return [...document.querySelectorAll(".d-mod:checked")].map(c => c.value); }
 async function discoverMachine() {
   const host = $("#d-host").value.trim();
   if (!host) { $("#d-result").textContent = "enter an IP"; return; }
   $("#d-result").textContent = "probing " + host + "…";
-  const r = await api("/api/hub/registry/discover", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ host, machine: $("#d-name").value.trim() || undefined })
-  }).then(x => x.json()).catch(e => ({ note: String(e) }));
-  $("#d-result").textContent = r.found?.length
-    ? `found ${r.found.map(f => f.modality).join(", ")} — ${r.registered} newly added (saved permanently)`
-    : (r.note || r.detail || "nothing answered — if the machine is off, use “Add manually” instead");
+  const r = await api("/api/hub/registry/discover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ host, machine: $("#d-name").value.trim() || undefined }) }).then(x => x.json()).catch(e => ({ note: String(e) }));
+  $("#d-result").textContent = r.found?.length ? `found ${r.found.map(f => f.modality).join(", ")} — ${r.registered} newly added (saved permanently)` : (r.note || r.detail || "nothing answered — if the machine is off, use “Add manually” instead");
   loadMachines(); refresh();
 }
 async function addMachineManual() {
-  const host = $("#d-host").value.trim();
-  const modalities = checkedModalities();
+  const host = $("#d-host").value.trim(); const modalities = checkedModalities();
   if (!host) { $("#d-result").textContent = "enter an IP"; return; }
   if (!modalities.length) { $("#d-result").textContent = "check at least one studio"; return; }
   $("#d-result").textContent = "saving " + host + "…";
-  const r = await api("/api/hub/registry/add", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ host, machine: $("#d-name").value.trim() || undefined, modalities })
-  }).then(x => x.json()).catch(e => ({ detail: String(e) }));
-  $("#d-result").textContent = r.registered != null
-    ? `added ${r.registered} studio(s) for ${r.machine} — saved; they'll activate when the machine is online`
-    : (r.detail || "failed");
+  const r = await api("/api/hub/registry/add", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ host, machine: $("#d-name").value.trim() || undefined, modalities }) }).then(x => x.json()).catch(e => ({ detail: String(e) }));
+  $("#d-result").textContent = r.registered != null ? `added ${r.registered} studio(s) for ${r.machine} — saved; they'll activate when online` : (r.detail || "failed");
   loadMachines(); refresh();
 }
 
@@ -699,7 +745,7 @@ async function refresh() {
     const sum = await api("/api/hub/summary").then(r => r.json());
     lastSummary = sum;
     renderOverview(sum);
-    renderResources(sum);
+    if (!$("#tab-resources").classList.contains("hide")) renderResources(sum);
     $("#last-refresh").textContent = "updated " + new Date().toLocaleTimeString();
   } catch (e) { $("#last-refresh").textContent = "hub unreachable"; }
 }
