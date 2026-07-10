@@ -892,5 +892,30 @@ async function refresh() {
 refresh();
 setInterval(refresh, 5000);
 </script>
+  <!-- ── KH auto-update banner (self-contained; mirrors the studios) ── -->
+  <script>
+  (function () {
+    function build(s) {
+      if (!(s.update_available && s.latest_version)) return;
+      var key = "kh-upd-" + s.latest_version;
+      try { if (localStorage.getItem(key) === "1") return; } catch (e) {}
+      var bar = document.createElement("div");
+      bar.style.cssText = "position:sticky;top:0;z-index:99999;display:flex;align-items:center;gap:12px;" +
+        "padding:8px 16px;font:13px/1.4 system-ui,-apple-system,sans-serif;background:#6aa7ff;color:#04122a;" +
+        "border-bottom:1px solid rgba(0,0,0,.25)";
+      var span = document.createElement("span"); span.style.flex = "1";
+      span.innerHTML = "\u2B06 Update available (v" + s.app_version + " \u2192 v" + s.latest_version +
+        "). In the Pinokio sidebar, click <b>Update</b>.";
+      var btn = document.createElement("button"); btn.textContent = "\u2715";
+      btn.setAttribute("aria-label", "Dismiss");
+      btn.style.cssText = "background:transparent;border:0;cursor:pointer;font-size:14px;color:inherit;opacity:.7";
+      btn.onclick = function () { try { localStorage.setItem(key, "1"); } catch (e) {} bar.remove(); };
+      bar.appendChild(span); bar.appendChild(btn);
+      document.body.insertBefore(bar, document.body.firstChild);
+    }
+    fetch("/api/update-status").then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (s) { if (s) build(s); }).catch(function () {});
+  })();
+  </script>
 </body>
 </html>

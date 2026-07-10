@@ -75,6 +75,51 @@ def health():
     return {"ok": True, "version": "0.1.0", "app_version": _app_version()}
 
 
+# ── Update auto-check (surfaced by the web-UI banner; mirrors the studios) ──
+import threading as _threading
+import time as _time
+import urllib.request as _urlreq
+
+_UPDATE_REPO = "theng12/studiohub-mac"
+_update_state = {"checked_at": 0.0, "latest": None}
+
+
+def _parse_ver(v):
+    try:
+        return tuple(int(x) for x in str(v).strip().lstrip("v").split(".")[:3])
+    except Exception:
+        return (0,)
+
+
+def _refresh_latest_version():
+    try:
+        url = f"https://raw.githubusercontent.com/{_UPDATE_REPO}/main/VERSION"
+        with _urlreq.urlopen(url, timeout=5) as r:
+            _update_state["latest"] = r.read().decode("utf-8").strip()
+    except Exception:
+        pass
+    finally:
+        _update_state["checked_at"] = _time.time()
+
+
+@app.get("/api/update-status")
+def update_status():
+    """Behind-the-published-version check for the web-UI banner. Remote VERSION is
+    fetched from the repo raw file at most every ~6h, in a background thread, so a
+    slow/unreachable GitHub never blocks the request."""
+    if _time.time() - _update_state["checked_at"] > 6 * 3600:
+        _threading.Thread(target=_refresh_latest_version, daemon=True).start()
+    latest = _update_state["latest"]
+    current = _app_version()
+    return {
+        "app_version": current,
+        "latest_version": latest,
+        "update_available": bool(latest and _parse_ver(latest) > _parse_ver(current)),
+        "generation_required": False,
+        "generation_ok": None,
+    }
+
+
 @app.get("/api/version")
 def version():
     return {"app_version": _app_version(), "title": TITLE}
