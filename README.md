@@ -115,6 +115,23 @@ await fetch(`${HUB}/api/hub/jobs`, {
 - **Remote** — reachable URLs + token, **Discover & Add** a machine, and a permanent
   **Registered machines** list (with Remove).
 
+## Run as an always-on service (auto-start)
+
+Instead of clicking **Start** every time, install the Hub as a macOS launchd
+service (same as the sibling studios): sidebar → **Install as Startup Service**.
+
+- Starts automatically at login, restarts itself if it crashes, and a watchdog
+  re-launches it if it stops answering `/api/health`.
+- The service owns port 47873; the sidebar switches to "service mode" (Open
+  Dashboard, Check Service Status, Restart, Uninstall) with no Start button —
+  use the service **or** Pinokio's Start, not both.
+- `Update` restarts the service automatically so new code is picked up.
+- For unattended reboot recovery (power cut), do the one-time admin settings the
+  installer prints: `sudo pmset -a autorestart 1`, enable Automatic Login, and
+  turn FileVault off (a LaunchAgent needs a logged-in session to start).
+- Remove it any time with **Uninstall Startup Service** (the app itself is
+  untouched; Start still works).
+
 ## The fleet: remote specs + remote control
 
 Health and models come over HTTP, but a machine's **RAM/specs** and
