@@ -456,13 +456,22 @@ def set_alerts(body: dict):
 
 
 @app.get("/api/hub/stats")
-def hub_stats(hours: int | None = Query(None, ge=1, description="limit to last N hours")):
-    """Generation analytics: per-machine/modality/model counts + speed, plus a
-    time-bucketed throughput series (bucket sized to the window)."""
+def hub_stats(
+    hours: int | None = Query(None, ge=1, description="limit to last N hours"),
+    source: str = Query("all", pattern="^(all|job|direct)$",
+                        description="all | job (Hub-dispatched) | direct (in-studio)"),
+    modality: str | None = Query(None, description="filter to one operation type"),
+    machine: str | None = Query(None, description="filter to one machine"),
+):
+    """Generation analytics: per-machine / operation-type / model counts +
+    speed, plus a time-bucketed throughput series (bucket sized to the window).
+    Counts span every source by default; `source`, `modality`, and `machine`
+    narrow the view (and the throughput chart) to match."""
     since = time.time() - hours * 3600 if hours else None
     bucket = 300 if hours == 1 else (3600 if hours == 24 else 86400)
-    result = ledger.stats(since_s=since)
-    result["timeline"] = ledger.timeline(since, bucket)
+    result = ledger.stats(since_s=since, source=source, op=modality, machine=machine)
+    result["timeline"] = ledger.timeline(since, bucket, source=source, op=modality, machine=machine)
+    result["filters"] = {"source": source, "modality": modality, "machine": machine, "hours": hours}
     return result
 
 

@@ -252,10 +252,19 @@
     <div class="controls">
       <div class="grp"><label>Window</label>
         <div class="seg" id="st-win">
-          <button data-v="0">All time</button><button data-v="24">24 h</button><button data-v="1">1 h</button>
+          <button data-v="0">All</button><button data-v="720">30 d</button><button data-v="168">7 d</button><button data-v="24">24 h</button><button data-v="1">1 h</button>
         </div>
       </div>
+      <div class="grp"><label>Source</label>
+        <div class="seg" id="st-src">
+          <button data-v="all">All</button><button data-v="job">Hub</button><button data-v="direct">Direct</button>
+        </div>
+      </div>
+      <div class="grp"><label>Machine</label>
+        <select id="st-mach" class="selctl" style="max-width:200px"><option value="">All machines</option></select>
+      </div>
       <span class="sub" id="st-total"></span>
+      <button id="st-clear" class="pill" style="display:none;cursor:pointer">✕ clear filters</button>
     </div>
     <div id="st-tiles" class="grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr));margin-bottom:18px"></div>
 
@@ -281,7 +290,7 @@
     <div style="overflow:auto">
       <table><thead><tr><th>Model</th><th>Type</th><th class="num">Count</th><th style="width:40%">Avg speed</th></tr></thead><tbody id="st-models"></tbody></table>
     </div>
-    <p class="muted" style="font-size:11.5px;margin-top:10px">Records come from the asset ledger — every generation the Hub dispatched, tagged with the machine that ran it and its generation time. Chat/LLM steps aren't timed here.</p>
+    <p class="muted" style="font-size:11.5px;margin-top:10px">Counts include both <b>Hub</b>-dispatched jobs and <b>direct</b> generations made inside each studio (indexed from their output folders) — use the <b>Source</b> toggle to separate them, and click an app tile or pick a machine to filter. Generation speed and per-model stats are only known for Hub jobs; direct/scanned files contribute to counts only. Voice vs. music is split by the studio that produced each file. Chat/LLM turns aren't recorded as assets.</p>
   </section>
 
   <!-- REMOTE -->
@@ -766,21 +775,52 @@ function renderThroughput(tl) {
   cap.textContent = `generations per ${per}`;
 }
 let stWin = localStorage.getItem("st_win") || "0";
+let stSrc = localStorage.getItem("st_src") || "all";
+let stOp = "";       // operation-type (app) filter — click a tile to set
+let stMach = "";     // machine filter
 initSeg("st-win", stWin, v => { stWin = v; localStorage.setItem("st_win", v); loadStats(); });
+initSeg("st-src", stSrc, v => { stSrc = v; localStorage.setItem("st_src", v); loadStats(); });
+$("#st-mach").addEventListener("change", () => { stMach = $("#st-mach").value; loadStats(); });
+$("#st-clear").addEventListener("click", () => { stOp = ""; stMach = ""; $("#st-mach").value = ""; loadStats(); });
+function setStatOp(m) { stOp = (stOp === m ? "" : m); loadStats(); }   // toggle app filter
+const WIN_LABEL = { "720": "30 d", "168": "7 d", "24": "24 h", "1": "1 h" };
 async function loadStats() {
-  const url = "/api/hub/stats" + (stWin !== "0" ? `?hours=${stWin}` : "");
-  const d = await api(url).then(r => r.json()).catch(() => null);
+  const p = new URLSearchParams();
+  if (stWin !== "0") p.set("hours", stWin);
+  if (stSrc !== "all") p.set("source", stSrc);
+  if (stOp) p.set("modality", stOp);
+  if (stMach) p.set("machine", stMach);
+  const qs = p.toString();
+  const d = await api("/api/hub/stats" + (qs ? "?" + qs : "")).then(r => r.json()).catch(() => null);
   if (!d) { $("#st-total").textContent = "stats unavailable"; return; }
-  $("#st-total").textContent = `${d.total} generations recorded${stWin !== "0" ? " in the last " + stWin + "h" : ""}`;
 
-  // tiles per modality
+  // Auto-clear a filter that no longer applies (e.g. after switching source/window).
+  if (stOp && !(d.available_modalities || []).includes(stOp)) { stOp = ""; return loadStats(); }
+  if (stMach && !(d.available_machines || []).includes(stMach)) { stMach = ""; $("#st-mach").value = ""; return loadStats(); }
+
+  // Populate the machine filter (preserving the current selection).
+  $("#st-mach").innerHTML = `<option value="">All machines</option>` +
+    (d.available_machines || []).map(m => `<option value="${m}"${m === stMach ? " selected" : ""}>${mlabel(m)}</option>`).join("");
+  $("#st-mach").value = stMach;
+
+  // Total line + active-filter summary.
+  const active = [];
+  if (stSrc !== "all") active.push(stSrc === "job" ? "Hub jobs" : "direct");
+  if (stOp) active.push((MOD_EMOJI[stOp] || "") + " " + stOp);
+  if (stMach) active.push(mlabel(stMach));
+  $("#st-clear").style.display = (stOp || stMach) ? "" : "none";
+  const winTxt = stWin !== "0" ? " · last " + (WIN_LABEL[stWin] || stWin + " h") : "";
+  $("#st-total").textContent = `${d.total} generations${winTxt}${active.length ? " · " + active.join(" · ") : ""}`;
+
+  // tiles per operation type — click to filter every table + the chart
   const mods = Object.keys(d.by_modality).sort((a, b) => d.by_modality[b].count - d.by_modality[a].count);
   $("#st-tiles").innerHTML = mods.map(m => {
-    const x = d.by_modality[m];
-    return `<div class="card" style="padding:14px"><div style="font-size:22px">${MOD_EMOJI[m] || "🧩"}</div>
+    const x = d.by_modality[m], on = stOp === m;
+    const ring = on ? `outline:2px solid ${MOD_COLOR[m] || MOD_COLOR.image};outline-offset:-2px` : "";
+    return `<div class="card" onclick="setStatOp('${m}')" title="Filter to ${m}" style="padding:14px;cursor:pointer;${ring}"><div style="font-size:22px">${MOD_EMOJI[m] || "🧩"}</div>
       <div style="font-size:22px;font-weight:700">${x.count}</div>
       <div class="sub">${m} · ${x.avg_s != null ? "avg " + x.avg_s + "s" : "—"}</div></div>`;
-  }).join("") || `<div class="empty">No generations recorded yet — run a batch in the Jobs tab</div>`;
+  }).join("") || `<div class="empty">No generations recorded in this view</div>`;
 
   // per-machine table
   const machines = Object.keys(d.by_machine).sort((a, b) => d.by_machine[b].count - d.by_machine[a].count);

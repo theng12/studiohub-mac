@@ -163,27 +163,78 @@ def scan_outputs(registry: list[dict]) -> dict:
     return {"scanned": seen, "added": added}
 
 
-def stats(since_s: float | None = None) -> dict:
-    """Generation analytics from the ledger (job-sourced assets only — scanned
-    pre-existing files have no timing/provenance). Returns per-machine and
-    per-modality counts, average/min/max generation seconds, and a
-    machine×modality matrix for spotting who does what and how fast."""
-    where = "source = 'job'"
+# ── Operation type ──
+# The user-facing "operation type" (image / voice / music / video / chat).
+# Prefer the STUDIO that produced the asset (machine suffix stripped), because
+# scanned files tag `modality` as the coarse MEDIA type (image/audio/video) —
+# which can't tell TTS (voice) from music. The studio can. Fall back to the
+# media modality when no studio is recorded (e.g. uploads).
+_OP_SQL = (
+    "CASE WHEN studio IS NOT NULL AND studio != '' THEN "
+    " CASE WHEN instr(studio,'@')>0 THEN substr(studio,1,instr(studio,'@')-1) "
+    " ELSE studio END "
+    "ELSE COALESCE(modality,'unknown') END"
+)
+
+
+def _stats_where(source: str | None, op: str | None, machine: str | None,
+                 since_s: float | None) -> tuple[str, list]:
+    """Build the shared WHERE clause + args for stats/timeline.
+
+    source: 'all' (default) | 'job' (Hub-dispatched) | 'direct' (scans + uploads
+    made straight in a studio). op/machine narrow to one operation type / one
+    machine. All values are parameterized (or fixed literals) — no injection."""
+    where = ["1=1"]
     args: list = []
+    if source == "job":
+        where.append("source = 'job'")
+    elif source == "direct":
+        where.append("source != 'job'")
+    # 'all' / None → every source
     if since_s:
-        where += " AND created_at >= ?"
-        args.append(since_s)
+        where.append("created_at >= ?"); args.append(since_s)
+    if op:
+        where.append(f"({_OP_SQL}) = ?"); args.append(op)
+    if machine:
+        where.append("machine = ?"); args.append(machine)
+    return " AND ".join(where), args
+
+
+def stats(since_s: float | None = None, source: str = "all",
+          op: str | None = None, machine: str | None = None) -> dict:
+    """Generation analytics from the ledger. Counts span every source by
+    default (Hub jobs + direct-in-studio scans + uploads); pass source='job'
+    or 'direct' to split them. Groups by operation type (see _OP_SQL) so voice
+    and music are distinct even for scanned audio. Timing/model stats only
+    reflect assets that carry a duration/model (Hub jobs) — SQL AVG ignores
+    the nulls. Also returns the full option lists (`available_*`) for the
+    filter UI, computed independent of the op/machine filters."""
+    where, args = _stats_where(source, op, machine, since_s)
     with _conn() as conn:
         cells = conn.execute(
-            f"SELECT machine, modality, COUNT(*) c, "
+            f"SELECT machine, ({_OP_SQL}) op, COUNT(*) c, "
             f"AVG(duration_s) avg_s, MIN(duration_s) min_s, MAX(duration_s) max_s, "
-            f"SUM(COALESCE(duration_s,0)) sum_s "
-            f"FROM assets WHERE {where} GROUP BY machine, modality", args).fetchall()
+            f"SUM(COALESCE(duration_s,0)) sum_s, "
+            # timed_c: how many rows in this group actually carry a duration.
+            # A group can now mix timed jobs + untimed scans, so the aggregate
+            # avg must divide sum_s by this, NOT by the full count.
+            f"SUM(CASE WHEN duration_s IS NOT NULL THEN 1 ELSE 0 END) timed_c "
+            f"FROM assets WHERE {where} GROUP BY machine, op", args).fetchall()
         total = conn.execute(
             f"SELECT COUNT(*) FROM assets WHERE {where}", args).fetchone()[0]
         model_rows = conn.execute(
-            f"SELECT model, modality, COUNT(*) c, AVG(duration_s) avg_s "
+            f"SELECT model, ({_OP_SQL}) op, COUNT(*) c, AVG(duration_s) avg_s "
             f"FROM assets WHERE {where} GROUP BY model", args).fetchall()
+        src_rows = conn.execute(
+            f"SELECT source, COUNT(*) c FROM assets WHERE {where} GROUP BY source",
+            args).fetchall()
+        # Option lists for the filter chips — narrowed by source+window only, so
+        # picking an op/machine filter doesn't make the other options vanish.
+        aw, aargs = _stats_where(source, None, None, since_s)
+        avail_ops = conn.execute(
+            f"SELECT DISTINCT ({_OP_SQL}) op FROM assets WHERE {aw}", aargs).fetchall()
+        avail_mach = conn.execute(
+            f"SELECT DISTINCT machine FROM assets WHERE {aw}", aargs).fetchall()
 
     def _round(x):
         return round(x, 2) if x is not None else None
@@ -192,47 +243,47 @@ def stats(since_s: float | None = None) -> dict:
     by_modality: dict = {}
     matrix = []
     for r in cells:
-        machine = r["machine"] or "unknown"
-        modality = r["modality"] or "unknown"
-        matrix.append({"machine": machine, "modality": modality, "count": r["c"],
+        m = r["machine"] or "unknown"
+        modality = r["op"] or "unknown"
+        matrix.append({"machine": m, "modality": modality, "count": r["c"],
                        "avg_s": _round(r["avg_s"]), "min_s": _round(r["min_s"]),
                        "max_s": _round(r["max_s"])})
-        bm = by_machine.setdefault(machine, {"count": 0, "sum_s": 0.0, "timed": 0,
-                                             "modalities": {}})
+        bm = by_machine.setdefault(m, {"count": 0, "sum_s": 0.0, "timed": 0,
+                                       "modalities": {}})
         bm["count"] += r["c"]
         bm["sum_s"] += r["sum_s"] or 0
-        bm["timed"] += r["c"] if r["avg_s"] is not None else 0
-        bm["modalities"][modality] = r["c"]
+        bm["timed"] += r["timed_c"] or 0
+        bm["modalities"][modality] = bm["modalities"].get(modality, 0) + r["c"]
         md = by_modality.setdefault(modality, {"count": 0, "sum_s": 0.0, "timed": 0,
                                                "machines": {}})
         md["count"] += r["c"]
         md["sum_s"] += r["sum_s"] or 0
-        md["timed"] += r["c"] if r["avg_s"] is not None else 0
-        md["machines"][machine] = r["c"]
+        md["timed"] += r["timed_c"] or 0
+        md["machines"][m] = md["machines"].get(m, 0) + r["c"]
     for d in (*by_machine.values(), *by_modality.values()):
         d["avg_s"] = _round(d["sum_s"] / d["timed"]) if d["timed"] else None
         d.pop("sum_s", None)
         d.pop("timed", None)
     by_model = {r["model"]: {"count": r["c"], "avg_s": _round(r["avg_s"]),
-                             "modality": r["modality"]}
+                             "modality": r["op"]}
                 for r in model_rows if r["model"]}
+    by_source = {r["source"] or "unknown": r["c"] for r in src_rows}
     return {"total": total, "by_machine": by_machine, "by_modality": by_modality,
-            "by_model": by_model, "matrix": matrix}
+            "by_model": by_model, "matrix": matrix, "by_source": by_source,
+            "available_modalities": sorted(r["op"] for r in avail_ops if r["op"]),
+            "available_machines": sorted(r["machine"] for r in avail_mach if r["machine"])}
 
 
-def timeline(since_s: float | None, bucket_s: int) -> dict:
-    """Generations bucketed over time, split by modality — for a throughput
-    chart. Returns bucket start-times (unix s) and a count series per modality."""
-    where = "source = 'job'"
-    args: list = []
-    if since_s:
-        where += " AND created_at >= ?"
-        args.append(since_s)
+def timeline(since_s: float | None, bucket_s: int, source: str = "all",
+             op: str | None = None, machine: str | None = None) -> dict:
+    """Generations bucketed over time, split by operation type — for a
+    throughput chart. Honours the same source/op/machine filters as stats()."""
+    where, args = _stats_where(source, op, machine, since_s)
     bucket_s = int(bucket_s)
     with _conn() as conn:
         rows = conn.execute(
-            f"SELECT CAST(created_at / {bucket_s} AS INTEGER) b, modality, COUNT(*) c "
-            f"FROM assets WHERE {where} GROUP BY b, modality ORDER BY b", args).fetchall()
+            f"SELECT CAST(created_at / {bucket_s} AS INTEGER) b, ({_OP_SQL}) op, COUNT(*) c "
+            f"FROM assets WHERE {where} GROUP BY b, op ORDER BY b", args).fetchall()
     if not rows:
         return {"bucket_s": bucket_s, "buckets": [], "series": {}}
     bmin = rows[0]["b"]
@@ -243,7 +294,7 @@ def timeline(since_s: float | None, bucket_s: int) -> dict:
         idx = r["b"] - bmin
         if idx >= n:
             continue
-        series.setdefault(r["modality"] or "unknown", [0] * n)[idx] += r["c"]
+        series.setdefault(r["op"] or "unknown", [0] * n)[idx] += r["c"]
     buckets = [(bmin + i) * bucket_s for i in range(n)]
     return {"bucket_s": bucket_s, "buckets": buckets, "series": series}
 

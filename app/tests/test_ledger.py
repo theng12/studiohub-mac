@@ -28,16 +28,39 @@ def test_stats_counts_and_speed(reset):
                             machine="local", model="a/b", duration_s=2.0)
     ledger.record_asset(source="job", modality="image", studio="image@mac-b",
                         machine="mac-b", model="a/b", duration_s=8.0)
-    # scanned assets must NOT count toward generation stats
-    ledger.record_asset(source="scan", modality="image", machine="local",
-                        artifact_path="/tmp/scanned.png")
+    # a direct-in-studio scan (no timing/model) — now COUNTED by default
+    ledger.record_asset(source="scan", modality="image", studio="image",
+                        machine="local", artifact_path="/tmp/scanned.png")
+
+    # default: all sources counted
     s = ledger.stats()
-    assert s["total"] == 4
-    assert s["by_machine"]["local"]["count"] == 3
-    assert s["by_machine"]["local"]["avg_s"] == 2.0
+    assert s["total"] == 5
+    assert s["by_source"] == {"job": 4, "scan": 1}
+    assert s["by_machine"]["local"]["count"] == 4          # 3 jobs + 1 scan
+    assert s["by_machine"]["local"]["avg_s"] == 2.0        # scan has no timing
     assert s["by_machine"]["mac-b"]["count"] == 1
-    assert s["by_modality"]["image"]["count"] == 4
-    assert s["by_model"]["a/b"]["count"] == 4
+    assert s["by_modality"]["image"]["count"] == 5
+    assert s["by_model"]["a/b"]["count"] == 4               # scan has no model
+
+    # source filters
+    assert ledger.stats(source="job")["total"] == 4
+    assert ledger.stats(source="direct")["total"] == 1
+    # op + machine filters
+    assert ledger.stats(op="image")["total"] == 5
+    assert ledger.stats(machine="mac-b")["total"] == 1
+
+
+def test_stats_op_splits_voice_and_music(reset):
+    # Scanned audio tags modality='audio' but studio tells voice vs music apart.
+    ledger.record_asset(source="job", modality="voice", studio="voice",
+                        machine="local", model="tts/x", duration_s=1.0)
+    ledger.record_asset(source="scan", modality="audio", studio="music",
+                        machine="local", artifact_path="/tmp/song.wav")
+    s = ledger.stats()
+    assert s["by_modality"]["voice"]["count"] == 1
+    assert s["by_modality"]["music"]["count"] == 1
+    assert "audio" not in s["by_modality"]                  # coarse type replaced by op
+    assert set(s["available_modalities"]) == {"voice", "music"}
 
 
 def test_timeline_buckets(reset):
