@@ -12,6 +12,17 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.20.1] — 2026-07-12
+
+### Fixed — dashboard and local-control security
+
+- Hub and fleet tokens are now always stored with owner-only (`0600`) permissions, including existing token files when they are loaded.
+- Unsafe browser requests must come from the Hub's own origin. Local scripts remain frictionless, while unrelated websites can no longer use the loopback auth exemption to change Hub settings or control studios.
+- Reference-image uploads now stream to disk, reject unsupported formats, enforce a 20 MB limit, and remove partial files after failed uploads.
+- Dynamic studio, model, job, asset, alert, machine, and version text is escaped before dashboard rendering; external links are limited to HTTP(S) and open with `noopener`.
+
+79 tests.
+
 ## [1.20.0] — 2026-07-11
 
 ### Added — per-item webhooks (stream results from a single batch)

@@ -427,11 +427,25 @@
 
 <script>
 const $ = (s) => document.querySelector(s);
+const esc = (value) => String(value ?? "").replace(/[&<>"']/g, ch => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+})[ch]);
+const jsq = (value) => String(value ?? "").replace(/[\\'"\r\n<>&]/g, ch => ({
+  "\\": "\\\\", "'": "\\x27", '"': "\\x22", "\r": "\\r", "\n": "\\n",
+  "<": "\\x3c", ">": "\\x3e", "&": "\\x26"
+})[ch]);
+function safeHttpUrl(value) {
+  try { const u = new URL(value, location.href); return /^(https?:)$/.test(u.protocol) ? esc(u.href) : ""; }
+  catch (_) { return ""; }
+}
 let lastSummary = null;
 let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.20.1", date: "2026-07-12", items: [
+    "Security hardening for local controls, private Hub/fleet tokens, bounded reference-image uploads, and safe rendering of dynamic dashboard text.",
+  ] },
   { v: "1.20.0", date: "2026-07-11", items: [
     "<b>Per-item webhooks</b> for clients (e.g. Story Studio): submit a whole multi-scene render as <b>one batch</b> and the Hub POSTs each scene back the moment it finishes (with its machine + a live n/N tally) — no waiting for the whole batch, no polling. Add <code>itemWebhook</code> to the job envelope.",
     "This makes the Jobs tab show a single <b>0/120</b> story progress line (with per-scene machine tags + ETA) instead of a pile of 1-item jobs.",
@@ -590,22 +604,22 @@ function studioActionsHTML(s, sum) {
   const controllable = machine === "local" ? !!s.app : !!(sum.resources.machines?.[machine]?.has_hub);
   let html = "";
   if (pend) html = `<button class="btn" disabled>${pend.action}…</button><span class="pending">${pend.action === "start" ? "starting" : "stopping"}…</span>`;
-  else if (s.status === "up") html = `<a class="open" href="${studioUrl(s)}" target="_blank">Open UI ↗</a>` + (controllable ? ` <button class="btn" onclick="lifecycle('${s.id}','restart')">Restart</button> <button class="btn stop" onclick="lifecycle('${s.id}','stop')">Stop</button>` : "");
-  else if (controllable) html = `<button class="btn" onclick="lifecycle('${s.id}','start')">Start</button>`;
+  else if (s.status === "up") html = `<a class="open" href="${safeHttpUrl(studioUrl(s))}" target="_blank" rel="noopener">Open UI ↗</a>` + (controllable ? ` <button class="btn" onclick="lifecycle('${jsq(s.id)}','restart')">Restart</button> <button class="btn stop" onclick="lifecycle('${jsq(s.id)}','stop')">Stop</button>` : "");
+  else if (controllable) html = `<button class="btn" onclick="lifecycle('${jsq(s.id)}','start')">Start</button>`;
   return { html, controllable, pend };
 }
 function studioCard(s, sum) {
   const res = sum.resources.studios[s.id];
   const a = studioActionsHTML(s, sum);
   const wd = (s.machine || "local") === "local" && s.app
-    ? `<label class="wd"><input type="checkbox" ${sum.watchdog?.[s.id]?.enabled ? "checked" : ""} onchange="toggleWatchdog('${s.id}', this.checked)"> auto-restart if down</label>` : "";
+    ? `<label class="wd"><input type="checkbox" ${sum.watchdog?.[s.id]?.enabled ? "checked" : ""} onchange="toggleWatchdog('${jsq(s.id)}', this.checked)"> auto-restart if down</label>` : "";
   return `<div class="card">
-    <div class="top"><span class="emoji">${s.emoji || "🧩"}</span><h3>${s.title}</h3><span class="dot ${stDot(s)}"></span></div>
+    <div class="top"><span class="emoji">${esc(s.emoji || "🧩")}</span><h3>${esc(s.title)}</h3><span class="dot ${stDot(s)}"></span></div>
     <dl class="kv">
       <dt>Status</dt><dd>${a.pend ? a.pend.action + "ing…" : (stState(s) === "generating" ? '<span class="genbadge">⚡ generating</span>' : s.status)}</dd>
-      <dt>Machine</dt><dd>${mlabel(s.machine || "local")}</dd>
-      <dt>Version</dt><dd>${s.app_version || "—"}</dd>
-      <dt>Address</dt><dd>${s.host}:${s.port}</dd>
+      <dt>Machine</dt><dd>${esc(mlabel(s.machine || "local"))}</dd>
+      <dt>Version</dt><dd>${esc(s.app_version || "—")}</dd>
+      <dt>Address</dt><dd>${esc(s.host)}:${esc(s.port)}</dd>
       <dt>Latency</dt><dd>${s.latency_ms != null ? s.latency_ms + " ms" : "—"}</dd>
       <dt>Memory</dt><dd>${cardMem(s, sum)}</dd>
       <dt>Last seen</dt><dd>${fmtAgo(s.last_seen)}</dd>
@@ -636,12 +650,12 @@ function cardMem(s, sum) {
 function studioRow(s, sum) {
   const a = studioActionsHTML(s, sum);
   return `<div class="lrow">
-    <span class="emoji" style="font-size:18px">${s.emoji || "🧩"}</span>
-    <div><span class="name">${s.title}</span><br><span class="sub">${s.host}:${s.port}</span></div>
-    <div class="sub">${mlabel(s.machine || "local")}</div>
+    <span class="emoji" style="font-size:18px">${esc(s.emoji || "🧩")}</span>
+    <div><span class="name">${esc(s.title)}</span><br><span class="sub">${esc(s.host)}:${esc(s.port)}</span></div>
+    <div class="sub">${esc(mlabel(s.machine || "local"))}</div>
     <div class="st"><span class="dot ${stDot(s)}"></span>${a.pend ? a.pend.action + "ing…" : (stState(s) === "generating" ? '<span class="genbadge">⚡ gen</span>' : s.status)}</div>
     <div>${memCell(s, sum)}</div>
-    <div class="num sub">${s.app_version ? "v" + s.app_version : "—"}</div>
+    <div class="num sub">${esc(s.app_version ? "v" + s.app_version : "—")}</div>
     <div class="actions" style="margin:0;justify-content:flex-end">${a.html}</div>
   </div>`;
 }
@@ -673,7 +687,7 @@ function groupStudios(studios) {
 function renderOverview(sum) {
   if (!sum) return;
   HUB_VERSION = sum.hub.app_version;
-  $("#hub-ver").innerHTML = "v" + HUB_VERSION +
+  $("#hub-ver").innerHTML = "v" + esc(HUB_VERSION) +
     (localStorage.getItem("hub_seen_ver") !== HUB_VERSION ? ' <span class="dot" id="ver-dot" title="new updates — click"></span>' : "");
   const up = sum.studios.filter(s => s.status === "up").length;
   const gen = sum.studios.filter(s => s.busy).length;
@@ -685,7 +699,7 @@ function renderOverview(sum) {
     const sorted = sortStudios(list, sum);
     const upN = list.filter(s => s.status === "up").length;
     const genN = list.filter(s => s.busy).length;
-    const head = `<div class="group-head"><h2>${title}</h2><span class="meta">${upN}/${list.length} up${genN ? " · ⚡" + genN : ""}</span></div>`;
+    const head = `<div class="group-head"><h2>${esc(title)}</h2><span class="meta">${upN}/${list.length} up${genN ? " · ⚡" + genN : ""}</span></div>`;
     const listHead = `<div class="lrow lhead"><span></span><span>Studio</span><span>Machine</span><span>Status</span><span>Memory (free / used)</span><span>Version</span><span></span></div>`;
     const body = display === "cards"
       ? `<div class="grid">${sorted.map(s => studioCard(s, sum)).join("")}</div>`
@@ -715,7 +729,7 @@ function renderModels() {
   const sel = $("#m-machine");
   if (sel.dataset.sig !== machines.join()) {
     sel.dataset.sig = machines.join();
-    sel.innerHTML = `<option value="">All machines</option>` + machines.map(m => `<option value="${m}">${m}</option>`).join("");
+    sel.innerHTML = `<option value="">All machines</option>` + machines.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
     sel.value = mMachine;
   }
   let rows = modelsData;
@@ -733,11 +747,11 @@ function renderModels() {
   body.innerHTML = rows.map(m => {
     let avail;
     if (m.is_cloud) avail = `<span class="pill cloud">cloud</span>`;
-    else if (m.cached_on.length) avail = `<span class="numbadge">${m.cached_on.length}</span> ` + m.cached_on.map(mc => `<span class="pill dl">${mc}</span>`).join("");
+    else if (m.cached_on.length) avail = `<span class="numbadge">${m.cached_on.length}</span> ` + m.cached_on.map(mc => `<span class="pill dl">${esc(mc)}</span>`).join("");
     else avail = `<span class="pill no">not downloaded</span>`;
     return `<tr>
-      <td><b>${m.label}</b><br><span class="sub">${m.repo}</span></td>
-      <td>${m.modality}</td><td>${m.family_label || "—"}</td>
+      <td><b>${esc(m.label)}</b><br><span class="sub">${esc(m.repo)}</span></td>
+      <td>${esc(m.modality)}</td><td>${esc(m.family_label || "—")}</td>
       <td class="num">${m.size_gb != null ? m.size_gb + " GB" : "—"}</td>
       <td class="num">${m.min_unified_memory_gb != null ? m.min_unified_memory_gb + " GB" : "—"}</td>
       <td>${avail}</td></tr>`;
@@ -772,10 +786,10 @@ function renderResources(sum) {
   const order = Object.keys(machines).filter(m => m !== "local").sort();
   $("#machines-res").innerHTML = order.map(m => {
     const mi = machines[m];
-    if (mi.host) return `<div class="card section mcard"><div class="top" style="margin:0"><span class="emoji">🖥️</span><h3>${mlabel(m)}</h3>
+    if (mi.host) return `<div class="card section mcard"><div class="top" style="margin:0"><span class="emoji">🖥️</span><h3>${esc(mlabel(m))}</h3>
       <span class="sub" style="margin-left:auto">${mi.host.used_gb}/${mi.host.total_gb} GB · CPU ${mi.host.cpu_percent}% · ${mi.host.cpu_count} cores</span></div>
       <div class="bar" style="grid-column:1/-1"><i style="width:${mi.host.percent}%" class="${mi.host.percent > 90 ? "crit" : mi.host.percent > 75 ? "hot" : ""}"></i></div></div>`;
-    return `<div class="card section"><div class="top" style="margin:0"><span class="emoji">🖥️</span><h3>${mlabel(m)}</h3>
+    return `<div class="card section"><div class="top" style="margin:0"><span class="emoji">🖥️</span><h3>${esc(mlabel(m))}</h3>
       <span class="sub" style="margin-left:auto">${mi.reachable ? "no Studio Hub running here" : "offline / unreachable"}</span></div></div>`;
   }).join("");
 
@@ -794,11 +808,11 @@ function renderResources(sum) {
     const rows = sortG(list).map(s => {
       const r = sum.resources.studios[s.id];
       return `<tr>
-        <td>${s.emoji || ""} ${s.title} ${stState(s) === "generating" ? '<span class="genbadge">⚡</span>' : ""}</td>
-        <td>${s.machine || "local"}</td><td>${stLabel(s)}</td>
+        <td>${esc(s.emoji || "")} ${esc(s.title)} ${stState(s) === "generating" ? '<span class="genbadge">⚡</span>' : ""}</td>
+        <td>${esc(s.machine || "local")}</td><td>${esc(stLabel(s))}</td>
         <td class="num">${r ? r.pid : "—"}</td><td class="num">${r ? r.rss_gb + " GB" : "—"}</td><td class="num">${r ? r.cpu_percent : "—"}</td></tr>`;
     }).join("");
-    return `<div class="group-head"><h2>${title}</h2></div>
+    return `<div class="group-head"><h2>${esc(title)}</h2></div>
       <table><thead><tr><th>Studio</th><th>Machine</th><th>Status</th><th class="num">PID</th><th class="num">Memory</th><th class="num">CPU %</th></tr></thead><tbody>${rows}</tbody></table>`;
   }).join("");
 }
@@ -813,7 +827,7 @@ async function loadSpark() {
 async function loadJobModels() {
   const mod = $("#j-modality").value;
   const r = await api(`/api/hub/models?modality=${mod}&downloaded=true`).then(x => x.json()).catch(() => null);
-  $("#j-model").innerHTML = (r?.models || []).map(m => `<option value="${m.repo}">${m.label} — on ${m.is_cloud ? "cloud" : m.cached_on.join(", ")}</option>`).join("")
+  $("#j-model").innerHTML = (r?.models || []).map(m => `<option value="${esc(m.repo)}">${esc(m.label)} — on ${esc(m.is_cloud ? "cloud" : m.cached_on.join(", "))}</option>`).join("")
     || `<option value="">no downloaded ${mod} models</option>`;
 }
 $("#j-modality").addEventListener("input", loadJobModels);
@@ -855,18 +869,18 @@ function renderBatches(batches) {
       if (known && e != null) eta = e * (1 - ri.progress) / ri.progress;      // from live progress
       else if (b.avg_s != null && e != null) eta = Math.max(0, b.avg_s - e);  // from avg work time
       return `<div class="run">
-        <span class="pill gen">⚡ ${mlab}</span>
+        <span class="pill gen">⚡ ${esc(mlab)}</span>
         <div class="prog"><i style="width:${known ? ppct : 100}%"${known ? "" : ' class="indet"'}></i></div>
         <span class="sub">${known ? ppct + "%" : "working"} · ${fmtDur(e)} in${eta != null ? " · ~" + fmtDur(eta) + " left" : ""}</span>
       </div>`;
     }).join("");
     return `<div class="card section">
-      <div class="top"><h3 style="font-size:13.5px">${b.modality} · ${b.model}</h3>
+      <div class="top"><h3 style="font-size:13.5px">${esc(b.modality)} · ${esc(b.model)}</h3>
         <span class="sub" style="margin-left:auto">${b.done}/${b.total} done${b.error ? ` · ${b.error} failed` : ""}${b.running ? ` · ${b.running} running` : ""}</span>
-        ${active ? `<button class="btn stop" style="margin-left:10px" onclick="cancelBatch('${b.id}')">Cancel</button>` : ""}</div>
+        ${active ? `<button class="btn stop" style="margin-left:10px" onclick="cancelBatch('${jsq(b.id)}')">Cancel</button>` : ""}</div>
       <div class="prog"><i style="width:${pct}%"></i></div>
       ${runs ? `<div class="runs">${runs}</div>` : ""}
-      <div class="sub" style="margin-top:4px">batch ${b.id}${b.label ? " · from " + b.label : ""}${b.avg_s != null ? " · avg " + fmtDur(b.avg_s) + "/item" : ""}${b.cancelled ? " · cancelled" : ""}${b.governor_note ? " · ⏳ " + b.governor_note : ""}</div>
+      <div class="sub" style="margin-top:4px">batch ${esc(b.id)}${b.label ? " · from " + esc(b.label) : ""}${b.avg_s != null ? " · avg " + fmtDur(b.avg_s) + "/item" : ""}${b.cancelled ? " · cancelled" : ""}${b.governor_note ? " · ⏳ " + esc(b.governor_note) : ""}</div>
     </div>`;
   }).join("") || `<div class="empty">No batches yet</div>`;
 }
@@ -887,11 +901,11 @@ async function loadAssets() {
   $("#a-body").innerHTML = r.assets.map(a => {
     const name = (a.artifact_path || "").split("/").pop() || a.id;
     return `<tr>
-      <td><b>${name}</b>${a.prompt ? `<br><span class="sub">${a.prompt.slice(0, 80)}</span>` : ""}</td>
-      <td>${a.modality || "—"}</td><td>${a.studio || "—"}</td>
-      <td>${a.model ? a.model.split("/").pop() : "—"}</td><td class="num">${a.seed ?? "—"}</td>
-      <td><span class="pill ${a.source === "job" ? "dl" : ""}">${a.source}</span></td>
-      <td>${a.artifact_url ? `<a class="open" href="${a.artifact_url}" target="_blank">open ↗</a>` : (a.exists ? "" : '<span class="sub">missing</span>')}</td></tr>`;
+      <td><b>${esc(name)}</b>${a.prompt ? `<br><span class="sub">${esc(a.prompt.slice(0, 80))}</span>` : ""}</td>
+      <td>${esc(a.modality || "—")}</td><td>${esc(a.studio || "—")}</td>
+      <td>${esc(a.model ? a.model.split("/").pop() : "—")}</td><td class="num">${esc(a.seed ?? "—")}</td>
+      <td><span class="pill ${a.source === "job" ? "dl" : ""}">${esc(a.source)}</span></td>
+      <td>${a.artifact_url && safeHttpUrl(a.artifact_url) ? `<a class="open" href="${safeHttpUrl(a.artifact_url)}" target="_blank" rel="noopener">open ↗</a>` : (a.exists ? "" : '<span class="sub">missing</span>')}</td></tr>`;
   }).join("") || `<tr><td colspan="7" class="empty">No assets — generate something or hit Scan</td></tr>`;
 }
 let aTimer;
@@ -959,7 +973,7 @@ async function loadStats() {
 
   // Populate the machine filter (preserving the current selection).
   $("#st-mach").innerHTML = `<option value="">All machines</option>` +
-    (d.available_machines || []).map(m => `<option value="${m}"${m === stMach ? " selected" : ""}>${mlabel(m)}</option>`).join("");
+    (d.available_machines || []).map(m => `<option value="${esc(m)}"${m === stMach ? " selected" : ""}>${esc(mlabel(m))}</option>`).join("");
   $("#st-mach").value = stMach;
 
   // Total line + active-filter summary.
@@ -976,9 +990,9 @@ async function loadStats() {
   $("#st-tiles").innerHTML = mods.map(m => {
     const x = d.by_modality[m], on = stOp === m;
     const ring = on ? `outline:2px solid ${MOD_COLOR[m] || MOD_COLOR.image};outline-offset:-2px` : "";
-    return `<div class="card" onclick="setStatOp('${m}')" title="Filter to ${m}" style="padding:14px;cursor:pointer;${ring}"><div style="font-size:22px">${MOD_EMOJI[m] || "🧩"}</div>
+    return `<div class="card" onclick="setStatOp('${jsq(m)}')" title="Filter to ${esc(m)}" style="padding:14px;cursor:pointer;${ring}"><div style="font-size:22px">${MOD_EMOJI[m] || "🧩"}</div>
       <div style="font-size:22px;font-weight:700">${x.count}</div>
-      <div class="sub">${m} · ${x.avg_s != null ? "avg " + x.avg_s + "s" : "—"}</div></div>`;
+      <div class="sub">${esc(m)} · ${x.avg_s != null ? "avg " + x.avg_s + "s" : "—"}</div></div>`;
   }).join("") || `<div class="empty">No generations recorded in this view</div>`;
 
   // per-machine table
@@ -986,8 +1000,8 @@ async function loadStats() {
   $("#st-machines").innerHTML = machines.map(m => {
     const x = d.by_machine[m];
     const breakdown = Object.entries(x.modalities).sort((a, b) => b[1] - a[1])
-      .map(([mo, c]) => `<span class="pill dl">${MOD_EMOJI[mo] || ""} ${mo} ${c}</span>`).join(" ");
-    return `<tr><td><b>${mlabel(m)}</b></td><td class="num">${x.count}</td>
+      .map(([mo, c]) => `<span class="pill dl">${MOD_EMOJI[mo] || ""} ${esc(mo)} ${c}</span>`).join(" ");
+    return `<tr><td><b>${esc(mlabel(m))}</b></td><td class="num">${x.count}</td>
       <td class="num">${x.avg_s != null ? x.avg_s + "s" : "—"}</td><td>${breakdown}</td></tr>`;
   }).join("") || `<tr><td colspan="4" class="empty">No data</td></tr>`;
 
@@ -998,8 +1012,8 @@ async function loadStats() {
   const maxAvg = Math.max(0.01, ...models.map(([, x]) => x.avg_s || 0));
   $("#st-models").innerHTML = models.map(([repo, x]) => {
     const pct = x.avg_s ? Math.min(100, x.avg_s / maxAvg * 100) : 0;
-    return `<tr><td><b>${repo.split("/").pop()}</b><br><span class="sub">${repo}</span></td>
-      <td>${x.modality || "—"}</td><td class="num">${x.count}</td>
+    return `<tr><td><b>${esc(repo.split("/").pop())}</b><br><span class="sub">${esc(repo)}</span></td>
+      <td>${esc(x.modality || "—")}</td><td class="num">${x.count}</td>
       <td><div style="display:flex;align-items:center;gap:8px"><div class="prog" style="flex:1;margin:0"><i style="width:${pct}%;background:${MOD_COLOR[x.modality] || MOD_COLOR.image}"></i></div><span class="num" style="min-width:44px;text-align:right">${x.avg_s != null ? x.avg_s + "s" : "—"}</span></div></td></tr>`;
   }).join("") || `<tr><td colspan="4" class="empty">No data</td></tr>`;
 
@@ -1007,13 +1021,13 @@ async function loadStats() {
   const cellMap = {};
   d.matrix.forEach(c => { cellMap[c.machine + "|" + c.modality] = c; });
   const colMods = mods;
-  $("#st-matrix-head").innerHTML = `<tr><th>Machine</th>${colMods.map(m => `<th class="num">${MOD_EMOJI[m] || ""} ${m}</th>`).join("")}</tr>`;
+  $("#st-matrix-head").innerHTML = `<tr><th>Machine</th>${colMods.map(m => `<th class="num">${MOD_EMOJI[m] || ""} ${esc(m)}</th>`).join("")}</tr>`;
   $("#st-matrix-body").innerHTML = machines.map(m => {
     const cells = colMods.map(mo => {
       const c = cellMap[m + "|" + mo];
       return `<td class="num">${c ? `<b>${c.count}</b>${c.avg_s != null ? `<br><span class="sub">${c.avg_s}s</span>` : ""}` : "·"}</td>`;
     }).join("");
-    return `<tr><td>${mlabel(m)}</td>${cells}</tr>`;
+    return `<tr><td>${esc(mlabel(m))}</td>${cells}</tr>`;
   }).join("") || `<tr><td class="empty">No data</td></tr>`;
 }
 
@@ -1034,8 +1048,8 @@ function renderAlerts() {
   const el = $("#alert-recent");
   if (!_alertRows.length) { el.innerHTML = `<div class="sub">No alerts yet — a clean fleet.</div>`; return; }
   const shown = alertsShowAll ? _alertRows : _alertRows.slice(0, ALERT_PAGE);
-  const rows = shown.map(e => `<tr><td class="sub" style="white-space:nowrap">${new Date(e.ts * 1000).toLocaleString()}</td>
-    <td>${ALERT_ICON[e.kind] || "•"} ${e.message}</td></tr>`).join("");
+  const rows = shown.map(e => `<tr><td class="sub" style="white-space:nowrap">${esc(new Date(e.ts * 1000).toLocaleString())}</td>
+    <td>${ALERT_ICON[e.kind] || "•"} ${esc(e.message)}</td></tr>`).join("");
   const more = _alertRows.length > ALERT_PAGE
     ? `<button class="btn" onclick="alertsShowAll=!alertsShowAll;renderAlerts()">${alertsShowAll ? "Show less" : `Show all ${_alertRows.length}`}</button>`
     : "";
@@ -1076,7 +1090,7 @@ async function renderBellDropdown() {
   const r = await api("/api/hub/alerts?limit=12").then(x => x.json()).catch(() => null);
   const rows = (r && r.recent || []);
   const body = rows.length
-    ? rows.map(e => `<div class="bd-row"><span>${ALERT_ICON[e.kind] || "•"}</span><span style="flex:1">${e.message}</span><span class="when">${new Date(e.ts * 1000).toLocaleTimeString()}</span></div>`).join("")
+    ? rows.map(e => `<div class="bd-row"><span>${ALERT_ICON[e.kind] || "•"}</span><span style="flex:1">${esc(e.message)}</span><span class="when">${esc(new Date(e.ts * 1000).toLocaleTimeString())}</span></div>`).join("")
     : `<div class="bd-row sub">No alerts — a clean fleet.</div>`;
   dd.innerHTML = `<div class="bd-head"><b style="font-size:12.5px">Alerts</b>
       <span style="margin-left:auto"></span>
@@ -1140,9 +1154,9 @@ async function loadAccess() {
   const r = await api("/api/hub/access").then(x => x.json()).catch(() => null);
   if (!r) return;
   $("#acc-body").innerHTML = r.addresses.map(a => `<tr>
-    <td><span class="pill ${a.kind === "tailscale" ? "cloud" : ""}">${a.kind}</span> <span class="sub">${a.interface}</span></td>
-    <td><code>${a.url}</code></td>
-    <td><button class="btn" onclick="navigator.clipboard.writeText('${a.url}')">Copy</button></td></tr>`).join("") || `<tr><td colspan="3" class="empty">No non-loopback interfaces</td></tr>`;
+    <td><span class="pill ${a.kind === "tailscale" ? "cloud" : ""}">${esc(a.kind)}</span> <span class="sub">${esc(a.interface)}</span></td>
+    <td><code>${esc(a.url)}</code></td>
+    <td><button class="btn" onclick="navigator.clipboard.writeText('${jsq(a.url)}')">Copy</button></td></tr>`).join("") || `<tr><td colspan="3" class="empty">No non-loopback interfaces</td></tr>`;
   if (r.token) { $("#acc-token-wrap").style.display = "block"; $("#acc-token").textContent = r.token; $("#acc-copy").onclick = () => navigator.clipboard.writeText(r.token); }
 }
 let machSort = localStorage.getItem("mach_sort") || "status";
@@ -1188,13 +1202,13 @@ function renderMachines() {
     const named = label !== e.m;
     const enabled = mstat[e.m] ? mstat[e.m].enabled !== false : true;
     const disBadge = enabled ? "" : ' <span class="pill warn">⏸ disabled — no jobs</span>';
-    const toggle = `<button class="btn${enabled ? " stop" : ""}" onclick="toggleMachine('${e.m}', ${enabled ? "false" : "true"})">${enabled ? "Disable" : "Enable"}</button>`;
+    const toggle = `<button class="btn${enabled ? " stop" : ""}" onclick="toggleMachine('${jsq(e.m)}', ${enabled ? "false" : "true"})">${enabled ? "Disable" : "Enable"}</button>`;
     return `<tr style="${enabled ? "" : "opacity:.62"}">
     <td class="num"><span class="numbadge">${i + 1}</span></td>
-    <td><b>${label}</b>${named ? ` <span class="sub">(${e.m})</span>` : ""}${e.m === "local" ? ' <span class="sub">· this Mac</span>' : ""}${disBadge}<br><span class="sub">${e.up}/${e.total} up</span></td>
-    <td class="sub">${e.host}${peerBadge(e.m)}</td>
-    <td>${e.list.map(s => `<span class="pill ${s.busy ? "gen" : (s.status === "up" ? "dl" : "no")}">${s.emoji || ""} ${s.modality}${s.busy ? " ⚡" : " · " + s.status}</span>`).join(" ")}</td>
-    <td style="white-space:nowrap">${toggle} <button class="btn" onclick="renameMachine('${e.m}')">Rename</button>${e.m !== "local" ? ` <button class="btn stop" onclick="removeMachine('${e.m}')">Remove</button>` : ""}</td></tr>`;
+    <td><b>${esc(label)}</b>${named ? ` <span class="sub">(${esc(e.m)})</span>` : ""}${e.m === "local" ? ' <span class="sub">· this Mac</span>' : ""}${disBadge}<br><span class="sub">${e.up}/${e.total} up</span></td>
+    <td class="sub">${esc(e.host)}${peerBadge(e.m)}</td>
+    <td>${e.list.map(s => `<span class="pill ${s.busy ? "gen" : (s.status === "up" ? "dl" : "no")}">${esc(s.emoji || "")} ${esc(s.modality)}${s.busy ? " ⚡" : " · " + esc(s.status)}</span>`).join(" ")}</td>
+    <td style="white-space:nowrap">${toggle} <button class="btn" onclick="renameMachine('${jsq(e.m)}')">Rename</button>${e.m !== "local" ? ` <button class="btn stop" onclick="removeMachine('${jsq(e.m)}')">Remove</button>` : ""}</td></tr>`;
   }).join("");
 }
 async function toggleMachine(m, enabled) {
@@ -1297,8 +1311,9 @@ setInterval(() => {
         "padding:8px 16px;font:13px/1.4 system-ui,-apple-system,sans-serif;background:#6aa7ff;color:#04122a;" +
         "border-bottom:1px solid rgba(0,0,0,.25)";
       var span = document.createElement("span"); span.style.flex = "1";
-      span.innerHTML = "\u2B06 Update available (v" + s.app_version + " \u2192 v" + s.latest_version +
-        "). In the Pinokio sidebar, click <b>Update</b>.";
+      span.append("\u2B06 Update available (v" + s.app_version + " \u2192 v" + s.latest_version +
+        "). In the Pinokio sidebar, click ");
+      var strong = document.createElement("b"); strong.textContent = "Update"; span.append(strong, ".");
       var btn = document.createElement("button"); btn.textContent = "\u2715";
       btn.setAttribute("aria-label", "Dismiss");
       btn.style.cssText = "background:transparent;border:0;cursor:pointer;font-size:14px;color:inherit;opacity:.7";

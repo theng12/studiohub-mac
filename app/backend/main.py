@@ -471,6 +471,10 @@ except ImportError:
         _HAS_MULTIPART = False
 
 if _HAS_MULTIPART:
+    _UPLOAD_CHUNK_BYTES = 1024 * 1024
+    _MAX_IMAGE_UPLOAD_BYTES = 20 * 1024 * 1024
+    _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+
     @app.post("/api/hub/assets/upload")
     async def hub_asset_upload(file: UploadFile = File(...)):
         """Upload a reference image ONCE, get an asset_id, then reference it from
@@ -479,20 +483,30 @@ if _HAS_MULTIPART:
         bytes to whichever machine runs each job."""
         import uuid
         from pathlib import Path
-        data = await file.read()
-        if not data:
-            raise HTTPException(400, "empty file")
         uploads = DATA_DIR / "uploads"
         uploads.mkdir(exist_ok=True)
         ext = (Path(file.filename or "").suffix or "").lower()
-        if ext not in (".png", ".jpg", ".jpeg", ".webp"):
-            ext = ".png"
+        if ext not in _IMAGE_EXTENSIONS:
+            raise HTTPException(415, "reference image must be PNG, JPEG, or WebP")
         asset_id = uuid.uuid4().hex[:12]
         path = uploads / (asset_id + ext)
-        path.write_bytes(data)
+        total = 0
+        try:
+            with path.open("xb") as out:
+                while chunk := await file.read(_UPLOAD_CHUNK_BYTES):
+                    total += len(chunk)
+                    if total > _MAX_IMAGE_UPLOAD_BYTES:
+                        raise HTTPException(413, "reference image exceeds the 20 MB limit")
+                    out.write(chunk)
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+        if not total:
+            path.unlink(missing_ok=True)
+            raise HTTPException(400, "empty file")
         ledger.record_asset(id=asset_id, source="upload", modality="image",
                             machine="local", artifact_path=str(path.resolve()))
-        return {"asset_id": asset_id, "bytes": len(data)}
+        return {"asset_id": asset_id, "bytes": total}
 else:
     @app.post("/api/hub/assets/upload")
     def hub_asset_upload_unavailable():

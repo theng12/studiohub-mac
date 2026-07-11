@@ -32,6 +32,20 @@ def test_fleet_get_set(authed):
     assert authed.get("/api/hub/fleet").json()["fleet_token_set"] is False
     authed.post("/api/hub/fleet", json={"token": "abc"})
     assert authed.get("/api/hub/fleet").json()["fleet_token_set"] is True
+    from backend import peers
+    import stat
+    assert stat.S_IMODE(peers.FLEET_TOKEN_FILE.stat().st_mode) == 0o600
+
+
+def test_asset_upload_limits_and_types(authed, monkeypatch):
+    from backend import main
+    ok = authed.post("/api/hub/assets/upload", files={"file": ("ref.png", b"png", "image/png")})
+    assert ok.status_code == 200 and ok.json()["bytes"] == 3
+    bad = authed.post("/api/hub/assets/upload", files={"file": ("ref.svg", b"<svg/>", "image/svg+xml")})
+    assert bad.status_code == 415
+    monkeypatch.setattr(main, "_MAX_IMAGE_UPLOAD_BYTES", 2)
+    large = authed.post("/api/hub/assets/upload", files={"file": ("large.png", b"123", "image/png")})
+    assert large.status_code == 413
 
 
 def test_registry_add_rename_remove(authed):

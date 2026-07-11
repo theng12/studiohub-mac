@@ -40,6 +40,7 @@ def fleet_token() -> str | None:
     if env and env.strip():
         return env.strip()
     if FLEET_TOKEN_FILE.exists():
+        os.chmod(FLEET_TOKEN_FILE, 0o600)
         t = FLEET_TOKEN_FILE.read_text().strip()
         return t or None
     return None
@@ -47,6 +48,7 @@ def fleet_token() -> str | None:
 
 def set_fleet_token(token: str):
     FLEET_TOKEN_FILE.write_text((token or "").strip() + "\n")
+    os.chmod(FLEET_TOKEN_FILE, 0o600)
 
 
 def _peer_url(studio: dict) -> str:

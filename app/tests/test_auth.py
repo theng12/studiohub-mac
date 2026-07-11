@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from backend import auth
+import stat
 
 
 def _req(host="1.2.3.4", headers=None, query=""):
@@ -45,3 +46,17 @@ def test_fleet_token_accepted(app, token):
     assert c.get("/api/hub/health").status_code == 200
     bad = TestClient(app, headers={"X-Hub-Token": "wrong"})
     assert bad.get("/api/hub/health").status_code == 401
+
+
+def test_cross_origin_browser_write_is_rejected(authed):
+    r = authed.post("/api/hub/registry/reload", headers={"Origin": "https://evil.example"})
+    assert r.status_code == 403
+    assert authed.post("/api/hub/registry/reload").status_code == 200
+    same = authed.post("/api/hub/registry/reload", headers={"Origin": "http://testserver"})
+    assert same.status_code == 200
+
+
+def test_hub_token_permissions_are_private(reset):
+    auth.TOKEN_FILE.unlink(missing_ok=True)
+    assert auth.load_token()
+    assert stat.S_IMODE(auth.TOKEN_FILE.stat().st_mode) == 0o600

@@ -12,7 +12,9 @@ The token is generated once and persisted to `.hub_token` at the launcher root
 (gitignored — machine state). Rotate by deleting the file and restarting.
 """
 
+import os
 import secrets
+from urllib.parse import urlsplit
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -30,9 +32,11 @@ def load_token() -> str:
     if TOKEN_FILE.exists():
         token = TOKEN_FILE.read_text().strip()
         if token:
+            os.chmod(TOKEN_FILE, 0o600)
             return token
     token = secrets.token_urlsafe(24)
     TOKEN_FILE.write_text(token + "\n")
+    os.chmod(TOKEN_FILE, 0o600)
     return token
 
 
@@ -55,6 +59,18 @@ def make_middleware(token: str):
     from . import peers
 
     async def middleware(request: Request, call_next):
+        # Local access stays passwordless, but an unrelated website opened in
+        # the user's browser must not be able to mutate a loopback Hub. Native
+        # clients do not send Origin; the Hub dashboard sends its own Host.
+        origin = request.headers.get("origin")
+        if request.method not in {"GET", "HEAD", "OPTIONS"} and origin:
+            origin_host = urlsplit(origin).netloc.lower()
+            request_host = request.headers.get("host", "").lower()
+            if not origin_host or origin_host != request_host:
+                return JSONResponse(
+                    {"detail": "Cross-origin browser writes are not allowed."},
+                    status_code=403,
+                )
         if request.url.path in PUBLIC_PATHS or is_loopback(request):
             return await call_next(request)
         offered = presented_token(request)
