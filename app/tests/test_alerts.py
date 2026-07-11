@@ -10,6 +10,21 @@ def test_emit_records_to_ring(reset):
     assert r[0]["data"] == {"x": 1}
 
 
+def test_clear_empties_ring(reset):
+    alerts.emit("test", "one")
+    alerts.emit("test", "two")
+    assert len(alerts.recent()) == 2
+    assert alerts.clear() == 2
+    assert alerts.recent() == []
+
+
+def test_clear_endpoint(authed, reset):
+    alerts.emit("test", "boom")
+    r = authed.post("/api/hub/alerts/clear").json()
+    assert r["ok"] and r["cleared"] >= 1
+    assert authed.get("/api/hub/alerts").json()["recent"] == []
+
+
 def test_config_roundtrip(reset):
     assert alerts.load_config() == {}
     alerts.set_config({"webhook": "http://x/y", "desktop": True})

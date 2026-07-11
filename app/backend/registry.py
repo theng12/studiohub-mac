@@ -31,11 +31,40 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 REGISTRY_FILE = DATA_DIR / "studios.json"
 LABELS_FILE = DATA_DIR / "machine_labels.json"
+FLAGS_FILE = DATA_DIR / "machine_flags.json"
 
 # machine-key -> friendly display name. The KEY (e.g. "local", "imac-pdt") is
 # the technical identity used for control routing and studio ids; the label is
 # purely cosmetic, so renaming never breaks anything.
 _labels_cache: dict | None = None
+
+# machine-key -> {"enabled": bool}. A DISABLED machine stays registered and
+# monitored, but the broker won't dispatch any jobs to its studios — useful to
+# quiesce a machine before updating/restarting it without removing it. Default
+# (no entry) is enabled.
+_flags_cache: dict | None = None
+
+
+def load_flags() -> dict:
+    global _flags_cache
+    if _flags_cache is None:
+        try:
+            _flags_cache = json.loads(FLAGS_FILE.read_text()) if FLAGS_FILE.exists() else {}
+        except (json.JSONDecodeError, OSError):
+            _flags_cache = {}
+    return _flags_cache
+
+
+def machine_enabled(machine: str) -> bool:
+    return bool(load_flags().get(machine, {}).get("enabled", True))
+
+
+def set_machine_enabled(machine: str, enabled: bool):
+    global _flags_cache
+    flags = dict(load_flags())
+    flags.setdefault(machine, {})["enabled"] = bool(enabled)
+    FLAGS_FILE.write_text(json.dumps(flags, indent=2) + "\n")
+    _flags_cache = flags
 
 
 def load_labels() -> dict:

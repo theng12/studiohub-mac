@@ -10,6 +10,7 @@ The /api/health and /api/version shapes intentionally mirror the sibling
 studios, so the Hub itself is monitorable by the same convention.
 """
 
+import asyncio
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -162,6 +163,17 @@ def rename_machine(machine: str, body: dict):
     return {"ok": True, "machine": machine, "name": body.get("name") or machine}
 
 
+@app.post("/api/hub/registry/machines/{machine}/enabled")
+def set_machine_enabled_ep(machine: str, body: dict):
+    """Enable/disable a machine in the fleet. A disabled machine stays
+    registered and monitored but the broker sends it no jobs — use it to quiesce
+    a machine before updating/restarting it. Body: {"enabled": <bool>}."""
+    from .registry import set_machine_enabled
+    enabled = bool(body.get("enabled", True))
+    set_machine_enabled(machine, enabled)
+    return {"ok": True, "machine": machine, "enabled": enabled}
+
+
 @app.get("/api/hub/health")
 def hub_health():
     up = sum(1 for st in monitor.status.values() if st.get("status") == "up")
@@ -214,7 +226,9 @@ def hub_resources(local_only: bool = Query(False)):
     ONLY this machine — peers call with it to prevent recursive fan-out.
     Remote studios are keyed by their local id (= modality) so a peer's reply
     maps straight onto our federated ids."""
-    machines = {"local": {"host": host_stats(), "reachable": True}}
+    from .registry import machine_enabled
+    machines = {"local": {"host": host_stats(), "reachable": True,
+                          "enabled": machine_enabled("local")}}
     per_studio = {}
     for s in monitor.registry:
         machine = s.get("machine", "local")
@@ -233,6 +247,8 @@ def hub_resources(local_only: bool = Query(False)):
                 # why the peer is (dis)connected, for the Remote tab:
                 # connected | no_hub | unreachable | token_rejected | no_token | pending
                 "status": (peer.get("status") if peer else "pending"),
+                # operator toggle — a disabled machine takes no jobs
+                "enabled": machine_enabled(machine),
             }
             per_studio[s["id"]] = (
                 (peer.get("studios", {}) or {}).get(s["modality"]) if peer else None)
@@ -502,6 +518,12 @@ def set_alerts(body: dict):
     return {"ok": True, "config": cfg}
 
 
+@app.post("/api/hub/alerts/clear")
+def clear_alerts():
+    """Wipe the alert log (also resets the header bell count)."""
+    return {"ok": True, "cleared": alerts.clear()}
+
+
 @app.get("/api/hub/stats")
 def hub_stats(
     hours: int | None = Query(None, ge=1, description="limit to last N hours"),
@@ -562,17 +584,36 @@ async def hub_director(body: dict):
     return result
 
 
+async def _delayed_start(studio: dict, delay: float = 4.0):
+    """Second half of a restart: start after the stop has had time to settle."""
+    await asyncio.sleep(delay)
+    control_studio(studio, "start")
+    try:
+        await monitor.poll_all()
+    except Exception:  # best-effort refresh; the poll loop catches up regardless
+        pass
+
+
 @app.post("/api/hub/studios/{studio_id}/{action}")
 async def studio_lifecycle(studio_id: str, action: str):
-    """Start or stop a local studio via Pinokio's pterm CLI. Returns
+    """Start / stop / restart a studio. Local studios go through Pinokio's pterm
+    CLI; remote studios are proxied to their own machine's Hub. Returns
     immediately; the health poller reflects the change within seconds."""
-    if action not in ("start", "stop"):
-        raise HTTPException(400, "action must be 'start' or 'stop'")
+    if action not in ("start", "stop", "restart"):
+        raise HTTPException(400, "action must be 'start', 'stop', or 'restart'")
     studio = next((s for s in monitor.registry if s["id"] == studio_id), None)
     if studio is None:
         raise HTTPException(404, f"unknown studio: {studio_id}")
     if studio.get("machine", "local") == "local":
-        result = control_studio(studio, action)          # local: pterm
+        if action == "restart":
+            # stop now, then start on a short delay so the port frees first
+            stop = control_studio(studio, "stop")
+            if not stop["ok"]:
+                raise HTTPException(409, stop["error"])
+            asyncio.create_task(_delayed_start(studio))
+            result = {"ok": True, "action": "restart", "studio": studio_id}
+        else:
+            result = control_studio(studio, action)          # local: pterm
     else:
         result = await peers.control_remote(monitor._client, studio, action)  # remote: peer Hub
     if not result["ok"]:

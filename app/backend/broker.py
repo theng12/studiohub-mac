@@ -27,7 +27,7 @@ import httpx
 
 from . import ledger
 from .monitor import is_cached
-from .registry import base_url
+from .registry import base_url, machine_enabled
 from .resources import host_stats
 
 _MIME_EXT = {"image/png": ".png", "image/jpeg": ".jpg", "image/jpg": ".jpg",
@@ -326,6 +326,9 @@ def _eligible_studios(modality: str, routing: str) -> list[dict]:
         if routing.startswith("studio:") and s["id"] != routing.split(":", 1)[1]:
             continue
         if s["modality"] != modality or s["id"] in _busy:
+            continue
+        # a machine the operator has disabled stays monitored but takes no jobs
+        if not machine_enabled(s.get("machine", "local")):
             continue
         if mon.status.get(s["id"], {}).get("status") == "up":
             out.append(s)

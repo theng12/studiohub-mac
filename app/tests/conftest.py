@@ -46,6 +46,7 @@ def _reset_state():
     metrics.watchdog.clear()
     metrics._last_sample = 0.0
     reg._labels_cache = None
+    reg._flags_cache = None
     # monitor: reload default registry, mark everything unknown (no network)
     monitor.reload_registry()
     monitor.status = {s["id"]: {"status": "unknown", "last_seen": None,

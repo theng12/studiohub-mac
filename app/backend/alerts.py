@@ -43,6 +43,13 @@ def recent(limit: int = 100) -> list:
     return list(_recent)[-limit:][::-1]  # newest first
 
 
+def clear() -> int:
+    """Wipe the alert log. Returns how many events were cleared."""
+    n = len(_recent)
+    _recent.clear()
+    return n
+
+
 async def _post_webhook(url: str, event: dict):
     try:
         async with httpx.AsyncClient() as c:

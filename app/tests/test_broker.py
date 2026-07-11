@@ -49,6 +49,21 @@ def test_summary_local_running_item_machine(reset):
     assert ri["machine"] == "local" and ri["progress"] is None
 
 
+def test_disabled_machine_takes_no_jobs(reset):
+    from backend import registry
+    mon = broker._monitor()
+    img = next(s for s in mon.registry if s["modality"] == "image")
+    mon.status[img["id"]] = {"status": "up"}
+    machine = img.get("machine", "local")
+    assert img["id"] in [s["id"] for s in broker._eligible_studios("image", "swarm")]
+    try:
+        registry.set_machine_enabled(machine, False)
+        assert img["id"] not in [s["id"] for s in broker._eligible_studios("image", "swarm")]
+    finally:
+        registry.set_machine_enabled(machine, True)
+    assert img["id"] in [s["id"] for s in broker._eligible_studios("image", "swarm")]
+
+
 def test_prompt_and_text_both_accepted(reset):
     r = broker.submit_batch({"modality": "voice", "model": "a/b",
                              "items": [{"text": "spoken"}]})

@@ -110,6 +110,13 @@
   .pill.warn { color: var(--warn); border-color: var(--warn); }
   .pill.err { color: var(--down); border-color: var(--down); }
   .pill.ok { color: var(--up); border-color: var(--up); }
+  /* header alert bell dropdown */
+  #bell-dropdown { position: absolute; top: 24px; right: 0; z-index: 60; width: 340px; max-height: 60vh; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.5); padding: 6px; }
+  #bell-dropdown .bd-row { display: flex; gap: 8px; padding: 7px 8px; border-radius: 7px; font-size: 12.5px; align-items: baseline; }
+  #bell-dropdown .bd-row:hover { background: var(--panel2); }
+  #bell-dropdown .bd-row .when { color: var(--dim); font-size: 11px; white-space: nowrap; }
+  #bell-dropdown .bd-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
   .hide { display: none !important; }
   .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
   .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; max-width: 560px; width: 100%; max-height: 82vh; overflow: auto; padding: 20px 22px; }
@@ -128,7 +135,10 @@
   <h1>Studio Hub KH</h1>
   <div class="spacer"></div>
   <span class="summary" id="hub-summary"></span>
-  <span id="alert-bell" style="font-size:12.5px;cursor:pointer" title="recent alerts — click for details"></span>
+  <span style="position:relative">
+    <span id="alert-bell" style="font-size:12.5px;cursor:pointer" title="recent alerts — click for details"></span>
+    <div id="bell-dropdown" class="hide"></div>
+  </span>
   <span class="ver" id="hub-ver" onclick="openWhatsNew()" style="cursor:pointer" title="See what's new"></span>
   <span class="muted" id="last-refresh" style="font-size:12px"></span>
 </header>
@@ -418,6 +428,11 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.19.0", date: "2026-07-11", items: [
+    "<b>Restart</b> a studio in one click (Overview → Restart) — works locally and on remote machines that run a Hub.",
+    "<b>Enable/Disable a machine</b> in the fleet (Remote tab). A disabled machine stays registered and monitored but takes no new jobs — quiesce it before updating or restarting.",
+    "<b>Alerts:</b> a <b>Clear log</b> button and <b>Show all / Show less</b>, and the header 🔔 is now a <b>dropdown</b> of recent alerts (with Clear / View all).",
+  ] },
   { v: "1.18.0", date: "2026-07-11", items: [
     "Jobs tab shows <b>which machine</b> each running item is on, plus live <b>progress %, time elapsed, and ETA</b> (from live progress, or the batch's average work time).",
     "<b>All tabs update live</b> now — Jobs, Resources and Remote ride the stream; Models/Assets/Stats auto-refresh while open.",
@@ -542,6 +557,7 @@ $("#ov-sort").onchange = e => { ovSort = e.target.value; localStorage.setItem("o
 const pendingActions = new Map();
 async function lifecycle(id, action) {
   if (action === "stop" && !confirm(`Stop ${id}?`)) return;
+  if (action === "restart" && !confirm(`Restart ${id}? It will stop, then start again in a few seconds.`)) return;
   pendingActions.set(id, { action, since: Date.now() });
   renderOverview(lastSummary);
   try {
@@ -562,7 +578,7 @@ function studioActionsHTML(s, sum) {
   const controllable = machine === "local" ? !!s.app : !!(sum.resources.machines?.[machine]?.has_hub);
   let html = "";
   if (pend) html = `<button class="btn" disabled>${pend.action}…</button><span class="pending">${pend.action === "start" ? "starting" : "stopping"}…</span>`;
-  else if (s.status === "up") html = `<a class="open" href="${studioUrl(s)}" target="_blank">Open UI ↗</a>` + (controllable ? ` <button class="btn stop" onclick="lifecycle('${s.id}','stop')">Stop</button>` : "");
+  else if (s.status === "up") html = `<a class="open" href="${studioUrl(s)}" target="_blank">Open UI ↗</a>` + (controllable ? ` <button class="btn" onclick="lifecycle('${s.id}','restart')">Restart</button> <button class="btn stop" onclick="lifecycle('${s.id}','stop')">Stop</button>` : "");
   else if (controllable) html = `<button class="btn" onclick="lifecycle('${s.id}','start')">Start</button>`;
   return { html, controllable, pend };
 }
@@ -970,16 +986,39 @@ async function loadStats() {
 
 // ── remote ────────────────────────────────────────────────────────────────
 const ALERT_ICON = { studio_down: "🔴", studio_recovered: "🟢", batch_failed: "⚠️" };
+let _alertRows = [];          // full recent list, newest first
+let alertsShowAll = false;    // show-more/less toggle
+const ALERT_PAGE = 6;
 async function loadAlerts() {
-  const r = await api("/api/hub/alerts?limit=30").then(x => x.json()).catch(() => null);
+  const r = await api("/api/hub/alerts?limit=200").then(x => x.json()).catch(() => null);
   if (!r) return;
   $("#alert-webhook").value = r.config.webhook || "";
   $("#alert-desktop").checked = !!r.config.desktop;
-  $("#alert-recent").innerHTML = r.recent.length
-    ? `<table><thead><tr><th>When</th><th>Event</th></tr></thead><tbody>` +
-      r.recent.map(e => `<tr><td class="sub" style="white-space:nowrap">${new Date(e.ts * 1000).toLocaleString()}</td>
-        <td>${ALERT_ICON[e.kind] || "•"} ${e.message}</td></tr>`).join("") + `</tbody></table>`
-    : `<div class="sub">No alerts yet — a clean fleet.</div>`;
+  _alertRows = r.recent;
+  renderAlerts();
+}
+function renderAlerts() {
+  const el = $("#alert-recent");
+  if (!_alertRows.length) { el.innerHTML = `<div class="sub">No alerts yet — a clean fleet.</div>`; return; }
+  const shown = alertsShowAll ? _alertRows : _alertRows.slice(0, ALERT_PAGE);
+  const rows = shown.map(e => `<tr><td class="sub" style="white-space:nowrap">${new Date(e.ts * 1000).toLocaleString()}</td>
+    <td>${ALERT_ICON[e.kind] || "•"} ${e.message}</td></tr>`).join("");
+  const more = _alertRows.length > ALERT_PAGE
+    ? `<button class="btn" onclick="alertsShowAll=!alertsShowAll;renderAlerts()">${alertsShowAll ? "Show less" : `Show all ${_alertRows.length}`}</button>`
+    : "";
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <span class="sub">${_alertRows.length} event${_alertRows.length > 1 ? "s" : ""}</span>
+      <span style="margin-left:auto"></span>${more}
+      <button class="btn stop" onclick="clearAlerts()">Clear log</button>
+    </div>
+    <table><thead><tr><th>When</th><th>Event</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+async function clearAlerts() {
+  if (!confirm("Clear the alert log? This also resets the bell.")) return;
+  await api("/api/hub/alerts/clear", { method: "POST" }).catch(() => {});
+  alertsShowAll = false;
+  loadAlerts(); refresh();
+  renderBellDropdown();
 }
 async function saveAlerts() {
   await api("/api/hub/alerts", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -988,10 +1027,35 @@ async function saveAlerts() {
 }
 function updateBell(active) {
   const bell = $("#alert-bell");
-  bell.textContent = active ? `🔔 ${active}` : "";
+  bell.textContent = active ? `🔔 ${active}` : "🔔";
   bell.style.color = active ? "var(--warn)" : "var(--dim)";
-  bell.onclick = () => document.querySelector('nav button[data-tab="remote"]').click();
+  bell.onclick = (ev) => { ev.stopPropagation(); toggleBellDropdown(); };
+  const dd = $("#bell-dropdown");
+  if (dd && !dd.classList.contains("hide")) renderBellDropdown();  // keep open dropdown fresh
 }
+async function toggleBellDropdown() {
+  const dd = $("#bell-dropdown");
+  if (dd.classList.contains("hide")) { await renderBellDropdown(); dd.classList.remove("hide"); }
+  else dd.classList.add("hide");
+}
+async function renderBellDropdown() {
+  const dd = $("#bell-dropdown");
+  const r = await api("/api/hub/alerts?limit=12").then(x => x.json()).catch(() => null);
+  const rows = (r && r.recent || []);
+  const body = rows.length
+    ? rows.map(e => `<div class="bd-row"><span>${ALERT_ICON[e.kind] || "•"}</span><span style="flex:1">${e.message}</span><span class="when">${new Date(e.ts * 1000).toLocaleTimeString()}</span></div>`).join("")
+    : `<div class="bd-row sub">No alerts — a clean fleet.</div>`;
+  dd.innerHTML = `<div class="bd-head"><b style="font-size:12.5px">Alerts</b>
+      <span style="margin-left:auto"></span>
+      ${rows.length ? `<button class="btn stop" onclick="clearAlerts()">Clear</button>` : ""}
+      <button class="btn" onclick="$('#bell-dropdown').classList.add('hide');document.querySelector('nav button[data-tab=&quot;remote&quot;]').click()">View all</button>
+    </div>${body}`;
+}
+// click-away closes the dropdown
+document.addEventListener("click", (ev) => {
+  const dd = $("#bell-dropdown");
+  if (dd && !dd.classList.contains("hide") && !ev.target.closest("#bell-dropdown") && ev.target.id !== "alert-bell") dd.classList.add("hide");
+});
 
 async function loadFleet() {
   const r = await api("/api/hub/fleet").then(x => x.json()).catch(() => null);
@@ -1085,16 +1149,29 @@ function renderMachines() {
     if (machSort === "studios") return b.up - a.up || a.m.localeCompare(b.m);
     return (b.up > 0) - (a.up > 0) || b.up - a.up || a.m.localeCompare(b.m); // status: any-online first
   });
+  const mstat = (sum.resources && sum.resources.machines) || {};
   $("#mach-body").innerHTML = entries.map((e, i) => {
     const label = mlabel(e.m);
     const named = label !== e.m;
-    return `<tr>
+    const enabled = mstat[e.m] ? mstat[e.m].enabled !== false : true;
+    const disBadge = enabled ? "" : ' <span class="pill warn">⏸ disabled — no jobs</span>';
+    const toggle = `<button class="btn${enabled ? " stop" : ""}" onclick="toggleMachine('${e.m}', ${enabled ? "false" : "true"})">${enabled ? "Disable" : "Enable"}</button>`;
+    return `<tr style="${enabled ? "" : "opacity:.62"}">
     <td class="num"><span class="numbadge">${i + 1}</span></td>
-    <td><b>${label}</b>${named ? ` <span class="sub">(${e.m})</span>` : ""}${e.m === "local" ? ' <span class="sub">· this Mac</span>' : ""}<br><span class="sub">${e.up}/${e.total} up</span></td>
+    <td><b>${label}</b>${named ? ` <span class="sub">(${e.m})</span>` : ""}${e.m === "local" ? ' <span class="sub">· this Mac</span>' : ""}${disBadge}<br><span class="sub">${e.up}/${e.total} up</span></td>
     <td class="sub">${e.host}${peerBadge(e.m)}</td>
     <td>${e.list.map(s => `<span class="pill ${s.busy ? "gen" : (s.status === "up" ? "dl" : "no")}">${s.emoji || ""} ${s.modality}${s.busy ? " ⚡" : " · " + s.status}</span>`).join(" ")}</td>
-    <td style="white-space:nowrap"><button class="btn" onclick="renameMachine('${e.m}')">Rename</button>${e.m !== "local" ? ` <button class="btn stop" onclick="removeMachine('${e.m}')">Remove</button>` : ""}</td></tr>`;
+    <td style="white-space:nowrap">${toggle} <button class="btn" onclick="renameMachine('${e.m}')">Rename</button>${e.m !== "local" ? ` <button class="btn stop" onclick="removeMachine('${e.m}')">Remove</button>` : ""}</td></tr>`;
   }).join("");
+}
+async function toggleMachine(m, enabled) {
+  const verb = enabled ? "enable" : "disable";
+  if (!confirm(`${enabled ? "Enable" : "Disable"} ${mlabel(m)}?${enabled ? "" : "\nIt stays registered and monitored, but the Hub will send it no new jobs until you re-enable it."}`)) return;
+  await api(`/api/hub/registry/machines/${encodeURIComponent(m)}/enabled`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled })
+  }).catch(e => alert(`${verb} failed: ${e}`));
+  refresh();
 }
 async function loadMachines() {
   if (!lastSummary) { await pollOnce(); }
