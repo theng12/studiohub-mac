@@ -12,6 +12,15 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.21.4] — 2026-07-12
+
+### Added — explicit port and memory preflight
+
+- Fleet preflight now detects duplicate host/port assignments and reports local or peer-Hub available/total memory with a low-memory warning threshold.
+- Added a regression test proving duplicate ports block readiness before maintenance.
+
+86 tests.
+
 ## [1.21.3] — 2026-07-12
 
 ### Fixed — Video Studio lifecycle path

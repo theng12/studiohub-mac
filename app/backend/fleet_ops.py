@@ -12,6 +12,7 @@ import httpx
 from . import broker, peers
 from .control import PINOKIO_HOME, control_studio, run_studio_script
 from .registry import base_url
+from .resources import host_stats
 
 PREFLIGHT_TIMEOUT = 12.0
 UPDATE_TIMEOUT = 20 * 60
@@ -54,6 +55,11 @@ async def _preflight_one(monitor, studio: dict) -> dict:
     health = monitor.status.get(sid, {})
     checks.append({"name": "health", "status": "pass" if health.get("status") == "up" else "fail",
                    "detail": health.get("status", "unknown")})
+    same_port = [s["id"] for s in monitor.registry
+                 if s.get("host") == studio.get("host") and s.get("port") == studio.get("port")]
+    checks.append({"name": "port", "status": "pass" if len(same_port) == 1 else "fail",
+                   "detail": f"{studio.get('host')}:{studio.get('port')}" if len(same_port) == 1
+                   else "conflicts with " + ", ".join(same_port)})
     row = {"id": sid, "title": studio.get("title", sid),
            "machine": studio.get("machine", "local"), "checks": checks}
     headers = peers.studio_headers(studio)
@@ -94,6 +100,17 @@ async def _preflight_one(monitor, studio: dict) -> dict:
             free_gb = shutil.disk_usage(app_dir).free / 1_000_000_000
             checks.append({"name": "disk space", "status": "pass" if free_gb >= 5 else "warn",
                            "detail": f"{free_gb:.1f} GB free"})
+        memory = host_stats()
+        available = memory.get("available_gb", 0)
+        checks.append({"name": "memory", "status": "pass" if available >= 2 else "warn",
+                       "detail": f"{available} GB free of {memory.get('total_gb', '?')} GB"})
+    elif studio.get("machine"):
+        peer = peers.cached(studio["machine"])
+        memory = (peer or {}).get("host")
+        if memory:
+            available = memory.get("available_gb", 0)
+            checks.append({"name": "memory", "status": "pass" if available >= 2 else "warn",
+                           "detail": f"{available} GB free of {memory.get('total_gb', '?')} GB"})
     row["capabilities"] = next((c["detail"] for c in checks if c["name"] == "capability contract"), "")
     row["status"] = "fail" if any(c["status"] == "fail" for c in checks) else (
         "warn" if any(c["status"] == "warn" for c in checks) else "pass")

@@ -12,6 +12,24 @@ def test_catalog_and_diagnostic_summaries():
     assert fleet_ops._diag_state({"available": True}) == "pass"
 
 
+@pytest.mark.asyncio
+async def test_preflight_reports_port_conflicts(monkeypatch, monitor):
+    studio = dict(monitor.registry[0])
+    duplicate = {**studio, "id": "duplicate"}
+    monitor.registry = [studio, duplicate]
+    monitor.status[studio["id"]] = {"status": "up"}
+
+    class BrokenClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, *args, **kwargs): raise fleet_ops.httpx.ConnectError("stop after local checks")
+
+    monkeypatch.setattr(fleet_ops.httpx, "AsyncClient", lambda **kwargs: BrokenClient())
+    row = await fleet_ops._preflight_one(monitor, studio)
+    port = next(c for c in row["checks"] if c["name"] == "port")
+    assert port["status"] == "fail" and "duplicate" in port["detail"]
+
+
 def test_maintenance_drains_broker(reset):
     mon = broker._monitor()
     image = next(s for s in mon.registry if s["id"] == "image")
