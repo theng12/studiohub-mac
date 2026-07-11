@@ -60,6 +60,9 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/resources` | Host memory/CPU + per-studio process stats |
 | `GET /api/hub/summary` | One-shot dashboard payload (studios + resources) |
 | `POST /api/hub/studios/{id}/start` | Start a local studio (via Pinokio's `pterm` CLI) |
+| `POST /api/hub/maintenance/preflight` | Check fleet auth, contracts, models, engines, disk, and updates |
+| `POST /api/hub/maintenance/updates` | Start a drained, sequential rolling update |
+| `GET /api/hub/maintenance/updates/{id}` | Follow rolling-update progress and health verification |
 | `POST /api/hub/studios/{id}/stop` | Stop a local studio |
 | `GET /api/hub/access` | Shareable LAN/Tailscale URLs (+ the token, loopback only) |
 | `ANY /studio/{id}/{path}` | **Gateway** — proxies to that studio's API (streams/SSE included) |
@@ -141,7 +144,7 @@ Hub aggregates them.
 
 Setup (once):
 1. Install + start Studio Hub on each Mac.
-2. On the primary, **Remote → Fleet token → Generate → Save**.
+2. On the primary, copy the automatically generated token from **Remote → Fleet security token**.
 3. Paste that **same token** into every other Mac's Hub (Remote → Fleet token).
    (Tip: it's one value for the whole fleet — keep it somewhere handy.)
 
@@ -229,6 +232,9 @@ call returns immediately — poll `/api/hub/studios` to watch the status change.
 - **Local (this machine)** — no token needed; everything works as before.
 - **Remote (LAN / Tailscale)** — every API call requires the Hub token via
   `Authorization: Bearer <token>`, `X-Hub-Token: <token>`, or `?token=`.
+  StudioHub also creates an owner-only fleet token automatically and forwards it as
+  `X-Studio-Token` to sibling Studio APIs. Local loopback use remains passwordless;
+  remote Studio API, OpenAI-compatible, settings, upload, and output routes require it.
   The dashboard page and `/api/health`/`/api/version` stay public; the
   dashboard prompts for the token once and remembers it.
 - The token is auto-generated into `.hub_token` (gitignored). See it in the

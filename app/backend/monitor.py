@@ -15,6 +15,7 @@ import httpx
 log = logging.getLogger("studiohub.monitor")
 
 from .registry import base_url, load_registry
+from .peers import studio_headers
 
 POLL_INTERVAL_S = 5.0
 HEALTH_TIMEOUT_S = 3.0
@@ -136,7 +137,8 @@ class StudioMonitor:
             return cached[1]
         try:
             r = await self._client.get(
-                f"{base_url(studio)}/api/catalog", timeout=CATALOG_TIMEOUT_S
+                f"{base_url(studio)}/api/catalog", headers=studio_headers(studio),
+                timeout=CATALOG_TIMEOUT_S
             )
             data = r.json()
             self._catalog_cache[sid] = (time.time(), data)

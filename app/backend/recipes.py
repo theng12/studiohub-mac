@@ -27,6 +27,7 @@ import httpx
 
 from . import broker
 from .registry import base_url
+from .peers import studio_headers
 
 runs: dict[str, dict] = {}
 
@@ -55,6 +56,7 @@ async def _chat(client: httpx.AsyncClient, model: str, prompt: str,
     r = await client.post(
         f"{base_url(chat)}/v1/chat/completions",
         json={"model": model, "messages": messages, "stream": False},
+        headers=studio_headers(chat),
         timeout=httpx.Timeout(connect=5, read=600, write=30, pool=5))
     if r.status_code >= 400:
         raise RuntimeError(f"chat HTTP {r.status_code}: {r.text[:200]}")

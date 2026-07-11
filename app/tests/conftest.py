@@ -20,7 +20,7 @@ from starlette.testclient import TestClient
 
 
 def _reset_state():
-    from backend import alerts, auth, broker, ledger, metrics, peers
+    from backend import alerts, auth, broker, fleet_ops, ledger, metrics, peers
     from backend import registry as reg
     from backend.main import monitor
     alerts._recent.clear()
@@ -40,8 +40,10 @@ def _reset_state():
     # in-memory state
     broker.batches.clear()
     broker._busy.clear()
+    broker._maintenance.clear()
     broker._reserved["gb"] = 0.0
     peers._cache.clear()
+    fleet_ops._updates.clear()
     metrics.samples.clear()
     metrics.watchdog.clear()
     metrics._last_sample = 0.0

@@ -18,8 +18,9 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel, Field
 
-from . import alerts, broadcast, broker, gateway, ledger, metrics, peers, recipes
+from . import alerts, broadcast, broker, fleet_ops, gateway, ledger, metrics, peers, recipes
 from .auth import is_loopback, load_token, make_middleware
 from .control import control_studio
 from .monitor import StudioMonitor
@@ -28,6 +29,10 @@ from .resources import host_stats, studio_process_stats
 
 TITLE = "Studio Hub KH"
 FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
+
+
+class UpdateRequest(BaseModel):
+    studio_ids: list[str] = Field(min_length=1, max_length=100)
 
 # Give our loggers a handler regardless of how uvicorn configures logging, so
 # structured warnings/alerts actually reach the service log.
@@ -651,7 +656,38 @@ def set_fleet(body: dict):
     """Set the shared fleet token (paste the SAME value on every Mac's Hub)."""
     token = body.get("token", "")
     peers.set_fleet_token(token)
-    return {"ok": True, "fleet_token_set": bool(token.strip())}
+    return {"ok": True, "fleet_token_set": True}
+
+
+@app.get("/api/hub/maintenance/preflight")
+def get_preflight():
+    return fleet_ops.preflight_snapshot()
+
+
+@app.post("/api/hub/maintenance/preflight")
+async def run_fleet_preflight():
+    return await fleet_ops.run_preflight(monitor)
+
+
+@app.get("/api/hub/maintenance/updates")
+def list_fleet_updates():
+    return {"updates": fleet_ops.update_snapshot()}
+
+
+@app.post("/api/hub/maintenance/updates")
+def start_fleet_updates(body: UpdateRequest):
+    try:
+        return fleet_ops.start_updates(monitor, body.studio_ids)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.get("/api/hub/maintenance/updates/{job_id}")
+def get_fleet_update(job_id: str):
+    job = fleet_ops.update_snapshot(job_id)
+    if not job:
+        raise HTTPException(404, "unknown update")
+    return job
 
 
 @app.post("/api/hub/registry/reload")

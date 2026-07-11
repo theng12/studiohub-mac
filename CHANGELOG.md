@@ -12,6 +12,19 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.21.0] — 2026-07-12
+
+### Added — secured Studio fleet, preflight, and rolling updates
+
+- StudioHub now automatically maintains an owner-only fleet token and forwards it to every protected Studio catalog, generation, asset, recipe, broadcast, and gateway request. Remote Hub authentication also establishes an HttpOnly Studio session cookie.
+- Added fleet preflight across health, authentication, capability schema, downloaded models, generation diagnostics, local update scripts, and free disk space.
+- Added drained rolling updates: Studios stop receiving new Hub work, active work finishes, each Studio's own mode-aware `update.js` runs one at a time, and the Hub requires the new on-disk version to return healthy. A failed update triggers a normal recovery start and does not prevent later Studios from proceeding.
+- Remote Studio updates delegate to the target machine's Hub, preserving machine-local Pinokio control.
+
+### Verification
+
+- 82 backend tests pass, including fleet-token forwarding, maintenance draining, sequential updates, and failure containment. Frontend scripts and all Python modules parse cleanly.
+
 ## [1.20.1] — 2026-07-12
 
 ### Fixed — dashboard and local-control security

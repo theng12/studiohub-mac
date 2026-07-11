@@ -76,11 +76,19 @@ def make_middleware(token: str):
         offered = presented_token(request)
         if offered is not None:
             if secrets.compare_digest(offered, token):
-                return await call_next(request)
+                response = await call_next(request)
+                fleet = peers.fleet_token()
+                if fleet:
+                    response.set_cookie("kh_studio_token", fleet, httponly=True,
+                                        samesite="strict")
+                return response
             # Fleet token: lets peer Hubs on the tailnet authenticate as a fleet.
             fleet = peers.fleet_token()
             if fleet and secrets.compare_digest(offered, fleet):
-                return await call_next(request)
+                response = await call_next(request)
+                response.set_cookie("kh_studio_token", fleet, httponly=True,
+                                    samesite="strict")
+                return response
         return JSONResponse(
             {"detail": "Hub token required for remote access. "
                        "Open the dashboard on the Hub machine to see the token."},

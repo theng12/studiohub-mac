@@ -71,3 +71,28 @@ def control_studio(studio: dict, action: str) -> dict:
     except OSError as e:
         return {"ok": False, "error": f"failed to spawn pterm: {e}"}
     return {"ok": True, "action": action, "studio": studio["id"], "ref": ref}
+
+
+def run_studio_script(studio: dict, script: str) -> dict:
+    """Launch an allowed maintenance script through the Studio's Pinokio app."""
+    if script not in {"update.js"}:
+        return {"ok": False, "error": "unsupported maintenance script"}
+    error = _is_controllable(studio)
+    if error:
+        return {"ok": False, "error": error}
+    script_path = PINOKIO_HOME / "api" / studio["app"] / script
+    if not script_path.exists():
+        return {"ok": False, "error": f"{script} not found for {studio['id']}"}
+    pterm = find_pterm()
+    if pterm is None:
+        return {"ok": False, "error": "pterm CLI not found"}
+    ref = f"{KERNEL}/api/{studio['app']}"
+    try:
+        subprocess.Popen(
+            [pterm, "start", script, "--ref", ref],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL, start_new_session=True,
+        )
+    except OSError as e:
+        return {"ok": False, "error": f"failed to spawn pterm: {e}"}
+    return {"ok": True, "script": script, "studio": studio["id"], "ref": ref}

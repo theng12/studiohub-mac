@@ -20,6 +20,7 @@ loop, so the 5s dashboard poll never blocks on slow/offline peers.
 
 import asyncio
 import os
+import secrets
 import time
 
 import httpx
@@ -42,13 +43,22 @@ def fleet_token() -> str | None:
     if FLEET_TOKEN_FILE.exists():
         os.chmod(FLEET_TOKEN_FILE, 0o600)
         t = FLEET_TOKEN_FILE.read_text().strip()
-        return t or None
-    return None
+        if t:
+            return t
+    token = secrets.token_urlsafe(24)
+    set_fleet_token(token)
+    return token
 
 
 def set_fleet_token(token: str):
-    FLEET_TOKEN_FILE.write_text((token or "").strip() + "\n")
+    value = (token or "").strip() or secrets.token_urlsafe(24)
+    FLEET_TOKEN_FILE.write_text(value + "\n")
     os.chmod(FLEET_TOKEN_FILE, 0o600)
+
+
+def studio_headers(studio: dict | None = None) -> dict[str, str]:
+    token = (studio or {}).get("studio_token") or fleet_token()
+    return {"X-Studio-Token": token} if token else {}
 
 
 def _peer_url(studio: dict) -> str:

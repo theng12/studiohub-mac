@@ -26,6 +26,7 @@ from pathlib import Path
 import httpx
 
 from . import ledger
+from .peers import studio_headers
 from .monitor import is_cached
 from .registry import base_url, machine_enabled
 from .resources import host_stats
@@ -45,6 +46,11 @@ def _mime_from_path(p: str) -> str:
     if s.endswith(".webp"):
         return "image/webp"
     return "image/png"
+
+
+def _studio_headers_for_url(url: str) -> dict[str, str]:
+    studio = next((s for s in _monitor().registry if url.startswith(base_url(s))), None)
+    return studio_headers(studio) if studio else {}
 
 
 def _multipart_fields(body: dict) -> dict:
@@ -78,7 +84,7 @@ async def _resolve_reference(client: httpx.AsyncClient, ref: dict):
         except Exception as e:
             raise ValueError(f"invalid base64: {e}")
     if ref.get("url"):
-        r = await client.get(ref["url"], timeout=30.0)
+        r = await client.get(ref["url"], headers=_studio_headers_for_url(ref["url"]), timeout=30.0)
         r.raise_for_status()
         return r.content, r.headers.get("content-type", "image/png")
     if ref.get("asset_id"):
@@ -90,7 +96,7 @@ async def _resolve_reference(client: httpx.AsyncClient, ref: dict):
             return Path(p).read_bytes(), _mime_from_path(p)
         u = a.get("artifact_url")
         if u:
-            r = await client.get(u, timeout=30.0)
+            r = await client.get(u, headers=_studio_headers_for_url(u), timeout=30.0)
             r.raise_for_status()
             return r.content, r.headers.get("content-type", "image/png")
         raise ValueError("asset has no fetchable bytes")
@@ -110,6 +116,7 @@ MEMORY_HEADROOM_GB = 1.0  # keep at least this much free beyond the model's need
 
 batches: dict[str, dict] = {}
 _busy: set[str] = set()  # studio ids currently running an item for us
+_maintenance: set[str] = set()  # drained by fleet maintenance/update operations
 _wakeup = asyncio.Event()
 # Sum of size_gb reserved by in-flight LOCAL dispatches. The memory governor
 # subtracts this from free RAM so two concurrent local dispatches (e.g. image +
@@ -216,6 +223,14 @@ def submit_batch(envelope: dict) -> dict:
 def busy_studios() -> set:
     """Studio ids currently running a batch item (i.e. 'generating')."""
     return set(_busy)
+
+
+def set_maintenance(studio_id: str, enabled: bool):
+    if enabled:
+        _maintenance.add(studio_id)
+    else:
+        _maintenance.discard(studio_id)
+        _wakeup.set()
 
 
 def _recent_avg(modality: str, model: str, limit: int = 50) -> float | None:
@@ -356,7 +371,7 @@ def _eligible_studios(modality: str, routing: str) -> list[dict]:
     for s in mon.registry:
         if routing.startswith("studio:") and s["id"] != routing.split(":", 1)[1]:
             continue
-        if s["modality"] != modality or s["id"] in _busy:
+        if s["modality"] != modality or s["id"] in _busy or s["id"] in _maintenance:
             continue
         # a machine the operator has disabled stays monitored but takes no jobs
         if not machine_enabled(s.get("machine", "local")):
@@ -467,9 +482,11 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             r = await client.post(
                 f"{base_url(studio)}/api/generate/{mode}",
                 data=_multipart_fields(body),
-                files={"image": (f"reference{_ext(mime)}", img_bytes, mime)})
+                files={"image": (f"reference{_ext(mime)}", img_bytes, mime)},
+                headers=studio_headers(studio))
         else:
-            r = await client.post(f"{base_url(studio)}{endpoint}", json=body)
+            r = await client.post(f"{base_url(studio)}{endpoint}", json=body,
+                                  headers=studio_headers(studio))
         if r.status_code >= 400:
             detail = (r.json().get("detail")
                       if "json" in r.headers.get("content-type", "") else r.text)
@@ -480,7 +497,8 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
         while True:
             await asyncio.sleep(POLL_S)
             jr = await client.get(
-                f"{base_url(studio)}/api/generate/jobs/{job['id']}")
+                f"{base_url(studio)}/api/generate/jobs/{job['id']}",
+                headers=studio_headers(studio))
             j = jr.json()["job"]
             state = j.get("state")
             if state in ("queued", "running"):
@@ -489,7 +507,8 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
                     item["progress"] = max(0.0, min(1.0, float(p)))
                 if b["cancelled"]:
                     await client.delete(
-                        f"{base_url(studio)}/api/generate/jobs/{job['id']}")
+                        f"{base_url(studio)}/api/generate/jobs/{job['id']}",
+                        headers=studio_headers(studio))
                     item["state"] = "cancelled"
                     return
                 continue

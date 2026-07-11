@@ -29,7 +29,7 @@ def test_models_empty_when_all_down(authed):
 
 
 def test_fleet_get_set(authed):
-    assert authed.get("/api/hub/fleet").json()["fleet_token_set"] is False
+    assert authed.get("/api/hub/fleet").json()["fleet_token_set"] is True
     authed.post("/api/hub/fleet", json={"token": "abc"})
     assert authed.get("/api/hub/fleet").json()["fleet_token_set"] is True
     from backend import peers

@@ -14,6 +14,7 @@ import re
 import httpx
 
 from .registry import base_url
+from .peers import studio_headers
 from .control import PINOKIO_HOME
 
 # Guard the env broadcaster against writing outside a studio's own folder.
@@ -31,7 +32,8 @@ async def broadcast_download(
             if token:
                 body["token"] = token
             r = await client.post(
-                f"{base_url(s)}/api/downloads", json=body, timeout=15.0)
+                f"{base_url(s)}/api/downloads", json=body,
+                headers=studio_headers(s), timeout=15.0)
             payload = r.json() if r.status_code < 500 else {}
             results[s["id"]] = {
                 "ok": r.status_code < 400,

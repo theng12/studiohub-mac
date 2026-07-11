@@ -55,6 +55,7 @@ def test_gateway_strips_hub_token_from_upstream(app, token, monkeypatch):
     _authed(app, token).get("/studio/chat/v1/models")
     hdrs = {k.lower() for k in fc.captured["headers"]}
     assert "x-hub-token" not in hdrs and "authorization" not in hdrs
+    assert "x-studio-token" in hdrs
 
 
 def test_gateway_unknown_studio_404(authed):

@@ -29,11 +29,12 @@ class FakeResp:
 
 
 def test_fleet_token_roundtrip(reset):
-    assert peers.fleet_token() is None
+    generated = peers.fleet_token()
+    assert generated
     peers.set_fleet_token("secret")
     assert peers.fleet_token() == "secret"
     peers.set_fleet_token("")
-    assert peers.fleet_token() is None
+    assert peers.fleet_token() not in {None, "", "secret"}
 
 
 def test_remote_machines_grouping():
@@ -69,8 +70,5 @@ async def test_refresh_inflight_guard(reset):
         peers._inflight["v"] = False
 
 
-@pytest.mark.asyncio
-async def test_control_remote_needs_token(reset):
-    async with httpx.AsyncClient() as c:
-        r = await peers.control_remote(c, REMOTE[0], "start")
-    assert r["ok"] is False and "fleet token" in r["error"]
+def test_studio_headers_use_per_studio_override(reset):
+    assert peers.studio_headers({"studio_token": "one"}) == {"X-Studio-Token": "one"}
