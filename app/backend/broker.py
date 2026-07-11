@@ -217,8 +217,47 @@ def busy_studios() -> set:
     return set(_busy)
 
 
+def _recent_avg(modality: str, model: str, limit: int = 50) -> float | None:
+    """Average completed-item duration for this (modality, model) across ALL
+    batches — so even a 1-item batch gets an ETA from the model's track record,
+    not just from its own (nonexistent) completed siblings."""
+    durs = []
+    for b in batches.values():
+        if b["modality"] != modality or b["model"] != model:
+            continue
+        for i in b["items"]:
+            if i.get("state") == "done" and isinstance(i.get("duration_s"), (int, float)):
+                durs.append(i["duration_s"])
+    durs = durs[-limit:]
+    return round(sum(durs) / len(durs), 1) if durs else None
+
+
 def batch_summary(b: dict) -> dict:
-    states = [i["state"] for i in b["items"]]
+    items = b["items"]
+    states = [i["state"] for i in items]
+    now = time.time()
+    # ETA basis: this batch's own completed items if any, else the model's recent
+    # average across every batch (so single-item jobs still get an estimate).
+    done_durs = [i["duration_s"] for i in items
+                 if i.get("state") == "done" and isinstance(i.get("duration_s"), (int, float))]
+    avg_s = (round(sum(done_durs) / len(done_durs), 1) if done_durs
+             else _recent_avg(b["modality"], b["model"]))
+    # per-item live detail for whatever is running right now (machine tag + progress)
+    running_items = []
+    for i in items:
+        if i.get("state") != "running":
+            continue
+        sid = i.get("studio") or ""
+        machine = sid.split("@", 1)[1] if "@" in sid else "local"
+        started = i.get("run_started")
+        elapsed = round(now - started, 1) if started else None
+        running_items.append({
+            "index": i.get("index"),
+            "studio": sid,                 # e.g. "image@macmini-m1-01" or "image"
+            "machine": machine,            # "macmini-m1-01" or "local"
+            "progress": i.get("progress"),  # 0..1 or None
+            "elapsed_s": elapsed,
+        })
     return {
         "id": b["id"], "modality": b["modality"], "model": b["model"],
         "created_at": b["created_at"], "cancelled": b["cancelled"],
@@ -230,6 +269,8 @@ def batch_summary(b: dict) -> dict:
         "done": states.count("done"),
         "error": states.count("error"),
         "cancelled_items": states.count("cancelled"),
+        "avg_s": avg_s,
+        "running_items": running_items,
     }
 
 
@@ -357,6 +398,8 @@ async def _dispatch_loop():
 async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict):
     endpoint, prompt_field, artifact_kind = MODALITY[b["modality"]]
     t_start = time.time()  # wall-clock fallback for generation duration
+    item["run_started"] = t_start   # surfaced live for elapsed/ETA in the UI
+    item["progress"] = None         # 0..1 as reported by the studio while running
     body = dict(b["shared_params"])
     body.update(item["params"])
     body["repo"] = b["model"]
@@ -407,6 +450,9 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             j = jr.json()["job"]
             state = j.get("state")
             if state in ("queued", "running"):
+                p = j.get("progress")
+                if isinstance(p, (int, float)):
+                    item["progress"] = max(0.0, min(1.0, float(p)))
                 if b["cancelled"]:
                     await client.delete(
                         f"{base_url(studio)}/api/generate/jobs/{job['id']}")

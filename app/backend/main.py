@@ -230,6 +230,9 @@ def hub_resources(local_only: bool = Query(False)):
                 "host": peer["host"] if peer else None,
                 "reachable": bool(peer and peer.get("reachable")),
                 "has_hub": bool(peer and peer.get("host") is not None),
+                # why the peer is (dis)connected, for the Remote tab:
+                # connected | no_hub | unreachable | token_rejected | no_token | pending
+                "status": (peer.get("status") if peer else "pending"),
             }
             per_studio[s["id"]] = (
                 (peer.get("studios", {}) or {}).get(s["modality"]) if peer else None)
@@ -249,7 +252,10 @@ def _build_summary() -> dict:
     return {
         "hub": {"title": TITLE, "app_version": _app_version()},
         "studios": studio_list,
-        "resources": hub_resources(),
+        # NB: pass local_only explicitly. Calling hub_resources() bare uses the
+        # FastAPI Query(False) default object, which is truthy — that would drop
+        # every remote machine from the summary (and thus the live dashboard).
+        "resources": hub_resources(local_only=False),
         "watchdog": metrics.watchdog_status(),
         "jobs": [broker.batch_summary(b) for b in broker.batches.values()],
         "alerts_active": active_alerts,

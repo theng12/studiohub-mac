@@ -21,6 +21,34 @@ def test_submit_ok_and_summary(reset):
     assert s["total"] == 2 and s["queued"] == 2 and s["label"] == "t"
 
 
+def test_summary_running_items_and_avg(reset):
+    import time
+    r = broker.submit_batch({"modality": "image", "model": "a/b",
+                             "items": [{"prompt": "one"}, {"prompt": "two"}]})
+    b = broker.batches[r["batch_id"]]
+    # item 0 running on a remote machine with live progress; item 1 done+timed
+    b["items"][0].update(state="running", studio="image@macmini-m1-01",
+                         run_started=time.time() - 10, progress=0.5)
+    b["items"][1].update(state="done", duration_s=8.0)
+    s = broker.batch_summary(b)
+    assert s["avg_s"] == 8.0
+    assert len(s["running_items"]) == 1
+    ri = s["running_items"][0]
+    assert ri["machine"] == "macmini-m1-01" and ri["progress"] == 0.5
+    assert ri["elapsed_s"] >= 9   # ~10s elapsed
+
+
+def test_summary_local_running_item_machine(reset):
+    import time
+    r = broker.submit_batch({"modality": "image", "model": "a/b",
+                             "items": [{"prompt": "x"}]})
+    b = broker.batches[r["batch_id"]]
+    b["items"][0].update(state="running", studio="image",
+                         run_started=time.time(), progress=None)
+    ri = broker.batch_summary(b)["running_items"][0]
+    assert ri["machine"] == "local" and ri["progress"] is None
+
+
 def test_prompt_and_text_both_accepted(reset):
     r = broker.submit_batch({"modality": "voice", "model": "a/b",
                              "items": [{"text": "spoken"}]})

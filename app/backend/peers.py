@@ -95,25 +95,40 @@ async def _refresh_stale(machines, stale, client, now):
     async def one(machine: str, studios: list[dict]):
         s0 = studios[0]
         url = _peer_url(s0)
-        headers = {"X-Hub-Token": _peer_token(s0)} if _peer_token(s0) else {}
+        token = _peer_token(s0)
+        headers = {"X-Hub-Token": token} if token else {}
         try:
             r = await client.get(f"{url}/api/hub/resources?local_only=true",
                                   headers=headers, timeout=PEER_TIMEOUT_S)
             if r.status_code == 401:
+                # Hub is reachable but rejected the token → clearest possible signal
+                # that the fleet tokens don't match on that machine.
                 _cache[machine] = (now, {"host": None, "studios": {},
-                                        "reachable": True, "auth": False})
+                                        "reachable": True, "auth": False,
+                                        "status": ("no_token" if not token
+                                                   else "token_rejected")})
                 return
             data = r.json()
             _cache[machine] = (now, {
                 "host": data.get("host"),
                 "studios": data.get("studios", {}),
-                "reachable": True, "auth": True,
+                "reachable": True, "auth": True, "status": "connected",
             })
-        except Exception:
-            # Peer Hub not running / machine offline — reachable=False means the
-            # studios may still answer health directly, we just have no Hub there.
+        except httpx.ConnectError:
+            # TCP refused: nothing is listening on :47873 there — the Studio Hub
+            # isn't actually running on that machine (even if its studios are).
             _cache[machine] = (now, {"host": None, "studios": {},
-                                    "reachable": False, "auth": True})
+                                    "reachable": False, "auth": True,
+                                    "status": "no_hub"})
+        except (httpx.TimeoutException, httpx.ConnectTimeout):
+            # Packets dropped: a firewall is blocking :47873, or the Mac is asleep/off.
+            _cache[machine] = (now, {"host": None, "studios": {},
+                                    "reachable": False, "auth": True,
+                                    "status": "unreachable"})
+        except Exception:
+            _cache[machine] = (now, {"host": None, "studios": {},
+                                    "reachable": False, "auth": True,
+                                    "status": "unreachable"})
 
     await asyncio.gather(*(one(m, machines[m]) for m in stale))
 

@@ -101,6 +101,15 @@
   .jform .go { background: var(--accent); border: none; color: #08131f; font-weight: 600; border-radius: 7px; padding: 8px 18px; cursor: pointer; font: inherit; }
   .prog { height: 6px; background: var(--panel2); border-radius: 3px; overflow: hidden; margin-top: 6px; }
   .prog i { display: block; height: 100%; background: var(--up); transition: width .5s; }
+  /* per-item live run rows in the Jobs tab */
+  .runs { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .run { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .run .prog { flex: 1; min-width: 90px; margin-top: 0; height: 5px; }
+  .run .prog i.indet { width: 30% !important; animation: indet 1.3s ease-in-out infinite; }
+  @keyframes indet { 0%{margin-left:-30%} 100%{margin-left:100%} }
+  .pill.warn { color: var(--warn); border-color: var(--warn); }
+  .pill.err { color: var(--down); border-color: var(--down); }
+  .pill.ok { color: var(--up); border-color: var(--up); }
   .hide { display: none !important; }
   .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
   .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; max-width: 560px; width: 100%; max-height: 82vh; overflow: auto; padding: 20px 22px; }
@@ -409,6 +418,11 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.18.0", date: "2026-07-11", items: [
+    "Jobs tab shows <b>which machine</b> each running item is on, plus live <b>progress %, time elapsed, and ETA</b> (from live progress, or the batch's average work time).",
+    "<b>All tabs update live</b> now — Jobs, Resources and Remote ride the stream; Models/Assets/Stats auto-refresh while open.",
+    "Remote tab shows <b>why</b> each peer is (dis)connected: <i>Hub ✓ · no Hub on :47873 · unreachable (firewall/asleep) · token mismatch</i> — and the fleet-token <b>Save now confirms</b> and re-checks the fleet.",
+  ] },
   { v: "1.17.0", date: "2026-07-10", items: [
     "Dashboard now updates <b>live</b> (Server-Sent Events) instead of polling — faster, lighter; auto-falls back to polling if the stream drops.",
     "Hardening: fixed a memory-governor batch-error bug, a memory race, and a gateway connection leak — all regression-tested (68 tests).",
@@ -764,20 +778,52 @@ async function submitBatch() {
   $("#j-status").textContent = r.ok ? `batch ${d.batch_id} queued (${d.items} items)` : (d.detail || "failed");
   loadBatches();
 }
-async function loadBatches() {
-  const r = await api("/api/hub/jobs").then(x => x.json()).catch(() => null);
-  if (!r) return;
-  $("#j-batches").innerHTML = r.batches.map(b => {
+function fmtDur(s) {
+  if (s == null || isNaN(s)) return "—";
+  s = Math.round(s);
+  if (s < 60) return s + "s";
+  const m = Math.floor(s / 60), ss = s % 60;
+  if (m < 60) return m + "m" + (ss ? " " + ss + "s" : "");
+  const h = Math.floor(m / 60);
+  return h + "h " + (m % 60) + "m";
+}
+// render the Jobs tab from a list of batch summaries (used by both the fetch
+// path and the live SSE summary, so the tab updates without switching away)
+function renderBatches(batches) {
+  const el = $("#j-batches"); if (!el) return;
+  const list = (batches || []).slice().sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+  el.innerHTML = list.map(b => {
     const pct = b.total ? Math.round(100 * (b.done + b.error + b.cancelled_items) / b.total) : 0;
     const active = b.queued + b.running > 0 && !b.cancelled;
+    const runs = (b.running_items || []).map(ri => {
+      const mlab = mlabel(ri.machine);
+      // a studio only counts as reporting real progress when it's > 0 — many
+      // (e.g. MLX image) report 0 the whole time, so treat that as indeterminate.
+      const known = (typeof ri.progress === "number" && ri.progress > 0.01);
+      const ppct = known ? Math.round(ri.progress * 100) : null;
+      const e = ri.elapsed_s;
+      let eta = null;                                   // seconds remaining
+      if (known && e != null) eta = e * (1 - ri.progress) / ri.progress;      // from live progress
+      else if (b.avg_s != null && e != null) eta = Math.max(0, b.avg_s - e);  // from avg work time
+      return `<div class="run">
+        <span class="pill gen">⚡ ${mlab}</span>
+        <div class="prog"><i style="width:${known ? ppct : 100}%"${known ? "" : ' class="indet"'}></i></div>
+        <span class="sub">${known ? ppct + "%" : "working"} · ${fmtDur(e)} in${eta != null ? " · ~" + fmtDur(eta) + " left" : ""}</span>
+      </div>`;
+    }).join("");
     return `<div class="card section">
       <div class="top"><h3 style="font-size:13.5px">${b.modality} · ${b.model}</h3>
         <span class="sub" style="margin-left:auto">${b.done}/${b.total} done${b.error ? ` · ${b.error} failed` : ""}${b.running ? ` · ${b.running} running` : ""}</span>
         ${active ? `<button class="btn stop" style="margin-left:10px" onclick="cancelBatch('${b.id}')">Cancel</button>` : ""}</div>
       <div class="prog"><i style="width:${pct}%"></i></div>
-      <div class="sub" style="margin-top:4px">batch ${b.id}${b.label ? " · from " + b.label : ""}${b.cancelled ? " · cancelled" : ""}${b.governor_note ? " · ⏳ " + b.governor_note : ""}</div>
+      ${runs ? `<div class="runs">${runs}</div>` : ""}
+      <div class="sub" style="margin-top:4px">batch ${b.id}${b.label ? " · from " + b.label : ""}${b.avg_s != null ? " · avg " + fmtDur(b.avg_s) + "/item" : ""}${b.cancelled ? " · cancelled" : ""}${b.governor_note ? " · ⏳ " + b.governor_note : ""}</div>
     </div>`;
   }).join("") || `<div class="empty">No batches yet</div>`;
+}
+async function loadBatches() {
+  const r = await api("/api/hub/jobs").then(x => x.json()).catch(() => null);
+  if (r) renderBatches(r.batches);
 }
 async function cancelBatch(id) { await api(`/api/hub/jobs/${id}`, { method: "DELETE" }); loadBatches(); }
 
@@ -950,15 +996,46 @@ function updateBell(active) {
 async function loadFleet() {
   const r = await api("/api/hub/fleet").then(x => x.json()).catch(() => null);
   if (!r) return;
-  $("#fleet-status").textContent = r.fleet_token_set
-    ? "✓ fleet token is set on this Hub — set the same value on your other Macs"
-    : "no fleet token yet — remote specs & control are disabled";
   if (r.token) $("#fleet-token").value = r.token;
+  $("#fleet-status").dataset.set = r.fleet_token_set ? "1" : "0";
+  renderFleetStatus();     // draw the live peer summary (falls back to token-only line)
+}
+// Live "how many peers are actually connected, and why not" summary — reads the
+// per-machine status the backend computes (connected | no_hub | unreachable |
+// token_rejected). This is what makes a broken fleet setup visible at a glance.
+function renderFleetStatus() {
+  const el = $("#fleet-status"); if (!el) return;
+  const set = el.dataset.set === "1";
+  const mm = (lastSummary && lastSummary.resources && lastSummary.resources.machines) || {};
+  const remotes = Object.entries(mm).filter(([m]) => m !== "local");
+  const n = st => remotes.filter(([, v]) => v.status === st).length;
+  const conn = n("connected"), noHub = n("no_hub"), unreach = n("unreachable");
+  const badTok = n("token_rejected") + n("no_token"), pend = n("pending");
+  let msg = set
+    ? "✓ fleet token set on this Hub. "
+    : "⚠ no fleet token yet — remote specs & control are disabled. ";
+  if (remotes.length) {
+    const parts = [`<b class="${conn ? '' : 'sub'}" style="${conn ? 'color:var(--up)' : ''}">${conn} connected</b>`];
+    if (noHub) parts.push(`${noHub} no Hub running`);
+    if (unreach) parts.push(`${unreach} unreachable (firewall/asleep)`);
+    if (badTok) parts.push(`<span style="color:var(--down)">${badTok} token mismatch</span>`);
+    if (pend) parts.push(`${pend} checking…`);
+    msg += `Peers: ${parts.join(" · ")} — of ${remotes.length}. See the machine list below for each.`;
+  } else {
+    msg += "Set the same value on your other Macs' Hubs.";
+  }
+  el.innerHTML = msg;
 }
 function genFleet() { const a = new Uint8Array(18); crypto.getRandomValues(a); $("#fleet-token").value = btoa(String.fromCharCode(...a)).replace(/[+/=]/g, "").slice(0, 24); }
 async function saveFleet() {
   const token = $("#fleet-token").value.trim();
-  await api("/api/hub/fleet", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
+  $("#fleet-status").textContent = "saving…";
+  try {
+    await api("/api/hub/fleet", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
+  } catch (e) { $("#fleet-status").textContent = "save failed: " + e; return; }
+  $("#fleet-status").innerHTML = token
+    ? "✓ <b>Saved on this Hub.</b> Now set the <b>same</b> token on every other Mac's Hub (Remote tab there). Re-checking the fleet…"
+    : "✓ fleet token cleared on this Hub.";
   loadFleet(); refresh();
 }
 async function loadAccess() {
@@ -974,11 +1051,33 @@ async function loadAccess() {
 let machSort = localStorage.getItem("mach_sort") || "status";
 $("#mach-sort").value = machSort;
 $("#mach-sort").onchange = e => { machSort = e.target.value; localStorage.setItem("mach_sort", machSort); loadMachines(); };
-async function loadMachines() {
-  const r = await api("/api/hub/studios").then(x => x.json()).catch(() => null);
-  if (!r) return;
+// Peer Hub connection badge + live RAM/CPU for a machine, from the summary's
+// resources.machines map. This is where the fleet setup becomes diagnosable:
+// each machine says exactly why it is or isn't reporting specs.
+function peerBadge(m) {
+  if (m === "local") return "";
+  const info = (lastSummary && lastSummary.resources && lastSummary.resources.machines && lastSummary.resources.machines[m]) || null;
+  const st = info ? info.status : "pending";
+  const map = {
+    connected: ["ok", "Hub ✓"],
+    no_hub: ["warn", "no Hub on :47873"],
+    unreachable: ["no", "unreachable (firewall/asleep)"],
+    token_rejected: ["err", "token mismatch"],
+    no_token: ["err", "set fleet token"],
+    pending: ["no", "checking…"],
+  };
+  const [cls, txt] = map[st] || map.pending;
+  let ram = "";
+  if (st === "connected" && info && info.host) {
+    const h = info.host;
+    ram = `<span class="sub"> · ${h.available_gb}/${h.total_gb} GB free · CPU ${Math.round(h.cpu_percent)}%</span>`;
+  }
+  return `<br><span class="pill ${cls}">${txt}</span>${ram}`;
+}
+function renderMachines() {
+  const sum = lastSummary; if (!sum || !sum.studios) return;
   const byM = {};
-  r.studios.forEach(s => (byM[s.machine || "local"] = byM[s.machine || "local"] || []).push(s));
+  sum.studios.forEach(s => (byM[s.machine || "local"] = byM[s.machine || "local"] || []).push(s));
   let entries = Object.entries(byM).map(([m, list]) => ({ m, list, host: list[0].host, up: list.filter(s => s.status === "up").length, total: list.length }));
   entries.sort((a, b) => {
     if (a.m === "local") return -1; if (b.m === "local") return 1;
@@ -992,10 +1091,14 @@ async function loadMachines() {
     return `<tr>
     <td class="num"><span class="numbadge">${i + 1}</span></td>
     <td><b>${label}</b>${named ? ` <span class="sub">(${e.m})</span>` : ""}${e.m === "local" ? ' <span class="sub">· this Mac</span>' : ""}<br><span class="sub">${e.up}/${e.total} up</span></td>
-    <td class="sub">${e.host}</td>
+    <td class="sub">${e.host}${peerBadge(e.m)}</td>
     <td>${e.list.map(s => `<span class="pill ${s.busy ? "gen" : (s.status === "up" ? "dl" : "no")}">${s.emoji || ""} ${s.modality}${s.busy ? " ⚡" : " · " + s.status}</span>`).join(" ")}</td>
     <td style="white-space:nowrap"><button class="btn" onclick="renameMachine('${e.m}')">Rename</button>${e.m !== "local" ? ` <button class="btn stop" onclick="removeMachine('${e.m}')">Remove</button>` : ""}</td></tr>`;
   }).join("");
+}
+async function loadMachines() {
+  if (!lastSummary) { await pollOnce(); }
+  renderMachines();     // renders from the summary; also refreshed live by applySummary
 }
 async function removeMachine(m) {
   if (!confirm(`Remove all of ${m}'s studios from the Hub? (The machine itself is untouched.)`)) return;
@@ -1022,11 +1125,16 @@ async function addMachineManual() {
 }
 
 // ── live updates (SSE) with a polling fallback ─────────────────────────────
+const vis = id => !$("#tab-" + id).classList.contains("hide");
 function applySummary(sum) {
   lastSummary = sum;
   machineLabels = Object.fromEntries(sum.studios.map(s => [s.machine || "local", s.machine_label || s.machine || "local"]));
   renderOverview(sum);
-  if (!$("#tab-resources").classList.contains("hide")) renderResources(sum);
+  // every tab that can be driven straight from the summary updates live — no
+  // need to switch away and back for fresh data.
+  if (vis("resources")) renderResources(sum);
+  if (vis("jobs")) renderBatches(sum.jobs);
+  if (vis("remote")) { renderMachines(); renderFleetStatus(); }
   updateBell(sum.alerts_active || 0);
   $("#last-refresh").textContent = "updated " + new Date().toLocaleTimeString();
 }
@@ -1056,6 +1164,16 @@ function startStream() {
 }
 pollOnce();      // instant first paint
 startStream();   // then go live
+// Heavier tabs (Models / Assets / Stats) each need their own fetch, so they
+// can't ride the summary stream. Refresh whichever one is open on a slower
+// cadence — but never while the user is typing/selecting in a control on it.
+setInterval(() => {
+  const ae = document.activeElement;
+  if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return;
+  if (vis("models")) loadModels();
+  else if (vis("assets")) loadAssets();
+  else if (vis("stats")) loadStats();
+}, 12000);
 </script>
   <!-- ── KH auto-update banner (self-contained; mirrors the studios) ── -->
   <script>
