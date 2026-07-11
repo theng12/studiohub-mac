@@ -63,8 +63,12 @@
   .wd { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--dim); cursor: pointer; margin-top: 8px; }
 
   .rows { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-  .lrow { display: grid; grid-template-columns: 22px 1.6fr 1fr .9fr .8fr auto; gap: 12px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: 13px; }
+  .lrow { display: grid; grid-template-columns: 22px 1.7fr 1fr .8fr 1.15fr .65fr auto; gap: 12px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: 13px; }
   .lrow:last-child { border-bottom: none; }
+  .lrow.lhead { padding: 7px 14px; background: var(--panel2); border-bottom: 1px solid var(--border); font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--dim); position: sticky; }
+  .lrow.lhead > span { font-weight: 600; }
+  .lrow .mem b { font-weight: 600; }
+  .lrow .actions .btn { padding: 4px 10px; }
   .lrow .name { font-weight: 600; }
   .lrow .sub, .sub { color: var(--dim); font-size: 11.5px; }
   .lrow .st { display: flex; align-items: center; gap: 7px; }
@@ -428,6 +432,10 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.19.1", date: "2026-07-11", items: [
+    "Overview <b>List</b> view is now a clean aligned table with a header row, and <b>Memory</b> and <b>Version</b> are separate columns (before, the studio's RAM footprint would replace the version).",
+    "The Memory column now shows the machine's <b>usable (free) and used</b> unified memory — e.g. <i>2.91 GB free · 5.2/17 GB used</i> — instead of a bare per-process number; each studio's own footprint moved to a tooltip / card line.",
+  ] },
   { v: "1.19.0", date: "2026-07-11", items: [
     "<b>Restart</b> a studio in one click (Overview → Restart) — works locally and on remote machines that run a Hub.",
     "<b>Enable/Disable a machine</b> in the fleet (Remote tab). A disabled machine stays registered and monitored but takes no new jobs — quiesce it before updating or restarting.",
@@ -595,21 +603,41 @@ function studioCard(s, sum) {
       <dt>Version</dt><dd>${s.app_version || "—"}</dd>
       <dt>Address</dt><dd>${s.host}:${s.port}</dd>
       <dt>Latency</dt><dd>${s.latency_ms != null ? s.latency_ms + " ms" : "—"}</dd>
-      <dt>Memory</dt><dd>${res ? res.rss_gb + " GB" : "—"}</dd>
+      <dt>Memory</dt><dd>${cardMem(s, sum)}</dd>
       <dt>Last seen</dt><dd>${fmtAgo(s.last_seen)}</dd>
     </dl>
     <div class="actions">${a.html}</div>${wd}
   </div>`;
 }
-function studioRow(s, sum) {
+// Machine memory (used + usable) for a studio's host. We only have real numbers
+// for the local Mac and any remote that runs a Hub; others show "—". `res` is
+// the studio's own process RSS (its footprint) — shown as a small hint.
+function memCell(s, sum) {
+  const machine = s.machine || "local";
+  const h = sum.resources.machines?.[machine]?.host;
   const res = sum.resources.studios[s.id];
+  const rss = res && res.rss_gb != null ? ` · uses ${res.rss_gb} GB` : "";
+  if (!h) return `<span class="sub">—</span>`;
+  return `<span class="mem" title="machine unified memory: ${h.used_gb} GB used of ${h.total_gb} GB (${h.percent}%)${rss}">`
+    + `<b>${h.available_gb} GB free</b><br><span class="sub">${h.used_gb} / ${h.total_gb} GB used</span></span>`;
+}
+function cardMem(s, sum) {
+  const machine = s.machine || "local";
+  const h = sum.resources.machines?.[machine]?.host;
+  const res = sum.resources.studios[s.id];
+  const rss = res && res.rss_gb != null ? `<br><span class="sub">this studio uses ${res.rss_gb} GB</span>` : "";
+  if (!h) return "—" + (rss || "");
+  return `${h.available_gb} GB free · ${h.used_gb}/${h.total_gb} used${rss}`;
+}
+function studioRow(s, sum) {
   const a = studioActionsHTML(s, sum);
   return `<div class="lrow">
     <span class="emoji" style="font-size:18px">${s.emoji || "🧩"}</span>
     <div><span class="name">${s.title}</span><br><span class="sub">${s.host}:${s.port}</span></div>
     <div class="sub">${mlabel(s.machine || "local")}</div>
     <div class="st"><span class="dot ${stDot(s)}"></span>${a.pend ? a.pend.action + "ing…" : (stState(s) === "generating" ? '<span class="genbadge">⚡ gen</span>' : s.status)}</div>
-    <div class="num">${res ? res.rss_gb + " GB" : (s.app_version ? "v" + s.app_version : "—")}</div>
+    <div>${memCell(s, sum)}</div>
+    <div class="num sub">${s.app_version ? "v" + s.app_version : "—"}</div>
     <div class="actions" style="margin:0;justify-content:flex-end">${a.html}</div>
   </div>`;
 }
@@ -654,9 +682,10 @@ function renderOverview(sum) {
     const upN = list.filter(s => s.status === "up").length;
     const genN = list.filter(s => s.busy).length;
     const head = `<div class="group-head"><h2>${title}</h2><span class="meta">${upN}/${list.length} up${genN ? " · ⚡" + genN : ""}</span></div>`;
+    const listHead = `<div class="lrow lhead"><span></span><span>Studio</span><span>Machine</span><span>Status</span><span>Memory (free / used)</span><span>Version</span><span></span></div>`;
     const body = display === "cards"
       ? `<div class="grid">${sorted.map(s => studioCard(s, sum)).join("")}</div>`
-      : `<div class="rows">${sorted.map(s => studioRow(s, sum)).join("")}</div>`;
+      : `<div class="rows">${listHead}${sorted.map(s => studioRow(s, sum)).join("")}</div>`;
     return head + body;
   }).join("") || `<div class="empty">No studios match this filter</div>`;
 }
