@@ -675,7 +675,7 @@ def list_fleet_updates():
 
 
 @app.post("/api/hub/maintenance/updates")
-def start_fleet_updates(body: UpdateRequest):
+async def start_fleet_updates(body: UpdateRequest):
     try:
         return fleet_ops.start_updates(monitor, body.studio_ids)
     except ValueError as e:

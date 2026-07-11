@@ -457,6 +457,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.21.1", date: "2026-07-12", items: [
+    "Rolling updates now launch on FastAPI's event loop; the failed first attempt started no Studio updates and is regression-tested.",
+  ] },
   { v: "1.21.0", date: "2026-07-12", items: [
     "Secure fleet authentication now covers every Hub-to-Studio request, with local Pinokio use remaining passwordless.",
     "New fleet preflight checks health, capability contracts, models, engines, disk space, and update readiness.",

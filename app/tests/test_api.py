@@ -37,6 +37,19 @@ def test_fleet_get_set(authed):
     assert stat.S_IMODE(peers.FLEET_TOKEN_FILE.stat().st_mode) == 0o600
 
 
+def test_update_route_schedules_on_event_loop(authed, monkeypatch):
+    from backend import fleet_ops
+
+    async def finish(mon, job):
+        job["status"] = "complete"
+        job["finished_at"] = 1
+
+    monkeypatch.setattr(fleet_ops, "_run_updates", finish)
+    response = authed.post("/api/hub/maintenance/updates", json={"studio_ids": ["image"]})
+    assert response.status_code == 200
+    assert response.json()["id"] in fleet_ops._updates
+
+
 def test_asset_upload_limits_and_types(authed, monkeypatch):
     from backend import main
     ok = authed.post("/api/hub/assets/upload", files={"file": ("ref.png", b"png", "image/png")})

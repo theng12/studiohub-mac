@@ -12,6 +12,15 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.21.1] — 2026-07-12
+
+### Fixed — rolling-update task launch
+
+- The update route is now asynchronous, so its background rolling-update task is created on FastAPI's event loop instead of a worker thread. The first live 1.21.0 attempt failed safely before launching any Studio update and exposed this boundary.
+- Added a route-level regression test that schedules an update through the real ASGI stack.
+
+83 tests.
+
 ## [1.21.0] — 2026-07-12
 
 ### Added — secured Studio fleet, preflight, and rolling updates
@@ -23,7 +32,7 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ### Verification
 
-- 82 backend tests pass, including fleet-token forwarding, maintenance draining, sequential updates, and failure containment. Frontend scripts and all Python modules parse cleanly.
+- 83 backend tests pass, including fleet-token forwarding, maintenance draining, sequential updates, failure containment, and route-level task scheduling. Frontend scripts and all Python modules parse cleanly.
 
 ## [1.20.1] — 2026-07-12
 
