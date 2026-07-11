@@ -12,6 +12,15 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.21.3] — 2026-07-12
+
+### Fixed — Video Studio lifecycle path
+
+- Corrected Video Studio's default Pinokio folder from the nonexistent `videostudio-mac.git` to `videostudio-mac`. The rolling update rejected the missing folder before launching anything, while Voice, Chat, and Music completed normally.
+- Added a regression test requiring every default local Studio launcher folder to exist.
+
+85 tests.
+
 ## [1.21.2] — 2026-07-12
 
 ### Fixed — Pinokio control from startup-service mode

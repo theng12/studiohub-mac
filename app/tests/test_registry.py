@@ -1,6 +1,11 @@
 from backend import registry as reg
 
 
+def test_default_launcher_folders_exist():
+    for studio in reg.DEFAULT_STUDIOS:
+        assert (reg.LAUNCHER_ROOT.parent / studio["app"]).is_dir(), studio["id"]
+
+
 def test_default_registry_has_five_local_studios(reset):
     studios = reg.load_registry()
     ids = {s["id"] for s in studios}

@@ -109,7 +109,7 @@ DEFAULT_STUDIOS = [
      "app": "chatstudio-mac.git"},
     {"id": "video", "title": "Video Studio KH", "modality": "video",
      "host": "127.0.0.1", "port": 47872, "machine": "local", "emoji": "🎬",
-     "app": "videostudio-mac.git"},
+     "app": "videostudio-mac"},
 ]
 
 
