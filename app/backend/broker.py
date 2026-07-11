@@ -189,6 +189,7 @@ def submit_batch(envelope: dict) -> dict:
         "routing": envelope.get("routing", "pool"),
         "label": envelope.get("label"),        # who submitted (e.g. "storystudio")
         "webhook": envelope.get("webhook"),    # POSTed the summary on completion
+        "item_webhook": envelope.get("itemWebhook"),  # POSTed per item as each finishes
         "webhook_sent": False,
         "created_at": time.time(),
         "cancelled": False,
@@ -284,6 +285,36 @@ def cancel_batch(batch_id: str) -> bool:
             it["state"] = "cancelled"
     ledger.save_batch(b)
     return True
+
+
+async def _post_item_webhook(client: httpx.AsyncClient, b: dict, item: dict):
+    """POST a single item to the client's per-item webhook the moment it reaches a
+    terminal state — lets a client submit ALL scenes as one batch yet still
+    receive each result as it finishes (instead of waiting for the whole batch).
+    Fires at most once per item; skipped for retry-requeued items."""
+    url = b.get("item_webhook")
+    if not url or item.get("_item_notified"):
+        return
+    if item["state"] not in ("done", "error", "cancelled"):
+        return
+    item["_item_notified"] = True
+    sid = item.get("studio") or ""
+    try:
+        await client.post(url, json={
+            "batch_id": b["id"], "label": b.get("label"),
+            "index": item["index"], "state": item["state"],
+            "studio": sid, "machine": sid.split("@", 1)[1] if "@" in sid else "local",
+            "artifact_url": item.get("artifact_url"),
+            "artifact_path": item.get("artifact_path"),
+            "asset_id": item.get("asset_id"),
+            "duration_s": item.get("duration_s"),
+            "error": item.get("error"),
+            # running batch tally so the client can show n/N without a poll
+            "done": sum(1 for i in b["items"] if i["state"] == "done"),
+            "total": len(b["items"]),
+        }, timeout=10.0)
+    except httpx.HTTPError:
+        pass  # client unreachable — the item is still in the batch/poll + ledger
 
 
 async def _maybe_finish(client: httpx.AsyncClient, b: dict):
@@ -496,6 +527,7 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
         _busy.discard(studio["id"])
         _reserved["gb"] = max(0.0, _reserved["gb"] - item.get("_reserved", 0.0))
         item["_reserved"] = 0.0
+        await _post_item_webhook(client, b, item)   # per-scene result → client
         await _maybe_finish(client, b)
         _wakeup.set()
 

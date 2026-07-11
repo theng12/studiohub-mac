@@ -49,6 +49,44 @@ def test_summary_local_running_item_machine(reset):
     assert ri["machine"] == "local" and ri["progress"] is None
 
 
+class _CapClient:
+    def __init__(self): self.posts = []
+    async def post(self, url, json=None, timeout=None): self.posts.append((url, json))
+
+
+@pytest.mark.asyncio
+async def test_item_webhook_fires_once_on_terminal(reset):
+    r = broker.submit_batch({"modality": "image", "model": "a/b",
+                             "itemWebhook": "http://cb", "items": [{"prompt": "x"}]})
+    b = broker.batches[r["batch_id"]]
+    it = b["items"][0]
+    it.update(state="done", studio="image@mac-b", artifact_url="http://u/1")
+    c = _CapClient()
+    await broker._post_item_webhook(c, b, it)
+    await broker._post_item_webhook(c, b, it)   # already notified → no-op
+    assert len(c.posts) == 1
+    url, payload = c.posts[0]
+    assert url == "http://cb"
+    assert payload["index"] == 0 and payload["machine"] == "mac-b"
+    assert payload["state"] == "done" and payload["total"] == 1 and payload["done"] == 1
+
+
+@pytest.mark.asyncio
+async def test_item_webhook_skips_non_terminal_and_when_unset(reset):
+    r = broker.submit_batch({"modality": "image", "model": "a/b",
+                             "itemWebhook": "http://cb", "items": [{"prompt": "x"}]})
+    b = broker.batches[r["batch_id"]]
+    it = b["items"][0]; it["state"] = "queued"
+    c = _CapClient()
+    await broker._post_item_webhook(c, b, it)   # not terminal → skip
+    assert c.posts == []
+    # no itemWebhook configured → skip even when terminal
+    r2 = broker.submit_batch({"modality": "image", "model": "a/b", "items": [{"prompt": "x"}]})
+    b2 = broker.batches[r2["batch_id"]]; b2["items"][0]["state"] = "done"
+    await broker._post_item_webhook(c, b2, b2["items"][0])
+    assert c.posts == []
+
+
 def test_disabled_machine_takes_no_jobs(reset):
     from backend import registry
     mon = broker._monitor()

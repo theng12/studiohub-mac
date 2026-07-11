@@ -195,6 +195,58 @@ POST. Match results back to your request by `label` + `id` (and `index`).
 
 ---
 
+## 6b. A whole render as ONE batch (recommended for multi-scene stories)
+
+**Submit all scenes of a story in a single batch, not one batch per scene.** The
+Hub then owns the queue and work-steals every scene across the whole fleet, and
+the dashboard shows a single **`n / N` progress** line for the story (with the
+machine each scene is running on, elapsed, and ETA). Submitting one 1-item batch
+per scene works too, but the Hub can't show story-level progress — it just sees N
+unrelated jobs.
+
+```json
+POST /api/hub/jobs
+{
+  "modality": "image",
+  "model": "AITRADER/FLUX2-klein-4B-mlx-4bit",
+  "label": "storystudio:<story-id-or-title>",
+  "sharedParams": { "width": 1024, "height": 1024 },
+  "itemWebhook": "http://<storystudio-host>:<port>/hub-item",
+  "webhook":     "http://<storystudio-host>:<port>/hub-done",
+  "items": [
+    { "prompt": "scene 1 …", "seed": 1 },
+    { "prompt": "scene 2 …", "seed": 2 }
+    /* … all 120 scenes … */
+  ]
+}
+```
+
+**Stream results back as each scene finishes** — pass `itemWebhook`. The Hub
+POSTs one small payload the moment *each* item reaches a terminal state (so you
+don't wait for all 120, and you don't have to poll):
+```json
+{
+  "batch_id": "0e13ca4f16", "label": "storystudio:my-story",
+  "index": 7, "state": "done", "machine": "macmini-m4-16gb-003-256",
+  "studio": "image@macmini-m4-16gb-003-256",
+  "artifact_url": "http://100.79.198.73:47868/api/generate/jobs/<jid>/image",
+  "artifact_path": "/…/scene7.png", "asset_id": "…", "duration_s": 44.8,
+  "error": null,
+  "done": 8, "total": 120
+}
+```
+- `index` maps straight back to your scene order; `done`/`total` is the live
+  story progress so you can render your own `8 / 120` bar without polling.
+- `itemWebhook` (per scene) and `webhook` (once, on whole-batch completion) are
+  independent — use either or both. If you can't run a webhook receiver, poll
+  `GET /api/hub/jobs/<batch_id>` instead; its `items[]` fill in `artifact_url` /
+  `state` as scenes finish, and it survives Hub restarts.
+- Ordering/back-pressure is the Hub's job now: it dispatches as fast as free
+  studios (with the model) appear, fastest machines naturally taking more.
+- Cancel the whole story with `DELETE /api/hub/jobs/<batch_id>`.
+
+---
+
 ## 7. Fetching the generated artifact
 
 Each done item has `artifact_url` — a **full URL on the studio that produced it**

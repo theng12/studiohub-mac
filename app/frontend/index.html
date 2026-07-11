@@ -432,6 +432,10 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.20.0", date: "2026-07-11", items: [
+    "<b>Per-item webhooks</b> for clients (e.g. Story Studio): submit a whole multi-scene render as <b>one batch</b> and the Hub POSTs each scene back the moment it finishes (with its machine + a live n/N tally) — no waiting for the whole batch, no polling. Add <code>itemWebhook</code> to the job envelope.",
+    "This makes the Jobs tab show a single <b>0/120</b> story progress line (with per-scene machine tags + ETA) instead of a pile of 1-item jobs.",
+  ] },
   { v: "1.19.1", date: "2026-07-11", items: [
     "Overview <b>List</b> view is now a clean aligned table with a header row, and <b>Memory</b> and <b>Version</b> are separate columns (before, the studio's RAM footprint would replace the version).",
     "The Memory column now shows the machine's <b>usable (free) and used</b> unified memory — e.g. <i>2.91 GB free · 5.2/17 GB used</i> — instead of a bare per-process number; each studio's own footprint moved to a tooltip / card line.",
