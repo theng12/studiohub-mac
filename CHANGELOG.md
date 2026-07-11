@@ -12,6 +12,15 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.21.2] — 2026-07-12
+
+### Fixed — Pinokio control from startup-service mode
+
+- Lifecycle and rolling-update commands now invoke bundled `pterm` through Pinokio's bundled Node executable. The startup service intentionally has a minimal macOS `PATH`; relying on `#!/usr/bin/env node` caused detached maintenance commands to exit before reaching Pinokio.
+- The rolling job remained safely drained on Image Studio and launched no update while this was diagnosed.
+
+84 tests.
+
 ## [1.21.1] — 2026-07-12
 
 ### Fixed — rolling-update task launch

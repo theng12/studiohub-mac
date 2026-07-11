@@ -457,6 +457,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.21.2", date: "2026-07-12", items: [
+    "Startup-service mode can now launch Pinokio lifecycle and rolling-update commands through the bundled Node runtime.",
+  ] },
   { v: "1.21.1", date: "2026-07-12", items: [
     "Rolling updates now launch on FastAPI's event loop; the failed first attempt started no Studio updates and is regression-tested.",
   ] },

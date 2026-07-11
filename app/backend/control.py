@@ -34,6 +34,13 @@ def find_pterm() -> str | None:
     return str(bundled) if bundled.exists() else None
 
 
+def pterm_command(pterm: str, action: str, script: str, ref: str) -> list[str]:
+    """Build a command that also works under launchd's minimal PATH."""
+    bundled_node = PINOKIO_HOME / "bin" / "miniforge" / "bin" / "node"
+    prefix = [str(bundled_node), pterm] if bundled_node.exists() else [pterm]
+    return prefix + [action, script, "--ref", ref]
+
+
 def _is_controllable(studio: dict) -> str | None:
     """Return an error string, or None if the studio can be controlled."""
     if studio.get("machine", "local") != "local":
@@ -57,7 +64,7 @@ def control_studio(studio: dict, action: str) -> dict:
         return {"ok": False, "error": "pterm CLI not found (PATH or PINOKIO_HOME/bin/npm/bin)"}
 
     ref = f"{KERNEL}/api/{studio['app']}"
-    cmd = [pterm, action, "start.js", "--ref", ref]
+    cmd = pterm_command(pterm, action, "start.js", ref)
     try:
         # Detached: new session, output discarded, never waited on. The client
         # exits by itself; killing it early aborts the script launch.
@@ -89,7 +96,7 @@ def run_studio_script(studio: dict, script: str) -> dict:
     ref = f"{KERNEL}/api/{studio['app']}"
     try:
         subprocess.Popen(
-            [pterm, "start", script, "--ref", ref],
+            pterm_command(pterm, "start", script, ref),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL, start_new_session=True,
         )
