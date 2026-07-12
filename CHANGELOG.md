@@ -12,6 +12,15 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.33.3] — 2026-07-13
+
+### Fixed — mixed Pinokio folder names and truthful update completion
+
+- Studio lifecycle/update control now resolves both the configured folder and its exact `.git` suffix counterpart, covering machines installed as either `imagestudio-mac` or `imagestudio-mac.git` (and the inverse Chat variant).
+- Update verification now follows the post-pull `VERSION` file and requires the running process to load that version after a restart or version advance. A peer can no longer report an old release as a successful update before the pull finishes.
+
+152 tests.
+
 ## [1.33.2] — 2026-07-13
 
 ### Fixed — rolling updates drain every queue type

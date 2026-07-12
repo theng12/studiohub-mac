@@ -77,6 +77,37 @@ def test_rolling_update_waits_for_every_queue_type(reset):
 
 
 @pytest.mark.asyncio
+async def test_update_health_waits_for_new_disk_version(monkeypatch, tmp_path):
+    studio = {"id": "chat", "app": "chatstudio-mac", "host": "127.0.0.1", "port": 1}
+    (tmp_path / "VERSION").write_text("2.0.0")
+    item = {"expected_version": "1.0.0", "from_version": "1.0.0"}
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, version): self.version = version
+        def json(self): return {"ok": True, "app_version": self.version}
+
+    class Client:
+        calls = 0
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, *args, **kwargs):
+            self.calls += 1
+            return Response("1.0.0" if self.calls == 1 else "2.0.0")
+
+    client = Client()
+    monkeypatch.setattr(fleet_ops, "resolve_app_dir", lambda studio: tmp_path)
+    monkeypatch.setattr(fleet_ops.httpx, "AsyncClient", lambda **kwargs: client)
+
+    async def no_sleep(seconds): return None
+    monkeypatch.setattr(fleet_ops.asyncio, "sleep", no_sleep)
+    await fleet_ops._wait_for_healthy(studio, item)
+    assert client.calls == 2 and item["status"] == "complete"
+    assert item["detail"] == "healthy on v2.0.0"
+
+
+@pytest.mark.asyncio
 async def test_updates_are_sequential_and_failure_is_contained(monkeypatch, monitor):
     calls = []
 

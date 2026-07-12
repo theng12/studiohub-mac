@@ -12,7 +12,8 @@ import httpx
 import json
 
 from . import broker, peers
-from .control import PINOKIO_HOME, control_studio, run_hub_script, run_studio_script
+from .control import (PINOKIO_HOME, control_studio, resolve_app_dir,
+                      run_hub_script, run_studio_script)
 from .registry import DATA_DIR, base_url
 from .resources import host_stats
 
@@ -251,7 +252,12 @@ async def _update_one(monitor, studio: dict, item: dict):
         if studio.get("machine", "local") != "local":
             await _update_remote(studio, item)
             return
-        version_file = PINOKIO_HOME / "api" / studio["app"] / "VERSION"
+        app_dir = resolve_app_dir(studio)
+        if app_dir is None:
+            raise RuntimeError(f"Pinokio app folder not found for {studio['id']}")
+        version_file = app_dir / "VERSION"
+        item["from_version"] = (monitor.status.get(sid, {}).get("app_version")
+                                or monitor.status.get(sid, {}).get("health", {}).get("app_version"))
         try:
             item["expected_version"] = version_file.read_text().strip()
         except OSError:
@@ -280,9 +286,16 @@ async def _wait_for_healthy(studio: dict, item: dict):
                 r = await client.get(f"{base_url(studio)}/api/health", headers=headers)
                 data = r.json()
                 version = str(data.get("app_version", "unknown"))
+                app_dir = resolve_app_dir(studio)
+                if app_dir:
+                    try:
+                        item["expected_version"] = (app_dir / "VERSION").read_text().strip()
+                    except OSError:
+                        pass
                 expected = item.get("expected_version")
                 version_loaded = bool(expected and version.startswith(expected))
-                if r.status_code == 200 and data.get("ok") and (saw_unavailable or version_loaded):
+                restarted_or_advanced = saw_unavailable or version != str(item.get("from_version"))
+                if r.status_code == 200 and data.get("ok") and version_loaded and restarted_or_advanced:
                     item.update(status="complete", detail=f"healthy on v{version}",
                                 finished_at=time.time())
                     return

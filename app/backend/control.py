@@ -25,6 +25,24 @@ PINOKIO_HOME = LAUNCHER_ROOT.parents[1]
 KERNEL = "pinokio://127.0.0.1:42000"
 
 
+def resolve_app_dir(studio: dict) -> Path | None:
+    """Resolve Pinokio's optional ``.git`` folder suffix without guessing one.
+
+    Fleet machines were installed in both forms over time. Prefer the registry
+    value, then accept only its exact suffix counterpart.
+    """
+    app = studio.get("app")
+    if not app:
+        return None
+    names = [app]
+    names.append(app[:-4] if app.endswith(".git") else app + ".git")
+    for name in names:
+        candidate = PINOKIO_HOME / "api" / name
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
 def find_pterm() -> str | None:
     """PATH first (Pinokio-managed shells have it), then the bundled location."""
     found = shutil.which("pterm")
@@ -47,9 +65,9 @@ def _is_controllable(studio: dict) -> str | None:
         return "remote studios must be controlled by their own machine's Hub"
     if not studio.get("app"):
         return "studio has no 'app' (Pinokio folder name) in the registry"
-    app_dir = PINOKIO_HOME / "api" / studio["app"]
-    if not app_dir.exists():
-        return f"Pinokio app folder not found: api/{studio['app']}"
+    if resolve_app_dir(studio) is None:
+        return (f"Pinokio app folder not found: api/{studio['app']} "
+                f"(also checked the .git suffix variant)")
     return None
 
 
@@ -63,7 +81,8 @@ def control_studio(studio: dict, action: str) -> dict:
     if pterm is None:
         return {"ok": False, "error": "pterm CLI not found (PATH or PINOKIO_HOME/bin/npm/bin)"}
 
-    ref = f"{KERNEL}/api/{studio['app']}"
+    app_dir = resolve_app_dir(studio)
+    ref = f"{KERNEL}/api/{app_dir.name}"
     cmd = pterm_command(pterm, action, "start.js", ref)
     try:
         # Detached: new session, output discarded, never waited on. The client
@@ -112,13 +131,14 @@ def run_studio_script(studio: dict, script: str) -> dict:
     error = _is_controllable(studio)
     if error:
         return {"ok": False, "error": error}
-    script_path = PINOKIO_HOME / "api" / studio["app"] / script
+    app_dir = resolve_app_dir(studio)
+    script_path = app_dir / script
     if not script_path.exists():
         return {"ok": False, "error": f"{script} not found for {studio['id']}"}
     pterm = find_pterm()
     if pterm is None:
         return {"ok": False, "error": "pterm CLI not found"}
-    ref = f"{KERNEL}/api/{studio['app']}"
+    ref = f"{KERNEL}/api/{app_dir.name}"
     try:
         subprocess.Popen(
             pterm_command(pterm, "start", script, ref),
