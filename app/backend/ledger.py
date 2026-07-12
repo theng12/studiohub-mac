@@ -301,7 +301,7 @@ def timeline(since_s: float | None, bucket_s: int, source: str = "all",
 
 def query_assets(q: str | None = None, modality: str | None = None,
                  studio: str | None = None, batch_id: str | None = None,
-                 limit: int = 100) -> list[dict]:
+                 limit: int = 100, sort: str = "newest") -> list[dict]:
     sql = "SELECT * FROM assets WHERE 1=1"
     args: list = []
     if q:
@@ -316,7 +316,15 @@ def query_assets(q: str | None = None, modality: str | None = None,
     if batch_id:
         sql += " AND batch_id = ?"
         args.append(batch_id)
-    sql += " ORDER BY created_at DESC LIMIT ?"
+    order_by = {
+        "newest": "created_at DESC",
+        "oldest": "created_at ASC",
+        "name": "LOWER(COALESCE(artifact_path, id)) ASC, created_at DESC",
+        "type": "LOWER(COALESCE(modality, '')) ASC, created_at DESC",
+        "studio": "LOWER(COALESCE(studio, '')) ASC, created_at DESC",
+        "model": "LOWER(COALESCE(model, '')) ASC, created_at DESC",
+    }.get(sort, "created_at DESC")
+    sql += f" ORDER BY {order_by} LIMIT ?"
     args.append(min(limit, 500))
     with _conn() as conn:
         rows = [dict(r) for r in conn.execute(sql, args)]

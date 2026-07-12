@@ -350,6 +350,15 @@
       </select>
       <button class="btn" onclick="scanAssets()">Scan studio outputs</button>
     </div>
+    <div class="controls">
+      <div class="grp"><label>Quick sort</label>
+        <div class="seg" id="a-sort">
+          <button data-v="newest">Newest</button><button data-v="oldest">Oldest</button>
+          <button data-v="name">Name</button><button data-v="type">Type</button>
+          <button data-v="studio">Studio</button><button data-v="model">Model</button>
+        </div>
+      </div>
+    </div>
     <div id="a-count" class="muted" style="margin-bottom:8px"></div>
     <div style="max-height:70vh;overflow:auto">
       <table><thead><tr>
@@ -537,6 +546,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.23.4", date: "2026-07-12", items: [
+    "Asset Ledger now has one-click sorting for Newest, Oldest, Name, Type, Studio, and Model, applied to the full ledger query rather than only visible rows.",
+  ] },
   { v: "1.23.3", date: "2026-07-12", items: [
     "Per-machine Resource tables now share one fixed column layout, keeping Studio, Machine, Status, PID, Memory, and CPU aligned across every section.",
   ] },
@@ -1065,13 +1077,21 @@ async function loadBatches() {
 async function cancelBatch(id) { await api(`/api/hub/jobs/${id}`, { method: "DELETE" }); loadBatches(); }
 
 // ── assets ────────────────────────────────────────────────────────────────
+let assetSort = localStorage.getItem("asset_sort") || "newest";
+const ASSET_SORT_LABEL = { newest: "newest first", oldest: "oldest first", name: "name", type: "type", studio: "Studio", model: "model" };
+initSeg("a-sort", assetSort, value => {
+  assetSort = value;
+  localStorage.setItem("asset_sort", value);
+  loadAssets();
+});
 async function loadAssets() {
   const p = new URLSearchParams();
   const q = $("#a-search").value.trim(); if (q) p.set("q", q);
   const m = $("#a-modality").value; if (m) p.set("modality", m);
+  p.set("sort", assetSort);
   const r = await api("/api/hub/assets?" + p).then(x => x.json()).catch(() => null);
   if (!r) return;
-  $("#a-count").textContent = `${r.assets.length} assets`;
+  $("#a-count").textContent = `${r.assets.length} assets · sorted by ${ASSET_SORT_LABEL[assetSort]}`;
   $("#a-body").innerHTML = r.assets.map(a => {
     const name = (a.artifact_path || "").split("/").pop() || a.id;
     return `<tr>

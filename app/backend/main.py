@@ -495,8 +495,9 @@ def hub_cancel_batch(batch_id: str):
 @app.get("/api/hub/assets")
 def hub_assets(q: str | None = None, modality: str | None = None,
                studio: str | None = None, batch_id: str | None = None,
+               sort: str = Query("newest", pattern="^(newest|oldest|name|type|studio|model)$"),
                limit: int = Query(100, ge=1, le=500)):
-    return {"assets": ledger.query_assets(q, modality, studio, batch_id, limit)}
+    return {"assets": ledger.query_assets(q, modality, studio, batch_id, limit, sort)}
 
 
 @app.get("/api/hub/models")

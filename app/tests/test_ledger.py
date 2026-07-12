@@ -22,6 +22,21 @@ def test_query_assets_filters(reset):
     assert len(ledger.query_assets()) == 2
 
 
+def test_query_assets_sorting(reset):
+    ledger.record_asset(source="job", modality="voice", studio="z-studio",
+                        machine="local", model="z/model", prompt="later",
+                        artifact_path="/tmp/z.wav", created_at=20)
+    ledger.record_asset(source="job", modality="image", studio="a-studio",
+                        machine="local", model="a/model", prompt="earlier",
+                        artifact_path="/tmp/a.png", created_at=10)
+    assert [a["created_at"] for a in ledger.query_assets(sort="newest")] == [20, 10]
+    assert [a["created_at"] for a in ledger.query_assets(sort="oldest")] == [10, 20]
+    assert ledger.query_assets(sort="name")[0]["artifact_path"] == "/tmp/a.png"
+    assert ledger.query_assets(sort="type")[0]["modality"] == "image"
+    assert ledger.query_assets(sort="studio")[0]["studio"] == "a-studio"
+    assert ledger.query_assets(sort="model")[0]["model"] == "a/model"
+
+
 def test_stats_counts_and_speed(reset):
     for i in range(3):
         ledger.record_asset(source="job", modality="image", studio="image",

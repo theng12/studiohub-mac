@@ -12,6 +12,16 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.23.4] — 2026-07-12
+
+### Added — Asset quick sorting
+
+- Added one-click Newest, Oldest, Name, Type, Studio, and Model sort buttons to Asset Ledger. Newest is the default and the selected choice is remembered.
+- Sorting is performed by the ledger query, not by rearranging the newest 100 browser rows, so Oldest and categorical choices select the correct records from full history.
+- Asset API sort values use a strict allowlist before reaching the database query.
+
+93 tests.
+
 ## [1.23.3] — 2026-07-12
 
 ### Fixed — Resource table alignment
