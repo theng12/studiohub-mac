@@ -80,6 +80,31 @@ def control_studio(studio: dict, action: str) -> dict:
     return {"ok": True, "action": action, "studio": studio["id"], "ref": ref}
 
 
+def run_hub_script(script: str) -> dict:
+    """Run THIS Hub's own maintenance script (update.js) via its Pinokio app.
+    Used for remote-triggered self-update: the primary Hub tells a peer to pull
+    latest + restart itself (its startup service brings it back). Detached, like
+    the studio scripts — the update kills this server, so we must not wait."""
+    if script not in {"update.js"}:
+        return {"ok": False, "error": "unsupported maintenance script"}
+    app = LAUNCHER_ROOT.name  # the Hub's own Pinokio folder, e.g. "studiohub-mac"
+    if not (LAUNCHER_ROOT / script).exists():
+        return {"ok": False, "error": f"{script} not found for the Hub"}
+    pterm = find_pterm()
+    if pterm is None:
+        return {"ok": False, "error": "pterm CLI not found"}
+    ref = f"{KERNEL}/api/{app}"
+    try:
+        subprocess.Popen(
+            pterm_command(pterm, "start", script, ref),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL, start_new_session=True,
+        )
+    except OSError as e:
+        return {"ok": False, "error": f"failed to spawn pterm: {e}"}
+    return {"ok": True, "script": script, "app": app, "ref": ref}
+
+
 def run_studio_script(studio: dict, script: str) -> dict:
     """Launch an allowed maintenance script through the Studio's Pinokio app."""
     if script not in {"update.js"}:

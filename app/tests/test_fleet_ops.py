@@ -61,3 +61,36 @@ async def test_updates_are_sequential_and_failure_is_contained(monkeypatch, moni
     assert job["items"][0]["status"] == "complete"
     assert job["items"][1]["status"] == "failed"
     assert job["items"][2]["status"] == "complete"
+
+
+def test_start_hub_updates_requires_remote_machines(monitor):
+    monitor.registry = [s for s in monitor.registry if s.get("machine", "local") == "local"]
+    fleet_ops._hub_updates.clear()
+    with pytest.raises(ValueError, match="no remote"):
+        fleet_ops.start_hub_updates(monitor, "1.0.0", None)
+
+
+@pytest.mark.asyncio
+async def test_start_hub_updates_builds_job(monkeypatch, monitor):
+    monitor.registry.append({"id": "image@mac-b", "modality": "image",
+                             "host": "10.0.0.9", "port": 47868, "machine": "mac-b"})
+    fleet_ops._hub_updates.clear()
+
+    async def _noop(job):
+        return None
+    monkeypatch.setattr(fleet_ops, "_run_hub_updates", _noop)
+
+    job = fleet_ops.start_hub_updates(monitor, "9.9.9", None)
+    assert job["kind"] == "hub" and job["latest"] == "9.9.9"
+    assert any(i["machine"] == "mac-b" and i["host"] == "10.0.0.9" for i in job["items"])
+
+    fleet_ops._hub_updates.clear()
+    with pytest.raises(ValueError, match="unknown"):
+        fleet_ops.start_hub_updates(monitor, "9.9.9", ["does-not-exist"])
+    fleet_ops._hub_updates.clear()
+
+
+def test_self_update_endpoint_requires_auth(client):
+    # non-loopback without the token → blocked before the handler runs
+    assert client.post("/api/hub/maintenance/self-update").status_code == 401
+    assert client.post("/api/hub/maintenance/hub-updates", json={}).status_code == 401

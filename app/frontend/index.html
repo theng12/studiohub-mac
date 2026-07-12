@@ -505,6 +505,18 @@
       <div id="upd-status" class="sub" style="margin-top:10px"></div>
     </div>
 
+    <div class="card section">
+      <div class="top"><span class="emoji">🛰️</span><h3>Studio Hub updates (agent Macs)</h3>
+        <span style="margin-left:auto"></span>
+        <button class="go" id="hubupd-run" onclick="startHubUpdate()">Update Hubs on agent Macs</button>
+      </div>
+      <p class="muted" style="font-size:13px;margin-bottom:10px">
+        Updates the <b>Studio Hub itself</b> on every reachable agent Mac (not the studios — those use preflight above). Each peer Hub pulls the latest, restarts, and comes back on its own via its startup service. Peers already on the latest version are skipped; unreachable Hubs need to be running with the same fleet token first.
+      </p>
+      <div style="overflow-x:auto"><table><thead><tr><th>Machine</th><th>Address</th><th>Version</th><th>Status</th></tr></thead><tbody id="hubupd-body"><tr><td colspan="4" class="empty">No fleet Hub update run yet.</td></tr></tbody></table></div>
+      <div id="hubupd-status" class="sub" style="margin-top:10px"></div>
+    </div>
+
     <div class="card jform section">
       <div class="top"><span class="emoji">🔔</span><h3>Alerts</h3></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
@@ -597,6 +609,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.25.4", date: "2026-07-12", items: [
+    "<b>Update the Studio Hub on agent Macs remotely</b> — Remote tab → 'Studio Hub updates (agent Macs)'. Each reachable peer Hub pulls the latest, restarts, and comes back on its own via its startup service; peers already on the latest version are skipped. (Studios still update via the preflight card above.)",
+  ] },
   { v: "1.25.3", date: "2026-07-12", items: [
     "<b>Refetch</b> a registered machine to pick up studios that have come online since you added it — adding a machine only captured whatever was up at that moment. Per-machine button plus a <b>Refetch all</b> in the Remote tab.",
   ] },
@@ -1579,11 +1594,14 @@ function renderPreflight(data) {
   }).join("");
 }
 async function loadMaintenance() {
-  const [pf, jobs] = await Promise.all([
+  const [pf, jobs, hubJobs] = await Promise.all([
     api("/api/hub/maintenance/preflight").then(r => r.json()).catch(() => null),
-    api("/api/hub/maintenance/updates").then(r => r.json()).catch(() => null)
+    api("/api/hub/maintenance/updates").then(r => r.json()).catch(() => null),
+    api("/api/hub/maintenance/hub-updates").then(r => r.json()).catch(() => null)
   ]);
   if (pf) renderPreflight(pf);
+  const hubLatest = hubJobs && hubJobs.updates && hubJobs.updates[0];
+  if (hubLatest) renderHubUpdate(hubLatest);
   const latest = jobs && jobs.updates && jobs.updates[0];
   maintenanceBusy = !!(latest && ["queued", "running"].includes(latest.status));
   $("#pf-run").disabled = maintenanceBusy;
@@ -1608,6 +1626,40 @@ async function startFleetUpdate(ids) {
   loadMaintenance();
 }
 function updateReadyStudios() { startFleetUpdate(preflightRows.filter(r => r.status !== "fail").map(r => r.id)); }
+let hubUpdateBusy = false;
+function renderHubUpdate(job) {
+  const body = $("#hubupd-body"), status = $("#hubupd-status"), btn = $("#hubupd-run");
+  if (!job || !job.items) { hubUpdateBusy = false; if (btn) btn.disabled = false; return; }
+  hubUpdateBusy = ["queued", "running"].includes(job.status);
+  if (btn) btn.disabled = hubUpdateBusy;
+  const pill = s => {
+    const cls = s === "complete" || s === "current" ? "ok" : s === "failed" ? "err"
+      : s === "queued" ? "" : "gen";
+    return `<span class="pill ${cls}">${esc(s)}</span>`;
+  };
+  body.innerHTML = job.items.map(i => `<tr>
+    <td><b>${esc(mlabel(i.machine))}</b></td>
+    <td class="sub">${esc(i.host)}</td>
+    <td class="sub">${i.from_version ? "v" + esc(i.from_version) : "—"}${i.to_version && i.to_version !== i.from_version ? " → v" + esc(i.to_version) : ""}</td>
+    <td>${pill(i.status)} <span class="sub">${esc(i.detail || "")}</span></td></tr>`).join("")
+    || `<tr><td colspan="4" class="empty">No agent Macs registered.</td></tr>`;
+  const done = job.items.filter(i => ["complete", "current", "failed"].includes(i.status)).length;
+  status.textContent = `Fleet Hub update ${job.status} — ${done}/${job.items.length} machines`;
+  if (hubUpdateBusy) setTimeout(() => pollHubUpdate(job.id), 3000);
+}
+async function pollHubUpdate(id) {
+  const job = await api(`/api/hub/maintenance/hub-updates/${id}`).then(r => r.json()).catch(() => null);
+  if (job) renderHubUpdate(job);
+}
+async function startHubUpdate() {
+  if (!confirm("Update the Studio Hub on every reachable agent Mac?\nEach peer Hub pulls the latest, restarts, and comes back on its own. Studios keep running; only the Hubs bounce.")) return;
+  $("#hubupd-run").disabled = true;
+  $("#hubupd-status").textContent = "Starting fleet Hub update…";
+  const r = await api("/api/hub/maintenance/hub-updates", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); $("#hubupd-run").disabled = false; $("#hubupd-status").textContent = e.detail || "Could not start"; return; }
+  const job = await r.json();
+  renderHubUpdate(job);
+}
 async function loadAccess() {
   loadFleet();
   const r = await api("/api/hub/access").then(x => x.json()).catch(() => null);

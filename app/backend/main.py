@@ -998,6 +998,49 @@ def get_fleet_update(job_id: str):
     return job
 
 
+@app.post("/api/hub/maintenance/self-update")
+def self_update():
+    """Run THIS Hub's own update.js (git pull + restart). Loopback can call it
+    (the sidebar Update does the same), and the primary Hub calls it on a peer
+    over the fleet (authenticated by the fleet token) to update the Studio Hub on
+    an agent Mac. The Hub goes down briefly; its startup service brings it back."""
+    from .control import run_hub_script
+    before = _app_version()
+    result = run_hub_script("update.js")
+    if not result["ok"]:
+        raise HTTPException(409, result["error"])
+    return {"ok": True, "version_before": before, "ref": result.get("ref")}
+
+
+@app.get("/api/hub/maintenance/hub-updates")
+def list_hub_updates():
+    return {"updates": fleet_ops.hub_update_snapshot()}
+
+
+@app.post("/api/hub/maintenance/hub-updates")
+async def start_hub_updates_route(body: dict):
+    """Update the Studio Hub on the agent Macs remotely. Each reachable peer Hub
+    self-updates and restarts; peers already at the latest version are skipped.
+    Optional body {"machines": [...]}; omit to update every registered machine."""
+    machines = body.get("machines")
+    if machines is not None and not isinstance(machines, list):
+        raise HTTPException(400, "machines must be a list of machine names")
+    if _time.time() - _update_state["checked_at"] > 6 * 3600 or not _update_state["latest"]:
+        _refresh_latest_version()  # make sure we know the target version to skip up-to-date peers
+    try:
+        return fleet_ops.start_hub_updates(monitor, _update_state["latest"], machines)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.get("/api/hub/maintenance/hub-updates/{job_id}")
+def get_hub_update(job_id: str):
+    job = fleet_ops.hub_update_snapshot(job_id)
+    if not job:
+        raise HTTPException(404, "unknown hub update")
+    return job
+
+
 @app.post("/api/hub/registry/reload")
 def reload_registry():
     """Re-read studios.json after editing it — no restart needed."""
