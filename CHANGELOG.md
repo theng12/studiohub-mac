@@ -12,6 +12,15 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.32.2] — 2026-07-13
+
+### Fixed — Jobs refresh independently of the live summary stream
+
+- Chat and transcription rows now refresh from their own endpoints every three seconds while Jobs is visible. A delayed or stalled summary stream can no longer freeze pack progress until the user switches tabs.
+- Returning to the Hub window triggers an immediate Jobs refresh, while the existing in-flight guard prevents overlapping requests.
+
+144 tests.
+
 ## [1.32.1] — 2026-07-13
 
 ### Fixed — restart-honest Hub version

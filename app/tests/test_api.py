@@ -20,6 +20,10 @@ def test_dashboard_includes_render_studio():
     assert 'return compact ? "LLM" : "LLM working"' in dashboard
     assert 'Priority #${rank}' in dashboard
     assert 'loadActiveJobQueues();' in dashboard
+    assert 'if (vis("jobs")) renderBatches(sum.jobs);' in dashboard
+    assert 'const JOB_QUEUE_REFRESH_MS = 3000;' in dashboard
+    assert 'if (vis("jobs") && !document.hidden) loadActiveJobQueues();' in dashboard
+    assert 'document.addEventListener("visibilitychange"' in dashboard
 
 
 def test_health_and_version(client):

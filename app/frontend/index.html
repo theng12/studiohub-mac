@@ -661,6 +661,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.32.2", date: "2026-07-13", items: [
+    "Jobs now refreshes Chat and transcription progress every <b>3 seconds on its own</b>, so rows keep moving even if the general live-status stream pauses. Returning to the Hub window refreshes them immediately.",
+  ] },
   { v: "1.32.1", date: "2026-07-13", items: [
     "Hub version now reflects the <b>backend code actually loaded</b>, so a pulled update cannot look active before its required service restart.",
   ] },
@@ -2078,7 +2081,7 @@ function applySummary(sum) {
   // every tab that can be driven straight from the summary updates live — no
   // need to switch away and back for fresh data.
   if (vis("resources")) renderResources(sum);
-  if (vis("jobs")) { renderBatches(sum.jobs); loadActiveJobQueues(); }
+  if (vis("jobs")) renderBatches(sum.jobs);
   if (vis("remote")) { renderMachines(); renderFleetStatus(); }
   updateBell(sum.alerts_active || 0);
   $("#last-refresh").textContent = "updated " + new Date().toLocaleTimeString();
@@ -2109,6 +2112,15 @@ function startStream() {
 }
 pollOnce();      // instant first paint
 startStream();   // then go live
+// Detailed job queues have their own endpoints and must keep moving even when
+// the summary stream is delayed by a proxy or a sleeping browser connection.
+const JOB_QUEUE_REFRESH_MS = 3000;
+setInterval(() => {
+  if (vis("jobs") && !document.hidden) loadActiveJobQueues();
+}, JOB_QUEUE_REFRESH_MS);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && vis("jobs")) loadActiveJobQueues();
+});
 // Heavier tabs (Models / Assets / Stats) each need their own fetch, so they
 // can't ride the summary stream. Refresh whichever one is open on a slower
 // cadence — but never while the user is typing/selecting in a control on it.
