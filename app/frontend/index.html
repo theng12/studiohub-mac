@@ -396,6 +396,7 @@
 
     <div class="group-head"><h2>Chat prompt packs</h2><span class="meta" id="chat-stats">0 scenes</span></div>
     <p class="muted" style="font-size:12px;margin:-6px 0 10px">Each worker receives one pack of up to 10 scenes. Ten ready Chat Studio servers can process up to 100 prompts in one fleet wave.</p>
+    <div class="controls"><button class="btn" onclick="clearChatBatches()">Clear finished</button><span class="sub" id="chat-clear-status"></span></div>
     <div id="chat-batches" class="tx-list"><div class="empty">No Chat prompt batches yet</div></div>
 
     <div class="group-head"><h2>Episode transcription</h2><span class="meta" id="tx-stats">0 chapters</span></div>
@@ -655,6 +656,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.30.0", date: "2026-07-13", items: [
+    "<b>Clear finished Chat prompt batches</b> — a per-batch <b>Clear</b> button on any done/errored/cancelled batch, plus a <b>Clear finished</b> button to sweep them all. Running batches are kept.",
+  ] },
   { v: "1.29.0", date: "2026-07-13", items: [
     "<b>Rescan versions</b> on the Studio Hub updates card — see each agent Mac's current Hub version + when it was last checked, persisted so it never disappears after a restart.",
     "Fleet preflight now shows <b>“last scanned … ago”</b> and remembers the last scan across restarts, plus a <b>“What the checks mean”</b> legend explaining every check.",
@@ -1354,7 +1358,7 @@ function renderChatBatches(data) {
       <div class="tx-head">
         <div class="tx-title"><b>${esc([b.project, b.episode].filter(Boolean).join(" / ") || b.label || "Chat prompt batch")}</b><code>${esc(b.id)} · ${esc(b.kind)} · ${esc(b.model)}</code></div>
         <div class="tx-counts">${txStatePill(b.status)}<span class="pill">${b.queued} queued</span><span class="pill gen">${b.running} running</span><span class="pill ok">${b.done} done</span>${b.partial ? `<span class="pill err">${b.partial} partial</span>` : ""}${b.error ? `<span class="pill err">${b.error} failed</span>` : ""}</div>
-        <div class="tx-actions">${canRetry ? `<button class="btn" onclick="retryChatBatch('${jsq(b.id)}')">Retry missing</button>` : ""}${!terminal ? `<button class="btn stop" onclick="cancelChatBatch('${jsq(b.id)}')">Cancel</button>` : ""}</div>
+        <div class="tx-actions">${canRetry ? `<button class="btn" onclick="retryChatBatch('${jsq(b.id)}')">Retry missing</button>` : ""}${!terminal ? `<button class="btn stop" onclick="cancelChatBatch('${jsq(b.id)}')">Cancel</button>` : `<button class="btn" onclick="clearChatBatch('${jsq(b.id)}')" title="Remove this finished batch">Clear</button>`}</div>
       </div>
       <div class="prog"><i style="width:${pct}%"></i></div>
       <details class="tx-items"${detOpen('chat:' + b.id)} ontoggle="detToggle(this,'chat:${jsq(b.id)}')"><summary>${b.completed_scenes}/${b.total_scenes} scenes · ${b.total_packs} packs · ${fmtDur(b.duration_seconds)} processing</summary>
@@ -1365,6 +1369,14 @@ function renderChatBatches(data) {
 }
 async function cancelChatBatch(id) { await api(`/api/hub/chat/jobs/${id}`, { method: "DELETE" }); loadBatches(); }
 async function retryChatBatch(id) { await api(`/api/hub/chat/jobs/${id}/retry`, { method: "POST" }); loadBatches(); }
+async function clearChatBatch(id) { await api(`/api/hub/chat/jobs/${id}/clear`, { method: "POST" }).catch(e => alert("clear failed: " + e)); loadBatches(); }
+async function clearChatBatches() {
+  if (!confirm("Clear all finished Chat prompt batches? Running ones are kept.")) return;
+  const st = $("#chat-clear-status"); if (st) st.textContent = "clearing…";
+  const r = await api("/api/hub/chat/jobs/clear", { method: "POST" }).then(x => x.json()).catch(e => ({ error: String(e) }));
+  if (st) st.textContent = r.error ? ("failed: " + r.error) : `cleared ${r.cleared || 0} finished batch(es)`;
+  loadBatches();
+}
 
 function txStatePill(state) {
   const cls = state === "done" ? "ok" : state === "error" ? "err" : state === "running" ? "gen" : "";

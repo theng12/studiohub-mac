@@ -294,3 +294,33 @@ def test_retry_preserves_completed_scene_results(reset):
     _, retried = jobs.retry_batch(batch["id"])
     assert retried == 1 and pack["state"] == "queued" and pack["tries"] == 0
     assert pack["results"] == {pack["scene_ids"][0]: "already saved"}
+
+
+def test_clear_finished_batches_keeps_running(reset):
+    def _uniq(episode):  # distinct episode → distinct idempotency key
+        payload = _payload(1)
+        payload["episode"] = episode
+        return payload
+
+    done, _ = jobs.create_batch(_uniq("EP-done"))
+    for pack in done["packs"]:
+        pack["state"] = "done"
+    jobs._save(done)
+    running, _ = jobs.create_batch(_uniq("EP-run"))
+    running["packs"][0]["state"] = "running"
+    jobs._save(running)
+
+    # a single finished batch removes; a running one is refused
+    assert jobs.remove_batch(running["id"]) is False
+    assert jobs.remove_batch(done["id"]) is True
+    assert jobs.get_batch(done["id"]) is None
+
+    # clear_terminal sweeps finished (incl. errored) but keeps the running one
+    errored, _ = jobs.create_batch(_uniq("EP-err"))
+    for pack in errored["packs"]:
+        pack["state"] = "error"
+    jobs._save(errored)
+    cleared = jobs.clear_terminal()
+    assert cleared >= 1
+    assert jobs.get_batch(errored["id"]) is None
+    assert jobs.get_batch(running["id"]) is not None

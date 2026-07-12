@@ -684,6 +684,21 @@ async def hub_retry_chat_job(batch_id: str):
             "status": chat_jobs.summary(batch)["status"]}
 
 
+@app.post("/api/hub/chat/jobs/clear")
+def hub_clear_chat_jobs():
+    """Remove all finished Chat prompt batches (done/partial/error/cancelled).
+    Running/queued batches are kept."""
+    return {"ok": True, "cleared": chat_jobs.clear_terminal()}
+
+
+@app.post("/api/hub/chat/jobs/{batch_id}/clear")
+def hub_clear_chat_job(batch_id: str):
+    """Remove ONE finished Chat prompt batch. 409 if it's still running."""
+    if not chat_jobs.remove_batch(batch_id):
+        raise HTTPException(409, "batch is still active or unknown — cancel it first")
+    return {"ok": True, "removed": batch_id}
+
+
 @app.post("/api/hub/transcribe")
 async def hub_transcribe(
     file: UploadFile = File(...),

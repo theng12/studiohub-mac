@@ -311,6 +311,37 @@ def list_batches() -> list[dict]:
         persisted.values(), key=lambda row: row["created_at"], reverse=True)]
 
 
+def _is_terminal(batch: dict) -> bool:
+    return all(pack["state"] in TERMINAL_STATES for pack in batch["packs"])
+
+
+def remove_batch(batch_id: str) -> bool:
+    """Delete ONE finished batch (done/partial/error/cancelled) from memory + DB.
+    Returns False if it's still active (cancel it first) or unknown."""
+    batch = get_batch(batch_id)
+    if not batch or not _is_terminal(batch):
+        return False
+    batches.pop(batch_id, None)
+    for index in range(len(batch["packs"])):
+        _pack_tasks.pop((batch_id, index), None)
+    with _conn() as conn:
+        conn.execute("DELETE FROM chat_batches WHERE id = ?", (batch_id,))
+    return True
+
+
+def clear_terminal() -> int:
+    """Remove every finished batch from memory + DB (running/queued ones are
+    kept). Returns how many were removed."""
+    for bid, batch in list(batches.items()):
+        if _is_terminal(batch):
+            batches.pop(bid, None)
+            for index in range(len(batch["packs"])):
+                _pack_tasks.pop((bid, index), None)
+    with _conn() as conn:
+        cur = conn.execute("DELETE FROM chat_batches WHERE finished = 1")
+    return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+
+
 async def _eligible_studios(monitor, model: str) -> list[dict]:
     eligible = []
     for studio in monitor.registry:
