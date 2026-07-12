@@ -237,7 +237,7 @@ async def sync_fleet_token(
                              "detail": f"saved but verification returned HTTP {verified.status_code}"}
         except httpx.HTTPError as exc:
             return machine, {"ok": False, "status": "unreachable",
-                             "detail": str(exc)[:180]}
+                             "detail": (str(exc).strip() or type(exc).__name__)[:180]}
 
     rows = await asyncio.gather(*(one(machine, studios)
                                   for machine, studios in machines.items()))
@@ -245,7 +245,9 @@ async def sync_fleet_token(
     set_fleet_token(new_token)
     _cache.clear()
     verified = sum(row["ok"] for row in results.values())
+    manual = sum(row["status"] == "manual" for row in results.values())
     return {
         "total": len(results), "verified": verified,
-        "manual": len(results) - verified, "machines": results,
+        "manual": manual, "pending": len(results) - verified - manual,
+        "machines": results,
     }

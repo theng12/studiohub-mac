@@ -662,6 +662,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.33.1", date: "2026-07-13", items: [
+    "Save verification now distinguishes <b>credential mismatch</b> (save locally once) from <b>offline/unreachable</b> (retry when online), so its next step is accurate.",
+  ] },
   { v: "1.33.0", date: "2026-07-13", items: [
     "Fleet credential <b>Save & verify</b> now synchronizes connected peer Hubs from the primary, verifies the new value, and shows persistent per-machine results. Only mismatched or unreachable machines need a one-time local Save.",
   ] },
@@ -1780,10 +1783,10 @@ async function saveFleet() {
     const response = await api("/api/hub/fleet", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, sync: true }) });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
-    const sync = body.sync || { total: 0, verified: 0, manual: 0, machines: {} };
+    const sync = body.sync || { total: 0, verified: 0, manual: 0, pending: 0, machines: {} };
     const machines = Object.entries(sync.machines || {}).map(([machine, row]) =>
       `<div style="margin-top:3px;color:${row.ok ? "var(--up)" : "var(--warn)"}">${row.ok ? "✓" : "!"} <b>${esc(mlabel(machine))}</b> · ${esc(row.detail || row.status)}</div>`).join("");
-    result.innerHTML = `<b style="color:var(--up)">✓ Saved on this Hub.</b> ${sync.total ? `${sync.verified}/${sync.total} peer Hubs verified.` : "No peer Hubs registered."}${sync.manual ? ` <span style="color:var(--warn)">${sync.manual} need a one-time local Save.</span>` : ""}${machines}`;
+    result.innerHTML = `<b style="color:var(--up)">✓ Saved on this Hub.</b> ${sync.total ? `${sync.verified}/${sync.total} peer Hubs verified.` : "No peer Hubs registered."}${sync.manual ? ` <span style="color:var(--warn)">${sync.manual} credential mismatch; save locally once.</span>` : ""}${sync.pending ? ` <span class="sub">${sync.pending} offline or unreachable; retry when online.</span>` : ""}${machines}`;
     await loadFleet(); await refresh();
   } catch (e) {
     result.textContent = "Save failed: " + e.message;

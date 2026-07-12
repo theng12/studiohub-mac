@@ -12,13 +12,21 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.33.1] — 2026-07-13
+
+### Fixed — verification feedback distinguishes offline from mismatched
+
+- **Save & verify** now separates a real credential mismatch (one-time local Save required) from an offline or unreachable peer (retry when it is online). Network exception names are shown when the underlying message is empty.
+
+148 tests plus an isolated browser save flow and a live 13-peer verification (6 verified, 7 correctly identified as unreachable).
+
 ## [1.33.0] — 2026-07-13
 
 ### Added — save, synchronize, and verify one fleet credential
 
 - **Save & verify** now saves on the primary Hub, securely synchronizes every registered peer Hub using the previously trusted credential, and verifies each peer with the new value before claiming success.
 - The Remote tab has an explicit busy state and a persistent accessible result panel with per-machine success or failure details. Live fleet refreshes no longer erase the Save response.
-- Mismatched or unreachable peers are identified as needing a one-time local Save; already connected peers no longer require repetitive pasting on every Mac.
+- Mismatched peers are identified as needing a one-time local Save; already connected peers no longer require repetitive pasting on every Mac.
 - Fleet credentials must be 12–512 characters, preventing accidental empty or ambiguous short saves. Tokens remain owner-only and are never returned in synchronization results.
 
 148 tests.

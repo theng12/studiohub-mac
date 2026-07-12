@@ -105,7 +105,7 @@ async def test_fleet_token_sync_uses_old_token_then_verifies_new(reset):
     peers.set_fleet_token("old-shared-secret")
     client = FakeSyncClient()
     result = await peers.sync_fleet_token(REMOTE, client, "new-shared-secret")
-    assert result["verified"] == 1 and result["manual"] == 0
+    assert result["verified"] == 1 and result["manual"] == 0 and result["pending"] == 0
     assert client.calls[0][2] == {"X-Hub-Token": "old-shared-secret"}
     assert client.calls[0][3] == {"token": "new-shared-secret", "sync": False}
     assert client.calls[1][2] == {"X-Hub-Token": "new-shared-secret"}
