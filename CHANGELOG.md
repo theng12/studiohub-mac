@@ -12,6 +12,16 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.23.0] — 2026-07-12
+
+### Changed — modern fleet workspace
+
+- Rebuilt the dashboard's visual hierarchy around a responsive fleet sidebar, live workspace masthead, elevated control surfaces, clearer status color, modern forms, and more readable tables.
+- Added focused titles and guidance for every workspace while preserving all scheduling, lifecycle, security, maintenance, and reporting behavior.
+- Added responsive navigation and dense-table handling for small screens, plus restrained transitions when changing workspaces.
+
+92 tests.
+
 ## [1.22.1] — 2026-07-12
 
 ### Fixed — Render Studio dashboard visibility
