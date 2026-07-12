@@ -547,10 +547,13 @@
     <div class="card section">
       <div class="top"><span class="emoji">🗂️</span><h3>Registered machines</h3>
         <div class="grp" style="margin-left:auto;display:flex;align-items:center;gap:7px">
+          <button class="btn" id="mach-refetch-all" onclick="refetchAllMachines()" title="Re-probe every machine and add studios that have since come online">Refetch all</button>
           <label style="color:var(--dim);font-size:11px;text-transform:uppercase">Sort</label>
           <select class="selctl" id="mach-sort"><option value="status">Status</option><option value="name">Name</option><option value="studios">Studios up</option></select>
         </div>
       </div>
+      <p class="muted" style="font-size:12px;margin:-4px 0 12px">Adding a machine only registers the studios that were online at that moment. <b>Refetch</b> re-probes a machine and picks up any studios that have since started.</p>
+      <div class="sub" id="mach-refetch-status" style="margin-bottom:8px"></div>
       <table><thead><tr><th class="num">#</th><th>Machine</th><th>Address</th><th>Studios</th><th></th></tr></thead><tbody id="mach-body"></tbody></table>
     </div>
 
@@ -594,6 +597,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.25.3", date: "2026-07-12", items: [
+    "<b>Refetch</b> a registered machine to pick up studios that have come online since you added it — adding a machine only captured whatever was up at that moment. Per-machine button plus a <b>Refetch all</b> in the Remote tab.",
+  ] },
   { v: "1.25.1", date: "2026-07-12", items: [
     "Jobs tab reordered: <b>Generation batches</b> (the Swarm submit form) is now on top, with the completed transcription/chat queues below it.",
     "Generation and transcription batch lists are now <b>sortable</b> (newest / oldest / status / longest) and <b>paginated</b> — no more scrolling past hundreds of finished jobs.",
@@ -1661,7 +1667,7 @@ function renderMachines() {
     <td><b>${esc(label)}</b>${named ? ` <span class="sub">(${esc(e.m)})</span>` : ""}${e.m === "local" ? ' <span class="sub">· this Mac</span>' : ""}${disBadge}<br><span class="sub">${e.up}/${e.total} up</span></td>
     <td class="sub">${esc(e.host)}${peerBadge(e.m)}</td>
     <td>${e.list.map(s => `<span class="pill ${s.busy ? "gen" : (s.status === "up" ? "dl" : "no")}">${esc(s.emoji || "")} ${esc(s.modality)}${s.busy ? " ⚡" : " · " + esc(s.status)}</span>`).join(" ")}</td>
-    <td style="white-space:nowrap">${toggle} <button class="btn" onclick="renameMachine('${jsq(e.m)}')">Rename</button>${e.m !== "local" ? ` <button class="btn stop" onclick="removeMachine('${jsq(e.m)}')">Remove</button>` : ""}</td></tr>`;
+    <td style="white-space:nowrap">${toggle} ${e.m !== "local" ? `<button class="btn" onclick="refetchMachine('${jsq(e.m)}','${jsq(e.host)}')" title="Re-probe ${esc(e.host)} and add any studios now online">Refetch</button> ` : ""}<button class="btn" onclick="renameMachine('${jsq(e.m)}')">Rename</button>${e.m !== "local" ? ` <button class="btn stop" onclick="removeMachine('${jsq(e.m)}')">Remove</button>` : ""}</td></tr>`;
   }).join("");
 }
 async function toggleMachine(m, enabled) {
@@ -1680,6 +1686,46 @@ async function loadMachines() {
 async function removeMachine(m) {
   if (!confirm(`Remove all of ${m}'s studios from the Hub? (The machine itself is untouched.)`)) return;
   await api(`/api/hub/registry/machines/${encodeURIComponent(m)}`, { method: "DELETE" });
+  loadMachines(); refresh();
+}
+// Re-probe a machine's host for the studio family ports and register any studio
+// that has come online since the machine was first added (registration only
+// captured the studios that were up at that moment).
+async function refetchMachine(m, host) {
+  const st = $("#mach-refetch-status");
+  if (st) st.textContent = `Refetching ${mlabel(m)} (${host})…`;
+  const r = await api("/api/hub/registry/discover", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ host, machine: m })
+  }).then(x => x.json()).catch(e => ({ note: String(e) }));
+  const found = r.found?.length || 0, added = r.registered || 0;
+  const msg = found
+    ? `${mlabel(m)}: ${found} studio(s) online${added ? `, added ${added} new` : " — nothing new to add"}.`
+    : `${mlabel(m)}: ${r.note || r.detail || "nothing answered — the machine may be offline."}`;
+  if (st) st.textContent = msg;
+  loadMachines(); refresh();
+  return { found, added };
+}
+async function refetchAllMachines() {
+  const sum = lastSummary;
+  const hosts = {};
+  (sum?.studios || []).forEach(s => { const m = s.machine || "local"; if (m !== "local") hosts[m] = s.host; });
+  const machines = Object.entries(hosts);
+  const st = $("#mach-refetch-status");
+  const btn = $("#mach-refetch-all"); if (btn) btn.disabled = true;
+  let totalAdded = 0, online = 0;
+  for (let i = 0; i < machines.length; i++) {
+    const [m, host] = machines[i];
+    if (st) st.textContent = `Refetching ${i + 1}/${machines.length}: ${mlabel(m)}…`;
+    const r = await api("/api/hub/registry/discover", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ host, machine: m })
+    }).then(x => x.json()).catch(() => ({}));
+    if (r.found?.length) online++;
+    totalAdded += r.registered || 0;
+  }
+  if (btn) btn.disabled = false;
+  if (st) st.textContent = `Refetched ${machines.length} machine(s): ${online} reachable, ${totalAdded} new studio(s) added.`;
   loadMachines(); refresh();
 }
 function checkedModalities() { return [...document.querySelectorAll(".d-mod:checked")].map(c => c.value); }
