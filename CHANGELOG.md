@@ -12,6 +12,14 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.32.1] — 2026-07-13
+
+### Fixed — restart-honest Hub version
+
+- `/api/version`, health, summary, and update status now report the version loaded when the Hub process started. Pulling a newer `VERSION` file without restarting can no longer make stale backend code claim the new release is already active.
+
+143 tests.
+
 ## [1.32.0] — 2026-07-13
 
 ### Changed — visible LLM workers and oldest-episode priority

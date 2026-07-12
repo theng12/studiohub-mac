@@ -661,6 +661,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.32.1", date: "2026-07-13", items: [
+    "Hub version now reflects the <b>backend code actually loaded</b>, so a pulled update cannot look active before its required service restart.",
+  ] },
   { v: "1.32.0", date: "2026-07-13", items: [
     "Overview now marks active Chat workers as <b>LLM working</b> and shows their episode and pack; Chat work no longer looks idle.",
     "Chat uses <b>oldest-episode priority</b>: every compatible free worker focuses on the oldest runnable batch before newer work. Jobs shows priority, active workers, attempts, elapsed time, and waiting reasons live.",

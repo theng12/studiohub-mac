@@ -49,11 +49,19 @@ if not _hub_log.handlers:
     _hub_log.propagate = False
 
 
-def _app_version() -> str:
+def _read_app_version() -> str:
     try:
         return (LAUNCHER_ROOT / "VERSION").read_text().strip()
     except OSError:
         return "0.0.0"
+
+
+APP_VERSION = _read_app_version()
+
+
+def _app_version() -> str:
+    """Version of the code loaded by this process, not a later disk checkout."""
+    return APP_VERSION
 
 
 monitor = StudioMonitor()

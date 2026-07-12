@@ -29,6 +29,16 @@ def test_health_and_version(client):
     assert v["title"] == "Studio Hub KH"
 
 
+def test_reported_version_is_snapshot_of_loaded_process(tmp_path, monkeypatch):
+    from backend import main
+
+    monkeypatch.setattr(main, "LAUNCHER_ROOT", tmp_path)
+    (tmp_path / "VERSION").write_text("99.0.0")
+    assert main._read_app_version() == "99.0.0"
+    assert main._app_version() == main.APP_VERSION
+    assert main._app_version() != "99.0.0"
+
+
 def test_hub_health_and_studios(authed):
     hh = authed.get("/api/hub/health").json()
     assert hh["studios_total"] == 6 and hh["studios_up"] == 0
