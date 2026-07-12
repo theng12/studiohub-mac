@@ -62,11 +62,16 @@ async def _preflight_one(monitor, studio: dict) -> dict:
                    "detail": f"{studio.get('host')}:{studio.get('port')}" if len(same_port) == 1
                    else "conflicts with " + ", ".join(same_port)})
     row = {"id": sid, "title": studio.get("title", sid),
-           "machine": studio.get("machine", "local"), "checks": checks}
+           "machine": studio.get("machine", "local"), "checks": checks, "version": None}
     headers = peers.studio_headers(studio)
     timeout = httpx.Timeout(PREFLIGHT_TIMEOUT)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
+            try:  # public endpoint — show the version even if auth is stale
+                vr = await client.get(f"{base_url(studio)}/api/version")
+                row["version"] = vr.json().get("app_version")
+            except (httpx.HTTPError, ValueError):
+                pass
             cap_r = await client.get(f"{base_url(studio)}/api/capabilities")
             cap_r.raise_for_status()
             cap = cap_r.json()
@@ -87,8 +92,17 @@ async def _preflight_one(monitor, studio: dict) -> dict:
                 checks.append({"name": "generation engine", "status": ds,
                                "detail": "ready" if ds == "pass" else "needs install or repair"})
     except httpx.HTTPStatusError as e:
-        name = "fleet authentication" if e.response.status_code in {401, 403} else "API contract"
-        checks.append({"name": name, "status": "fail", "detail": f"HTTP {e.response.status_code}"})
+        if e.response.status_code in {401, 403}:
+            # A stale/mismatched fleet token does NOT block updating: the update
+            # runs via the machine's own Hub (not the studio's API) and RESTARTS
+            # the studio, which reloads the token — i.e. updating fixes this. So
+            # it's a warning, not a hard block.
+            checks.append({"name": "fleet authentication", "status": "warn",
+                           "detail": f"HTTP {e.response.status_code} — studio rejected the fleet "
+                                     "token (needs a restart to reload it; updating does that)"})
+        else:
+            checks.append({"name": "API contract", "status": "fail",
+                           "detail": f"HTTP {e.response.status_code}"})
     except (httpx.HTTPError, ValueError) as e:
         checks.append({"name": "API contract", "status": "fail", "detail": str(e)[:160]})
 

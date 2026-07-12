@@ -532,7 +532,7 @@
         Checks health, fleet authentication, capability contracts, models, generation engines, disk space, and update scripts. Updates drain and verify one Studio at a time.
       </p>
       <div class="sub" id="pf-summary" style="margin-bottom:8px">Preflight has not run yet.</div>
-      <div style="overflow-x:auto"><table><thead><tr><th>Studio</th><th>Machine</th><th>Result</th><th>Checks</th><th></th></tr></thead><tbody id="pf-body"></tbody></table></div>
+      <div style="overflow-x:auto"><table><thead><tr><th>Studio</th><th>Machine</th><th>Version</th><th>Result</th><th>Checks</th><th></th></tr></thead><tbody id="pf-body"></tbody></table></div>
       <div id="upd-status" class="sub" style="margin-top:10px"></div>
     </div>
 
@@ -640,6 +640,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.28.0", date: "2026-07-13", items: [
+    "Fleet preflight now shows each studio's <b>Version</b>, and a studio that rejects the fleet token (401) is a <b>warning, not a block</b> — because updating it restarts it and reloads the token, which fixes the auth. So 'Update ready Studios' no longer refuses the very studios that the update would repair.",
+  ] },
   { v: "1.27.0", date: "2026-07-13", items: [
     "<b>Set one Hugging Face token on the whole fleet</b> (Models tab) — paste it once and it's pushed to every online studio's Settings (for gated models + higher download rate limits). Pass-through only; the token is never stored in the Hub, and it's a partial update so existing cloud keys are preserved.",
   ] },
@@ -1691,6 +1694,7 @@ function renderPreflight(data) {
     const checks = (r.checks || []).map(c => `<span class="pill ${c.status === "pass" ? "dl" : (c.status === "warn" ? "warn" : "no")}" title="${esc(c.detail)}">${esc(c.name)}</span>`).join(" ");
     const result = r.status === "pass" ? "Ready" : (r.status === "warn" ? "Ready with warnings" : "Blocked");
     return `<tr><td><b>${esc(r.title)}</b><br><span class="sub">${esc(r.capabilities || "")}</span></td><td>${esc(mlabel(r.machine))}</td>
+      <td class="sub">${r.version ? "v" + esc(r.version) : "—"}</td>
       <td><span class="pill ${r.status === "pass" ? "dl" : (r.status === "warn" ? "warn" : "no")}">${result}</span></td><td>${checks}</td>
       <td>${r.status !== "fail" ? `<button class="btn" onclick="startFleetUpdate(['${jsq(r.id)}'])">Update</button>` : ""}</td></tr>`;
   }).join("");

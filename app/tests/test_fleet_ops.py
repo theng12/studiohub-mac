@@ -94,3 +94,46 @@ def test_self_update_endpoint_requires_auth(client):
     # non-loopback without the token → blocked before the handler runs
     assert client.post("/api/hub/maintenance/self-update").status_code == 401
     assert client.post("/api/hub/maintenance/hub-updates", json={}).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_preflight_401_is_warning_not_block(monkeypatch, monitor):
+    import httpx as _httpx
+    studio = dict(monitor.registry[0])
+    monitor.registry = [studio]
+    monitor.status[studio["id"]] = {"status": "up"}
+
+    class Resp:
+        def __init__(self, status, payload):
+            self.status_code = status
+            self._p = payload
+
+        def json(self):
+            return self._p
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise _httpx.HTTPStatusError(
+                    "err", request=_httpx.Request("GET", "http://x"), response=self)
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return None
+
+        async def get(self, url, **kw):
+            if url.endswith("/api/version"):
+                return Resp(200, {"app_version": "9.9.9"})
+            if url.endswith("/api/capabilities"):
+                return Resp(200, {"schema_version": 1,
+                                  "studio": {"modality": studio["modality"]},
+                                  "operations": ["chat"]})
+            if url.endswith("/api/catalog"):
+                return Resp(401, {})           # studio rejects the fleet token
+            return Resp(200, {})
+
+    monkeypatch.setattr(fleet_ops.httpx, "AsyncClient", lambda **kw: Client())
+    row = await fleet_ops._preflight_one(monitor, studio)
+    fa = next(c for c in row["checks"] if c["name"] == "fleet authentication")
+    assert fa["status"] == "warn"      # 401 → warn (non-blocking), not fail
+    assert row["version"] == "9.9.9"   # version captured from the public endpoint
+    assert row["status"] != "fail"     # so the studio stays eligible for update
