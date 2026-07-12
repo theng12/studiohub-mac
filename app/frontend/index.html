@@ -115,6 +115,9 @@
   .pill.err { color: var(--down); border-color: var(--down); }
   .pill.ok { color: var(--up); border-color: var(--up); }
   .tx-list { border: 1px solid var(--border); border-radius: 16px; overflow: hidden; background: var(--panel); }
+  .pager { display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-bottom: 1px solid var(--border); background: var(--panel2, transparent); }
+  #j-batches .pager { border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; }
+  .pager .btn[disabled] { opacity: .45; cursor: default; }
   .tx-batch { padding: 15px 17px; border-bottom: 1px solid var(--border); }
   .tx-batch:last-child { border-bottom: 0; }
   .tx-head { display: grid; grid-template-columns: minmax(190px,1.4fr) minmax(150px,1fr) auto; gap: 12px; align-items: center; }
@@ -336,23 +339,6 @@
 
   <!-- JOBS -->
   <section id="tab-jobs" class="hide">
-    <div class="group-head"><h2>Chat prompt packs</h2><span class="meta" id="chat-stats">0 scenes</span></div>
-    <p class="muted" style="font-size:12px;margin:-6px 0 10px">Each worker receives one pack of up to 10 scenes. Ten ready Chat Studio servers can process up to 100 prompts in one fleet wave.</p>
-    <div id="chat-batches" class="tx-list"><div class="empty">No Chat prompt batches yet</div></div>
-
-    <div class="group-head"><h2>Episode transcription</h2><span class="meta" id="tx-stats">0 chapters</span></div>
-    <div class="controls">
-      <div class="grp"><label for="tx-retention">Retention</label>
-        <select class="selctl" id="tx-retention" onchange="saveTranscriptionRetention()">
-          <option value="1">1 day</option><option value="3">3 days</option><option value="7">7 days</option>
-          <option value="15">15 days</option><option value="30">30 days</option>
-        </select>
-      </div>
-      <button class="btn" onclick="cleanupTranscriptions()">Clean expired files</button>
-      <span class="sub" id="tx-cleanup-status"></span>
-    </div>
-    <div id="tx-batches" class="tx-list"><div class="empty">No transcription batches yet</div></div>
-
     <div class="group-head"><h2>Generation batches</h2><span class="meta">Swarm queue</span></div>
     <div class="card jform section">
       <div class="top"><span class="emoji">🐝</span><h3>Swarm Batch — one prompt per line</h3></div>
@@ -367,7 +353,38 @@
       <button class="go" onclick="submitBatch()">Submit batch</button>
       <span class="sub" id="j-status" style="margin-left:10px"></span>
     </div>
+    <div class="controls">
+      <div class="grp"><label for="gen-sort">Sort</label>
+        <select class="selctl" id="gen-sort" onchange="jobsSort('gen', this.value)">
+          <option value="recent">Newest first</option><option value="oldest">Oldest first</option>
+          <option value="status">Status</option><option value="duration">Longest processing</option>
+        </select>
+      </div>
+    </div>
     <div id="j-batches"></div>
+
+    <div class="group-head"><h2>Chat prompt packs</h2><span class="meta" id="chat-stats">0 scenes</span></div>
+    <p class="muted" style="font-size:12px;margin:-6px 0 10px">Each worker receives one pack of up to 10 scenes. Ten ready Chat Studio servers can process up to 100 prompts in one fleet wave.</p>
+    <div id="chat-batches" class="tx-list"><div class="empty">No Chat prompt batches yet</div></div>
+
+    <div class="group-head"><h2>Episode transcription</h2><span class="meta" id="tx-stats">0 chapters</span></div>
+    <div class="controls">
+      <div class="grp"><label for="tx-sort">Sort</label>
+        <select class="selctl" id="tx-sort" onchange="jobsSort('tx', this.value)">
+          <option value="recent">Newest first</option><option value="oldest">Oldest first</option>
+          <option value="status">Status</option><option value="duration">Longest processing</option>
+        </select>
+      </div>
+      <div class="grp"><label for="tx-retention">Retention</label>
+        <select class="selctl" id="tx-retention" onchange="saveTranscriptionRetention()">
+          <option value="1">1 day</option><option value="3">3 days</option><option value="7">7 days</option>
+          <option value="15">15 days</option><option value="30">30 days</option>
+        </select>
+      </div>
+      <button class="btn" onclick="cleanupTranscriptions()">Clean expired files</button>
+      <span class="sub" id="tx-cleanup-status"></span>
+    </div>
+    <div id="tx-batches" class="tx-list"><div class="empty">No transcription batches yet</div></div>
   </section>
 
   <!-- ASSETS -->
@@ -577,6 +594,11 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.25.1", date: "2026-07-12", items: [
+    "Jobs tab reordered: <b>Generation batches</b> (the Swarm submit form) is now on top, with the completed transcription/chat queues below it.",
+    "Generation and transcription batch lists are now <b>sortable</b> (newest / oldest / status / longest) and <b>paginated</b> — no more scrolling past hundreds of finished jobs.",
+    "Expanded batch rows now <b>stay open</b> during the live refresh instead of snapping shut every couple of seconds.",
+  ] },
   { v: "1.25.0", date: "2026-07-12", items: [
     "Chat Studio work is now a saved fleet queue: each worker leases a pack of up to 10 scene prompts, so ten servers can process up to 100 scenes in one wave.",
     "Valid scene results are retained by stable ID even when a local model returns an incomplete pack; only missing IDs retry, and Jobs shows workers, pack IDs, failures, cancellation, and retry controls.",
@@ -1081,10 +1103,48 @@ function fmtDur(s) {
 }
 // render the Jobs tab from a list of batch summaries (used by both the fetch
 // path and the live SSE summary, so the tab updates without switching away)
+// ── jobs list: sort + pagination + collapse-preservation (shared) ──────────
+// Keep <details> open across the live SSE re-render — keyed by a stable id, so
+// an expanded batch stays expanded until the user collapses it.
+const openDetails = new Set();
+function detOpen(key) { return openDetails.has(key) ? " open" : ""; }
+function detToggle(el, key) { el.open ? openDetails.add(key) : openDetails.delete(key); }
+// per-list sort + page state; survives re-renders so live updates don't reset it
+const jobsView = { tx: { sort: "recent", page: 0, per: 12 }, gen: { sort: "recent", page: 0, per: 12 } };
+let _txData = null, _genData = null;   // last payloads, so sort/page needs no refetch
+function sortBatches(list, sort) {
+  const n = v => (typeof v === "number" ? v : 0);
+  const l = list.slice();
+  if (sort === "oldest") l.sort((a, b) => n(a.created_at) - n(b.created_at));
+  else if (sort === "duration") l.sort((a, b) => n(b.duration_seconds) - n(a.duration_seconds));
+  else if (sort === "status") l.sort((a, b) => String(a.status || "").localeCompare(String(b.status || "")) || n(b.created_at) - n(a.created_at));
+  else l.sort((a, b) => n(b.created_at) - n(a.created_at));  // recent (default)
+  return l;
+}
+function pageSlice(which, list) {
+  const v = jobsView[which];
+  const pages = Math.max(1, Math.ceil(list.length / v.per));
+  if (v.page >= pages) v.page = pages - 1;
+  if (v.page < 0) v.page = 0;
+  return { rows: list.slice(v.page * v.per, v.page * v.per + v.per), pages, total: list.length };
+}
+function pagerHTML(which, total, pages) {
+  const v = jobsView[which];
+  if (total <= v.per) return "";
+  const from = v.page * v.per + 1, to = Math.min(total, (v.page + 1) * v.per);
+  return `<div class="pager"><button class="btn" ${v.page <= 0 ? "disabled" : ""} onclick="jobsPage('${which}',-1)">‹ Prev</button>
+    <span class="sub">${from}–${to} of ${total}</span>
+    <button class="btn" ${v.page >= pages - 1 ? "disabled" : ""} onclick="jobsPage('${which}',1)">Next ›</button></div>`;
+}
+function jobsPage(which, delta) { jobsView[which].page += delta; which === "tx" ? renderTranscriptionBatches(_txData) : renderBatches(_genData && _genData.batches); }
+function jobsSort(which, val) { jobsView[which].sort = val; jobsView[which].page = 0; which === "tx" ? renderTranscriptionBatches(_txData) : renderBatches(_genData && _genData.batches); }
+
 function renderBatches(batches) {
   const el = $("#j-batches"); if (!el) return;
-  const list = (batches || []).slice().sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
-  el.innerHTML = list.map(b => {
+  _genData = { batches: batches || [] };
+  const sorted = sortBatches(batches || [], jobsView.gen.sort);
+  const { rows: list, pages, total } = pageSlice("gen", sorted);
+  el.innerHTML = (total ? pagerHTML("gen", total, pages) : "") + list.map(b => {
     const pct = b.total ? Math.round(100 * (b.done + b.error + b.cancelled_items) / b.total) : 0;
     const active = b.queued + b.running > 0 && !b.cancelled;
     const runs = (b.running_items || []).map(ri => {
@@ -1152,7 +1212,7 @@ function renderChatBatches(data) {
         <div class="tx-actions">${canRetry ? `<button class="btn" onclick="retryChatBatch('${jsq(b.id)}')">Retry missing</button>` : ""}${!terminal ? `<button class="btn stop" onclick="cancelChatBatch('${jsq(b.id)}')">Cancel</button>` : ""}</div>
       </div>
       <div class="prog"><i style="width:${pct}%"></i></div>
-      <details class="tx-items"><summary>${b.completed_scenes}/${b.total_scenes} scenes · ${b.total_packs} packs · ${fmtDur(b.duration_seconds)} processing</summary>
+      <details class="tx-items"${detOpen('chat:' + b.id)} ontoggle="detToggle(this,'chat:${jsq(b.id)}')"><summary>${b.completed_scenes}/${b.total_scenes} scenes · ${b.total_packs} packs · ${fmtDur(b.duration_seconds)} processing</summary>
         <table><thead><tr><th>Pack</th><th>State</th><th>Chat worker</th><th>Scenes</th><th>Time</th><th>Failure / missing IDs</th></tr></thead><tbody>${packs}</tbody></table>
       </details>
     </div>`;
@@ -1166,10 +1226,14 @@ function txStatePill(state) {
   return `<span class="pill ${cls}">${esc(state)}</span>`;
 }
 function renderTranscriptionBatches(data) {
+  if (!data) return;
+  _txData = data;
   const stats = data.stats || {};
   $("#tx-stats").textContent = `${stats.items || 0} chapters · ${fmtDur(stats.duration_seconds || 0)} processing · ${stats.done || 0} complete`;
   const el = $("#tx-batches");
-  el.innerHTML = (data.batches || []).map(b => {
+  const sorted = sortBatches(data.batches || [], jobsView.tx.sort);
+  const { rows, pages, total } = pageSlice("tx", sorted);
+  el.innerHTML = (total ? pagerHTML("tx", total, pages) : "") + rows.map(b => {
     const terminal = b.status === "done" || b.status === "partial" || b.status === "error" || b.status === "cancelled";
     const canRetry = b.error > 0 && !b.storage_cleaned;
     const pct = b.total ? Math.round(100 * (b.done + b.error + b.cancelled) / b.total) : 0;
@@ -1188,7 +1252,7 @@ function renderTranscriptionBatches(data) {
         <div class="tx-actions">${canRetry ? `<button class="btn" onclick="retryTranscription('${jsq(b.id)}')">Retry failed</button>` : ""}${terminal && !b.storage_cleaned ? `<button class="btn" onclick="cleanupTranscription('${jsq(b.id)}')">Clean files</button>` : ""}${!terminal ? `<button class="btn stop" onclick="cancelTranscription('${jsq(b.id)}')">Cancel</button>` : ""}</div>
       </div>
       <div class="prog"><i style="width:${pct}%"></i></div>
-      <details class="tx-items"><summary>${b.total} chapters · ${fmtDur(b.duration_seconds)} processing${b.storage_cleaned ? " · files cleaned" : ""}</summary>
+      <details class="tx-items"${detOpen('tx:' + b.id)} ontoggle="detToggle(this,'tx:${jsq(b.id)}')"><summary>${b.total} chapters · ${fmtDur(b.duration_seconds)} processing${b.storage_cleaned ? " · files cleaned" : ""}</summary>
         <table><thead><tr><th>Chapter</th><th>State</th><th>Voice worker / task</th><th>Time</th><th>Artifact</th><th>Failure</th></tr></thead><tbody>${items}</tbody></table>
       </details>
     </div>`;

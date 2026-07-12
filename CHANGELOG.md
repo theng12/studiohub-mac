@@ -12,6 +12,16 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.25.1] — 2026-07-12
+
+### Changed — Jobs tab: order, sorting, pagination, sticky expand
+
+- **Generation batches** (the Swarm submit form + list) moved to the **top** of the Jobs tab, above the Chat and Episode-transcription queues, so the completed jobs sit below the thing you actually submit.
+- The **Generation** and **Episode-transcription** batch lists are now **sortable** (newest / oldest / status / longest processing) and **paginated** (12 per page with prev/next) — the transcription list had grown to 100+ finished batches with no way to page through it.
+- **Fixed:** an expanded batch's detail (`<details>`) no longer collapses on every live refresh. Open state is preserved per batch id until you collapse it yourself.
+
+Frontend-only.
+
 ## [1.25.0] — 2026-07-12
 
 ### Added — Saved Chat Studio prompt packs
