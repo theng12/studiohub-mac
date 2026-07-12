@@ -22,7 +22,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import alerts, broadcast, broker, fleet_ops, gateway, ledger, metrics, peers, recipes
+from . import (alerts, broadcast, broker, fleet_ops, gateway, ledger, metrics,
+               peers, recipes, transcription_jobs)
 from .auth import is_loopback, load_token, make_middleware
 from .control import control_studio
 from .monitor import StudioMonitor
@@ -65,7 +66,12 @@ async def lifespan(app: FastAPI):
     if restored:
         print(f"[hub] resumed {restored} unfinished batch(es) from hub.db")
     broker.start_dispatcher()
+    transcription_restored = transcription_jobs.restore_batches()
+    if transcription_restored:
+        print(f"[hub] resumed {transcription_restored} transcription batch(es) from hub.db")
+    transcription_jobs.start_dispatcher(monitor)
     yield
+    await transcription_jobs.stop()
     await monitor.stop()
 
 
@@ -522,32 +528,98 @@ async def hub_transcription(force: bool = False):
     return await monitor.transcription_inventory(force=force)
 
 
-_transcription_busy: set[str] = set()
-_transcription_lock = asyncio.Lock()
+# Kept as a public compatibility alias for diagnostics and older tests.
+_transcription_busy = transcription_jobs.busy_studios
 
 
-async def _acquire_transcription_studio(model: str, timeout_s: float = 300.0) -> dict:
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        candidates = []
-        for studio in monitor.registry:
-            if studio.get("modality") != "voice":
-                continue
-            if monitor.status.get(studio["id"], {}).get("status") != "up":
-                continue
-            availability = await monitor.get_transcription(studio)
-            models = availability.get("models", []) if availability else []
-            if availability and availability.get("available") and any(
-                m.get("repo") == model and m.get("cached") for m in models
-            ):
-                candidates.append(studio)
-        async with _transcription_lock:
-            studio = next((s for s in candidates if s["id"] not in _transcription_busy), None)
-            if studio:
-                _transcription_busy.add(studio["id"])
-                return studio
-        await asyncio.sleep(0.5)
-    raise HTTPException(503, f"No free Voice Studio has '{model}' ready")
+@app.post("/api/hub/transcription/jobs")
+async def hub_create_transcription_job(
+    files: list[UploadFile] = File(...),
+    item_ids: list[str] = Form(...),
+    model: str = Form(...),
+    language: str | None = Form(None),
+    word_timestamps: bool = Form(False),
+    label: str | None = Form(None),
+    project: str | None = Form(None),
+    episode: str | None = Form(None),
+):
+    """Spool an episode upload and immediately enqueue its chapters."""
+    batch, duplicate = await transcription_jobs.create_batch(
+        files, item_ids, model, language, word_timestamps, label, project, episode)
+    transcription_jobs.start_dispatcher(monitor)
+    result = {"batch_id": batch["id"], "items": len(batch["items"]),
+              "queued": sum(i["state"] == "queued" for i in batch["items"])}
+    if duplicate:
+        result["duplicate"] = True
+    return result
+
+
+@app.get("/api/hub/transcription/jobs")
+def hub_list_transcription_jobs():
+    return {"batches": transcription_jobs.list_batches(),
+            "stats": transcription_jobs.statistics()}
+
+
+@app.get("/api/hub/transcription/settings")
+def hub_transcription_settings():
+    return transcription_jobs.settings()
+
+
+@app.post("/api/hub/transcription/settings")
+def hub_set_transcription_settings(body: dict):
+    return transcription_jobs.set_retention(body.get("retention_days"))
+
+
+@app.post("/api/hub/transcription/cleanup")
+def hub_cleanup_transcription(body: dict | None = None):
+    body = body or {}
+    return transcription_jobs.cleanup(
+        batch_id=body.get("batch_id"), expired_only=not bool(body.get("all_terminal")))
+
+
+@app.get("/api/hub/transcription/jobs/{batch_id}")
+def hub_get_transcription_job(batch_id: str):
+    batch = transcription_jobs.get_batch(batch_id)
+    if not batch:
+        raise HTTPException(404, "unknown transcription batch")
+    return transcription_jobs.summary(batch, include_metadata=True)
+
+
+@app.get("/api/hub/transcription/jobs/{batch_id}/items/{item_index}/artifact")
+def hub_get_transcription_artifact(batch_id: str, item_index: int):
+    batch = transcription_jobs.get_batch(batch_id)
+    if not batch:
+        raise HTTPException(404, "unknown transcription batch")
+    item = next((i for i in batch["items"] if i["index"] == item_index), None)
+    path = Path((item or {}).get("artifact_path") or "")
+    root = transcription_jobs.ROOT.resolve()
+    try:
+        safe = path.resolve().is_relative_to(root)
+    except OSError:
+        safe = False
+    if (not item or item["state"] != "done" or not safe or not path.is_file()
+            or path.stat().st_size == 0):
+        raise HTTPException(404, "SRT artifact is not available")
+    return FileResponse(path, media_type="application/x-subrip",
+                        filename=f"{item['item_id']}.srt")
+
+
+@app.delete("/api/hub/transcription/jobs/{batch_id}")
+async def hub_cancel_transcription_job(batch_id: str):
+    batch = await transcription_jobs.cancel_batch(batch_id)
+    if not batch:
+        raise HTTPException(404, "unknown transcription batch")
+    return transcription_jobs.summary(batch)
+
+
+@app.post("/api/hub/transcription/jobs/{batch_id}/retry")
+def hub_retry_transcription_job(batch_id: str):
+    batch, retried = transcription_jobs.retry_batch(batch_id)
+    if not batch:
+        raise HTTPException(404, "unknown transcription batch")
+    transcription_jobs.start_dispatcher(monitor)
+    return {"batch_id": batch_id, "retried": retried,
+            "status": transcription_jobs.summary(batch)["status"]}
 
 
 @app.post("/api/hub/transcribe")
@@ -557,30 +629,23 @@ async def hub_transcribe(
     language: str | None = Form(None),
     word_timestamps: bool = Form(False),
 ):
-    """Route one Whisper upload to a ready, model-capable Voice Studio."""
-    studio = await _acquire_transcription_studio(model)
-    try:
-        content = await file.read()
-        if not content:
-            raise HTTPException(400, "audio file is empty")
-        data = {"model": model, "word_timestamps": str(word_timestamps).lower()}
-        if language:
-            data["language"] = language
-        response = await monitor._client.post(
-            f"{base_url(studio)}/api/transcribe",
-            headers=peers.studio_headers(studio),
-            files={"file": (file.filename or "audio.bin", content,
-                            file.content_type or "application/octet-stream")},
-            data=data,
-            timeout=300.0,
-        )
-        if response.status_code >= 400:
-            detail = response.text[:500]
-            raise HTTPException(response.status_code, detail or "Voice Studio transcription failed")
-        return response.json()
-    finally:
-        async with _transcription_lock:
-            _transcription_busy.discard(studio["id"])
+    """Backward-compatible one-file request, implemented through the queue."""
+    item_id = Path(file.filename or "audio").stem or "audio"
+    batch, _ = await transcription_jobs.create_batch(
+        [file], [item_id], model, language, word_timestamps,
+        "single-file-api", None, None, deduplicate=False)
+    transcription_jobs.start_dispatcher(monitor)
+    deadline = time.monotonic() + 305.0
+    item = batch["items"][0]
+    while time.monotonic() < deadline and item["state"] in {"queued", "running"}:
+        await asyncio.sleep(0.1)
+    if item["state"] != "done":
+        if item["state"] in {"queued", "running"}:
+            await transcription_jobs.cancel_batch(batch["id"])
+            raise HTTPException(503, f"No free Voice Studio has '{model}' ready")
+        raise HTTPException(502, item.get("error") or "Voice Studio transcription failed")
+    artifact = Path(item["artifact_path"])
+    return {**(item.get("metadata") or {}), "srt": artifact.read_text(encoding="utf-8")}
 
 
 @app.post("/api/hub/assets/scan")

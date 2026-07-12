@@ -123,6 +123,7 @@ MEMORY_HEADROOM_GB = 1.0  # keep at least this much free beyond the model's need
 batches: dict[str, dict] = {}
 _busy: set[str] = set()  # studio ids currently running an item for us
 _maintenance: set[str] = set()  # drained by fleet maintenance/update operations
+_external_machine_leases: dict[str, str] = {}
 _wakeup = asyncio.Event()
 # Sum of size_gb reserved by in-flight LOCAL dispatches. The memory governor
 # subtracts this from free RAM so two concurrent local dispatches (e.g. image +
@@ -234,11 +235,26 @@ def busy_studios() -> set:
 def busy_machines() -> set[str]:
     """Physical machines holding a non-preemptive heavy-work lease."""
     by_id = {s["id"]: s for s in _monitor().registry}
-    return {
+    return set(_external_machine_leases) | {
         by_id[sid].get("machine", "local")
         for sid in _busy
         if sid in by_id
     }
+
+
+def acquire_external_machine(machine: str, owner: str) -> bool:
+    """Atomically reserve a physical machine for another heavy-work queue."""
+    if machine in busy_machines():
+        return False
+    _external_machine_leases[machine] = owner
+    _wakeup.set()
+    return True
+
+
+def release_external_machine(machine: str, owner: str) -> None:
+    if _external_machine_leases.get(machine) == owner:
+        del _external_machine_leases[machine]
+        _wakeup.set()
 
 
 def set_maintenance(studio_id: str, enabled: bool):
@@ -460,6 +476,11 @@ async def _dispatch_loop():
                             b["governor_note"] = f"{studio['id']}: {note}"
                             continue
                         reserve = mem.get("size") or 0.0
+                    # Eligibility was calculated before the catalog/memory awaits.
+                    # Recheck the physical lease so a transcription that claimed
+                    # this Mac in the meantime never overlaps generation/render.
+                    if studio.get("machine", "local") in busy_machines():
+                        continue
                     b["governor_note"] = None
                     item = queued.pop(0)
                     item["state"] = "running"

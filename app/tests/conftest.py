@@ -20,7 +20,8 @@ from starlette.testclient import TestClient
 
 
 def _reset_state():
-    from backend import alerts, auth, broker, fleet_ops, ledger, metrics, peers
+    from backend import (alerts, auth, broker, fleet_ops, ledger, metrics, peers,
+                         transcription_jobs)
     from backend import main
     from backend import registry as reg
     from backend.main import monitor
@@ -42,7 +43,15 @@ def _reset_state():
     broker.batches.clear()
     broker._busy.clear()
     broker._maintenance.clear()
+    broker._external_machine_leases.clear()
     broker._reserved["gb"] = 0.0
+    transcription_jobs.reset_for_tests()
+    import shutil
+    shutil.rmtree(transcription_jobs.ROOT, ignore_errors=True)
+    try:
+        transcription_jobs.SETTINGS_FILE.unlink()
+    except FileNotFoundError:
+        pass
     peers._cache.clear()
     fleet_ops._updates.clear()
     metrics.samples.clear()

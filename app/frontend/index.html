@@ -114,6 +114,19 @@
   .pill.warn { color: var(--warn); border-color: var(--warn); }
   .pill.err { color: var(--down); border-color: var(--down); }
   .pill.ok { color: var(--up); border-color: var(--up); }
+  .tx-list { border: 1px solid var(--border); border-radius: 16px; overflow: hidden; background: var(--panel); }
+  .tx-batch { padding: 15px 17px; border-bottom: 1px solid var(--border); }
+  .tx-batch:last-child { border-bottom: 0; }
+  .tx-head { display: grid; grid-template-columns: minmax(190px,1.4fr) minmax(150px,1fr) auto; gap: 12px; align-items: center; }
+  .tx-title { min-width: 0; }
+  .tx-title b, .tx-title code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tx-counts { display: flex; gap: 5px; flex-wrap: wrap; justify-content: flex-start; }
+  .tx-actions { display: flex; gap: 7px; justify-content: flex-end; }
+  .tx-items { margin-top: 10px; overflow-x: auto; }
+  .tx-items summary { color: var(--accent); cursor: pointer; font-size: 11.5px; font-weight: 650; }
+  .tx-items table { margin-top: 8px; box-shadow: none; min-width: 760px; }
+  .tx-error { color: var(--down); max-width: 280px; overflow-wrap: anywhere; }
+  @media (max-width: 760px) { .tx-head { grid-template-columns: 1fr; } .tx-actions { justify-content: flex-start; } }
   /* header alert bell dropdown */
   #bell-dropdown { position: absolute; top: 24px; right: 0; z-index: 60; width: 340px; max-height: 60vh; overflow-y: auto;
     background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.5); padding: 6px; }
@@ -323,6 +336,20 @@
 
   <!-- JOBS -->
   <section id="tab-jobs" class="hide">
+    <div class="group-head"><h2>Episode transcription</h2><span class="meta" id="tx-stats">0 chapters</span></div>
+    <div class="controls">
+      <div class="grp"><label for="tx-retention">Retention</label>
+        <select class="selctl" id="tx-retention" onchange="saveTranscriptionRetention()">
+          <option value="1">1 day</option><option value="3">3 days</option><option value="7">7 days</option>
+          <option value="15">15 days</option><option value="30">30 days</option>
+        </select>
+      </div>
+      <button class="btn" onclick="cleanupTranscriptions()">Clean expired files</button>
+      <span class="sub" id="tx-cleanup-status"></span>
+    </div>
+    <div id="tx-batches" class="tx-list"><div class="empty">No transcription batches yet</div></div>
+
+    <div class="group-head"><h2>Generation batches</h2><span class="meta">Swarm queue</span></div>
     <div class="card jform section">
       <div class="top"><span class="emoji">🐝</span><h3>Swarm Batch — one prompt per line</h3></div>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -546,6 +573,10 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.24.1", date: "2026-07-12", items: [
+    "Episode transcription is now a durable fleet queue: chapters spread across every ready Voice Studio and resume safely after a Hub restart.",
+    "Jobs now shows chapter workers, task IDs, processing time, failures, SRT downloads, retry/cancel controls, lifetime totals, and retention cleanup.",
+  ] },
   { v: "1.24.0", date: "2026-07-12", items: [
     "Whisper transcription is now first-class fleet inventory, with cached and ready Macs visible alongside every other model.",
     "Story Studio can send subtitle audio through one authenticated Hub endpoint; Studio Hub selects a free Voice Studio holding the requested Whisper model.",
@@ -699,7 +730,7 @@ document.querySelectorAll("nav button").forEach(btn => {
     updatePageHeading(btn.dataset.tab);
     if (btn.dataset.tab === "models") loadModels();
     if (btn.dataset.tab === "remote") { loadAccess(); loadMachines(); loadAlerts(); loadMaintenance(); }
-    if (btn.dataset.tab === "jobs") { loadJobModels(); loadBatches(); }
+    if (btn.dataset.tab === "jobs") { loadJobModels(); loadBatches(); loadTranscriptionSettings(); }
     if (btn.dataset.tab === "assets") loadAssets();
     if (btn.dataset.tab === "stats") loadStats();
     if (btn.dataset.tab === "resources") { loadSpark(); renderResources(lastSummary); }
@@ -1075,10 +1106,79 @@ function renderBatches(batches) {
   }).join("") || `<div class="empty">No batches yet</div>`;
 }
 async function loadBatches() {
-  const r = await api("/api/hub/jobs").then(x => x.json()).catch(() => null);
+  const [r, tx] = await Promise.all([
+    api("/api/hub/jobs").then(x => x.json()).catch(() => null),
+    api("/api/hub/transcription/jobs").then(x => x.json()).catch(() => null),
+  ]);
   if (r) renderBatches(r.batches);
+  if (tx) renderTranscriptionBatches(tx);
+}
+async function loadTranscriptionBatches() {
+  const tx = await api("/api/hub/transcription/jobs").then(x => x.json()).catch(() => null);
+  if (tx) renderTranscriptionBatches(tx);
 }
 async function cancelBatch(id) { await api(`/api/hub/jobs/${id}`, { method: "DELETE" }); loadBatches(); }
+
+function txStatePill(state) {
+  const cls = state === "done" ? "ok" : state === "error" ? "err" : state === "running" ? "gen" : "";
+  return `<span class="pill ${cls}">${esc(state)}</span>`;
+}
+function renderTranscriptionBatches(data) {
+  const stats = data.stats || {};
+  $("#tx-stats").textContent = `${stats.items || 0} chapters · ${fmtDur(stats.duration_seconds || 0)} processing · ${stats.done || 0} complete`;
+  const el = $("#tx-batches");
+  el.innerHTML = (data.batches || []).map(b => {
+    const terminal = b.status === "done" || b.status === "partial" || b.status === "error" || b.status === "cancelled";
+    const canRetry = b.error > 0 && !b.storage_cleaned;
+    const pct = b.total ? Math.round(100 * (b.done + b.error + b.cancelled) / b.total) : 0;
+    const items = (b.items || []).map(i => `<tr>
+      <td><b>${esc(i.item_id)}</b><br><span class="sub">${esc(i.filename)}</span></td>
+      <td>${txStatePill(i.state)} <span class="sub">try ${i.tries}</span></td>
+      <td>${esc(i.studio || "—")}${i.studio_task_id ? `<br><code>${esc(i.studio_task_id)}</code>` : ""}</td>
+      <td class="num">${fmtDur(i.duration_seconds)}</td>
+      <td>${i.artifact_url ? `<button class="btn" onclick="downloadTranscriptionArtifact('${jsq(i.artifact_url)}','${jsq(i.item_id)}.srt')">SRT</button>` : "—"}</td>
+      <td class="tx-error">${esc(i.error || "—")}</td>
+    </tr>`).join("");
+    return `<div class="tx-batch">
+      <div class="tx-head">
+        <div class="tx-title"><b>${esc([b.project, b.episode].filter(Boolean).join(" / ") || b.label || "Transcription batch")}</b><code>${esc(b.id)} · ${esc(b.model)}</code></div>
+        <div class="tx-counts">${txStatePill(b.status)}<span class="pill">${b.queued} queued</span><span class="pill gen">${b.running} running</span><span class="pill ok">${b.done} done</span>${b.error ? `<span class="pill err">${b.error} failed</span>` : ""}</div>
+        <div class="tx-actions">${canRetry ? `<button class="btn" onclick="retryTranscription('${jsq(b.id)}')">Retry failed</button>` : ""}${terminal && !b.storage_cleaned ? `<button class="btn" onclick="cleanupTranscription('${jsq(b.id)}')">Clean files</button>` : ""}${!terminal ? `<button class="btn stop" onclick="cancelTranscription('${jsq(b.id)}')">Cancel</button>` : ""}</div>
+      </div>
+      <div class="prog"><i style="width:${pct}%"></i></div>
+      <details class="tx-items"><summary>${b.total} chapters · ${fmtDur(b.duration_seconds)} processing${b.storage_cleaned ? " · files cleaned" : ""}</summary>
+        <table><thead><tr><th>Chapter</th><th>State</th><th>Voice worker / task</th><th>Time</th><th>Artifact</th><th>Failure</th></tr></thead><tbody>${items}</tbody></table>
+      </details>
+    </div>`;
+  }).join("") || `<div class="empty">No transcription batches yet</div>`;
+}
+async function loadTranscriptionSettings() {
+  const value = await api("/api/hub/transcription/settings").then(r => r.json()).catch(() => null);
+  if (value) $("#tx-retention").value = String(value.retention_days);
+}
+async function saveTranscriptionRetention() {
+  const days = Number($("#tx-retention").value);
+  const r = await api("/api/hub/transcription/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ retention_days: days }) });
+  $("#tx-cleanup-status").textContent = r.ok ? `keeping files for ${days} days` : "could not save retention";
+}
+async function cleanupTranscriptions() {
+  const result = await api("/api/hub/transcription/cleanup", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then(r => r.json());
+  $("#tx-cleanup-status").textContent = `${result.cleaned || 0} batches cleaned`;
+  loadBatches();
+}
+async function cleanupTranscription(id) {
+  await api("/api/hub/transcription/cleanup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ batch_id: id, all_terminal: true }) });
+  loadBatches();
+}
+async function cancelTranscription(id) { await api(`/api/hub/transcription/jobs/${id}`, { method: "DELETE" }); loadBatches(); }
+async function retryTranscription(id) { await api(`/api/hub/transcription/jobs/${id}/retry`, { method: "POST" }); loadBatches(); }
+async function downloadTranscriptionArtifact(url, filename) {
+  const response = await api(url);
+  if (!response.ok) return;
+  const href = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a"); link.href = href; link.download = filename; link.click();
+  setTimeout(() => URL.revokeObjectURL(href), 1000);
+}
 
 // ── assets ────────────────────────────────────────────────────────────────
 let assetSort = localStorage.getItem("asset_sort") || "newest";
@@ -1504,7 +1604,7 @@ function applySummary(sum) {
   // every tab that can be driven straight from the summary updates live — no
   // need to switch away and back for fresh data.
   if (vis("resources")) renderResources(sum);
-  if (vis("jobs")) renderBatches(sum.jobs);
+  if (vis("jobs")) { renderBatches(sum.jobs); loadTranscriptionBatches(); }
   if (vis("remote")) { renderMachines(); renderFleetStatus(); }
   updateBell(sum.alerts_active || 0);
   $("#last-refresh").textContent = "updated " + new Date().toLocaleTimeString();

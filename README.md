@@ -60,6 +60,12 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/models` | **Deduped by repo** with per-machine availability (`cached_on`, `machines[]`). Query: `q`, `modality`, `downloaded` |
 | `GET /api/hub/transcription` | Fleet-wide Whisper inventory with `cached_on`, `available_on`, ready counts, and recommended default |
 | `POST /api/hub/transcribe` | Multipart audio transcription routed to a free Voice Studio that has the selected Whisper model cached |
+| `POST /api/hub/transcription/jobs` | Stream a multi-file episode transcription batch into the persistent fleet queue |
+| `GET /api/hub/transcription/jobs` · `GET /api/hub/transcription/jobs/{batch}` | List batches/lifetime totals or read chapter-level status |
+| `GET /api/hub/transcription/jobs/{batch}/items/{index}/artifact` | Download a verified completed SRT through Hub authentication |
+| `DELETE /api/hub/transcription/jobs/{batch}` · `POST /api/hub/transcription/jobs/{batch}/retry` | Cancel unfinished chapters or retry failed/interrupted chapters only |
+| `GET /api/hub/transcription/settings` · `POST /api/hub/transcription/settings` | Read/set SRT and upload retention (`1`, `3`, `7`, `15`, or `30` days) |
+| `POST /api/hub/transcription/cleanup` | Clean expired terminal transcription files; active batches are never removed |
 | `DELETE /api/hub/registry/machines/{machine}` | Unregister a discovered machine's studios |
 | `GET /api/hub/fleet` · `POST /api/hub/fleet` | Fleet token status / set (`{token}`) — enables remote specs + control |
 | `GET /api/hub/resources?local_only=true` | This machine only (peers call with this to prevent recursion) |
@@ -98,8 +104,106 @@ External apps never talk to studios directly — they talk to the Hub:
    ideally, `webhook` — the Hub POSTs the batch summary (incl. per-item
    `artifact_url`) to that URL the moment the batch finishes. No polling.
 3. Or poll `GET /api/hub/jobs/{batch_id}` — this survives Hub restarts
-   (batches are persisted in `hub.db` and unfinished work resumes
-   automatically; in-flight items are re-queued and redone).
+   (batches are persisted in `hub.db`; in-flight items are safely re-queued).
+
+### Episode transcription contract
+
+Submit one multipart request with repeated `files` and matching repeated `item_ids`.
+The item IDs must be stable chapter slugs or names and must appear in the same order
+as their files. `project` and `episode` are optional, but supplying both gives active
+submissions stable idempotency across client retries.
+
+```bash
+curl -X POST "$HUB/api/hub/transcription/jobs" \
+  -H "X-Hub-Token: $HUB_TOKEN" \
+  -F 'files=@DK0039_Introduction.mp3' \
+  -F 'files=@DK0039_Chapter_01.mp3' \
+  -F 'item_ids=Introduction' \
+  -F 'item_ids=Chapter_01' \
+  -F 'model=mlx-community/whisper-large-v3-turbo' \
+  -F 'language=en' \
+  -F 'word_timestamps=true' \
+  -F 'label=Story Studio KH' \
+  -F 'project=dark-kingdom' \
+  -F 'episode=DK0039'
+```
+
+An accepted request returns immediately. Repeating the same active project, episode,
+model, item IDs, and filenames returns the original `batch_id` with `duplicate: true`.
+
+```json
+{"batch_id":"abc123def456","items":2,"queued":2}
+```
+
+Poll `GET /api/hub/transcription/jobs/abc123def456`:
+
+```json
+{
+  "id": "abc123def456",
+  "status": "running",
+  "project": "dark-kingdom",
+  "episode": "DK0039",
+  "model": "mlx-community/whisper-large-v3-turbo",
+  "total": 2,
+  "queued": 0,
+  "running": 1,
+  "done": 1,
+  "error": 0,
+  "cancelled": 0,
+  "items": [{
+    "index": 0,
+    "item_id": "Introduction",
+    "filename": "DK0039_Introduction.mp3",
+    "state": "done",
+    "studio": "voice@macmini-m4-001",
+    "studio_task_id": null,
+    "duration_seconds": 18.4,
+    "media_duration_seconds": 301.2,
+    "artifact_url": "/api/hub/transcription/jobs/abc123def456/items/0/artifact",
+    "error": null,
+    "tries": 1,
+    "metadata": {"text":"...","language":"en","duration":301.2,"segments":[],"vtt":"WEBVTT..."}
+  }]
+}
+```
+
+Download `artifact_url` with the same Hub token. Cancel with `DELETE` on the batch URL;
+completed SRTs remain available. Retry with `POST .../{batch_id}/retry`; its response is
+`{"batch_id":"abc123def456","retried":1,"status":"queued"}` and successful chapters
+are not retranscribed.
+
+JavaScript submission:
+
+```javascript
+const body = new FormData();
+for (const chapter of chapters) {
+  body.append("files", chapter.file, chapter.filename);
+  body.append("item_ids", chapter.id);
+}
+body.append("model", "mlx-community/whisper-large-v3-turbo");
+body.append("language", "en");
+body.append("word_timestamps", "true");
+body.append("project", "dark-kingdom");
+body.append("episode", "DK0039");
+const batch = await fetch(`${HUB}/api/hub/transcription/jobs`, {
+  method: "POST", headers: {"X-Hub-Token": token}, body
+}).then(response => response.json());
+```
+
+Python submission:
+
+```python
+with httpx.Client(headers={"X-Hub-Token": token}) as client:
+    response = client.post(
+        f"{HUB}/api/hub/transcription/jobs",
+        data=[("item_ids", "Introduction"), ("item_ids", "Chapter_01"),
+              ("model", "mlx-community/whisper-large-v3-turbo"),
+              ("project", "dark-kingdom"), ("episode", "DK0039")],
+        files=[("files", ("intro.mp3", open("intro.mp3", "rb"), "audio/mpeg")),
+               ("files", ("chapter-01.mp3", open("chapter-01.mp3", "rb"), "audio/mpeg"))],
+    )
+    batch = response.raise_for_status().json()
+```
 
 ```javascript
 // Story Studio side
