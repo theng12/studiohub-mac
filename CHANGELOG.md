@@ -12,6 +12,16 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.23.2] — 2026-07-12
+
+### Added — Resource ordering
+
+- Added a visible remote-machine order control with Online first, Name, and Available memory choices. Online is the default and the selected order is remembered.
+- Resource Studio tables now also default to active/online workers first, then offline workers, while retaining Memory and Name choices.
+- Machine-group sections prioritize machines with an online Studio and show clearer online, reachable-without-Hub, and offline states.
+
+92 tests.
+
 ## [1.23.1] — 2026-07-12
 
 ### Fixed — Overview list alignment

@@ -8,6 +8,9 @@ def test_dashboard_includes_render_studio():
     assert '<option value="render">Render</option>' in dashboard
     assert 'class="workspace-head"' in dashboard
     assert 'const TAB_META = {' in dashboard
+    assert 'id="res-machine-sort"' in dashboard
+    assert 'localStorage.getItem("res_machine_sort") || "status"' in dashboard
+    assert 'localStorage.getItem("res_sort") || "status"' in dashboard
 
 
 def test_health_and_version(client):

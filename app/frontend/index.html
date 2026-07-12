@@ -296,6 +296,14 @@
       </svg>
       <div class="muted" style="font-size:11px">memory % — last hour</div>
     </div>
+    <div class="controls">
+      <div class="grp"><label>Machine order</label>
+        <select class="selctl" id="res-machine-sort">
+          <option value="status">Online first</option><option value="name">Name</option><option value="memory">Available memory</option>
+        </select>
+      </div>
+      <span class="sub" id="res-machine-count"></span>
+    </div>
     <div id="machines-res"></div>
     <div class="controls">
       <div class="grp"><label>Group studios</label>
@@ -304,7 +312,7 @@
         </div>
       </div>
       <div class="grp"><label>Sort</label>
-        <select class="selctl" id="res-sort"><option value="memory">Memory</option><option value="name">Name</option></select>
+        <select class="selctl" id="res-sort"><option value="status">Online first</option><option value="memory">Memory</option><option value="name">Name</option></select>
       </div>
     </div>
     <div id="res-studios"></div>
@@ -527,6 +535,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.23.2", date: "2026-07-12", items: [
+    "Resources now defaults to online machines and Studios first, with visible sorting by status, name, or available memory.",
+  ] },
   { v: "1.23.1", date: "2026-07-12", items: [
     "Overview list columns now stay aligned when some Studios have lifecycle controls and remote Studios only have an Open UI link.",
   ] },
@@ -898,8 +909,11 @@ $("#m-sort").addEventListener("change", e => { mSort = e.target.value; localStor
 
 // ── resources ─────────────────────────────────────────────────────────────
 let resGroup = localStorage.getItem("res_group") || "machine";
-let resSort = localStorage.getItem("res_sort") || "memory";
+let resMachineSort = localStorage.getItem("res_machine_sort") || "status";
+let resSort = localStorage.getItem("res_sort") || "status";
 initSeg("res-grp", resGroup, v => { resGroup = v; localStorage.setItem("res_group", v); renderResources(lastSummary); });
+$("#res-machine-sort").value = resMachineSort;
+$("#res-machine-sort").onchange = e => { resMachineSort = e.target.value; localStorage.setItem("res_machine_sort", resMachineSort); renderResources(lastSummary); };
 $("#res-sort").value = resSort;
 $("#res-sort").onchange = e => { resSort = e.target.value; localStorage.setItem("res_sort", resSort); renderResources(lastSummary); };
 
@@ -916,27 +930,49 @@ function renderResources(sum) {
   $("#host-mem-label").textContent = h.percent + "% of unified memory in use";
 
   const machines = sum.resources.machines || {};
-  const order = Object.keys(machines).filter(m => m !== "local").sort();
+  const machineRank = m => machines[m]?.host ? 0 : (machines[m]?.reachable ? 1 : 2);
+  const machineCompare = (a, b) => {
+    if (resMachineSort === "name") return mlabel(a).localeCompare(mlabel(b));
+    if (resMachineSort === "memory") {
+      const available = m => machines[m]?.host?.available_gb ?? -1;
+      return available(b) - available(a) || machineRank(a) - machineRank(b) || mlabel(a).localeCompare(mlabel(b));
+    }
+    return machineRank(a) - machineRank(b) || mlabel(a).localeCompare(mlabel(b));
+  };
+  const order = Object.keys(machines).filter(m => m !== "local").sort(machineCompare);
+  const onlineMachines = order.filter(m => machines[m]?.host).length;
+  $("#res-machine-count").textContent = `${onlineMachines}/${order.length} remote machines online`;
   $("#machines-res").innerHTML = order.map(m => {
     const mi = machines[m];
     if (mi.host) return `<div class="card section mcard"><div class="top" style="margin:0"><span class="emoji">🖥️</span><h3>${esc(mlabel(m))}</h3>
-      <span class="sub" style="margin-left:auto">${mi.host.used_gb}/${mi.host.total_gb} GB · CPU ${mi.host.cpu_percent}% · ${mi.host.cpu_count} cores</span></div>
+      <span class="dot up" title="online"></span><span class="sub">${mi.host.used_gb}/${mi.host.total_gb} GB · CPU ${mi.host.cpu_percent}% · ${mi.host.cpu_count} cores</span></div>
       <div class="bar" style="grid-column:1/-1"><i style="width:${mi.host.percent}%" class="${mi.host.percent > 90 ? "crit" : mi.host.percent > 75 ? "hot" : ""}"></i></div></div>`;
     return `<div class="card section"><div class="top" style="margin:0"><span class="emoji">🖥️</span><h3>${esc(mlabel(m))}</h3>
-      <span class="sub" style="margin-left:auto">${mi.reachable ? "no Studio Hub running here" : "offline / unreachable"}</span></div></div>`;
+      <span class="dot ${mi.reachable ? "unknown" : "down"}"></span><span class="sub">${mi.reachable ? "reachable · no Studio Hub" : "offline / unreachable"}</span></div></div>`;
   }).join("");
 
   // grouped per-studio table
   let groups;
   if (resGroup === "machine") {
     const g = {}; sum.studios.forEach(s => (g[s.machine || "local"] = g[s.machine || "local"] || []).push(s));
-    groups = Object.keys(g).sort((a, b) => (a === "local" ? -1 : b === "local" ? 1 : a.localeCompare(b))).map(k => [mlabel(k), g[k]]);
+    groups = Object.keys(g).sort((a, b) => {
+      if (a === "local") return -1;
+      if (b === "local") return 1;
+      const aUp = g[a].some(s => s.status === "up") ? 0 : 1;
+      const bUp = g[b].some(s => s.status === "up") ? 0 : 1;
+      return aUp - bUp || mlabel(a).localeCompare(mlabel(b));
+    }).map(k => [mlabel(k), g[k]]);
   } else if (resGroup === "modality") {
     const g = {}; sum.studios.forEach(s => (g[s.modality] = g[s.modality] || []).push(s));
     groups = MOD_ORDER.filter(k => g[k]).map(k => [k, g[k]]);
   } else groups = [["All studios", sum.studios]];
 
-  const sortG = list => [...list].sort((a, b) => resSort === "memory" ? rss(sum, b) - rss(sum, a) : a.title.localeCompare(b.title));
+  const sortG = list => [...list].sort((a, b) => {
+    if (resSort === "memory") return rss(sum, b) - rss(sum, a) || a.title.localeCompare(b.title);
+    if (resSort === "name") return a.title.localeCompare(b.title);
+    const rank = s => s.status === "up" ? (s.busy ? 0 : 1) : 2;
+    return rank(a) - rank(b) || a.title.localeCompare(b.title);
+  });
   $("#res-studios").innerHTML = groups.map(([title, list]) => {
     const rows = sortG(list).map(s => {
       const r = sum.resources.studios[s.id];
