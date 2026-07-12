@@ -12,6 +12,16 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.24.0] — 2026-07-12
+
+### Added — Fleet-wide Whisper inventory
+
+- Voice Studio transcription availability is now authenticated, aggregated across every online Mac, and included in the unified catalog as the `transcription` modality.
+- Added `GET /api/hub/transcription` with recommended model, cached machines, ready machines, and fleet endpoint counts for Story Studio's Subtitles screen.
+- Added an authenticated multipart transcription gateway that queues for a free compatible Voice Studio, so clients no longer upload audio to individual Macs.
+- The Models tab now includes transcription models alongside image, voice, chat, and render inventory.
+- Catalog failures serve the last good Whisper snapshot, matching the existing resilient model-catalog behavior.
+
 ## [1.23.4] — 2026-07-12
 
 ### Added — Asset quick sorting

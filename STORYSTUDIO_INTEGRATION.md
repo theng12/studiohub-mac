@@ -83,6 +83,16 @@ Use `status === "up"` to know what's currently runnable.
 - NOTE: this call can take a few seconds if some fleet machines are offline
   (it waits on their catalogs). Cache the result in Story Studio for a minute.
 
+Whisper models are included with `modality=transcription`. For the Subtitles
+screen's ready/cached summary use `GET /api/hub/transcription`, which merges
+every online Voice Studio and reports `endpoint_count`, `ready_count`,
+`cached_on`, and `available_on` per model.
+
+Submit transcription as multipart to `POST /api/hub/transcribe` with `file`,
+`model`, optional `language`, and optional `word_timestamps`. The Hub waits for
+a free Voice Studio that has that Whisper repo cached and returns the studio's
+normal JSON result (`srt`, `vtt`, segments, and detected language).
+
 ---
 
 ## 4. Submit work — Swarm Batch

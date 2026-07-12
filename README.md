@@ -58,6 +58,8 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/health` | Aggregate: totals + per-studio statuses |
 | `GET /api/hub/catalog` | Raw per-studio catalog rows (annotated `hub_cached`, `hub_machine`). Query: `q`, `modality`, `downloaded`, `cloud`, `force` |
 | `GET /api/hub/models` | **Deduped by repo** with per-machine availability (`cached_on`, `machines[]`). Query: `q`, `modality`, `downloaded` |
+| `GET /api/hub/transcription` | Fleet-wide Whisper inventory with `cached_on`, `available_on`, ready counts, and recommended default |
+| `POST /api/hub/transcribe` | Multipart audio transcription routed to a free Voice Studio that has the selected Whisper model cached |
 | `DELETE /api/hub/registry/machines/{machine}` | Unregister a discovered machine's studios |
 | `GET /api/hub/fleet` · `POST /api/hub/fleet` | Fleet token status / set (`{token}`) — enables remote specs + control |
 | `GET /api/hub/resources?local_only=true` | This machine only (peers call with this to prevent recursion) |

@@ -264,7 +264,7 @@
       <select id="m-modality" class="selctl">
         <option value="">All modalities</option>
         <option value="image">Image</option><option value="chat">Chat</option>
-        <option value="voice">Voice</option><option value="music">Music</option><option value="video">Video</option>
+        <option value="voice">Voice</option><option value="transcription">Transcription</option><option value="music">Music</option><option value="video">Video</option>
         <option value="render">Render</option>
       </select>
       <select id="m-machine" class="selctl"><option value="">All machines</option></select>
@@ -546,6 +546,10 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.24.0", date: "2026-07-12", items: [
+    "Whisper transcription is now first-class fleet inventory, with cached and ready Macs visible alongside every other model.",
+    "Story Studio can send subtitle audio through one authenticated Hub endpoint; Studio Hub selects a free Voice Studio holding the requested Whisper model.",
+  ] },
   { v: "1.23.4", date: "2026-07-12", items: [
     "Asset Ledger now has one-click sorting for Newest, Oldest, Name, Type, Studio, and Model, applied to the full ledger query rather than only visible rows.",
   ] },

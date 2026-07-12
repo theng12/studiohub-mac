@@ -43,6 +43,7 @@ class StudioMonitor:
             for s in self.registry
         }
         self._catalog_cache: dict[str, tuple[float, dict]] = {}
+        self._transcribe_cache: dict[str, tuple[float, dict]] = {}
         self._client = httpx.AsyncClient()
         self._task: asyncio.Task | None = None
 
@@ -158,6 +159,26 @@ class StudioMonitor:
             return cached[1] if cached else None
         return await self.get_catalog(studio, force=force)
 
+    async def get_transcription(self, studio: dict, force: bool = False) -> dict | None:
+        """Voice Studio's Whisper inventory lives outside its TTS catalog."""
+        sid = studio["id"]
+        cached = self._transcribe_cache.get(sid)
+        if cached and not force and (time.time() - cached[0]) < CATALOG_TTL_S:
+            return cached[1]
+        if self.status.get(sid, {}).get("status") != "up":
+            return cached[1] if cached else None
+        try:
+            r = await self._client.get(
+                f"{base_url(studio)}/api/transcribe/availability",
+                headers=studio_headers(studio), timeout=CATALOG_TIMEOUT_S,
+            )
+            r.raise_for_status()
+            data = r.json()
+            self._transcribe_cache[sid] = (time.time(), data)
+            return data
+        except Exception:
+            return cached[1] if cached else None
+
     async def aggregate_catalog(self, force: bool = False) -> dict:
         """Merge all studios' catalogs. Models pass through verbatim, annotated
         with hub_studio / hub_modality / hub_machine so clients know the source."""
@@ -179,6 +200,34 @@ class StudioMonitor:
                 annotated["hub_cached"] = is_cached(m)  # correct download state
                 models.append(annotated)
             per_studio[sid] = {"ok": True, "models": len(entries)}
+
+        # Whisper/STT is a separate Voice Studio subsystem and therefore is not
+        # present in /api/catalog. Fold it into the fleet catalog as its own
+        # modality so clients never need direct Voice Studio URLs for discovery.
+        voice_studios = [s for s in self.registry if s.get("modality") == "voice"]
+        transcription = await asyncio.gather(
+            *(self.get_transcription(s, force=force) for s in voice_studios)
+        )
+        for studio, availability in zip(voice_studios, transcription):
+            if not availability:
+                continue
+            sid = studio["id"]
+            ready = bool(availability.get("available"))
+            default_repo = availability.get("default_model")
+            entries = availability.get("models") or []
+            for model in entries:
+                annotated = dict(model)
+                annotated["hub_studio"] = sid
+                annotated["hub_modality"] = "transcription"
+                annotated["hub_machine"] = studio.get("machine", "local")
+                annotated["hub_cached"] = bool(model.get("cached"))
+                annotated["hub_ready"] = ready
+                annotated["default"] = model.get("repo") == default_repo
+                models.append(annotated)
+            per_studio.setdefault(sid, {}).update({
+                "transcription_ok": ready,
+                "transcription_models": len(entries),
+            })
         return {"models": models, "per_studio": per_studio, "total": len(models)}
 
     async def models_by_repo(self, force: bool = False) -> list[dict]:
@@ -202,16 +251,45 @@ class StudioMonitor:
                     "size_gb": m.get("size_gb"),
                     "min_unified_memory_gb": m.get("min_unified_memory_gb"),
                     "is_cloud": bool(m.get("is_cloud")),
+                    "recommended": bool(m.get("recommended") or m.get("default")),
+                    "note": m.get("note"),
                     "machines": [],       # every studio that lists it
                     "cached_on": [],      # machine names where it's downloaded
+                    "available_on": [],   # machines whose runtime is ready
                 }
             machine = m.get("hub_machine", "local")
             row["machines"].append({"studio": m.get("hub_studio"),
-                                    "machine": machine, "cached": m.get("hub_cached")})
+                                    "machine": machine, "cached": m.get("hub_cached"),
+                                    "ready": m.get("hub_ready")})
             if m.get("hub_cached") and machine not in row["cached_on"]:
                 row["cached_on"].append(machine)
+            if m.get("hub_ready") and m.get("hub_cached") and machine not in row["available_on"]:
+                row["available_on"].append(machine)
         rows = list(by_repo.values())
         for r in rows:
             r["downloaded"] = bool(r["cached_on"]) or r["is_cloud"]
+            r["available"] = bool(r["available_on"]) if r["modality"] == "transcription" else True
         rows.sort(key=lambda r: (r["modality"] or "", not r["downloaded"], r["repo"]))
         return rows
+
+    async def transcription_inventory(self, force: bool = False) -> dict:
+        rows = [r for r in await self.models_by_repo(force=force)
+                if r.get("modality") == "transcription"]
+        machines = {m["machine"] for row in rows for m in row.get("machines", [])}
+        ready = {m for row in rows for m in row.get("available_on", [])}
+        default = next((r["repo"] for r in rows
+                        if r.get("recommended") and r.get("downloaded")), None)
+        if default is None:
+            default = next((r["repo"] for r in rows if r.get("downloaded")), None)
+        return {
+            "available": bool(ready),
+            "models": [{
+                "repo": r["repo"], "label": r["label"], "size_gb": r.get("size_gb"),
+                "note": r.get("note"), "recommended": r.get("recommended", False),
+                "cached": r.get("downloaded", False), "cached_on": r.get("cached_on", []),
+                "available_on": r.get("available_on", []), "machines": r.get("machines", []),
+            } for r in rows],
+            "default_model": default,
+            "endpoint_count": len(machines),
+            "ready_count": len(ready),
+        }

@@ -21,6 +21,7 @@ from starlette.testclient import TestClient
 
 def _reset_state():
     from backend import alerts, auth, broker, fleet_ops, ledger, metrics, peers
+    from backend import main
     from backend import registry as reg
     from backend.main import monitor
     alerts._recent.clear()
@@ -47,6 +48,7 @@ def _reset_state():
     metrics.samples.clear()
     metrics.watchdog.clear()
     metrics._last_sample = 0.0
+    main._transcription_busy.clear()
     reg._labels_cache = None
     reg._flags_cache = None
     # monitor: reload default registry, mark everything unknown (no network)
@@ -54,6 +56,7 @@ def _reset_state():
     monitor.status = {s["id"]: {"status": "unknown", "last_seen": None,
                                 "last_checked": None} for s in monitor.registry}
     monitor._catalog_cache.clear()
+    monitor._transcribe_cache.clear()
 
 
 @pytest.fixture
@@ -102,4 +105,7 @@ def seed_catalog(monitor):
         monitor.status[studio_id] = {"status": status, "last_seen": time.time(),
                                      "last_checked": time.time()}
         monitor._catalog_cache[studio_id] = (time.time(), {"models": models})
+        if studio_id.split("@", 1)[0] == "voice":
+            monitor._transcribe_cache.setdefault(
+                studio_id, (time.time(), {"available": False, "models": []}))
     return _seed

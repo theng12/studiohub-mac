@@ -68,6 +68,46 @@ def test_models_empty_when_all_down(authed):
     assert d["count"] == 0
 
 
+def test_transcription_empty_when_all_voice_studios_down(authed):
+    d = authed.get("/api/hub/transcription").json()
+    assert d["available"] is False
+    assert d["models"] == []
+    assert d["endpoint_count"] == 0
+
+
+def test_transcription_gateway_routes_with_studio_auth(authed, monkeypatch):
+    import time
+    from backend import main, peers
+
+    main.monitor.status["voice"] = {"status": "up", "last_seen": time.time()}
+    main.monitor._transcribe_cache["voice"] = (time.time(), {
+        "available": True,
+        "models": [{"repo": "mlx/whisper", "cached": True}],
+    })
+    captured = {}
+
+    class Response:
+        status_code = 200
+        def json(self):
+            return {"srt": "1\n00:00:00,000 --> 00:00:01,000\nHello\n"}
+
+    async def post(url, **kwargs):
+        captured.update(url=url, **kwargs)
+        return Response()
+
+    monkeypatch.setattr(main.monitor._client, "post", post)
+    response = authed.post(
+        "/api/hub/transcribe",
+        data={"model": "mlx/whisper", "language": "en"},
+        files={"file": ("clip.wav", b"audio", "audio/wav")},
+    )
+    assert response.status_code == 200
+    assert captured["url"].endswith("/api/transcribe")
+    voice = next(s for s in main.monitor.registry if s["id"] == "voice")
+    assert captured["headers"] == peers.studio_headers(voice)
+    assert main._transcription_busy == set()
+
+
 def test_fleet_get_set(authed):
     assert authed.get("/api/hub/fleet").json()["fleet_token_set"] is True
     authed.post("/api/hub/fleet", json={"token": "abc"})

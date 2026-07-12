@@ -17,7 +17,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -514,6 +514,73 @@ async def hub_models(modality: str | None = None, q: str | None = None,
     if downloaded is not None:
         rows = [r for r in rows if r["downloaded"] == downloaded]
     return {"models": rows, "count": len(rows)}
+
+
+@app.get("/api/hub/transcription")
+async def hub_transcription(force: bool = False):
+    """Fleet-wide Whisper availability with per-machine cache status."""
+    return await monitor.transcription_inventory(force=force)
+
+
+_transcription_busy: set[str] = set()
+_transcription_lock = asyncio.Lock()
+
+
+async def _acquire_transcription_studio(model: str, timeout_s: float = 300.0) -> dict:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        candidates = []
+        for studio in monitor.registry:
+            if studio.get("modality") != "voice":
+                continue
+            if monitor.status.get(studio["id"], {}).get("status") != "up":
+                continue
+            availability = await monitor.get_transcription(studio)
+            models = availability.get("models", []) if availability else []
+            if availability and availability.get("available") and any(
+                m.get("repo") == model and m.get("cached") for m in models
+            ):
+                candidates.append(studio)
+        async with _transcription_lock:
+            studio = next((s for s in candidates if s["id"] not in _transcription_busy), None)
+            if studio:
+                _transcription_busy.add(studio["id"])
+                return studio
+        await asyncio.sleep(0.5)
+    raise HTTPException(503, f"No free Voice Studio has '{model}' ready")
+
+
+@app.post("/api/hub/transcribe")
+async def hub_transcribe(
+    file: UploadFile = File(...),
+    model: str = Form(...),
+    language: str | None = Form(None),
+    word_timestamps: bool = Form(False),
+):
+    """Route one Whisper upload to a ready, model-capable Voice Studio."""
+    studio = await _acquire_transcription_studio(model)
+    try:
+        content = await file.read()
+        if not content:
+            raise HTTPException(400, "audio file is empty")
+        data = {"model": model, "word_timestamps": str(word_timestamps).lower()}
+        if language:
+            data["language"] = language
+        response = await monitor._client.post(
+            f"{base_url(studio)}/api/transcribe",
+            headers=peers.studio_headers(studio),
+            files={"file": (file.filename or "audio.bin", content,
+                            file.content_type or "application/octet-stream")},
+            data=data,
+            timeout=300.0,
+        )
+        if response.status_code >= 400:
+            detail = response.text[:500]
+            raise HTTPException(response.status_code, detail or "Voice Studio transcription failed")
+        return response.json()
+    finally:
+        async with _transcription_lock:
+            _transcription_busy.discard(studio["id"])
 
 
 @app.post("/api/hub/assets/scan")

@@ -45,3 +45,33 @@ async def test_aggregate_skips_down_studios_no_network(monitor, seed_catalog):
     agg = await monitor.aggregate_catalog()
     assert agg["total"] == 1
     assert agg["per_studio"]["voice"]["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_whisper_models_join_fleet_inventory(monitor, seed_catalog):
+    import time
+
+    seed_catalog("voice", [{"repo": "org/tts", "cache": {"state": "cached"}}])
+    monitor._transcribe_cache["voice"] = (time.time(), {
+        "available": True,
+        "default_model": "mlx/whisper-turbo",
+        "models": [
+            {"repo": "mlx/whisper-turbo", "label": "Whisper Turbo",
+             "size_gb": 1.6, "recommended": True, "cached": True},
+            {"repo": "mlx/whisper-small", "label": "Whisper Small",
+             "size_gb": 0.5, "cached": False},
+        ],
+    })
+
+    rows = await monitor.models_by_repo()
+    turbo = next(r for r in rows if r["repo"] == "mlx/whisper-turbo")
+    assert turbo["modality"] == "transcription"
+    assert turbo["downloaded"] is True
+    assert turbo["available_on"] == ["local"]
+
+    inventory = await monitor.transcription_inventory()
+    assert inventory["available"] is True
+    assert inventory["default_model"] == "mlx/whisper-turbo"
+    assert inventory["endpoint_count"] == 1
+    assert inventory["ready_count"] == 1
+    assert len(inventory["models"]) == 2
