@@ -12,6 +12,15 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.22.1] — 2026-07-12
+
+### Fixed — Render Studio dashboard visibility
+
+- Added the `render` capability to Overview grouping, machine discovery, model filters, and fleet statistics. The Hub API already detected Render Studio, but the dashboard's older five-modality list hid it.
+- Added a dashboard regression test so newly registered Render Studio workers remain visible.
+
+92 tests.
+
 ## [1.22.0] — 2026-07-12
 
 ### Added — episode render workers

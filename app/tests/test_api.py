@@ -1,3 +1,13 @@
+from pathlib import Path
+
+
+def test_dashboard_includes_render_studio():
+    dashboard = (Path(__file__).parents[1] / "frontend" / "index.html").read_text()
+    assert '["image", "chat", "voice", "music", "video", "render"]' in dashboard
+    assert 'class="d-mod" value="render"' in dashboard
+    assert '<option value="render">Render</option>' in dashboard
+
+
 def test_health_and_version(client):
     h = client.get("/api/health").json()
     assert h["ok"] is True and "app_version" in h

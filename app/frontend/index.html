@@ -195,6 +195,7 @@
         <option value="">All modalities</option>
         <option value="image">Image</option><option value="chat">Chat</option>
         <option value="voice">Voice</option><option value="music">Music</option><option value="video">Video</option>
+        <option value="render">Render</option>
       </select>
       <select id="m-machine" class="selctl"><option value="">All machines</option></select>
       <select id="m-dl" class="selctl">
@@ -399,6 +400,7 @@
         <label class="wd" style="margin:0"><input type="checkbox" class="d-mod" value="voice" checked> 🎙️ voice</label>
         <label class="wd" style="margin:0"><input type="checkbox" class="d-mod" value="chat" checked> 💬 chat</label>
         <label class="wd" style="margin:0"><input type="checkbox" class="d-mod" value="video" checked> 🎬 video</label>
+        <label class="wd" style="margin:0"><input type="checkbox" class="d-mod" value="render" checked> 🖥️ render</label>
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         <button class="go" onclick="discoverMachine()" style="white-space:nowrap">Discover &amp; Add</button>
@@ -457,6 +459,12 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.22.1", date: "2026-07-12", items: [
+    "Render Studio now appears in Overview, discovery, model filters, and fleet statistics.",
+  ] },
+  { v: "1.22.0", date: "2026-07-12", items: [
+    "Episode render workers use non-preemptive machine leases and prefer faster M4 16 GB machines without interrupting active image work.",
+  ] },
   { v: "1.21.4", date: "2026-07-12", items: [
     "Preflight now reports port conflicts and available machine memory explicitly.",
   ] },
@@ -533,7 +541,7 @@ function markWhatsNewSeen() {
 }
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeWhatsNew(); });
 let machineLabels = {};                       // machine-key -> friendly name
-const MOD_ORDER = ["image", "chat", "voice", "music", "video"];
+const MOD_ORDER = ["image", "chat", "voice", "music", "video", "render"];
 const mlabel = (m) => machineLabels[m] || m;  // display name, fallback to key
 async function renameMachine(m) {
   const cur = mlabel(m);
@@ -947,8 +955,8 @@ async function scanAssets() {
 }
 
 // ── stats ─────────────────────────────────────────────────────────────────
-const MOD_EMOJI = { image: "🎨", music: "🎵", voice: "🎙️", chat: "💬", video: "🎬" };
-const MOD_COLOR = { image: "#58a6ff", voice: "#d29922", music: "#3fb950", video: "#bc8cff", chat: "#8b949e", unknown: "#6e7681" };
+const MOD_EMOJI = { image: "🎨", music: "🎵", voice: "🎙️", chat: "💬", video: "🎬", render: "🖥️" };
+const MOD_COLOR = { image: "#58a6ff", voice: "#d29922", music: "#3fb950", video: "#bc8cff", chat: "#8b949e", render: "#e3b341", unknown: "#6e7681" };
 function renderThroughput(tl) {
   const svg = $("#tp-chart"), legend = $("#tp-legend"), cap = $("#tp-cap");
   const mods = Object.keys(tl.series);
