@@ -28,6 +28,19 @@ class FakeResp:
         return self._data
 
 
+class FakeSyncClient:
+    def __init__(self):
+        self.calls = []
+
+    async def post(self, url, headers=None, json=None, timeout=None):
+        self.calls.append(("POST", url, headers, json))
+        return FakeResp(200)
+
+    async def get(self, url, headers=None, timeout=None):
+        self.calls.append(("GET", url, headers, None))
+        return FakeResp(200, {"host": {}})
+
+
 def test_fleet_token_roundtrip(reset):
     generated = peers.fleet_token()
     assert generated
@@ -85,3 +98,15 @@ def test_remote_studio_requests_use_connected_peer_hub(reset):
     peer_url, peer_headers = peers.studio_request(studio, "/api/catalog")
     assert peer_url == "http://100.1.1.1:47873/studio/image/api/catalog"
     assert peer_headers == {"X-Hub-Token": "shared-secret"}
+
+
+@pytest.mark.asyncio
+async def test_fleet_token_sync_uses_old_token_then_verifies_new(reset):
+    peers.set_fleet_token("old-shared-secret")
+    client = FakeSyncClient()
+    result = await peers.sync_fleet_token(REMOTE, client, "new-shared-secret")
+    assert result["verified"] == 1 and result["manual"] == 0
+    assert client.calls[0][2] == {"X-Hub-Token": "old-shared-secret"}
+    assert client.calls[0][3] == {"token": "new-shared-secret", "sync": False}
+    assert client.calls[1][2] == {"X-Hub-Token": "new-shared-secret"}
+    assert peers.fleet_token() == "new-shared-secret"

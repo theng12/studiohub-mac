@@ -512,15 +512,16 @@
     <div class="card jform section">
       <div class="top"><span class="emoji">🧩</span><h3>Fleet security token</h3></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        This Hub automatically protects its five Studio APIs. For multiple Macs, set the <b>same fleet token</b>
-        on every machine's Hub so monitoring, generation, and control remain authenticated end to end.
+        This shared credential lets your Hubs and Studios trust requests from your fleet while rejecting other
+        devices. Save it on the primary Hub to securely synchronize and verify every connected machine.
       </p>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         <input id="fleet-token" placeholder="paste or generate a shared token" style="flex:1;min-width:240px">
-        <button class="go" onclick="saveFleet()">Save</button>
+        <button class="go" id="fleet-save" onclick="saveFleet()">Save &amp; verify</button>
         <button class="btn" onclick="genFleet()">Generate</button>
       </div>
       <div class="sub" id="fleet-status" style="margin-top:8px"></div>
+      <div class="sub" id="fleet-save-result" role="status" aria-live="polite" style="margin-top:7px"></div>
     </div>
 
     <div class="card section">
@@ -661,6 +662,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.33.0", date: "2026-07-13", items: [
+    "Fleet credential <b>Save & verify</b> now synchronizes connected peer Hubs from the primary, verifies the new value, and shows persistent per-machine results. Only mismatched or unreachable machines need a one-time local Save.",
+  ] },
   { v: "1.32.4", date: "2026-07-13", items: [
     "Transient Chat failures now retry after <b>5 seconds, then 15 seconds</b>, giving a newly activated worker time to load its cached model into memory. Jobs shows the automatic retry countdown while other workers continue.",
   ] },
@@ -1768,14 +1772,24 @@ function renderFleetStatus() {
 function genFleet() { const a = new Uint8Array(18); crypto.getRandomValues(a); $("#fleet-token").value = btoa(String.fromCharCode(...a)).replace(/[+/=]/g, "").slice(0, 24); }
 async function saveFleet() {
   const token = $("#fleet-token").value.trim();
-  $("#fleet-status").textContent = "saving…";
+  const btn = $("#fleet-save"), result = $("#fleet-save-result");
+  if (token.length < 12) { result.textContent = "Enter or generate a credential of at least 12 characters."; return; }
+  btn.disabled = true; btn.setAttribute("aria-busy", "true"); btn.textContent = "Saving…";
+  result.textContent = "Saving locally and verifying connected machines…";
   try {
-    await api("/api/hub/fleet", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
-  } catch (e) { $("#fleet-status").textContent = "save failed: " + e; return; }
-  $("#fleet-status").innerHTML = token
-    ? "✓ <b>Saved on this Hub.</b> Now set the <b>same</b> token on every other Mac's Hub (Remote tab there). Re-checking the fleet…"
-    : "✓ fleet token rotated automatically on this Hub.";
-  loadFleet(); refresh();
+    const response = await api("/api/hub/fleet", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, sync: true }) });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
+    const sync = body.sync || { total: 0, verified: 0, manual: 0, machines: {} };
+    const machines = Object.entries(sync.machines || {}).map(([machine, row]) =>
+      `<div style="margin-top:3px;color:${row.ok ? "var(--up)" : "var(--warn)"}">${row.ok ? "✓" : "!"} <b>${esc(mlabel(machine))}</b> · ${esc(row.detail || row.status)}</div>`).join("");
+    result.innerHTML = `<b style="color:var(--up)">✓ Saved on this Hub.</b> ${sync.total ? `${sync.verified}/${sync.total} peer Hubs verified.` : "No peer Hubs registered."}${sync.manual ? ` <span style="color:var(--warn)">${sync.manual} need a one-time local Save.</span>` : ""}${machines}`;
+    await loadFleet(); await refresh();
+  } catch (e) {
+    result.textContent = "Save failed: " + e.message;
+  } finally {
+    btn.disabled = false; btn.removeAttribute("aria-busy"); btn.textContent = "Save & verify";
+  }
 }
 let preflightRows = [];
 let maintenanceBusy = false;

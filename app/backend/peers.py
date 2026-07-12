@@ -199,3 +199,53 @@ async def control_remote(client: httpx.AsyncClient, studio: dict, action: str) -
     except httpx.HTTPError as e:
         return {"ok": False, "error": f"can't reach the Hub on {studio['host']} "
                 f"— run Studio Hub on that Mac ({e})"}
+
+
+async def sync_fleet_token(
+    registry: list[dict], client: httpx.AsyncClient, new_token: str,
+) -> dict:
+    """Rotate connected peer Hubs from the current credential to ``new_token``.
+
+    Each write is authenticated with the old token, then verified with the new
+    one. The local token changes last so a partial failure remains recoverable
+    and can be reported as a one-time manual save on that machine.
+    """
+    old_token = fleet_token()
+    machines = _remote_machines(registry)
+
+    async def one(machine: str, studios: list[dict]) -> tuple[str, dict]:
+        studio = studios[0]
+        url = _peer_url(studio)
+        headers = {"X-Hub-Token": old_token} if old_token else {}
+        try:
+            response = await client.post(
+                f"{url}/api/hub/fleet", headers=headers,
+                json={"token": new_token, "sync": False}, timeout=PEER_TIMEOUT_S)
+            if response.status_code in {401, 403}:
+                return machine, {"ok": False, "status": "manual",
+                                 "detail": "peer rejected the current credential"}
+            if response.status_code >= 400:
+                return machine, {"ok": False, "status": "failed",
+                                 "detail": f"peer returned HTTP {response.status_code}"}
+            verified = await client.get(
+                f"{url}/api/hub/resources?local_only=true",
+                headers={"X-Hub-Token": new_token}, timeout=PEER_TIMEOUT_S)
+            if verified.status_code == 200:
+                return machine, {"ok": True, "status": "verified",
+                                 "detail": "saved and verified"}
+            return machine, {"ok": False, "status": "failed",
+                             "detail": f"saved but verification returned HTTP {verified.status_code}"}
+        except httpx.HTTPError as exc:
+            return machine, {"ok": False, "status": "unreachable",
+                             "detail": str(exc)[:180]}
+
+    rows = await asyncio.gather(*(one(machine, studios)
+                                  for machine, studios in machines.items()))
+    results = dict(rows)
+    set_fleet_token(new_token)
+    _cache.clear()
+    verified = sum(row["ok"] for row in results.values())
+    return {
+        "total": len(results), "verified": verified,
+        "manual": len(results) - verified, "machines": results,
+    }

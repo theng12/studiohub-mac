@@ -12,6 +12,17 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.33.0] — 2026-07-13
+
+### Added — save, synchronize, and verify one fleet credential
+
+- **Save & verify** now saves on the primary Hub, securely synchronizes every registered peer Hub using the previously trusted credential, and verifies each peer with the new value before claiming success.
+- The Remote tab has an explicit busy state and a persistent accessible result panel with per-machine success or failure details. Live fleet refreshes no longer erase the Save response.
+- Mismatched or unreachable peers are identified as needing a one-time local Save; already connected peers no longer require repetitive pasting on every Mac.
+- Fleet credentials must be 12–512 characters, preventing accidental empty or ambiguous short saves. Tokens remain owner-only and are never returned in synchronization results.
+
+148 tests.
+
 ## [1.32.4] — 2026-07-13
 
 ### Fixed — model warm-up no longer exhausts retries immediately

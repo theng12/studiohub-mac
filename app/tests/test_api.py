@@ -24,6 +24,9 @@ def test_dashboard_includes_render_studio():
     assert 'const JOB_QUEUE_REFRESH_MS = 3000;' in dashboard
     assert 'if (vis("jobs") && !document.hidden) loadActiveJobQueues();' in dashboard
     assert 'document.addEventListener("visibilitychange"' in dashboard
+    assert 'id="fleet-save"' in dashboard
+    assert 'id="fleet-save-result" role="status" aria-live="polite"' in dashboard
+    assert 'JSON.stringify({ token, sync: true })' in dashboard
 
 
 def test_health_and_version(client):
@@ -129,11 +132,17 @@ def test_transcription_gateway_routes_with_studio_auth(authed, monkeypatch):
 
 def test_fleet_get_set(authed):
     assert authed.get("/api/hub/fleet").json()["fleet_token_set"] is True
-    authed.post("/api/hub/fleet", json={"token": "abc"})
+    response = authed.post("/api/hub/fleet", json={"token": "a-valid-fleet-token"})
+    assert response.json()["ok"] is True
     assert authed.get("/api/hub/fleet").json()["fleet_token_set"] is True
     from backend import peers
     import stat
     assert stat.S_IMODE(peers.FLEET_TOKEN_FILE.stat().st_mode) == 0o600
+
+
+def test_fleet_save_rejects_ambiguous_short_credentials(authed):
+    response = authed.post("/api/hub/fleet", json={"token": "short"})
+    assert response.status_code == 400
 
 
 def test_update_route_schedules_on_event_loop(authed, monkeypatch):

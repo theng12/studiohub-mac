@@ -1008,11 +1008,18 @@ def get_fleet(request: Request):
 
 
 @app.post("/api/hub/fleet")
-def set_fleet(body: dict):
-    """Set the shared fleet token (paste the SAME value on every Mac's Hub)."""
-    token = body.get("token", "")
-    peers.set_fleet_token(token)
-    return {"ok": True, "fleet_token_set": True}
+async def set_fleet(body: dict):
+    """Save locally, optionally synchronizing and verifying every peer Hub."""
+    token = str(body.get("token") or "").strip()
+    if not 12 <= len(token) <= 512:
+        raise HTTPException(400, "fleet credential must be 12 to 512 characters")
+    sync = None
+    if body.get("sync"):
+        sync = await peers.sync_fleet_token(monitor.registry, monitor._client, token)
+    else:
+        peers.set_fleet_token(token)
+        peers._cache.clear()
+    return {"ok": True, "fleet_token_set": True, "sync": sync}
 
 
 @app.get("/api/hub/maintenance/preflight")
