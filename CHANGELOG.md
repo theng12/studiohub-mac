@@ -12,6 +12,15 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.23.3] — 2026-07-12
+
+### Fixed — Resource table alignment
+
+- Applied one fixed percentage-based column layout to every per-machine Resource table. Long Studio or machine names no longer shift Status, PID, Memory, or CPU between sections.
+- Long values truncate inside their own cell instead of widening a table, while narrow screens retain internal table scrolling.
+
+92 tests.
+
 ## [1.23.2] — 2026-07-12
 
 ### Added — Resource ordering

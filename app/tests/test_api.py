@@ -11,6 +11,8 @@ def test_dashboard_includes_render_studio():
     assert 'id="res-machine-sort"' in dashboard
     assert 'localStorage.getItem("res_machine_sort") || "status"' in dashboard
     assert 'localStorage.getItem("res_sort") || "status"' in dashboard
+    assert 'class="resource-studio-table"' in dashboard
+    assert '<col style="width:32%"><col style="width:23%">' in dashboard
 
 
 def test_health_and_version(client):
