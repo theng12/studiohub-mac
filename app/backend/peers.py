@@ -22,6 +22,7 @@ import asyncio
 import os
 import secrets
 import time
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -67,6 +68,30 @@ def _peer_url(studio: dict) -> str:
 
 def _peer_token(studio: dict) -> str | None:
     return studio.get("hub_token") or fleet_token()
+
+
+def studio_request(studio: dict, path_or_url: str) -> tuple[str, dict[str, str]]:
+    """Return the safest URL + credentials for a Studio API request.
+
+    A connected peer Hub is the local authority for its machine. Routing remote
+    Studio traffic through that Hub also survives a Studio process that still
+    has an older fleet token in memory: the peer reaches its own Studio over
+    loopback, while this Hub authenticates to the peer with the shared Hub
+    token. If no connected peer is available, retain the direct Studio path.
+    """
+    parsed = urlsplit(path_or_url)
+    path = parsed.path.lstrip("/")
+    if parsed.query:
+        path += "?" + parsed.query
+    machine = studio.get("machine", "local")
+    peer = cached(machine) if machine != "local" else None
+    if peer and peer.get("status") == "connected":
+        token = _peer_token(studio)
+        headers = {"X-Hub-Token": token} if token else {}
+        return f"{_peer_url(studio)}/studio/{studio['modality']}/{path}", headers
+    direct = path_or_url if parsed.scheme in {"http", "https"} else (
+        f"http://{studio['host']}:{studio['port']}/{path}")
+    return direct, studio_headers(studio)
 
 
 def _remote_machines(registry: list[dict]) -> dict[str, list[dict]]:

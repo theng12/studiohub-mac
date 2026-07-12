@@ -269,6 +269,35 @@ async def test_model_capability_and_physical_machine_lease_filter_workers(reset,
     assert await jobs._eligible_studios(monitor, MODEL) == []
 
 
+@pytest.mark.asyncio
+async def test_remote_chat_pack_uses_connected_peer_hub(reset, monitor, monkeypatch):
+    from backend import peers
+
+    batch, _ = jobs.create_batch(_payload())
+    worker = _add_chat_workers(monitor, 1)[0]
+    peers.set_fleet_token("shared-secret")
+    peers._cache[worker["machine"]] = (1.0, {"status": "connected", "reachable": True})
+
+    async def catalog(studio):
+        return {"models": [{"repo": MODEL, "cache": {"state": "cached"}}]}
+
+    calls = []
+
+    async def post(url, **kwargs):
+        calls.append((url, kwargs.get("headers")))
+        return _Response(_results(batch["packs"][0]["scene_ids"]))
+
+    monkeypatch.setattr(monitor, "get_catalog", catalog)
+    monkeypatch.setattr(monitor._client, "post", post)
+    assert await jobs.dispatch_once(monitor) == 1
+    await asyncio.gather(*list(jobs._pack_tasks.values()))
+    assert calls == [(
+        f"http://{worker['host']}:47873/studio/chat/v1/chat/completions",
+        {"X-Hub-Token": "shared-secret"},
+    )]
+    assert jobs.summary(batch)["status"] == "done"
+
+
 def test_restart_recovery_requeues_running_pack(reset):
     batch, _ = jobs.create_batch(_payload())
     batch["packs"][0].update(state="running", studio="chat@mac")

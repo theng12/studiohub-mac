@@ -12,8 +12,8 @@ import httpx
 from fastapi import HTTPException
 
 from . import broker, ledger
-from .peers import studio_headers
-from .registry import base_url, machine_enabled
+from .peers import studio_request
+from .registry import machine_enabled
 
 MAX_PACKS = 500
 MAX_SCENES_PER_PACK = 10
@@ -427,9 +427,9 @@ async def _run_pack(monitor, batch: dict, pack: dict, studio: dict, owner: str) 
                            f"scene IDs: {json.dumps(missing)}. Do not repeat completed IDs.",
             })
         body = {"model": batch["model"], "messages": messages, "stream": False, **pack["params"]}
+        url, headers = studio_request(studio, "/v1/chat/completions")
         response = await monitor._client.post(
-            f"{base_url(studio)}/v1/chat/completions", json=body,
-            headers=studio_headers(studio),
+            url, json=body, headers=headers,
             timeout=httpx.Timeout(connect=5, read=600, write=30, pool=5),
         )
         if response.status_code >= 400:

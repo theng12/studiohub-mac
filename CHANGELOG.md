@@ -12,6 +12,16 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.32.3] — 2026-07-13
+
+### Fixed — remote workers hidden by stale Studio authentication
+
+- Protected requests to a remote Studio now travel through that machine's connected peer Hub. This preserves fleet authentication while avoiding a stale in-memory Studio token that previously made fully cached models look absent and excluded those workers from Chat packs.
+- Remote catalog and transcription inventory calls now reject HTTP errors instead of caching a `401` response as an empty model inventory.
+- Model downloads and fleet Hugging Face settings use the same peer-authority route, with direct Studio access retained when no connected peer Hub is available.
+
+145 tests.
+
 ## [1.32.2] — 2026-07-13
 
 ### Fixed — Jobs refresh independently of the live summary stream

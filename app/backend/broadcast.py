@@ -13,8 +13,7 @@ import re
 
 import httpx
 
-from .registry import base_url
-from .peers import studio_headers
+from .peers import studio_request
 from .control import PINOKIO_HOME
 
 # Guard the env broadcaster against writing outside a studio's own folder.
@@ -31,9 +30,9 @@ async def broadcast_download(
             body = {"repo": repo}
             if token:
                 body["token"] = token
+            url, headers = studio_request(s, "/api/downloads")
             r = await client.post(
-                f"{base_url(s)}/api/downloads", json=body,
-                headers=studio_headers(s), timeout=15.0)
+                url, json=body, headers=headers, timeout=15.0)
             payload = r.json() if r.status_code < 500 else {}
             results[s["id"]] = {
                 "ok": r.status_code < 400,
@@ -57,9 +56,9 @@ async def broadcast_hf_token(
     results = {}
     for s in studios:
         try:
+            url, headers = studio_request(s, "/api/settings")
             r = await client.post(
-                f"{base_url(s)}/api/settings", json={"hf_token": token},
-                headers=studio_headers(s), timeout=15.0)
+                url, json={"hf_token": token}, headers=headers, timeout=15.0)
             if r.status_code == 404 or r.status_code == 405:
                 results[s["id"]] = {"ok": False, "status": r.status_code,
                                     "detail": "no settings endpoint (studio can't hold a token)"}

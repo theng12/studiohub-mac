@@ -15,7 +15,7 @@ import httpx
 log = logging.getLogger("studiohub.monitor")
 
 from .registry import base_url, load_registry
-from .peers import studio_headers
+from .peers import studio_request
 
 POLL_INTERVAL_S = 5.0
 HEALTH_TIMEOUT_S = 3.0
@@ -152,10 +152,12 @@ class StudioMonitor:
         if cached and not force and (time.time() - cached[0]) < CATALOG_TTL_S:
             return cached[1]
         try:
+            url, headers = studio_request(studio, "/api/catalog")
             r = await self._client.get(
-                f"{base_url(studio)}/api/catalog", headers=studio_headers(studio),
+                url, headers=headers,
                 timeout=CATALOG_TIMEOUT_S
             )
+            r.raise_for_status()
             data = r.json()
             self._catalog_cache[sid] = (time.time(), data)
             return data
@@ -183,9 +185,9 @@ class StudioMonitor:
         if self.status.get(sid, {}).get("status") != "up":
             return cached[1] if cached else None
         try:
+            url, headers = studio_request(studio, "/api/transcribe/availability")
             r = await self._client.get(
-                f"{base_url(studio)}/api/transcribe/availability",
-                headers=studio_headers(studio), timeout=CATALOG_TIMEOUT_S,
+                url, headers=headers, timeout=CATALOG_TIMEOUT_S,
             )
             r.raise_for_status()
             data = r.json()

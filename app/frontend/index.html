@@ -661,6 +661,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.32.3", date: "2026-07-13", items: [
+    "Remote Studio work now travels through each machine's <b>connected peer Hub</b>. A Studio holding an older in-memory fleet token can no longer make its cached models look absent or prevent that machine from joining Chat jobs.",
+  ] },
   { v: "1.32.2", date: "2026-07-13", items: [
     "Jobs now refreshes Chat and transcription progress every <b>3 seconds on its own</b>, so rows keep moving even if the general live-status stream pauses. Returning to the Hub window refreshes them immediately.",
   ] },

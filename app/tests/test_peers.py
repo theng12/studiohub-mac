@@ -72,3 +72,16 @@ async def test_refresh_inflight_guard(reset):
 
 def test_studio_headers_use_per_studio_override(reset):
     assert peers.studio_headers({"studio_token": "one"}) == {"X-Studio-Token": "one"}
+
+
+def test_remote_studio_requests_use_connected_peer_hub(reset):
+    studio = REMOTE[0]
+    peers.set_fleet_token("shared-secret")
+    direct_url, direct_headers = peers.studio_request(studio, "/api/catalog")
+    assert direct_url == "http://100.1.1.1:47868/api/catalog"
+    assert direct_headers == {"X-Studio-Token": "shared-secret"}
+
+    peers._cache["mac-b"] = (1.0, {"status": "connected", "reachable": True})
+    peer_url, peer_headers = peers.studio_request(studio, "/api/catalog")
+    assert peer_url == "http://100.1.1.1:47873/studio/image/api/catalog"
+    assert peer_headers == {"X-Hub-Token": "shared-secret"}
