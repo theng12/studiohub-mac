@@ -277,6 +277,23 @@
       Every model across <b>all your machines</b>, deduped. <b>Availability</b> shows which machines
       have each downloaded — a model can live on your media server but not this Mac.
     </p>
+    <div class="card jform section">
+      <div class="top"><span class="emoji">📦</span><h3>Distribute a model to the fleet</h3></div>
+      <p class="muted" style="font-size:13px;margin-bottom:10px">
+        Tell every studio of a type to download a model from Hugging Face — <b>each machine pulls it itself</b>, so you never copy files between Macs. Only studios that are <b>online</b> receive it; run it again while others are up to catch them.
+      </p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <select id="bc-modality" class="selctl" style="max-width:150px" onchange="fillBroadcastRepos()">
+          <option value="chat">chat</option><option value="image">image</option>
+          <option value="voice">voice</option><option value="music">music</option><option value="video">video</option>
+        </select>
+        <input id="bc-repo" list="bc-repos" placeholder="Hugging Face repo, e.g. mlx-community/Qwen3-4B-Instruct-2507-4bit" style="flex:1;min-width:300px">
+        <datalist id="bc-repos"></datalist>
+        <button class="go" onclick="broadcastModelDownload()">Download on all</button>
+      </div>
+      <div class="sub" id="bc-status" style="margin-top:10px"></div>
+      <div id="bc-results" style="margin-top:6px"></div>
+    </div>
     <div class="toolbar">
       <input id="m-search" class="grow" placeholder="Search models…">
       <select id="m-modality" class="selctl">
@@ -611,6 +628,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.26.0", date: "2026-07-12", items: [
+    "<b>Distribute a model to the fleet</b> (Models tab) — pick a studio type + a Hugging Face repo and every online studio of that type downloads it <b>itself</b>, so you never copy model files between Macs. Great for pushing e.g. a chat model to all Chat Studio servers at once.",
+  ] },
   { v: "1.25.6", date: "2026-07-12", items: [
     "<b>Remove a single studio from a machine</b> — click the small ✕ on any studio pill in the Remote tab. Use it to prune a studio you don't run there (e.g. a music/video studio that shows 'down' because it was pre-registered by 'Add manually' but never installed). It only comes back if it's actually running next time you Refetch.",
   ] },
@@ -972,6 +992,40 @@ async function loadModels() {
   const res = await api("/api/hub/models?" + p).then(r => r.json()).catch(() => null);
   modelsData = res ? res.models : null;
   renderModels();
+  fillBroadcastRepos();
+}
+// datalist of repos for the chosen modality, so you can pick instead of type
+function fillBroadcastRepos() {
+  const dl = $("#bc-repos"); if (!dl || !Array.isArray(modelsData)) return;
+  const mod = ($("#bc-modality") || {}).value;
+  const repos = [...new Set(modelsData.filter(m => !mod || m.modality === mod).map(m => m.repo))].sort();
+  dl.innerHTML = repos.map(r => `<option value="${esc(r)}"></option>`).join("");
+}
+// Fan out a model download to every ONLINE studio of a type. Each studio pulls
+// the repo from Hugging Face itself (POST /api/downloads), so no files are copied
+// between machines. Offline studios are skipped — re-run when they're up.
+async function broadcastModelDownload() {
+  const repo = $("#bc-repo").value.trim();
+  const mod = $("#bc-modality").value;
+  const status = $("#bc-status");
+  if (!repo) { status.textContent = "enter a Hugging Face repo id (e.g. mlx-community/Qwen3-4B-Instruct-2507-4bit)"; return; }
+  const targets = ((lastSummary || {}).studios || []).filter(s => s.modality === mod && s.status === "up");
+  if (!targets.length) { status.textContent = `No ${mod} studios are online right now.`; return; }
+  if (!confirm(`Download "${repo}" on ${targets.length} online ${mod} studio(s)?\nEach downloads it from Hugging Face in the background.`)) return;
+  status.textContent = `Sending to ${targets.length} ${mod} studio(s)…`;
+  $("#bc-results").innerHTML = "";
+  const r = await api("/api/hub/broadcast/download", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repo, studios: targets.map(s => s.id) })
+  }).then(x => x.json()).catch(e => ({ error: String(e) }));
+  if (r.error) { status.textContent = "failed: " + r.error; return; }
+  const res = r.results || {};
+  const ok = Object.values(res).filter(v => v.ok).length;
+  status.innerHTML = `Started on <b>${ok}/${Object.keys(res).length}</b> studio(s) — they download in the background. Watch the <b>Availability</b> column below fill in.`;
+  $("#bc-results").innerHTML = `<table><thead><tr><th>Studio</th><th>Result</th></tr></thead><tbody>` +
+    Object.entries(res).map(([id, v]) => `<tr><td>${esc(id)}</td><td>${v.ok
+      ? `<span class="pill ok">started${v.job ? " · job " + esc(v.job) : ""}</span>`
+      : `<span class="pill err">${esc(v.detail || v.error || ("HTTP " + v.status))}</span>`}</td></tr>`).join("") + `</tbody></table>`;
 }
 function renderModels() {
   const body = $("#m-body");
