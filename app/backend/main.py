@@ -404,6 +404,20 @@ async def hub_broadcast_download(body: dict):
     return {"repo": repo, "results": results}
 
 
+@app.post("/api/hub/broadcast/hf-token")
+async def hub_broadcast_hf_token(body: dict):
+    """Set one Hugging Face token on every studio (partial settings update).
+    The token is passed through to each studio and never stored in the Hub."""
+    token = (body.get("token") or "").strip()
+    if not token:
+        raise HTTPException(400, "token is required")
+    import httpx
+    async with httpx.AsyncClient() as client:
+        results = await broadcast.broadcast_hf_token(
+            client, _pick_studios(body.get("studios")), token)
+    return {"results": results}  # NB: never echo the token back
+
+
 @app.post("/api/hub/broadcast/env")
 def hub_broadcast_env(body: dict):
     key, value = body.get("key"), body.get("value")

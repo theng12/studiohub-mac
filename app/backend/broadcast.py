@@ -46,6 +46,36 @@ async def broadcast_download(
     return results
 
 
+async def broadcast_hf_token(
+    client: httpx.AsyncClient, studios: list[dict], token: str,
+) -> dict:
+    """Set the Hugging Face token on many studios at once via each studio's own
+    `POST /api/settings` (a partial update — only `hf_token` is sent, so other
+    keys like cloud API credentials are preserved). The token is passed through,
+    never stored in the Hub. Studios without a settings endpoint (e.g. Render)
+    report a clean failure rather than blocking the rest."""
+    results = {}
+    for s in studios:
+        try:
+            r = await client.post(
+                f"{base_url(s)}/api/settings", json={"hf_token": token},
+                headers=studio_headers(s), timeout=15.0)
+            if r.status_code == 404 or r.status_code == 405:
+                results[s["id"]] = {"ok": False, "status": r.status_code,
+                                    "detail": "no settings endpoint (studio can't hold a token)"}
+                continue
+            payload = r.json() if r.status_code < 500 and r.headers.get(
+                "content-type", "").startswith("application/json") else {}
+            results[s["id"]] = {
+                "ok": r.status_code < 400,
+                "status": r.status_code,
+                "detail": payload.get("detail") if isinstance(payload, dict) else None,
+            }
+        except httpx.HTTPError as e:
+            results[s["id"]] = {"ok": False, "error": str(e)}
+    return results
+
+
 def broadcast_env(studios: list[dict], key: str, value: str) -> dict:
     if not _KEY_RE.match(key):
         return {"error": f"invalid env key: {key!r} (UPPER_SNAKE_CASE only)"}

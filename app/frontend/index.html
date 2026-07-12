@@ -294,6 +294,18 @@
       <div class="sub" id="bc-status" style="margin-top:10px"></div>
       <div id="bc-results" style="margin-top:6px"></div>
     </div>
+    <div class="card jform section">
+      <div class="top"><span class="emoji">🔑</span><h3>Set Hugging Face token on all studios</h3></div>
+      <p class="muted" style="font-size:13px;margin-bottom:10px">
+        Push one token to every online studio's Settings — for <b>gated models</b> and <b>higher download rate limits</b>. It's sent straight to each studio over your Tailscale network and is <b>never stored in the Hub</b>. Offline studios get it next time you run this while they're up.
+      </p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <input id="hft-token" type="password" autocomplete="off" placeholder="hf_… paste your Hugging Face token" style="flex:1;min-width:300px">
+        <button class="go" onclick="broadcastHfToken()">Set on all studios</button>
+      </div>
+      <div class="sub" id="hft-status" style="margin-top:10px"></div>
+      <div id="hft-results" style="margin-top:6px"></div>
+    </div>
     <div class="toolbar">
       <input id="m-search" class="grow" placeholder="Search models…">
       <select id="m-modality" class="selctl">
@@ -628,6 +640,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.27.0", date: "2026-07-13", items: [
+    "<b>Set one Hugging Face token on the whole fleet</b> (Models tab) — paste it once and it's pushed to every online studio's Settings (for gated models + higher download rate limits). Pass-through only; the token is never stored in the Hub, and it's a partial update so existing cloud keys are preserved.",
+  ] },
   { v: "1.26.0", date: "2026-07-12", items: [
     "<b>Distribute a model to the fleet</b> (Models tab) — pick a studio type + a Hugging Face repo and every online studio of that type downloads it <b>itself</b>, so you never copy model files between Macs. Great for pushing e.g. a chat model to all Chat Studio servers at once.",
   ] },
@@ -1026,6 +1041,34 @@ async function broadcastModelDownload() {
     Object.entries(res).map(([id, v]) => `<tr><td>${esc(id)}</td><td>${v.ok
       ? `<span class="pill ok">started${v.job ? " · job " + esc(v.job) : ""}</span>`
       : `<span class="pill err">${esc(v.detail || v.error || ("HTTP " + v.status))}</span>`}</td></tr>`).join("") + `</tbody></table>`;
+}
+// Push one Hugging Face token to every online studio's Settings (partial update
+// — only the token; other keys are preserved). Pass-through; not stored here.
+async function broadcastHfToken() {
+  const token = $("#hft-token").value.trim();
+  const status = $("#hft-status");
+  if (!token) { status.textContent = "paste a Hugging Face token (starts with hf_)"; return; }
+  // every online studio that can hold a token — Render has no settings endpoint
+  const targets = ((lastSummary || {}).studios || []).filter(s => s.status === "up" && s.modality !== "render");
+  if (!targets.length) { status.textContent = "No studios are online right now."; return; }
+  if (!confirm(`Set this Hugging Face token on ${targets.length} online studio(s)?\nIt's sent to each studio over Tailscale and is not stored in the Hub.`)) return;
+  status.textContent = `Setting on ${targets.length} studio(s)…`;
+  $("#hft-results").innerHTML = "";
+  const r = await api("/api/hub/broadcast/hf-token", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, studios: targets.map(s => s.id) })
+  }).then(x => x.json()).catch(e => ({ error: String(e) }));
+  if (r.error) { status.textContent = "failed: " + r.error; return; }
+  const res = r.results || {};
+  const ok = Object.values(res).filter(v => v.ok).length;
+  status.innerHTML = `Set on <b>${ok}/${Object.keys(res).length}</b> studio(s). Gated-model downloads and rate limits will use it right away.`;
+  const rows = Object.entries(res).map(([id, v]) => {
+    const cell = v.ok
+      ? '<span class="pill ok">set ✓</span>'
+      : `<span class="pill err">${esc(v.detail || v.error || ("HTTP " + v.status))}</span>`;
+    return `<tr><td>${esc(id)}</td><td>${cell}</td></tr>`;
+  }).join("");
+  $("#hft-results").innerHTML = `<table><thead><tr><th>Studio</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 function renderModels() {
   const body = $("#m-body");
