@@ -410,24 +410,37 @@ async def _update_hub_one(item: dict, latest: str | None):
     item.update(status="restarting", detail="waiting for the Hub to come back online")
     deadline = time.monotonic() + UPDATE_TIMEOUT
     saw_down = False
+    frm = item.get("from_version")
+
+    def _record(ver: str, status: str, detail: str):
+        item.update(status=status, to_version=ver, detail=detail, finished_at=time.time())
+        _hub_versions[item["machine"]] = {"version": ver, "host": host,
+                                          "checked_at": time.time(), "reachable": True}
+        _save_state()
+
     async with httpx.AsyncClient(timeout=5.0) as client:
         while time.monotonic() < deadline:
             await asyncio.sleep(4)
             try:
                 v = await client.get(f"{url}/api/version")
                 ver = str(v.json().get("app_version") or "")
-                if saw_down or (item["from_version"] and ver != item["from_version"]):
-                    item.update(status="complete", to_version=ver,
-                                detail=f"back online on v{ver}", finished_at=time.time())
-                    # keep the persistent version cache fresh after an update
-                    _hub_versions[item["machine"]] = {
-                        "version": ver, "host": host,
-                        "checked_at": time.time(), "reachable": True}
-                    _save_state()
+                if frm and ver != frm:
+                    _record(ver, "complete", f"updated to v{ver}")
+                    return
+                if saw_down:
+                    # It restarted but came back on the SAME version — the update
+                    # did not actually apply (git pull / deps likely failed on that
+                    # Mac). Report it honestly instead of a misleading "complete".
+                    _record(ver, "failed",
+                            f"restarted but still on v{ver} — update didn't apply "
+                            "(git pull or deps failed on that Mac; update it from "
+                            "its Pinokio sidebar and check its logs)")
                     return
             except (httpx.HTTPError, ValueError):
                 saw_down = True  # it went down to restart — expected
-    item.update(status="failed", detail="Hub did not come back before the timeout",
+    item.update(status="failed",
+                detail=f"still on v{frm or '?'} — the Hub didn't come back on a new "
+                       "version before the timeout (the update may have failed on that Mac)",
                 finished_at=time.time())
 
 

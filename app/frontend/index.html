@@ -526,6 +526,11 @@
     <div class="card section">
       <div class="top"><span class="emoji">🩺</span><h3>Fleet preflight &amp; rolling updates</h3>
         <span style="margin-left:auto"></span>
+        <label class="sub" style="text-transform:uppercase;font-size:11px">Sort</label>
+        <select class="selctl" id="pf-sort" onchange="setPreflightSort(this.value)">
+          <option value="machine">Machine</option><option value="app">App</option>
+          <option value="status">Status</option><option value="version">Version</option>
+        </select>
         <button class="btn" id="pf-run" onclick="runPreflight()">Run preflight</button>
         <button class="go" id="pf-update" onclick="updateReadyStudios()" disabled>Update ready Studios</button>
       </div>
@@ -656,6 +661,11 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.31.0", date: "2026-07-13", items: [
+    "<b>Fixed the version comparison:</b> a Hub newer than the cached “latest” no longer reads “update available → &lt;older version&gt;”. Rescan now re-fetches the published latest, and comparison is numeric, so up-to-date is up-to-date.",
+    "A remote Hub update that <b>restarts but comes back on the same version</b> is now reported as <b>failed</b> (“update didn’t apply — git pull/deps failed on that Mac”) instead of a misleading “complete”.",
+    "<b>Sort the Fleet preflight</b> by Machine, App, Status, or Version.",
+  ] },
   { v: "1.30.0", date: "2026-07-13", items: [
     "<b>Clear finished Chat prompt batches</b> — a per-batch <b>Clear</b> button on any done/errored/cancelled batch, plus a <b>Clear finished</b> button to sweep them all. Running batches are kept.",
   ] },
@@ -1712,8 +1722,23 @@ async function saveFleet() {
 }
 let preflightRows = [];
 let maintenanceBusy = false;
+let lastPreflightData = null;
+let pfSort = localStorage.getItem("pf_sort") || "machine";
+function setPreflightSort(v) { pfSort = v; localStorage.setItem("pf_sort", v); if (lastPreflightData) renderPreflight(lastPreflightData); }
+function _sortPreflight(rows) {
+  const app = r => (r.id || "").split("@")[0];               // modality = the app
+  const rank = { pass: 0, warn: 1, fail: 2 };
+  return rows.slice().sort((a, b) => {
+    if (pfSort === "app") return app(a).localeCompare(app(b)) || mlabel(a.machine).localeCompare(mlabel(b.machine));
+    if (pfSort === "status") return (rank[a.status] ?? 3) - (rank[b.status] ?? 3) || app(a).localeCompare(app(b));
+    if (pfSort === "version") return String(b.version || "").localeCompare(String(a.version || "")) || app(a).localeCompare(app(b));
+    return mlabel(a.machine).localeCompare(mlabel(b.machine)) || app(a).localeCompare(app(b));  // machine (default)
+  });
+}
 function renderPreflight(data) {
-  preflightRows = data && data.studios || [];
+  lastPreflightData = data;
+  preflightRows = _sortPreflight(data && data.studios || []);
+  const sel = $("#pf-sort"); if (sel && sel.value !== pfSort) sel.value = pfSort;
   const summary = $("#pf-summary"), body = $("#pf-body"), update = $("#pf-update");
   if (!preflightRows.length) {
     summary.textContent = "Preflight has not run yet."; body.innerHTML = ""; update.disabled = true; return;
@@ -1793,6 +1818,18 @@ async function pollHubUpdate(id) {
   const job = await api(`/api/hub/maintenance/hub-updates/${id}`).then(r => r.json()).catch(() => null);
   if (job) renderHubUpdate(job);
 }
+// Numeric version compare: a >= b, ignoring any non-numeric suffix (e.g. a git
+// hash). So a peer NEWER than the published "latest" reads as up-to-date, not
+// "update available → <older version>".
+function verGte(a, b) {
+  const pa = String(a || "").split(".").map(n => parseInt(n, 10) || 0);
+  const pb = String(b || "").split(".").map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x !== y) return x > y;
+  }
+  return true;
+}
 // Persistent peer-Hub version table (survives Hub restarts). Default view of the
 // card when no update job is running.
 function renderHubVersions(data) {
@@ -1809,14 +1846,14 @@ function renderHubVersions(data) {
     const ver = v.version ? "v" + esc(v.version) : "—";
     let st;
     if (!v.reachable) st = `<span class="pill no">last known · not reachable this scan</span>`;
-    else if (latest && v.version === latest) st = `<span class="pill ok">up to date</span>`;
+    else if (latest && v.version && verGte(v.version, latest)) st = `<span class="pill ok">up to date</span>`;
     else if (latest && v.version) st = `<span class="pill warn">update available → v${esc(latest)}</span>`;
     else st = `<span class="pill dl">connected</span>`;
     return `<tr><td><b>${esc(mlabel(m))}</b></td><td class="sub">${esc(v.host || "")}</td>
       <td class="sub">${ver}</td><td class="sub">${v.checked_at ? fmtAgo(v.checked_at) : "—"}</td><td>${st}</td></tr>`;
   }).join("");
   const conn = entries.filter(([, v]) => v.reachable).length;
-  const upToDate = entries.filter(([, v]) => v.reachable && latest && v.version === latest).length;
+  const upToDate = entries.filter(([, v]) => v.reachable && latest && v.version && verGte(v.version, latest)).length;
   status.textContent = `${conn} connected · ${upToDate} up to date${latest ? ` (latest v${latest})` : ""}.`;
 }
 async function rescanHubVersions() {

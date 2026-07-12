@@ -1079,9 +1079,10 @@ def get_hub_versions():
 
 @app.post("/api/hub/maintenance/hub-versions")
 async def rescan_hub_versions():
-    """Re-query every agent Mac's Hub version now and cache it."""
-    if _time.time() - _update_state["checked_at"] > 6 * 3600 or not _update_state["latest"]:
-        _refresh_latest_version()
+    """Re-query every agent Mac's Hub version now and cache it. Always refreshes
+    the published 'latest' too, so an explicit rescan can't compare against a
+    stale target (which made a newer peer look like it needed a downgrade)."""
+    _refresh_latest_version()
     machines = await fleet_ops.scan_hub_versions(monitor)
     return {"latest": _update_state["latest"], "machines": machines}
 
