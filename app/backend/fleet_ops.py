@@ -9,10 +9,16 @@ import uuid
 
 import httpx
 
+import json
+
 from . import broker, peers
 from .control import PINOKIO_HOME, control_studio, run_hub_script, run_studio_script
-from .registry import base_url
+from .registry import DATA_DIR, base_url
 from .resources import host_stats
+
+# Cached fleet versions persisted to disk, so the last-known versions survive a
+# Hub restart and never just "disappear" from the dashboard.
+_STATE_FILE = DATA_DIR / "fleet_versions.json"
 
 PREFLIGHT_TIMEOUT = 12.0
 UPDATE_TIMEOUT = 20 * 60
@@ -21,6 +27,31 @@ DRAIN_TIMEOUT = 30 * 60
 _preflight = {"ran_at": None, "status": "never", "studios": []}
 _updates: dict[str, dict] = {}
 _hub_updates: dict[str, dict] = {}
+# machine -> {version, checked_at, host, reachable}: last-known peer Hub versions
+_hub_versions: dict[str, dict] = {}
+
+
+def _save_state() -> None:
+    try:
+        _STATE_FILE.write_text(json.dumps(
+            {"preflight": _preflight, "hub_versions": _hub_versions}, indent=2) + "\n")
+    except OSError:
+        pass
+
+
+def _load_state() -> None:
+    global _preflight, _hub_versions
+    try:
+        d = json.loads(_STATE_FILE.read_text())
+        if isinstance(d.get("preflight"), dict):
+            _preflight = d["preflight"]
+        if isinstance(d.get("hub_versions"), dict):
+            _hub_versions = d["hub_versions"]
+    except (OSError, ValueError):
+        pass
+
+
+_load_state()
 
 
 def _downloaded(catalog: dict) -> tuple[int, int]:
@@ -47,7 +78,36 @@ async def run_preflight(monitor) -> dict:
     status = "fail" if any(r["status"] == "fail" for r in rows) else (
         "warn" if any(r["status"] == "warn" for r in rows) else "pass")
     _preflight = {"ran_at": time.time(), "status": status, "studios": rows}
+    _save_state()
     return _preflight
+
+
+async def scan_hub_versions(monitor) -> dict:
+    """Query each remote machine's Hub /api/version and cache the result with a
+    timestamp. Unreachable machines keep their last-known version (so it never
+    disappears) and are just marked not-currently-reachable."""
+    hosts = _remote_hosts(monitor)
+
+    async def one(machine: str, host: str):
+        url = f"http://{host}:{peers.DEFAULT_HUB_PORT}/api/version"
+        prev = _hub_versions.get(machine, {})
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                r = await client.get(url)
+                version = r.json().get("app_version")
+            _hub_versions[machine] = {"version": version, "host": host,
+                                      "checked_at": time.time(), "reachable": True}
+        except (httpx.HTTPError, ValueError):
+            _hub_versions[machine] = {"version": prev.get("version"), "host": host,
+                                      "checked_at": time.time(), "reachable": False}
+
+    await asyncio.gather(*(one(m, h) for m, h in hosts.items()))
+    _save_state()
+    return _hub_versions
+
+
+def hub_versions_snapshot() -> dict:
+    return _hub_versions
 
 
 async def _preflight_one(monitor, studio: dict) -> dict:
@@ -359,6 +419,11 @@ async def _update_hub_one(item: dict, latest: str | None):
                 if saw_down or (item["from_version"] and ver != item["from_version"]):
                     item.update(status="complete", to_version=ver,
                                 detail=f"back online on v{ver}", finished_at=time.time())
+                    # keep the persistent version cache fresh after an update
+                    _hub_versions[item["machine"]] = {
+                        "version": ver, "host": host,
+                        "checked_at": time.time(), "reachable": True}
+                    _save_state()
                     return
             except (httpx.HTTPError, ValueError):
                 saw_down = True  # it went down to restart — expected

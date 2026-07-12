@@ -32,3 +32,4 @@ service/
 logs/service/
 .pytest_cache/
 app/tests/__pycache__/
+fleet_versions.json

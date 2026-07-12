@@ -529,8 +529,22 @@
         <button class="go" id="pf-update" onclick="updateReadyStudios()" disabled>Update ready Studios</button>
       </div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        Checks health, fleet authentication, capability contracts, models, generation engines, disk space, and update scripts. Updates drain and verify one Studio at a time.
+        <b>Run preflight</b> re-scans every studio and records its <b>version</b> (remembered even after a restart). Updates drain and verify one Studio at a time.
       </p>
+      <details class="tx-items" style="margin-bottom:10px"><summary class="sub">What the checks mean</summary>
+        <ul style="font-size:12.5px;line-height:1.7;margin:8px 0 0 18px;color:var(--dim)">
+          <li><b>health</b> — the studio answers and reports itself running (up).</li>
+          <li><b>port</b> — exactly one studio owns this host:port (no duplicate/conflict in the registry).</li>
+          <li><b>capability contract</b> — <code>/api/capabilities</code> reports the right modality + a valid schema (the Hub knows how to drive it).</li>
+          <li><b>fleet authentication</b> — the studio accepts this Hub's fleet token. A warning here means it cached an old token and just needs a restart — <b>updating fixes it</b>, so it doesn't block.</li>
+          <li><b>models</b> — how many of its catalog models are downloaded/ready.</li>
+          <li><b>generation engine</b> — the local ML engine (MLX etc.) is installed and ready to generate.</li>
+          <li><b>update workflow</b> — an <code>update.js</code> exists to run the update (local studios only).</li>
+          <li><b>disk space</b> — enough free disk for a model update (local only).</li>
+          <li><b>memory</b> — free unified memory on that machine.</li>
+        </ul>
+        <p class="sub" style="margin:8px 0 0 2px">Badge colour: <span class="pill dl">green = pass</span> <span class="pill warn">amber = warning (still eligible)</span> <span class="pill no">grey = failed (blocks the update)</span></p>
+      </details>
       <div class="sub" id="pf-summary" style="margin-bottom:8px">Preflight has not run yet.</div>
       <div style="overflow-x:auto"><table><thead><tr><th>Studio</th><th>Machine</th><th>Version</th><th>Result</th><th>Checks</th><th></th></tr></thead><tbody id="pf-body"></tbody></table></div>
       <div id="upd-status" class="sub" style="margin-top:10px"></div>
@@ -539,12 +553,13 @@
     <div class="card section">
       <div class="top"><span class="emoji">🛰️</span><h3>Studio Hub updates (agent Macs)</h3>
         <span style="margin-left:auto"></span>
+        <button class="btn" id="hubupd-rescan" onclick="rescanHubVersions()">Rescan versions</button>
         <button class="go" id="hubupd-run" onclick="startHubUpdate()">Update Hubs on agent Macs</button>
       </div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        Updates the <b>Studio Hub itself</b> on every reachable agent Mac (not the studios — those use preflight above). Each peer Hub pulls the latest, restarts, and comes back on its own via its startup service. Peers already on the latest version are skipped; unreachable Hubs need to be running with the same fleet token first.
+        Updates the <b>Studio Hub itself</b> on every reachable agent Mac (not the studios — those use preflight above). Each peer Hub pulls the latest, restarts, and comes back on its own via its startup service. <b>Rescan versions</b> re-checks what each Hub is on; the last-known version is remembered even after a restart.
       </p>
-      <div style="overflow-x:auto"><table><thead><tr><th>Machine</th><th>Address</th><th>Version</th><th>Status</th></tr></thead><tbody id="hubupd-body"><tr><td colspan="4" class="empty">No fleet Hub update run yet.</td></tr></tbody></table></div>
+      <div style="overflow-x:auto"><table><thead><tr><th>Machine</th><th>Address</th><th>Version</th><th>Last checked</th><th>Status</th></tr></thead><tbody id="hubupd-body"><tr><td colspan="5" class="empty">Click “Rescan versions” to check each agent Mac's Hub.</td></tr></tbody></table></div>
       <div id="hubupd-status" class="sub" style="margin-top:10px"></div>
     </div>
 
@@ -640,6 +655,10 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.29.0", date: "2026-07-13", items: [
+    "<b>Rescan versions</b> on the Studio Hub updates card — see each agent Mac's current Hub version + when it was last checked, persisted so it never disappears after a restart.",
+    "Fleet preflight now shows <b>“last scanned … ago”</b> and remembers the last scan across restarts, plus a <b>“What the checks mean”</b> legend explaining every check.",
+  ] },
   { v: "1.28.0", date: "2026-07-13", items: [
     "Fleet preflight now shows each studio's <b>Version</b>, and a studio that rejects the fleet token (401) is a <b>warning, not a block</b> — because updating it restarts it and reloads the token, which fixes the auth. So 'Update ready Studios' no longer refuses the very studios that the update would repair.",
   ] },
@@ -1688,7 +1707,8 @@ function renderPreflight(data) {
     summary.textContent = "Preflight has not run yet."; body.innerHTML = ""; update.disabled = true; return;
   }
   const good = preflightRows.filter(r => r.status !== "fail");
-  summary.textContent = `${good.length}/${preflightRows.length} Studios eligible · fleet ${data.status}`;
+  summary.textContent = `${good.length}/${preflightRows.length} Studios eligible · fleet ${data.status}`
+    + (data.ran_at ? ` · last scanned ${fmtAgo(data.ran_at)}` : "");
   update.disabled = maintenanceBusy || !good.length;
   body.innerHTML = preflightRows.map(r => {
     const checks = (r.checks || []).map(c => `<span class="pill ${c.status === "pass" ? "dl" : (c.status === "warn" ? "warn" : "no")}" title="${esc(c.detail)}">${esc(c.name)}</span>`).join(" ");
@@ -1700,14 +1720,17 @@ function renderPreflight(data) {
   }).join("");
 }
 async function loadMaintenance() {
-  const [pf, jobs, hubJobs] = await Promise.all([
+  const [pf, jobs, hubJobs, hubVers] = await Promise.all([
     api("/api/hub/maintenance/preflight").then(r => r.json()).catch(() => null),
     api("/api/hub/maintenance/updates").then(r => r.json()).catch(() => null),
-    api("/api/hub/maintenance/hub-updates").then(r => r.json()).catch(() => null)
+    api("/api/hub/maintenance/hub-updates").then(r => r.json()).catch(() => null),
+    api("/api/hub/maintenance/hub-versions").then(r => r.json()).catch(() => null)
   ]);
   if (pf) renderPreflight(pf);
   const hubLatest = hubJobs && hubJobs.updates && hubJobs.updates[0];
-  if (hubLatest) renderHubUpdate(hubLatest);
+  const hubJobRunning = hubLatest && ["queued", "running"].includes(hubLatest.status);
+  if (hubJobRunning) renderHubUpdate(hubLatest);
+  else if (hubVers) renderHubVersions(hubVers);   // default: persistent version table
   const latest = jobs && jobs.updates && jobs.updates[0];
   maintenanceBusy = !!(latest && ["queued", "running"].includes(latest.status));
   $("#pf-run").disabled = maintenanceBusy;
@@ -1747,8 +1770,9 @@ function renderHubUpdate(job) {
     <td><b>${esc(mlabel(i.machine))}</b></td>
     <td class="sub">${esc(i.host)}</td>
     <td class="sub">${i.from_version ? "v" + esc(i.from_version) : "—"}${i.to_version && i.to_version !== i.from_version ? " → v" + esc(i.to_version) : ""}</td>
+    <td class="sub">now</td>
     <td>${pill(i.status)} <span class="sub">${esc(i.detail || "")}</span></td></tr>`).join("")
-    || `<tr><td colspan="4" class="empty">No agent Macs registered.</td></tr>`;
+    || `<tr><td colspan="5" class="empty">No agent Macs registered.</td></tr>`;
   const done = job.items.filter(i => ["complete", "current", "failed"].includes(i.status)).length;
   status.textContent = `Fleet Hub update ${job.status} — ${done}/${job.items.length} machines`;
   if (hubUpdateBusy) setTimeout(() => pollHubUpdate(job.id), 3000);
@@ -1756,6 +1780,40 @@ function renderHubUpdate(job) {
 async function pollHubUpdate(id) {
   const job = await api(`/api/hub/maintenance/hub-updates/${id}`).then(r => r.json()).catch(() => null);
   if (job) renderHubUpdate(job);
+}
+// Persistent peer-Hub version table (survives Hub restarts). Default view of the
+// card when no update job is running.
+function renderHubVersions(data) {
+  const body = $("#hubupd-body"), status = $("#hubupd-status");
+  if (hubUpdateBusy) return;                 // an update job owns the table
+  const latest = data && data.latest;
+  const entries = Object.entries((data && data.machines) || {});
+  if (!entries.length) {
+    body.innerHTML = `<tr><td colspan="5" class="empty">Click “Rescan versions” to check each agent Mac's Hub.</td></tr>`;
+    status.textContent = ""; return;
+  }
+  entries.sort((a, b) => (b[1].reachable ? 1 : 0) - (a[1].reachable ? 1 : 0) || a[0].localeCompare(b[0]));
+  body.innerHTML = entries.map(([m, v]) => {
+    const ver = v.version ? "v" + esc(v.version) : "—";
+    let st;
+    if (!v.reachable) st = `<span class="pill no">last known · not reachable this scan</span>`;
+    else if (latest && v.version === latest) st = `<span class="pill ok">up to date</span>`;
+    else if (latest && v.version) st = `<span class="pill warn">update available → v${esc(latest)}</span>`;
+    else st = `<span class="pill dl">connected</span>`;
+    return `<tr><td><b>${esc(mlabel(m))}</b></td><td class="sub">${esc(v.host || "")}</td>
+      <td class="sub">${ver}</td><td class="sub">${v.checked_at ? fmtAgo(v.checked_at) : "—"}</td><td>${st}</td></tr>`;
+  }).join("");
+  const conn = entries.filter(([, v]) => v.reachable).length;
+  const upToDate = entries.filter(([, v]) => v.reachable && latest && v.version === latest).length;
+  status.textContent = `${conn} connected · ${upToDate} up to date${latest ? ` (latest v${latest})` : ""}.`;
+}
+async function rescanHubVersions() {
+  const btn = $("#hubupd-rescan"); if (btn) btn.disabled = true;
+  $("#hubupd-status").textContent = "Checking each agent Mac's Hub version…";
+  const data = await api("/api/hub/maintenance/hub-versions", { method: "POST" }).then(r => r.json()).catch(e => ({ error: String(e) }));
+  if (btn) btn.disabled = false;
+  if (data.error) { $("#hubupd-status").textContent = "rescan failed: " + data.error; return; }
+  renderHubVersions(data);
 }
 async function startHubUpdate() {
   if (!confirm("Update the Studio Hub on every reachable agent Mac?\nEach peer Hub pulls the latest, restarts, and comes back on its own. Studios keep running; only the Hubs bounce.")) return;
