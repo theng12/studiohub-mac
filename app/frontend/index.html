@@ -336,6 +336,10 @@
 
   <!-- JOBS -->
   <section id="tab-jobs" class="hide">
+    <div class="group-head"><h2>Chat prompt packs</h2><span class="meta" id="chat-stats">0 scenes</span></div>
+    <p class="muted" style="font-size:12px;margin:-6px 0 10px">Each worker receives one pack of up to 10 scenes. Ten ready Chat Studio servers can process up to 100 prompts in one fleet wave.</p>
+    <div id="chat-batches" class="tx-list"><div class="empty">No Chat prompt batches yet</div></div>
+
     <div class="group-head"><h2>Episode transcription</h2><span class="meta" id="tx-stats">0 chapters</span></div>
     <div class="controls">
       <div class="grp"><label for="tx-retention">Retention</label>
@@ -573,6 +577,10 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.25.0", date: "2026-07-12", items: [
+    "Chat Studio work is now a saved fleet queue: each worker leases a pack of up to 10 scene prompts, so ten servers can process up to 100 scenes in one wave.",
+    "Valid scene results are retained by stable ID even when a local model returns an incomplete pack; only missing IDs retry, and Jobs shows workers, pack IDs, failures, cancellation, and retry controls.",
+  ] },
   { v: "1.24.1", date: "2026-07-12", items: [
     "Episode transcription is now a durable fleet queue: chapters spread across every ready Voice Studio and resume safely after a Hub restart.",
     "Jobs now shows chapter workers, task IDs, processing time, failures, SRT downloads, retry/cancel controls, lifetime totals, and retention cleanup.",
@@ -1106,18 +1114,52 @@ function renderBatches(batches) {
   }).join("") || `<div class="empty">No batches yet</div>`;
 }
 async function loadBatches() {
-  const [r, tx] = await Promise.all([
+  const [r, tx, chat] = await Promise.all([
     api("/api/hub/jobs").then(x => x.json()).catch(() => null),
     api("/api/hub/transcription/jobs").then(x => x.json()).catch(() => null),
+    api("/api/hub/chat/jobs").then(x => x.json()).catch(() => null),
   ]);
   if (r) renderBatches(r.batches);
   if (tx) renderTranscriptionBatches(tx);
+  if (chat) renderChatBatches(chat);
 }
 async function loadTranscriptionBatches() {
   const tx = await api("/api/hub/transcription/jobs").then(x => x.json()).catch(() => null);
   if (tx) renderTranscriptionBatches(tx);
 }
 async function cancelBatch(id) { await api(`/api/hub/jobs/${id}`, { method: "DELETE" }); loadBatches(); }
+
+function renderChatBatches(data) {
+  const stats = data.stats || {};
+  $("#chat-stats").textContent = `${stats.completed_scenes || 0}/${stats.scenes || 0} scenes · ${stats.packs || 0} packs · ${fmtDur(stats.duration_seconds || 0)} processing`;
+  const el = $("#chat-batches");
+  el.innerHTML = (data.batches || []).map(b => {
+    const terminal = ["done", "partial", "error", "cancelled"].includes(b.status);
+    const canRetry = (b.error || 0) + (b.partial || 0) > 0;
+    const pct = b.total_scenes ? Math.round(100 * b.completed_scenes / b.total_scenes) : 0;
+    const packs = (b.packs || []).map(p => `<tr>
+      <td><b>${esc(p.pack_id)}</b><br><span class="sub">${p.scene_ids.length} scenes</span></td>
+      <td>${txStatePill(p.state)} <span class="sub">try ${p.tries}</span></td>
+      <td>${esc(p.studio || "—")}</td>
+      <td class="num">${p.scene_ids.length - p.missing_scene_ids.length}/${p.scene_ids.length}</td>
+      <td class="num">${fmtDur(p.duration_seconds)}</td>
+      <td class="tx-error">${p.missing_scene_ids.length ? `Missing: ${esc(p.missing_scene_ids.join(", "))}` : esc(p.error || "—")}</td>
+    </tr>`).join("");
+    return `<div class="tx-batch">
+      <div class="tx-head">
+        <div class="tx-title"><b>${esc([b.project, b.episode].filter(Boolean).join(" / ") || b.label || "Chat prompt batch")}</b><code>${esc(b.id)} · ${esc(b.kind)} · ${esc(b.model)}</code></div>
+        <div class="tx-counts">${txStatePill(b.status)}<span class="pill">${b.queued} queued</span><span class="pill gen">${b.running} running</span><span class="pill ok">${b.done} done</span>${b.partial ? `<span class="pill err">${b.partial} partial</span>` : ""}${b.error ? `<span class="pill err">${b.error} failed</span>` : ""}</div>
+        <div class="tx-actions">${canRetry ? `<button class="btn" onclick="retryChatBatch('${jsq(b.id)}')">Retry missing</button>` : ""}${!terminal ? `<button class="btn stop" onclick="cancelChatBatch('${jsq(b.id)}')">Cancel</button>` : ""}</div>
+      </div>
+      <div class="prog"><i style="width:${pct}%"></i></div>
+      <details class="tx-items"><summary>${b.completed_scenes}/${b.total_scenes} scenes · ${b.total_packs} packs · ${fmtDur(b.duration_seconds)} processing</summary>
+        <table><thead><tr><th>Pack</th><th>State</th><th>Chat worker</th><th>Scenes</th><th>Time</th><th>Failure / missing IDs</th></tr></thead><tbody>${packs}</tbody></table>
+      </details>
+    </div>`;
+  }).join("") || `<div class="empty">No Chat prompt batches yet</div>`;
+}
+async function cancelChatBatch(id) { await api(`/api/hub/chat/jobs/${id}`, { method: "DELETE" }); loadBatches(); }
+async function retryChatBatch(id) { await api(`/api/hub/chat/jobs/${id}/retry`, { method: "POST" }); loadBatches(); }
 
 function txStatePill(state) {
   const cls = state === "done" ? "ok" : state === "error" ? "err" : state === "running" ? "gen" : "";

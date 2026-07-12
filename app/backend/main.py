@@ -22,8 +22,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import (alerts, broadcast, broker, fleet_ops, gateway, ledger, metrics,
-               peers, recipes, transcription_jobs)
+from . import (alerts, broadcast, broker, chat_jobs, fleet_ops, gateway, ledger,
+               metrics, peers, recipes, transcription_jobs)
 from .auth import is_loopback, load_token, make_middleware
 from .control import control_studio
 from .monitor import StudioMonitor
@@ -70,7 +70,12 @@ async def lifespan(app: FastAPI):
     if transcription_restored:
         print(f"[hub] resumed {transcription_restored} transcription batch(es) from hub.db")
     transcription_jobs.start_dispatcher(monitor)
+    chat_restored = chat_jobs.restore_batches()
+    if chat_restored:
+        print(f"[hub] resumed {chat_restored} Chat batch(es) from hub.db")
+    chat_jobs.start_dispatcher(monitor)
     yield
+    await chat_jobs.stop()
     await transcription_jobs.stop()
     await monitor.stop()
 
@@ -620,6 +625,49 @@ def hub_retry_transcription_job(batch_id: str):
     transcription_jobs.start_dispatcher(monitor)
     return {"batch_id": batch_id, "retried": retried,
             "status": transcription_jobs.summary(batch)["status"]}
+
+
+# ── saved Chat Studio packs ───────────────────────────────────────────────
+@app.post("/api/hub/chat/jobs")
+async def hub_create_chat_job(body: dict):
+    batch, duplicate = chat_jobs.create_batch(body)
+    chat_jobs.start_dispatcher(monitor)
+    result = {"batch_id": batch["id"], "packs": len(batch["packs"]),
+              "scenes": sum(len(pack["scene_ids"]) for pack in batch["packs"])}
+    if duplicate:
+        result["duplicate"] = True
+    return result
+
+
+@app.get("/api/hub/chat/jobs")
+def hub_list_chat_jobs():
+    return {"batches": chat_jobs.list_batches(), "stats": chat_jobs.statistics()}
+
+
+@app.get("/api/hub/chat/jobs/{batch_id}")
+def hub_get_chat_job(batch_id: str, include_raw: bool = False):
+    batch = chat_jobs.get_batch(batch_id)
+    if not batch:
+        raise HTTPException(404, "unknown Chat batch")
+    return chat_jobs.summary(batch, include_raw=include_raw)
+
+
+@app.delete("/api/hub/chat/jobs/{batch_id}")
+async def hub_cancel_chat_job(batch_id: str):
+    batch = await chat_jobs.cancel_batch(batch_id)
+    if not batch:
+        raise HTTPException(404, "unknown Chat batch")
+    return chat_jobs.summary(batch)
+
+
+@app.post("/api/hub/chat/jobs/{batch_id}/retry")
+async def hub_retry_chat_job(batch_id: str):
+    batch, retried = chat_jobs.retry_batch(batch_id)
+    if not batch:
+        raise HTTPException(404, "unknown Chat batch")
+    chat_jobs.start_dispatcher(monitor)
+    return {"batch_id": batch_id, "retried": retried,
+            "status": chat_jobs.summary(batch)["status"]}
 
 
 @app.post("/api/hub/transcribe")

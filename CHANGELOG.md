@@ -12,6 +12,18 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.25.0] — 2026-07-12
+
+### Added — Saved Chat Studio prompt packs
+
+- Added a restart-safe Chat queue where every worker leases one pack of up to 10 stable scene IDs. Ten model-capable Chat Studio servers can process up to 100 visual or motion prompts in one fleet wave.
+- Added model-aware fleet dispatch, one active pack per physical machine, oldest-first scheduling, bounded retries, cancellation, active-batch idempotency, and restart recovery.
+- Valid results from incomplete local-model responses are saved immediately. Automatic and manual retries request only missing scene IDs instead of discarding or regenerating successful prompts.
+- Added authenticated submit/list/status/cancel/retry APIs and Jobs-tab visibility for project, episode, visual versus motion kind, batch/pack IDs, workers, scene progress, missing IDs, attempts, duration, and errors.
+- Full prompt text is returned only by a specific batch status request; the frequently-polled batch list stays compact for long episodes.
+
+121 tests.
+
 ## [1.24.1] — 2026-07-12
 
 ### Added — Restart-safe episode transcription queue

@@ -111,7 +111,7 @@ normal JSON result (`srt`, `vtt`, segments, and detected language).
   ]
 }
 ```
-- `modality`: one of `image | voice | music | video` (chat is different, see §7).
+- `modality`: one of `image | voice | music | video | render` (Chat prompt packs use §4c).
 - `model`: a `repo` from `/api/hub/models`.
 - `items`: 1..N. Each has `prompt` (always), optional `seed`, optional `params`.
 - `sharedParams` merge into every item (item `params` win on conflict).
@@ -159,6 +159,46 @@ For continuity / style-ref renders, add `reference_images` to an image item's
 - Large base64 bodies are accepted (no small cap); prefer JPEG for refs when
   lossless isn't needed.
 - Everything else (poll / webhook / `artifact_url`) is identical to txt2img.
+
+## 4c. Visual and motion prompts — 10-scene Chat packs
+
+`POST /api/hub/chat/jobs` with one or more packs. A pack is one Chat Studio
+completion containing at most 10 stable scene IDs. Hub leases one pack per
+eligible Chat Studio, so 10 servers can process 100 scenes in one wave.
+
+```json
+{
+  "model": "mlx-community/Llama-3.2-3B-Instruct-4bit",
+  "kind": "visual",
+  "label": "Scene visual prompts",
+  "project": "dozing-knight",
+  "episode": "DK0001",
+  "packs": [{
+    "pack_id": "visual-0001-0010",
+    "scene_ids": ["scene-001", "scene-002"],
+    "messages": [
+      {"role": "system", "content": "Return JSON results keyed by scene_id."},
+      {"role": "user", "content": "<the two scene briefs and shared story context>"}
+    ],
+    "params": {"temperature": 0.4, "max_tokens": 4096}
+  }]
+}
+```
+
+Use `kind: "motion"` for the optional motion stage. Responses:
+
+- Submit: `{ "batch_id", "packs", "scenes", "duplicate"? }`
+- Poll full results: `GET /api/hub/chat/jobs/{batch_id}`
+- Compact history: `GET /api/hub/chat/jobs`
+- Cancel: `DELETE /api/hub/chat/jobs/{batch_id}`
+- Retry partial/error packs: `POST /api/hub/chat/jobs/{batch_id}/retry`
+
+Each result row contains `scene_id` and `text`. Stitch by `scene_id`, never by
+return order. Valid IDs from an incomplete response remain saved; Hub appends a
+correction request listing only `missing_scene_ids`. The model should return
+JSON as `{"results":[{"scene_id":"scene-001","prompt":"..."}]}`. For
+motion, `motion_prompt` is also accepted; for visual, `visual_prompt` is
+accepted. Unknown IDs are discarded.
 
 ## 5. Get results by polling
 
