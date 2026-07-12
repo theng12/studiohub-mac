@@ -27,6 +27,7 @@ machine_labels.json
 machine_flags.json
 uploads/
 transcription_jobs/
+transcription_settings.json
 service/
 logs/service/
 .pytest_cache/
