@@ -46,6 +46,8 @@ def test_fleet_token_roundtrip(reset):
     assert generated
     peers.set_fleet_token("secret")
     assert peers.fleet_token() == "secret"
+    assert peers.SHARED_STUDIO_TOKEN_FILE.read_text().strip() == "secret"
+    assert peers.SHARED_STUDIO_TOKEN_FILE.stat().st_mode & 0o777 == 0o600
     peers.set_fleet_token("")
     assert peers.fleet_token() not in {None, "", "secret"}
 

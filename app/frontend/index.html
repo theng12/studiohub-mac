@@ -662,6 +662,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.33.4", date: "2026-07-13", items: [
+    "Fleet Save now keeps the canonical sibling-Studio credential synchronized regardless of whether a machine installed Hub as <code>studiohub-mac</code> or <code>studiohub-mac.git</code>. Updated Studios repair immediately without restart.",
+  ] },
   { v: "1.33.3", date: "2026-07-13", items: [
     "Rolling updates now resolve both Pinokio folder-name variants (<code>app</code> / <code>app.git</code>) and verify the <b>post-pull version actually loaded</b> before reporting success.",
   ] },

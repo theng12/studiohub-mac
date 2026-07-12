@@ -12,6 +12,15 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.33.4] — 2026-07-13
+
+### Fixed — canonical Studio credential stays synchronized
+
+- Every Hub fleet save now updates both its private `.fleet_token` and the owner-only API-root `.kh_studio_token` consumed by all sibling Studios. This is independent of whether the Hub folder is named `studiohub-mac` or `studiohub-mac.git`.
+- Updated Studios reload that canonical file on every protected request, so synchronization repairs authentication immediately without another Studio restart.
+
+152 tests.
+
 ## [1.33.3] — 2026-07-13
 
 ### Fixed — mixed Pinokio folder names and truthful update completion

@@ -26,9 +26,13 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .registry import DATA_DIR
+from .registry import DATA_DIR, LAUNCHER_ROOT
 
 FLEET_TOKEN_FILE = DATA_DIR / ".fleet_token"
+SHARED_STUDIO_TOKEN_FILE = (
+    LAUNCHER_ROOT.parent / ".kh_studio_token"
+    if DATA_DIR == LAUNCHER_ROOT else DATA_DIR / ".kh_studio_token"
+)
 DEFAULT_HUB_PORT = 47873
 PEER_TTL_S = 12.0
 PEER_TIMEOUT_S = 5.0
@@ -53,8 +57,10 @@ def fleet_token() -> str | None:
 
 def set_fleet_token(token: str):
     value = (token or "").strip() or secrets.token_urlsafe(24)
-    FLEET_TOKEN_FILE.write_text(value + "\n")
-    os.chmod(FLEET_TOKEN_FILE, 0o600)
+    for path in (FLEET_TOKEN_FILE, SHARED_STUDIO_TOKEN_FILE):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(value + "\n")
+        os.chmod(path, 0o600)
 
 
 def studio_headers(studio: dict | None = None) -> dict[str, str]:

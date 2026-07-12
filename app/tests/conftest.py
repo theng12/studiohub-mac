@@ -33,7 +33,8 @@ def _reset_state():
     # wipe ALL persisted state between tests (incl. tokens, or one test's token
     # leaks into the next)
     for f in (ledger.DB_FILE, reg.REGISTRY_FILE, reg.LABELS_FILE,
-              peers.FLEET_TOKEN_FILE, auth.TOKEN_FILE, metrics.STATE_FILE):
+              peers.FLEET_TOKEN_FILE, peers.SHARED_STUDIO_TOKEN_FILE,
+              auth.TOKEN_FILE, metrics.STATE_FILE):
         try:
             f.unlink()
         except FileNotFoundError:
