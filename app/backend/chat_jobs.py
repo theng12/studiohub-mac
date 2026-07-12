@@ -315,27 +315,39 @@ async def _eligible_studios(monitor, model: str) -> list[dict]:
 
 async def dispatch_once(monitor) -> int:
     assigned = 0
-    active = sorted((batch for batch in batches.values() if not batch.get("cancelled")),
-                    key=lambda batch: batch["created_at"])
-    for batch in active:
-        queued = [pack for pack in batch["packs"] if pack["state"] == "queued"]
-        if not queued:
-            continue
-        for studio in await _eligible_studios(monitor, batch["model"]):
-            if not queued:
-                break
-            pack = queued.pop(0)
-            machine = studio.get("machine", "local")
-            owner = f"chat:{batch['id']}:{pack['index']}"
-            if not broker.acquire_external_machine(machine, owner):
+    # Round-robin one pack per batch per pass. A single 200-scene episode still
+    # fills every capable server, while several episodes share each wave rather
+    # than the oldest episode monopolising the fleet until all its packs finish.
+    while True:
+        made_progress = False
+        active = sorted(
+            (batch for batch in batches.values() if not batch.get("cancelled")),
+            key=lambda batch: (batch.get("last_dispatched_at", 0), batch["created_at"]),
+        )
+        for batch in active:
+            pack = next((p for p in batch["packs"] if p["state"] == "queued"), None)
+            if not pack:
                 continue
-            pack.update(state="running", studio=studio["id"], error=None,
-                        started_at=time.time(), tries=pack["tries"] + 1)
-            busy_studios.add(studio["id"])
-            _save(batch)
-            task = asyncio.create_task(_run_pack(monitor, batch, pack, studio, owner))
-            _pack_tasks[(batch["id"], pack["index"])] = task
-            assigned += 1
+            eligible = await _eligible_studios(monitor, batch["model"])
+            if not eligible:
+                continue
+            for studio in eligible:
+                machine = studio.get("machine", "local")
+                owner = f"chat:{batch['id']}:{pack['index']}"
+                if not broker.acquire_external_machine(machine, owner):
+                    continue
+                pack.update(state="running", studio=studio["id"], error=None,
+                            started_at=time.time(), tries=pack["tries"] + 1)
+                batch["last_dispatched_at"] = time.time()
+                busy_studios.add(studio["id"])
+                _save(batch)
+                task = asyncio.create_task(_run_pack(monitor, batch, pack, studio, owner))
+                _pack_tasks[(batch["id"], pack["index"])] = task
+                assigned += 1
+                made_progress = True
+                break
+        if not made_progress:
+            break
     return assigned
 
 

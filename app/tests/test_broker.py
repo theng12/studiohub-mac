@@ -128,6 +128,21 @@ def test_render_batches_have_queue_priority_without_preemption(reset):
     assert ordered[1]["id"] == image["batch_id"]
 
 
+def test_pending_render_reserves_its_machine_from_external_queues(reset):
+    mon = broker._monitor()
+    render_studio = next(s for s in mon.registry if s["modality"] == "render")
+    machine = render_studio.get("machine", "local")
+    mon.status[render_studio["id"]] = {"status": "up", "health": {"render_score": 100}}
+    render = broker.submit_batch({
+        "modality": "render", "model": "episode-assembly-v1",
+        "items": [{"prompt": "episode"}],
+    })
+    assert broker.acquire_external_machine(machine, "chat:episode:0") is False
+    broker.batches[render["batch_id"]]["items"][0]["state"] = "running"
+    assert broker.acquire_external_machine(machine, "chat:episode:0") is True
+    broker.release_external_machine(machine, "chat:episode:0")
+
+
 def test_render_workers_rank_by_reported_hardware_score(reset):
     mon = broker._monitor()
     local = next(s for s in mon.registry if s["modality"] == "render")

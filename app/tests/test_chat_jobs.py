@@ -140,6 +140,58 @@ async def test_ten_servers_process_one_hundred_scenes_in_one_wave(reset, monitor
 
 
 @pytest.mark.asyncio
+async def test_two_hundred_scenes_flow_through_five_servers_in_four_waves(reset, monitor, monkeypatch):
+    batch, _ = jobs.create_batch(_payload(20))
+    _add_chat_workers(monitor, 5)
+
+    async def catalog(studio):
+        return {"models": [{"repo": MODEL, "cache": {"state": "cached"}}]}
+
+    async def post(url, **kwargs):
+        scene_ids = json.loads(kwargs["json"]["messages"][1]["content"])["scene_ids"]
+        return _Response(_results(scene_ids))
+
+    monkeypatch.setattr(monitor, "get_catalog", catalog)
+    monkeypatch.setattr(monitor._client, "post", post)
+    wave_sizes = []
+    for _ in range(4):
+        wave_sizes.append(await jobs.dispatch_once(monitor))
+        await asyncio.gather(*list(jobs._pack_tasks.values()))
+    assert wave_sizes == [5, 5, 5, 5]
+    assert jobs.summary(batch)["completed_scenes"] == 200
+    assert jobs.summary(batch)["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_multiple_episodes_share_the_same_chat_wave_fairly(reset, monitor, monkeypatch):
+    first, _ = jobs.create_batch(_payload(2))
+    second_payload = _payload(2)
+    second_payload["episode"] = "EP0002"
+    for pack_index, pack in enumerate(second_payload["packs"]):
+        pack["pack_id"] = f"ep2-{pack_index}"
+        pack["scene_ids"] = [f"ep2-{scene_id}" for scene_id in pack["scene_ids"]]
+    second, _ = jobs.create_batch(second_payload)
+    _add_chat_workers(monitor, 2)
+
+    async def catalog(studio):
+        return {"models": [{"repo": MODEL, "cache": {"state": "cached"}}]}
+
+    gate = asyncio.Event()
+
+    async def post(url, **kwargs):
+        await gate.wait()
+        return _Response("{}")
+
+    monkeypatch.setattr(monitor, "get_catalog", catalog)
+    monkeypatch.setattr(monitor._client, "post", post)
+    assert await jobs.dispatch_once(monitor) == 2
+    assert sum(p["state"] == "running" for p in first["packs"]) == 1
+    assert sum(p["state"] == "running" for p in second["packs"]) == 1
+    gate.set()
+    await asyncio.gather(*list(jobs._pack_tasks.values()))
+
+
+@pytest.mark.asyncio
 async def test_partial_pack_saves_valid_results_and_retries_only_missing_ids(reset, monitor, monkeypatch):
     batch, _ = jobs.create_batch(_payload())
     _add_chat_workers(monitor, 1)

@@ -246,9 +246,31 @@ def acquire_external_machine(machine: str, owner: str) -> bool:
     """Atomically reserve a physical machine for another heavy-work queue."""
     if machine in busy_machines():
         return False
+    # Episode renders are the fleet's highest-priority queued work. Never
+    # interrupt a running job, but once a render is waiting, reserve an eligible
+    # render Mac so a Chat/transcription poller cannot win the next-free race.
+    if not owner.startswith("render:") and _pending_render_for_machine(machine):
+        return False
     _external_machine_leases[machine] = owner
     _wakeup.set()
     return True
+
+
+def _pending_render_for_machine(machine: str) -> bool:
+    if not any(
+        b.get("modality") == "render" and not b.get("cancelled")
+        and any(item.get("state") == "queued" for item in b.get("items", []))
+        for b in batches.values()
+    ):
+        return False
+    mon = _monitor()
+    return any(
+        studio.get("modality") == "render"
+        and studio.get("machine", "local") == machine
+        and machine_enabled(machine)
+        and mon.status.get(studio["id"], {}).get("status") == "up"
+        for studio in mon.registry
+    )
 
 
 def release_external_machine(machine: str, owner: str) -> None:
@@ -426,10 +448,11 @@ def _eligible_studios(modality: str, routing: str) -> list[dict]:
 
 
 def _queued_batches() -> list[dict]:
-    """Queued work in priority/FIFO order; running work is never preempted."""
+    """Queued work in priority/fair-turn order; running work is never preempted."""
     return sorted(
         batches.values(),
         key=lambda b: (MODALITY_PRIORITY.get(b["modality"], 10),
+                       b.get("last_dispatched_at", 0),
                        b.get("created_at", 0)),
     )
 
@@ -489,6 +512,7 @@ async def _dispatch_loop():
                     item["_reserved"] = reserve
                     _reserved["gb"] += reserve
                     _busy.add(studio["id"])
+                    b["last_dispatched_at"] = time.time()
                     asyncio.create_task(_run_item(client, b, item, studio))
                     assigned = True
             _wakeup.clear()

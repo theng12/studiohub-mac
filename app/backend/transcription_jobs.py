@@ -281,29 +281,33 @@ async def _eligible_studios(monitor, model: str) -> list[dict]:
 
 async def dispatch_once(monitor) -> int:
     assigned = 0
-    active = sorted(
-        (b for b in batches.values() if not b.get("cancelled")),
-        key=lambda b: b["created_at"],
-    )
-    for batch in active:
-        queued = [item for item in batch["items"] if item["state"] == "queued"]
-        if not queued:
-            continue
-        for studio in await _eligible_studios(monitor, batch["model"]):
-            if not queued:
-                break
-            machine = studio.get("machine", "local")
-            item = queued.pop(0)
-            owner = f"transcription:{batch['id']}:{item['index']}"
-            if not broker.acquire_external_machine(machine, owner):
+    while True:
+        made_progress = False
+        active = sorted(
+            (batch for batch in batches.values() if not batch.get("cancelled")),
+            key=lambda batch: (batch.get("last_dispatched_at", 0), batch["created_at"]),
+        )
+        for batch in active:
+            item = next((i for i in batch["items"] if i["state"] == "queued"), None)
+            if not item:
                 continue
-            item.update(state="running", studio=studio["id"], error=None,
-                        started_at=time.time(), tries=item["tries"] + 1)
-            busy_studios.add(studio["id"])
-            _save(batch)
-            task = asyncio.create_task(_run_item(monitor, batch, item, studio, owner))
-            _item_tasks[(batch["id"], item["index"])] = task
-            assigned += 1
+            for studio in await _eligible_studios(monitor, batch["model"]):
+                machine = studio.get("machine", "local")
+                owner = f"transcription:{batch['id']}:{item['index']}"
+                if not broker.acquire_external_machine(machine, owner):
+                    continue
+                item.update(state="running", studio=studio["id"], error=None,
+                            started_at=time.time(), tries=item["tries"] + 1)
+                batch["last_dispatched_at"] = time.time()
+                busy_studios.add(studio["id"])
+                _save(batch)
+                task = asyncio.create_task(_run_item(monitor, batch, item, studio, owner))
+                _item_tasks[(batch["id"], item["index"])] = task
+                assigned += 1
+                made_progress = True
+                break
+        if not made_progress:
+            break
     return assigned
 
 

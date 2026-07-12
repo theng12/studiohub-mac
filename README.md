@@ -327,7 +327,12 @@ Cloud-backed models bypass the governor entirely.
 
 Chat work uses a saved queue separate from media generation. Each item is one
 LLM request containing at most 10 scenes. One eligible Chat Studio leases one
-pack at a time, so 10 servers can produce up to 100 prompts in one wave.
+pack at a time. This is an adaptive wave size, not a 100-scene limit: 70 scenes
+can use seven compatible servers at once; 200 scenes with five compatible
+servers continue over four waves. A batch may contain up to 5,000 scenes.
+Workers pull another pack as soon as they finish, so faster Macs naturally do
+more work. Multiple episodes share each wave round-robin instead of one long
+episode monopolizing the fleet.
 
 ```bash
 curl -X POST http://localhost:47873/api/hub/chat/jobs \

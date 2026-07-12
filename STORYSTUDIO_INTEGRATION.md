@@ -164,7 +164,10 @@ For continuity / style-ref renders, add `reference_images` to an image item's
 
 `POST /api/hub/chat/jobs` with one or more packs. A pack is one Chat Studio
 completion containing at most 10 stable scene IDs. Hub leases one pack per
-eligible Chat Studio, so 10 servers can process 100 scenes in one wave.
+eligible Chat Studio. The fleet size controls only each wave: 70 scenes can use
+seven compatible servers; 200 scenes with five compatible servers continue
+over four waves. Packs are pulled as workers finish, and a batch can contain up
+to 5,000 scenes. Multiple episodes share workers in fair round-robin turns.
 
 ```json
 {
