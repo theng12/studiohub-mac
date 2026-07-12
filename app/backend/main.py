@@ -11,7 +11,9 @@ studios, so the Hub itself is monitorable by the same convention.
 """
 
 import asyncio
+import hashlib
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -426,6 +428,62 @@ def hub_get_batch(batch_id: str):
     return {**broker.batch_summary(b), "items": b["items"]}
 
 
+@app.get("/api/hub/jobs/{batch_id}/items/{item_index}/artifact")
+def hub_proxy_job_artifact(batch_id: str, item_index: int):
+    """Stream a worker artifact through Hub so clients need only Hub auth."""
+    b = broker.batches.get(batch_id) or ledger.load_batch(batch_id)
+    if not b:
+        raise HTTPException(404, "unknown batch")
+    item = next((i for i in b["items"] if i.get("index") == item_index), None)
+    if not item or item.get("state") != "done" or not item.get("artifact_url"):
+        raise HTTPException(404, "artifact is not available")
+    studio = next((s for s in monitor.registry if s["id"] == item.get("studio")), None)
+    if not studio:
+        raise HTTPException(503, "render worker is no longer registered")
+
+    async def stream():
+        import httpx
+        from .peers import studio_headers
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            async with client.stream(
+                "GET", item["artifact_url"], headers=studio_headers(studio),
+                timeout=None,
+            ) as response:
+                response.raise_for_status()
+                async for chunk in response.aiter_bytes(1024 * 1024):
+                    yield chunk
+
+    headers = {}
+    if item.get("bytes"):
+        headers["Content-Length"] = str(item["bytes"])
+    if item.get("sha256"):
+        headers["X-Content-SHA256"] = item["sha256"]
+    return StreamingResponse(stream(), media_type="video/mp4", headers=headers)
+
+
+@app.post("/api/hub/jobs/{batch_id}/items/{item_index}/ack")
+async def hub_ack_job_artifact(batch_id: str, item_index: int):
+    """Start worker retention only after the main machine verifies receipt."""
+    import httpx
+    from .peers import studio_headers
+    b = broker.batches.get(batch_id) or ledger.load_batch(batch_id)
+    if not b:
+        raise HTTPException(404, "unknown batch")
+    item = next((i for i in b["items"] if i.get("index") == item_index), None)
+    studio = next((s for s in monitor.registry if s["id"] == (item or {}).get("studio")), None)
+    if not item or not studio or not item.get("studio_job_id"):
+        raise HTTPException(404, "worker job is not available")
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{base_url(studio)}/api/generate/jobs/{item['studio_job_id']}/ack",
+            headers=studio_headers(studio), timeout=15.0)
+    if response.status_code >= 400:
+        raise HTTPException(502, "render worker did not acknowledge receipt")
+    item["receipt_acked_at"] = time.time()
+    ledger.save_batch(b)
+    return {"ok": True}
+
+
 @app.delete("/api/hub/jobs/{batch_id}")
 def hub_cancel_batch(batch_id: str):
     if not broker.cancel_batch(batch_id):
@@ -460,6 +518,75 @@ async def hub_models(modality: str | None = None, q: str | None = None,
 @app.post("/api/hub/assets/scan")
 def hub_assets_scan():
     return ledger.scan_outputs(monitor.registry)
+
+
+# Large render inputs use a raw streaming lane rather than multipart so Story
+# Studio never has to hold an episode's audio/video bytes in memory.
+_RENDER_UPLOADS = DATA_DIR / "render_uploads"
+_RENDER_UPLOADS.mkdir(exist_ok=True)
+_RENDER_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".webp", ".mp4", ".mov", ".m4v",
+    ".mp3", ".wav", ".m4a", ".aac", ".srt", ".ass", ".txt",
+}
+_MAX_RENDER_UPLOAD_BYTES = 20 * 1024 * 1024 * 1024
+
+
+@app.post("/api/hub/render-assets")
+async def hub_render_asset_upload(request: Request):
+    """Stream one immutable render input to the Hub and return its digest."""
+    original = request.headers.get("x-file-name", "asset.bin")
+    ext = Path(original).suffix.lower()
+    if ext not in _RENDER_EXTENSIONS:
+        raise HTTPException(415, f"unsupported render asset type: {ext or '(none)'}")
+    declared = request.headers.get("content-length")
+    if declared and int(declared) > _MAX_RENDER_UPLOAD_BYTES:
+        raise HTTPException(413, "render asset exceeds 20 GB")
+    asset_id = uuid.uuid4().hex[:16]
+    partial = _RENDER_UPLOADS / f".{asset_id}{ext}.partial"
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        with partial.open("xb") as handle:
+            async for chunk in request.stream():
+                total += len(chunk)
+                if total > _MAX_RENDER_UPLOAD_BYTES:
+                    raise HTTPException(413, "render asset exceeds 20 GB")
+                digest.update(chunk)
+                handle.write(chunk)
+        if not total:
+            raise HTTPException(400, "empty render asset")
+        sha256 = digest.hexdigest()
+        final = _RENDER_UPLOADS / f"{asset_id}{ext}"
+        partial.replace(final)
+    except Exception:
+        partial.unlink(missing_ok=True)
+        raise
+    return {"asset_id": asset_id, "bytes": total, "sha256": sha256,
+            "path": f"/api/hub/render-assets/{asset_id}"}
+
+
+def _render_asset_path(asset_id: str) -> Path | None:
+    if not asset_id.isalnum():
+        return None
+    return next((p for p in _RENDER_UPLOADS.glob(f"{asset_id}.*")
+                 if p.is_file() and not p.name.endswith(".partial")), None)
+
+
+@app.get("/api/hub/render-assets/{asset_id}")
+def hub_render_asset_download(asset_id: str):
+    path = _render_asset_path(asset_id)
+    if not path:
+        raise HTTPException(404, "render asset not found")
+    return FileResponse(path, filename=path.name)
+
+
+@app.delete("/api/hub/render-assets/{asset_id}")
+def hub_render_asset_delete(asset_id: str):
+    path = _render_asset_path(asset_id)
+    if not path:
+        raise HTTPException(404, "render asset not found")
+    path.unlink()
+    return {"ok": True}
 
 
 # The upload-once endpoint receives multipart, which needs python-multipart.

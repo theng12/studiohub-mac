@@ -12,6 +12,17 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.22.0] — 2026-07-12
+
+### Added — episode render workers
+
+- Added Render Studio KH as a separate `render` capability on port 47874. It remains distinct from generative Video Studio.
+- Added physical-machine, non-preemptive work leases so image and render jobs never overlap on the same Mac. Render batches are considered first when a machine becomes free; active work is never paused.
+- Available render workers rank by their reported hardware score, preferring M4 16 GB machines while retaining older Macs as fallbacks.
+- Added authenticated streaming storage for immutable render inputs, worker-artifact proxying, checksum metadata, and receipt acknowledgement so retention starts only after Story Studio verifies the returned file.
+
+91 tests.
+
 ## [1.21.4] — 2026-07-12
 
 ### Added — explicit port and memory preflight

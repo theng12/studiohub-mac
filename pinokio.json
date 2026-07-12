@@ -1,7 +1,7 @@
 {
   "version": "3.6",
   "title": "Studio Hub KH",
-  "description": "Control plane for the KH Studio family — live health grid, unified model catalog, and unified-memory monitoring for Image/Music/Voice/Chat/Video Studio. One canonical API for clients like Story Studio KH.",
+  "description": "Control plane for the KH Studio family — generation queues, episode render workers, health, models, and machine-level scheduling.",
   "icon": "icon.png",
   "platform": ["darwin"],
   "links": {

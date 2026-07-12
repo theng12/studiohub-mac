@@ -1,7 +1,7 @@
 module.exports = {
   version: "3.6",
   title: "Studio Hub KH",
-  description: "Control plane for the KH Studio family — live health, unified model catalog, and unified-memory monitoring for Image/Music/Voice/Chat/Video Studio.",
+  description: "Control plane for the KH Studio family — generation and episode rendering across the KH fleet.",
   icon: "icon.png",
   menu: async (kernel, info) => {
     const installed = info.exists("conda_env")

@@ -2,12 +2,13 @@
 
 Control plane for the KH Studio family. One dashboard — and one canonical API — for
 **Image Studio (47868)**, **Music Studio (47869)**, **Voice Studio (47870)**,
-**Chat Studio (47871)** and **Video Studio (47872)**.
+**Chat Studio (47871)**, **Video Studio (47872)** and the separate
+**Render Studio (47874)** episode-assembly worker.
 
 The Hub runs on fixed port **47873** and provides:
 
 - **Live health grid** — up/down, version, latency and last-seen for every studio.
-- **Unified model catalog** — every model across all five studios in one searchable
+- **Unified model catalog** — every model across all generative studios in one searchable
   table (downloaded state, size, minimum unified-memory fit, local vs cloud lane).
   Per-model parameters are passed through verbatim — the Hub never flattens
   model-specific capabilities.
@@ -15,6 +16,9 @@ The Hub runs on fixed port **47873** and provides:
   (RSS) and CPU, resolved port → PID → process tree.
 - **Host-aware registry** — studios on other machines (LAN/Tailscale) can be added
   via `studios.json`, the foundation for multi-machine federation and Swarm Batch.
+- **Machine-level work leases** — image generation and final rendering take turns
+  on each Mac without pausing active work. Waiting render jobs are assigned first,
+  with faster M4 16 GB workers preferred when available.
 
 See `SPEC.md` for the full architecture and phased roadmap (gateway, job broker,
 Swarm Batch, recipes).
@@ -40,7 +44,7 @@ Create `studios.json` in this folder (it's gitignored — per-machine state):
 ```
 
 Then `POST /api/hub/registry/reload` (or restart the Hub). Entries with an existing
-id (`image`, `music`, `voice`, `chat`, `video`) override the local defaults instead.
+id (`image`, `music`, `voice`, `chat`, `video`, `render`) override the local defaults instead.
 
 ## API
 
@@ -75,6 +79,9 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/jobs` · `GET /api/hub/jobs/{batch}` · `DELETE /api/hub/jobs/{batch}` | Track / cancel batches |
 | `GET /api/hub/assets` · `POST /api/hub/assets/scan` | Asset ledger (query: `q`, `modality`, `studio`, `batch_id`) |
 | `POST /api/hub/assets/upload` | Upload a reference image once → `{asset_id}` (for img2img continuity) |
+| `POST /api/hub/render-assets` | Stream an immutable render input; returns path, bytes, and SHA-256 |
+| `GET /api/hub/jobs/{batch}/items/{index}/artifact` | Stream a completed worker video through Hub authentication |
+| `POST /api/hub/jobs/{batch}/items/{index}/ack` | Confirm the main copy was verified and start worker retention |
 | `GET /api/hub/stats[?hours=N]` | Generation analytics: by machine/modality/model + timeline |
 | `POST /api/hub/recipes/run` | Run a recipe chain (`{recipe, brief}`) |
 | `GET /api/hub/recipes/runs[/{id}]` | Recipe run status |

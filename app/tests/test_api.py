@@ -7,10 +7,31 @@ def test_health_and_version(client):
 
 def test_hub_health_and_studios(authed):
     hh = authed.get("/api/hub/health").json()
-    assert hh["studios_total"] == 5 and hh["studios_up"] == 0
+    assert hh["studios_total"] == 6 and hh["studios_up"] == 0
     studios = authed.get("/api/hub/studios").json()["studios"]
-    assert len(studios) == 5
+    assert len(studios) == 6
     assert all("machine_label" in s for s in studios)
+
+
+def test_render_asset_stream_round_trip(authed):
+    payload = b"render-input" * 100
+    uploaded = authed.post(
+        "/api/hub/render-assets", content=payload,
+        headers={"X-File-Name": "scene.mp4"})
+    assert uploaded.status_code == 200
+    result = uploaded.json()
+    assert result["bytes"] == len(payload) and len(result["sha256"]) == 64
+    downloaded = authed.get(result["path"])
+    assert downloaded.content == payload
+    assert authed.delete(result["path"]).status_code == 200
+    assert authed.get(result["path"]).status_code == 404
+
+
+def test_render_asset_rejects_unsafe_type(authed):
+    response = authed.post(
+        "/api/hub/render-assets", content=b"bad",
+        headers={"X-File-Name": "script.sh"})
+    assert response.status_code == 415
 
 
 def test_update_status(authed):

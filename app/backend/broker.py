@@ -108,7 +108,13 @@ MODALITY = {
     "music": ("/api/generate/txt2music", "prompt", "audio"),
     "voice": ("/api/generate/txt2speech", "text", "audio"),
     "video": ("/api/generate/txt2video", "prompt", "video"),
+    # Render Studio accepts an immutable episode recipe and downloads every
+    # referenced input before FFmpeg starts. It deliberately remains separate
+    # from generative Video Studio.
+    "render": ("/api/generate/render", "label", "video"),
 }
+
+MODALITY_PRIORITY = {"render": 0}
 
 MAX_TRIES = 3
 POLL_S = 2.0
@@ -223,6 +229,16 @@ def submit_batch(envelope: dict) -> dict:
 def busy_studios() -> set:
     """Studio ids currently running a batch item (i.e. 'generating')."""
     return set(_busy)
+
+
+def busy_machines() -> set[str]:
+    """Physical machines holding a non-preemptive heavy-work lease."""
+    by_id = {s["id"]: s for s in _monitor().registry}
+    return {
+        by_id[sid].get("machine", "local")
+        for sid in _busy
+        if sid in by_id
+    }
 
 
 def set_maintenance(studio_id: str, enabled: bool):
@@ -368,17 +384,38 @@ async def _maybe_finish(client: httpx.AsyncClient, b: dict):
 def _eligible_studios(modality: str, routing: str) -> list[dict]:
     mon = _monitor()
     out = []
+    leased_machines = busy_machines()
     for s in mon.registry:
         if routing.startswith("studio:") and s["id"] != routing.split(":", 1)[1]:
             continue
-        if s["modality"] != modality or s["id"] in _busy or s["id"] in _maintenance:
+        machine = s.get("machine", "local")
+        if (s["modality"] != modality or s["id"] in _busy
+                or s["id"] in _maintenance or machine in leased_machines):
             continue
         # a machine the operator has disabled stays monitored but takes no jobs
         if not machine_enabled(s.get("machine", "local")):
             continue
         if mon.status.get(s["id"], {}).get("status") == "up":
             out.append(s)
+    if modality == "render":
+        # Render workers publish a normalized score in /api/health. M4 16 GB
+        # machines rank above older/smaller Macs, while every healthy worker
+        # remains an eligible fallback.
+        out.sort(key=lambda s: (
+            -float((mon.status.get(s["id"], {}).get("health") or {})
+                   .get("render_score", 0)),
+            s["id"],
+        ))
     return out
+
+
+def _queued_batches() -> list[dict]:
+    """Queued work in priority/FIFO order; running work is never preempted."""
+    return sorted(
+        batches.values(),
+        key=lambda b: (MODALITY_PRIORITY.get(b["modality"], 10),
+                       b.get("created_at", 0)),
+    )
 
 
 async def _dispatch_loop():
@@ -387,7 +424,7 @@ async def _dispatch_loop():
     while True:
         try:
             assigned = False
-            for b in list(batches.values()):
+            for b in _queued_batches():
                 if b["cancelled"]:
                     continue
                 queued = [i for i in b["items"] if i["state"] == "queued"]
@@ -519,6 +556,9 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             item["artifact_url"] = (
                 f"{base_url(studio)}{j['output_url']}" if j.get("output_url") else None)
             item["state"] = "done"
+            item["sha256"] = j.get("sha256")
+            item["bytes"] = j.get("bytes")
+            item["encoder"] = j.get("encoder")
             # Prefer the studio's own generation time; fall back to wall-clock.
             duration = j.get("duration_seconds")
             if duration is None:

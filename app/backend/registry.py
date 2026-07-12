@@ -110,6 +110,9 @@ DEFAULT_STUDIOS = [
     {"id": "video", "title": "Video Studio KH", "modality": "video",
      "host": "127.0.0.1", "port": 47872, "machine": "local", "emoji": "🎬",
      "app": "videostudio-mac"},
+    {"id": "render", "title": "Render Studio KH", "modality": "render",
+     "host": "127.0.0.1", "port": 47874, "machine": "local", "emoji": "🖥️",
+     "app": "renderstudio-mac"},
 ]
 
 
@@ -146,10 +149,10 @@ def base_url(studio: dict) -> str:
 
 # Family port convention — used by discovery to infer modality.
 FAMILY_PORTS = {47868: "image", 47869: "music", 47870: "voice",
-                47871: "chat", 47872: "video"}
+                47871: "chat", 47872: "video", 47874: "render"}
 MODALITY_PORT = {v: k for k, v in FAMILY_PORTS.items()}
 MODALITY_EMOJI = {"image": "🎨", "music": "🎵", "voice": "🎙️",
-                  "chat": "💬", "video": "🎬"}
+                  "chat": "💬", "video": "🎬", "render": "🖥️"}
 
 
 def build_machine_entries(host: str, machine: str, modalities: list[str]) -> list[dict]:

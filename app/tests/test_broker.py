@@ -102,6 +102,48 @@ def test_disabled_machine_takes_no_jobs(reset):
     assert img["id"] in [s["id"] for s in broker._eligible_studios("image", "swarm")]
 
 
+def test_machine_lease_blocks_other_heavy_studios_on_same_mac(reset):
+    mon = broker._monitor()
+    img = next(s for s in mon.registry if s["modality"] == "image")
+    render = next(s for s in mon.registry if s["modality"] == "render")
+    # Defaults share the physical "local" machine.
+    assert img.get("machine", "local") == render.get("machine", "local")
+    mon.status[img["id"]] = {"status": "up"}
+    mon.status[render["id"]] = {"status": "up", "health": {"render_score": 100}}
+    broker._busy.add(img["id"])
+    try:
+        assert broker._eligible_studios("render", "pool") == []
+    finally:
+        broker._busy.discard(img["id"])
+    assert [s["id"] for s in broker._eligible_studios("render", "pool")] == [render["id"]]
+
+
+def test_render_batches_have_queue_priority_without_preemption(reset):
+    image = broker.submit_batch({"modality": "image", "model": "a/b",
+                                 "items": [{"prompt": "image"}]})
+    render = broker.submit_batch({"modality": "render", "model": "episode-assembly-v1",
+                                  "items": [{"prompt": "episode"}]})
+    ordered = broker._queued_batches()
+    assert ordered[0]["id"] == render["batch_id"]
+    assert ordered[1]["id"] == image["batch_id"]
+
+
+def test_render_workers_rank_by_reported_hardware_score(reset):
+    mon = broker._monitor()
+    local = next(s for s in mon.registry if s["modality"] == "render")
+    remote = {**local, "id": "render@m4-16", "machine": "m4-16",
+              "host": "10.0.0.2"}
+    mon.registry.append(remote)
+    mon.status[local["id"]] = {"status": "up", "health": {"render_score": 20}}
+    mon.status[remote["id"]] = {"status": "up", "health": {"render_score": 100}}
+    try:
+        eligible = broker._eligible_studios("render", "pool")
+        assert [s["id"] for s in eligible[:2]] == [remote["id"], local["id"]]
+    finally:
+        mon.registry.remove(remote)
+        mon.status.pop(remote["id"], None)
+
+
 def test_prompt_and_text_both_accepted(reset):
     r = broker.submit_batch({"modality": "voice", "model": "a/b",
                              "items": [{"text": "spoken"}]})

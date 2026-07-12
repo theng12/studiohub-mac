@@ -6,10 +6,10 @@ def test_default_launcher_folders_exist():
         assert (reg.LAUNCHER_ROOT.parent / studio["app"]).is_dir(), studio["id"]
 
 
-def test_default_registry_has_five_local_studios(reset):
+def test_default_registry_has_six_local_studios(reset):
     studios = reg.load_registry()
     ids = {s["id"] for s in studios}
-    assert ids == {"image", "music", "voice", "chat", "video"}
+    assert ids == {"image", "music", "voice", "chat", "video", "render"}
     assert all(s["machine"] == "local" for s in studios)
     assert all(s["host"] == "127.0.0.1" for s in studios)
 
@@ -55,4 +55,4 @@ def test_user_entry_overrides_default(reset):
 def test_malformed_studios_json_falls_back(reset):
     reg.REGISTRY_FILE.write_text("{ not json")
     studios = reg.load_registry()  # must not raise
-    assert len(studios) == 5
+    assert len(studios) == 6
