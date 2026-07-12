@@ -12,6 +12,14 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.23.1] — 2026-07-12
+
+### Fixed — Overview list alignment
+
+- Gave every Overview list row the same stable column contract. Remote link-only rows now reserve the same action width as rows with Restart and Stop controls, keeping Machine, Status, Memory, and Version aligned with their headers.
+
+92 tests.
+
 ## [1.23.0] — 2026-07-12
 
 ### Changed — modern fleet workspace
