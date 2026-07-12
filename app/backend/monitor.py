@@ -98,6 +98,15 @@ class StudioMonitor:
             alerts.emit("studio_down", f"{label} on {machine} went down",
                         {"studio": studio["id"], "machine": machine})
 
+    @staticmethod
+    def _has_active_lease(studio_id: str) -> bool:
+        """A model server may not answer health while synchronous inference is
+        running. Its Hub lease is stronger evidence than a short poll timeout."""
+        from . import broker, chat_jobs, transcription_jobs
+        return (studio_id in broker.busy_studios()
+                or studio_id in chat_jobs.busy_studios
+                or studio_id in transcription_jobs.busy_studios)
+
     async def _poll_one(self, studio: dict):
         sid = studio["id"]
         url = f"{base_url(studio)}/api/health"
@@ -120,6 +129,12 @@ class StudioMonitor:
             self._note_transition(studio, prev_status, new_status)
         except Exception:
             prev = self.status.get(sid, {})
+            if prev_status == "up" and self._has_active_lease(sid):
+                self.status[sid] = {
+                    **prev, "latency_ms": None, "last_checked": now,
+                    "health_busy": True,
+                }
+                return
             self.status[sid] = {
                 "status": "down",
                 "latency_ms": None,

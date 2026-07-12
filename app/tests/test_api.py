@@ -15,6 +15,11 @@ def test_dashboard_includes_render_studio():
     assert '<col style="width:32%"><col style="width:23%">' in dashboard
     assert 'id="a-sort"' in dashboard
     assert 'localStorage.getItem("asset_sort") || "newest"' in dashboard
+    assert '>Working</button>' in dashboard
+    assert 'function stState(s) { return s.busy ? "generating"' in dashboard
+    assert 'return compact ? "LLM" : "LLM working"' in dashboard
+    assert 'Priority #${rank}' in dashboard
+    assert 'loadActiveJobQueues();' in dashboard
 
 
 def test_health_and_version(client):

@@ -128,6 +128,14 @@ def test_result_parser_salvages_rows_after_reasoning_and_from_truncated_outer_js
     }
 
 
+def test_batch_with_completed_and_queued_packs_is_not_claimed_running(reset):
+    batch, _ = jobs.create_batch(_payload(2))
+    batch["packs"][0]["state"] = "done"
+    result = jobs.summary(batch)
+    assert result["status"] == "queued"
+    assert result["running"] == 0 and result["done"] == 1 and result["queued"] == 1
+
+
 @pytest.mark.asyncio
 async def test_ten_servers_process_one_hundred_scenes_in_one_wave(reset, monitor, monkeypatch):
     batch, _ = jobs.create_batch(_payload(10))
@@ -177,7 +185,7 @@ async def test_two_hundred_scenes_flow_through_five_servers_in_four_waves(reset,
 
 
 @pytest.mark.asyncio
-async def test_multiple_episodes_share_the_same_chat_wave_fairly(reset, monitor, monkeypatch):
+async def test_oldest_episode_fills_chat_wave_before_newer_work(reset, monitor, monkeypatch):
     first, _ = jobs.create_batch(_payload(2))
     second_payload = _payload(2)
     second_payload["episode"] = "EP0002"
@@ -199,10 +207,21 @@ async def test_multiple_episodes_share_the_same_chat_wave_fairly(reset, monitor,
     monkeypatch.setattr(monitor, "get_catalog", catalog)
     monkeypatch.setattr(monitor._client, "post", post)
     assert await jobs.dispatch_once(monitor) == 2
-    assert sum(p["state"] == "running" for p in first["packs"]) == 1
-    assert sum(p["state"] == "running" for p in second["packs"]) == 1
+    assert sum(p["state"] == "running" for p in first["packs"]) == 2
+    assert sum(p["state"] == "running" for p in second["packs"]) == 0
+    assert second["queue_note"].endswith("DK0001")
     gate.set()
     await asyncio.gather(*list(jobs._pack_tasks.values()))
+
+
+def test_active_assignment_exposes_episode_pack_and_attempt(reset):
+    batch, _ = jobs.create_batch(_payload())
+    pack = batch["packs"][0]
+    pack.update(state="running", studio="chat@mac-01", tries=2, started_at=123.0)
+    assignment = jobs.active_assignments()["chat@mac-01"]
+    assert assignment["kind"] == "chat" and assignment["episode"] == "DK0001"
+    assert assignment["pack_id"] == "pack-01" and assignment["attempt"] == 2
+    assert assignment["max_attempts"] == jobs.MAX_TRIES
 
 
 @pytest.mark.asyncio

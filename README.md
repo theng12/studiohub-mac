@@ -331,8 +331,9 @@ pack at a time. This is an adaptive wave size, not a 100-scene limit: 70 scenes
 can use seven compatible servers at once; 200 scenes with five compatible
 servers continue over four waves. A batch may contain up to 5,000 scenes.
 Workers pull another pack as soon as they finish, so faster Macs naturally do
-more work. Multiple episodes share each wave round-robin instead of one long
-episode monopolizing the fleet.
+more work. The oldest runnable episode receives every compatible free worker
+before newer episodes. A newer episode can still use a server that cannot run
+the oldest batch's model, so capable hardware is not left idle.
 
 ```bash
 curl -X POST http://localhost:47873/api/hub/chat/jobs \
@@ -357,7 +358,10 @@ The model response may be an array under `results` or `prompts`, or an object
 mapping scene IDs to text. Array rows use `scene_id` plus `visual_prompt`,
 `motion_prompt`, `prompt`, or `text`. Unknown IDs are ignored. Valid IDs are
 persisted immediately; incomplete packs automatically retry only missing IDs.
-Poll `GET /api/hub/chat/jobs/{batch_id}` for full per-scene text.
+Transient failures also retry automatically, with a maximum of three attempts.
+After that, **Retry missing** starts a fresh retry only for incomplete/failed
+packs and never discards completed scene results. Poll
+`GET /api/hub/chat/jobs/{batch_id}` for full per-scene text.
 
 ## Recipes & director
 

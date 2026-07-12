@@ -276,10 +276,21 @@ def hub_resources(local_only: bool = Query(False)):
 
 
 def _build_summary() -> dict:
-    busy = broker.busy_studios()
+    workloads = {
+        studio_id: {"kind": "generation"}
+        for studio_id in broker.busy_studios()
+    }
+    chat_active = chat_jobs.active_assignments()
+    for studio_id in chat_jobs.busy_studios:
+        workloads[studio_id] = chat_active.get(studio_id, {"kind": "chat"})
+    transcription_active = transcription_jobs.active_assignments()
+    for studio_id in transcription_jobs.busy_studios:
+        workloads[studio_id] = transcription_active.get(
+            studio_id, {"kind": "transcription"})
     studio_list = studios()["studios"]
     for s in studio_list:
-        s["busy"] = s["id"] in busy  # 'generating' when up + busy
+        s["workload"] = workloads.get(s["id"])
+        s["busy"] = s["workload"] is not None
     now = time.time()
     active_alerts = sum(1 for e in alerts.recent(100)
                         if now - e["ts"] < 3600 and e["kind"] != "studio_recovered")

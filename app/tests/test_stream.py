@@ -33,6 +33,26 @@ def test_summary_includes_remote_machines(authed, reset):
     assert "status" in machines["mac-b"]
 
 
+def test_summary_marks_chat_worker_with_llm_workload(authed, reset):
+    from backend import chat_jobs
+
+    main.monitor.status["chat"] = {"status": "up", "last_seen": 1}
+    chat_jobs.busy_studios.add("chat")
+    chat_jobs.batches["chat-live"] = {
+        "id": "chat-live", "project": "story", "episode": "EP0001",
+        "packs": [{"state": "running", "studio": "chat", "pack_id": "pack-01",
+                   "tries": 1, "started_at": 10}],
+    }
+    worker = next(s for s in authed.get("/api/hub/summary").json()["studios"]
+                  if s["id"] == "chat")
+    assert worker["busy"] is True
+    assert worker["workload"] == {
+        "kind": "chat", "batch_id": "chat-live", "project": "story",
+        "episode": "EP0001", "pack_id": "pack-01", "attempt": 1,
+        "max_attempts": 3, "started_at": 10,
+    }
+
+
 @pytest.mark.asyncio
 async def test_sse_generator_emits_summary(reset):
     gen = main._sse_summary(FakeReq(), interval=0.01)

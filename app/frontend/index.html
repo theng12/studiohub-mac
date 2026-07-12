@@ -250,7 +250,7 @@
       <div class="grp"><label>Status</label>
         <div class="seg" id="statusf">
           <button data-v="all">All</button><button data-v="online">Online</button>
-          <button data-v="generating">Generating</button><button data-v="offline">Offline</button>
+          <button data-v="generating">Working</button><button data-v="offline">Offline</button>
         </div>
       </div>
       <div class="grp"><label>Group</label>
@@ -395,7 +395,7 @@
     <div id="j-batches"></div>
 
     <div class="group-head"><h2>Chat prompt packs</h2><span class="meta" id="chat-stats">0 scenes</span></div>
-    <p class="muted" style="font-size:12px;margin:-6px 0 10px">Each worker receives one pack of up to 10 scenes. Ten ready Chat Studio servers can process up to 100 prompts in one fleet wave.</p>
+    <p class="muted" style="font-size:12px;margin:-6px 0 10px">The oldest runnable episode gets every compatible free worker. Incomplete or transiently failed packs retry automatically up to 3 attempts.</p>
     <div class="controls"><button class="btn" onclick="clearChatBatches()">Clear finished</button><span class="sub" id="chat-clear-status"></span></div>
     <div id="chat-batches" class="tx-list"><div class="empty">No Chat prompt batches yet</div></div>
 
@@ -661,6 +661,11 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.32.0", date: "2026-07-13", items: [
+    "Overview now marks active Chat workers as <b>LLM working</b> and shows their episode and pack; Chat work no longer looks idle.",
+    "Chat uses <b>oldest-episode priority</b>: every compatible free worker focuses on the oldest runnable batch before newer work. Jobs shows priority, active workers, attempts, elapsed time, and waiting reasons live.",
+    "Queued batches no longer say running when zero packs are active. Incomplete/transient failures still auto-retry up to <b>3 attempts</b> before manual Retry missing.",
+  ] },
   { v: "1.31.0", date: "2026-07-13", items: [
     "<b>Fixed the version comparison:</b> a Hub newer than the cached “latest” no longer reads “update available → &lt;older version&gt;”. Rescan now re-fetches the published latest, and comparison is numeric, so up-to-date is up-to-date.",
     "A remote Hub update that <b>restarts but comes back on the same version</b> is now reported as <b>failed</b> (“update didn’t apply — git pull/deps failed on that Mac”) instead of a misleading “complete”.",
@@ -887,9 +892,19 @@ function studioUrl(s) {
   return `http://${host}:${s.port}`;
 }
 // three exclusive states
-function stState(s) { return s.status !== "up" ? "offline" : (s.busy ? "generating" : "online"); }
+function stState(s) { return s.busy ? "generating" : (s.status !== "up" ? "offline" : "online"); }
 function stDot(s) { const st = stState(s); return st === "generating" ? "gen" : (s.status === "up" ? "up" : (s.status === "unknown" ? "unknown" : "down")); }
-function stLabel(s) { const st = stState(s); return st === "generating" ? "generating" : s.status; }
+function workloadLabel(s, compact = false) {
+  const kind = s.workload?.kind;
+  if (kind === "chat") return compact ? "LLM" : "LLM working";
+  if (kind === "transcription") return compact ? "speech" : "transcribing";
+  return compact ? "gen" : "generating";
+}
+function workloadContext(s) {
+  const work = s.workload || {};
+  return [work.episode || work.project, work.pack_id || work.item_id].filter(Boolean).join(" · ");
+}
+function stLabel(s) { return stState(s) === "generating" ? workloadLabel(s) : s.status; }
 function rss(sum, s) { const r = sum.resources.studios[s.id]; return r ? r.rss_gb : -1; }
 
 // ── overview ──────────────────────────────────────────────────────────────
@@ -936,10 +951,12 @@ function studioCard(s, sum) {
   const a = studioActionsHTML(s, sum);
   const wd = (s.machine || "local") === "local" && s.app
     ? `<label class="wd"><input type="checkbox" ${sum.watchdog?.[s.id]?.enabled ? "checked" : ""} onchange="toggleWatchdog('${jsq(s.id)}', this.checked)"> auto-restart if down</label>` : "";
+  const work = workloadContext(s);
   return `<div class="card">
     <div class="top"><span class="emoji">${esc(s.emoji || "🧩")}</span><h3>${esc(s.title)}</h3><span class="dot ${stDot(s)}"></span></div>
     <dl class="kv">
-      <dt>Status</dt><dd>${a.pend ? a.pend.action + "ing…" : (stState(s) === "generating" ? '<span class="genbadge">⚡ generating</span>' : s.status)}</dd>
+      <dt>Status</dt><dd>${a.pend ? a.pend.action + "ing…" : (stState(s) === "generating" ? `<span class="genbadge">⚡ ${esc(workloadLabel(s))}</span>` : esc(s.status))}</dd>
+      ${work ? `<dt>Current job</dt><dd title="${esc(s.workload?.batch_id || "")}">${esc(work)}</dd>` : ""}
       <dt>Machine</dt><dd>${esc(mlabel(s.machine || "local"))}</dd>
       <dt>Version</dt><dd>${esc(s.app_version || "—")}</dd>
       <dt>Address</dt><dd>${esc(s.host)}:${esc(s.port)}</dd>
@@ -976,7 +993,7 @@ function studioRow(s, sum) {
     <span class="emoji" style="font-size:18px">${esc(s.emoji || "🧩")}</span>
     <div><span class="name">${esc(s.title)}</span><br><span class="sub">${esc(s.host)}:${esc(s.port)}</span></div>
     <div class="sub">${esc(mlabel(s.machine || "local"))}</div>
-    <div class="st"><span class="dot ${stDot(s)}"></span>${a.pend ? a.pend.action + "ing…" : (stState(s) === "generating" ? '<span class="genbadge">⚡ gen</span>' : s.status)}</div>
+    <div class="st"><span class="dot ${stDot(s)}"></span>${a.pend ? a.pend.action + "ing…" : (stState(s) === "generating" ? `<span class="genbadge" title="${esc(workloadContext(s))}">⚡ ${esc(workloadLabel(s, true))}</span>` : esc(s.status))}</div>
     <div>${memCell(s, sum)}</div>
     <div class="num sub">${esc(s.app_version ? "v" + s.app_version : "—")}</div>
     <div class="actions" style="margin:0;justify-content:flex-end">${a.html}</div>
@@ -1015,7 +1032,7 @@ function renderOverview(sum) {
   const up = sum.studios.filter(s => s.status === "up").length;
   const gen = sum.studios.filter(s => s.busy).length;
   const machines = new Set(sum.studios.map(s => s.machine || "local")).size;
-  $("#hub-summary").textContent = `${up}/${sum.studios.length} up${gen ? " · ⚡" + gen + " generating" : ""} · ${machines} machines`;
+  $("#hub-summary").textContent = `${up}/${sum.studios.length} up${gen ? " · ⚡" + gen + " working" : ""} · ${machines} machines`;
   const filtered = sum.studios.filter(passStatus);
   const groups = groupStudios(filtered);
   $("#ov-body").innerHTML = groups.map(([title, list]) => {
@@ -1342,9 +1359,20 @@ async function loadBatches() {
   if (tx) renderTranscriptionBatches(tx);
   if (chat) renderChatBatches(chat);
 }
-async function loadTranscriptionBatches() {
-  const tx = await api("/api/hub/transcription/jobs").then(x => x.json()).catch(() => null);
-  if (tx) renderTranscriptionBatches(tx);
+let activeJobQueuesLoading = false;
+async function loadActiveJobQueues() {
+  if (activeJobQueuesLoading) return;
+  activeJobQueuesLoading = true;
+  try {
+    const [tx, chat] = await Promise.all([
+      api("/api/hub/transcription/jobs").then(x => x.json()).catch(() => null),
+      api("/api/hub/chat/jobs").then(x => x.json()).catch(() => null),
+    ]);
+    if (tx) renderTranscriptionBatches(tx);
+    if (chat) renderChatBatches(chat);
+  } finally {
+    activeJobQueuesLoading = false;
+  }
 }
 async function cancelBatch(id) { await api(`/api/hub/jobs/${id}`, { method: "DELETE" }); loadBatches(); }
 
@@ -1352,25 +1380,42 @@ function renderChatBatches(data) {
   const stats = data.stats || {};
   $("#chat-stats").textContent = `${stats.completed_scenes || 0}/${stats.scenes || 0} scenes · ${stats.packs || 0} packs · ${fmtDur(stats.duration_seconds || 0)} processing`;
   const el = $("#chat-batches");
-  el.innerHTML = (data.batches || []).map(b => {
+  const batches = data.batches || [];
+  const active = batches.filter(b => ["queued", "running"].includes(b.status))
+    .slice().sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+  const priority = new Map(active.map((batch, index) => [batch.id, index + 1]));
+  el.innerHTML = batches.map(b => {
     const terminal = ["done", "partial", "error", "cancelled"].includes(b.status);
     const canRetry = (b.error || 0) + (b.partial || 0) > 0;
     const pct = b.total_scenes ? Math.round(100 * b.completed_scenes / b.total_scenes) : 0;
-    const packs = (b.packs || []).map(p => `<tr>
+    const runningPacks = (b.packs || []).filter(pack => pack.state === "running");
+    const workers = runningPacks.map(pack => {
+      const machine = (pack.studio || "").includes("@") ? pack.studio.split("@")[1] : "local";
+      const elapsed = pack.started_at ? Date.now() / 1000 - pack.started_at : null;
+      return `<div class="run"><span class="pill gen">LLM · ${esc(mlabel(machine))}</span><b>${esc(pack.pack_id)}</b><span class="sub">attempt ${pack.tries}/${pack.max_tries || 3} · ${fmtDur(elapsed)}</span></div>`;
+    }).join("");
+    const packs = (b.packs || []).map(p => {
+      const issue = [p.error, p.missing_scene_ids.length ? `Missing: ${p.missing_scene_ids.join(", ")}` : null]
+        .filter(Boolean).map(esc).join("<br>") || "—";
+      return `<tr>
       <td><b>${esc(p.pack_id)}</b><br><span class="sub">${p.scene_ids.length} scenes</span></td>
-      <td>${txStatePill(p.state)} <span class="sub">try ${p.tries}</span></td>
+      <td>${txStatePill(p.state)} <span class="sub">attempt ${p.tries}/${p.max_tries || 3}</span></td>
       <td>${esc(p.studio || "—")}</td>
       <td class="num">${p.scene_ids.length - p.missing_scene_ids.length}/${p.scene_ids.length}</td>
       <td class="num">${fmtDur(p.duration_seconds)}</td>
-      <td class="tx-error">${p.missing_scene_ids.length ? `Missing: ${esc(p.missing_scene_ids.join(", "))}` : esc(p.error || "—")}</td>
-    </tr>`).join("");
+      <td class="tx-error">${issue}</td>
+    </tr>`;
+    }).join("");
+    const rank = priority.get(b.id);
     return `<div class="tx-batch">
       <div class="tx-head">
         <div class="tx-title"><b>${esc([b.project, b.episode].filter(Boolean).join(" / ") || b.label || "Chat prompt batch")}</b><code>${esc(b.id)} · ${esc(b.kind)} · ${esc(b.model)}</code></div>
-        <div class="tx-counts">${txStatePill(b.status)}<span class="pill">${b.queued} queued</span><span class="pill gen">${b.running} running</span><span class="pill ok">${b.done} done</span>${b.partial ? `<span class="pill err">${b.partial} partial</span>` : ""}${b.error ? `<span class="pill err">${b.error} failed</span>` : ""}</div>
+        <div class="tx-counts">${rank ? `<span class="pill ${b.running ? "gen" : ""}">Priority #${rank} · ${b.running ? "active" : "waiting"}</span>` : ""}${txStatePill(b.status)}<span class="pill">${b.queued} queued</span><span class="pill gen">${b.running} running</span><span class="pill ok">${b.done} done</span>${b.partial ? `<span class="pill err">${b.partial} partial</span>` : ""}${b.error ? `<span class="pill err">${b.error} failed</span>` : ""}</div>
         <div class="tx-actions">${canRetry ? `<button class="btn" onclick="retryChatBatch('${jsq(b.id)}')">Retry missing</button>` : ""}${!terminal ? `<button class="btn stop" onclick="cancelChatBatch('${jsq(b.id)}')">Cancel</button>` : `<button class="btn" onclick="clearChatBatch('${jsq(b.id)}')" title="Remove this finished batch">Clear</button>`}</div>
       </div>
       <div class="prog"><i style="width:${pct}%"></i></div>
+      ${workers ? `<div class="runs">${workers}</div>` : ""}
+      ${!workers && b.queue_note ? `<div class="sub" style="margin-top:7px">${esc(b.queue_note)}</div>` : ""}
       <details class="tx-items"${detOpen('chat:' + b.id)} ontoggle="detToggle(this,'chat:${jsq(b.id)}')"><summary>${b.completed_scenes}/${b.total_scenes} scenes · ${b.total_packs} packs · ${fmtDur(b.duration_seconds)} processing</summary>
         <table><thead><tr><th>Pack</th><th>State</th><th>Chat worker</th><th>Scenes</th><th>Time</th><th>Failure / missing IDs</th></tr></thead><tbody>${packs}</tbody></table>
       </details>
@@ -2030,7 +2075,7 @@ function applySummary(sum) {
   // every tab that can be driven straight from the summary updates live — no
   // need to switch away and back for fresh data.
   if (vis("resources")) renderResources(sum);
-  if (vis("jobs")) { renderBatches(sum.jobs); loadTranscriptionBatches(); }
+  if (vis("jobs")) { renderBatches(sum.jobs); loadActiveJobQueues(); }
   if (vis("remote")) { renderMachines(); renderFleetStatus(); }
   updateBell(sum.alerts_active || 0);
   $("#last-refresh").textContent = "updated " + new Date().toLocaleTimeString();

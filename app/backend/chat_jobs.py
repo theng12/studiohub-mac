@@ -266,7 +266,7 @@ def summary(batch: dict, include_raw: bool = False, include_results: bool = True
     states = [pack["state"] for pack in batch["packs"]]
     counts = {state: states.count(state) for state in ("queued", "running", "done", "partial", "error", "cancelled")}
     if counts["queued"] or counts["running"]:
-        status = "running" if counts["running"] or counts["done"] else "queued"
+        status = "running" if counts["running"] else "queued"
     elif counts["error"] or counts["partial"]:
         status = "partial" if counts["done"] or counts["partial"] else "error"
     elif counts["cancelled"]:
@@ -279,6 +279,7 @@ def summary(batch: dict, include_raw: bool = False, include_results: bool = True
         "project": batch.get("project"), "episode": batch.get("episode"),
         "created_at": batch["created_at"], "updated_at": batch.get("updated_at"),
         "finished_at": batch.get("finished_at"), "total_packs": len(states), **counts,
+        "queue_note": batch.get("queue_note"), "max_tries": MAX_TRIES,
         "total_scenes": sum(len(pack["scene_ids"]) for pack in batch["packs"]),
         "completed_scenes": sum(len(pack.get("results", {})) for pack in batch["packs"]),
         "duration_seconds": round(sum(pack.get("duration_seconds") or 0 for pack in batch["packs"]), 2),
@@ -289,6 +290,7 @@ def summary(batch: dict, include_raw: bool = False, include_results: bool = True
             "index": pack["index"], "pack_id": pack["pack_id"],
             "scene_ids": pack["scene_ids"], "state": pack["state"],
             "studio": pack.get("studio"), "tries": pack["tries"],
+            "max_tries": MAX_TRIES, "started_at": pack.get("started_at"),
             "duration_seconds": pack.get("duration_seconds"), "error": pack.get("error"),
             "missing_scene_ids": [scene_id for scene_id in pack["scene_ids"]
                                   if scene_id not in pack.get("results", {})],
@@ -302,6 +304,22 @@ def summary(batch: dict, include_raw: bool = False, include_results: bool = True
             row["raw_responses"] = pack.get("raw_responses", [])
         result["packs"].append(row)
     return result
+
+
+def active_assignments() -> dict[str, dict]:
+    """Current Chat lease details keyed by Studio id for the live dashboard."""
+    active = {}
+    for batch in batches.values():
+        for pack in batch["packs"]:
+            studio = pack.get("studio")
+            if pack["state"] == "running" and studio:
+                active[studio] = {
+                    "kind": "chat", "batch_id": batch["id"],
+                    "project": batch.get("project"), "episode": batch.get("episode"),
+                    "pack_id": pack["pack_id"], "attempt": pack["tries"],
+                    "max_attempts": MAX_TRIES, "started_at": pack.get("started_at"),
+                }
+    return active
 
 
 def list_batches() -> list[dict]:
@@ -360,41 +378,41 @@ async def _eligible_studios(monitor, model: str) -> list[dict]:
 
 
 async def dispatch_once(monitor) -> int:
-    assigned = 0
-    # Round-robin one pack per batch per pass. A single 200-scene episode still
-    # fills every capable server, while several episodes share each wave rather
-    # than the oldest episode monopolising the fleet until all its packs finish.
-    while True:
-        made_progress = False
-        active = sorted(
-            (batch for batch in batches.values() if not batch.get("cancelled")),
-            key=lambda batch: (batch.get("last_dispatched_at", 0), batch["created_at"]),
-        )
-        for batch in active:
-            pack = next((p for p in batch["packs"] if p["state"] == "queued"), None)
-            if not pack:
+    active = sorted(
+        (batch for batch in batches.values() if not batch.get("cancelled")),
+        key=lambda batch: batch["created_at"],
+    )
+    for position, batch in enumerate(active):
+        queued = [pack for pack in batch["packs"] if pack["state"] == "queued"]
+        if not queued:
+            batch["queue_note"] = None
+            continue
+        eligible = await _eligible_studios(monitor, batch["model"])
+        if not eligible:
+            batch["queue_note"] = "Waiting for a free online Chat Studio with this model cached"
+            continue
+
+        assigned = 0
+        batch["queue_note"] = None
+        for studio, pack in zip(eligible, queued):
+            machine = studio.get("machine", "local")
+            owner = f"chat:{batch['id']}:{pack['index']}"
+            if not broker.acquire_external_machine(machine, owner):
                 continue
-            eligible = await _eligible_studios(monitor, batch["model"])
-            if not eligible:
-                continue
-            for studio in eligible:
-                machine = studio.get("machine", "local")
-                owner = f"chat:{batch['id']}:{pack['index']}"
-                if not broker.acquire_external_machine(machine, owner):
-                    continue
-                pack.update(state="running", studio=studio["id"], error=None,
-                            started_at=time.time(), tries=pack["tries"] + 1)
-                batch["last_dispatched_at"] = time.time()
-                busy_studios.add(studio["id"])
-                _save(batch)
-                task = asyncio.create_task(_run_pack(monitor, batch, pack, studio, owner))
-                _pack_tasks[(batch["id"], pack["index"])] = task
-                assigned += 1
-                made_progress = True
-                break
-        if not made_progress:
-            break
-    return assigned
+            pack.update(state="running", studio=studio["id"], error=None,
+                        started_at=time.time(), tries=pack["tries"] + 1)
+            busy_studios.add(studio["id"])
+            task = asyncio.create_task(_run_pack(monitor, batch, pack, studio, owner))
+            _pack_tasks[(batch["id"], pack["index"])] = task
+            assigned += 1
+        if assigned:
+            _save(batch)
+            older = batch.get("episode") or batch.get("project") or batch["id"]
+            for waiting in active[position + 1:]:
+                if any(pack["state"] == "queued" for pack in waiting["packs"]):
+                    waiting["queue_note"] = f"Waiting behind older batch {older}"
+            return assigned
+    return 0
 
 
 async def _run_pack(monitor, batch: dict, pack: dict, studio: dict, owner: str) -> None:

@@ -14,6 +14,32 @@ def test_is_cached_semantics():
 
 
 @pytest.mark.asyncio
+async def test_active_chat_lease_suppresses_false_health_flap(reset, monitor, monkeypatch):
+    from backend import alerts, chat_jobs
+
+    studio = next(row for row in monitor.registry if row["id"] == "chat")
+    monitor.status["chat"] = {
+        "status": "up", "last_seen": 10, "last_checked": 10,
+        "app_version": "1.0.0", "health": {"ok": True},
+    }
+
+    async def timeout(*args, **kwargs):
+        raise RuntimeError("inference is blocking health")
+
+    monkeypatch.setattr(monitor._client, "get", timeout)
+    chat_jobs.busy_studios.add("chat")
+    await monitor._poll_one(studio)
+    assert monitor.status["chat"]["status"] == "up"
+    assert monitor.status["chat"]["health_busy"] is True
+    assert not any(event["kind"] == "studio_down" for event in alerts.recent(20))
+
+    chat_jobs.busy_studios.discard("chat")
+    await monitor._poll_one(studio)
+    assert monitor.status["chat"]["status"] == "down"
+    assert any(event["kind"] == "studio_down" for event in alerts.recent(20))
+
+
+@pytest.mark.asyncio
 async def test_models_dedup_and_availability(monitor, seed_catalog):
     from backend import registry as reg
     reg.add_user_entries([{"id": "image@mac-b", "modality": "image",

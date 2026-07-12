@@ -61,6 +61,17 @@ def test_empty_upload_and_mismatched_ids_are_rejected(authed):
     assert mismatch.status_code == 400
 
 
+def test_completed_plus_queued_transcription_is_not_claimed_running(reset):
+    batch = {
+        "id": "status", "model": "mlx/whisper", "created_at": 1,
+        "items": [{"state": "done", "duration_seconds": 1},
+                  {"state": "queued", "duration_seconds": None}],
+    }
+    result = jobs.summary(batch, include_items=False)
+    assert result["status"] == "queued"
+    assert result["running"] == 0 and result["done"] == 1 and result["queued"] == 1
+
+
 def test_upload_size_limit_is_enforced(authed, monkeypatch):
     monkeypatch.setattr(jobs, "MAX_FILE_BYTES", 2)
     response = authed.post(

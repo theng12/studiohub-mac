@@ -218,7 +218,7 @@ def summary(batch: dict, include_items: bool = True,
     states = [item["state"] for item in batch["items"]]
     counts = {state: states.count(state) for state in ("queued", "running", "done", "error", "cancelled")}
     if counts["queued"] or counts["running"]:
-        status = "running" if counts["running"] or counts["done"] else "queued"
+        status = "running" if counts["running"] else "queued"
     elif counts["cancelled"] == len(states):
         status = "cancelled"
     elif counts["error"] and counts["done"]:
@@ -260,6 +260,22 @@ def list_batches() -> list[dict]:
     persisted.update(batches)
     return [summary(b, include_items=True) for b in sorted(
         persisted.values(), key=lambda row: row["created_at"], reverse=True)]
+
+
+def active_assignments() -> dict[str, dict]:
+    """Current transcription lease details keyed by Voice Studio id."""
+    active = {}
+    for batch in batches.values():
+        for item in batch["items"]:
+            studio = item.get("studio")
+            if item["state"] == "running" and studio:
+                active[studio] = {
+                    "kind": "transcription", "batch_id": batch["id"],
+                    "project": batch.get("project"), "episode": batch.get("episode"),
+                    "item_id": item["item_id"], "attempt": item["tries"],
+                    "max_attempts": MAX_TRIES, "started_at": item.get("started_at"),
+                }
+    return active
 
 
 async def _eligible_studios(monitor, model: str) -> list[dict]:
