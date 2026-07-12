@@ -26,6 +26,7 @@ hub_state.json
 machine_labels.json
 machine_flags.json
 uploads/
+transcription_jobs/
 service/
 logs/service/
 .pytest_cache/
