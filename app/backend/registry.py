@@ -188,6 +188,23 @@ def remove_machine(machine: str) -> int:
     return removed
 
 
+def remove_studio(studio_id: str) -> int:
+    """Drop a single studios.json entry by id (e.g. 'music@macmini-m1-01') — for
+    pruning a studio type that isn't installed on that machine, without removing
+    the rest. Local defaults live in code, not the file, so they're untouched."""
+    if not REGISTRY_FILE.exists():
+        return 0
+    try:
+        existing = json.loads(REGISTRY_FILE.read_text())
+    except (json.JSONDecodeError, OSError):
+        return 0
+    kept = [e for e in existing if e.get("id") != studio_id]
+    removed = len(existing) - len(kept)
+    if removed:
+        REGISTRY_FILE.write_text(json.dumps(kept, indent=2) + "\n")
+    return removed
+
+
 def add_user_entries(entries: list[dict]) -> int:
     """Append/merge entries into studios.json (per-machine registry state)."""
     existing = []

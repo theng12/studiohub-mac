@@ -1068,6 +1068,24 @@ def remove_machine_route(machine: str):
     return {"ok": True, "removed": removed}
 
 
+@app.delete("/api/hub/registry/studios/{studio_id:path}")
+def remove_studio_route(studio_id: str):
+    """Unregister ONE studio (e.g. a music/video studio that isn't installed on
+    that machine) without removing the rest. It reappears only if it's actually
+    running the next time you Refetch, or if you re-add it manually."""
+    from .registry import remove_studio
+    entry = next((s for s in monitor.registry if s["id"] == studio_id), None)
+    if entry and entry.get("machine", "local") == "local":
+        raise HTTPException(400, "the local machine's studios can't be removed")
+    removed = remove_studio(studio_id)
+    if not removed:
+        raise HTTPException(404, f"no registered studio {studio_id!r}")
+    monitor.reload_registry()
+    monitor.registry = [s for s in monitor.registry if s["id"] != studio_id]
+    monitor.status.pop(studio_id, None)
+    return {"ok": True, "removed": studio_id}
+
+
 @app.post("/api/hub/registry/add")
 def add_machine_manual(body: dict):
     """Pre-register a machine's studios WITHOUT probing — works while the

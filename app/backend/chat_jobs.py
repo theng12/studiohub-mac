@@ -224,7 +224,22 @@ def parse_scene_results(content: str, expected: list[str], kind: str) -> dict[st
     except (json.JSONDecodeError, TypeError):
         if len(expected) == 1 and content.strip():
             return {expected[0]: content.strip()}
-        return {}
+        # Small local models sometimes prepend a thought channel, and a tight
+        # output limit may truncate the outer results array after several
+        # complete rows. Recover every self-contained JSON scene object so
+        # valid work is saved and the next try requests only missing IDs.
+        decoder = json.JSONDecoder()
+        recovered = []
+        for match in re.finditer(r"\{", content):
+            try:
+                row, _ = decoder.raw_decode(content[match.start():])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(row, dict) and (row.get("scene_id") or row.get("id")):
+                recovered.append(row)
+        if not recovered:
+            return {}
+        data = recovered
     if isinstance(data, dict):
         candidate = data.get("results", data.get("prompts", data))
     else:

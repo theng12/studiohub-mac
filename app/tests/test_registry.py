@@ -32,6 +32,21 @@ def test_add_and_remove_machine(reset):
     assert "image@mac-b" not in ids
 
 
+def test_remove_single_studio(reset):
+    reg.add_user_entries(reg.build_machine_entries(
+        "100.1.1.1", "mac-b", ["image", "music", "video"]))
+    assert reg.remove_studio("music@mac-b") == 1        # prune one
+    assert reg.remove_studio("music@mac-b") == 0        # already gone
+    ids = {s["id"] for s in reg.load_registry()}
+    assert "music@mac-b" not in ids
+    assert {"image@mac-b", "video@mac-b"} <= ids        # siblings untouched
+
+
+def test_remove_studio_endpoint_rejects_local(authed):
+    # a default local studio isn't in studios.json → cannot be pruned
+    assert authed.delete("/api/hub/registry/studios/image").status_code == 400
+
+
 def test_build_machine_entries_skips_unknown_modality(reset):
     entries = reg.build_machine_entries("100.1.1.1", "x", ["image", "bogus"])
     assert {e["modality"] for e in entries} == {"image"}

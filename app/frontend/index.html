@@ -114,6 +114,8 @@
   .pill.warn { color: var(--warn); border-color: var(--warn); }
   .pill.err { color: var(--down); border-color: var(--down); }
   .pill.ok { color: var(--up); border-color: var(--up); }
+  .pill-x { margin-left: 5px; cursor: pointer; opacity: .5; font-size: 10px; text-decoration: none; }
+  .pill-x:hover { opacity: 1; color: var(--down); }
   .tx-list { border: 1px solid var(--border); border-radius: 16px; overflow: hidden; background: var(--panel); }
   .pager { display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-bottom: 1px solid var(--border); background: var(--panel2, transparent); }
   #j-batches .pager { border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; }
@@ -609,6 +611,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.25.6", date: "2026-07-12", items: [
+    "<b>Remove a single studio from a machine</b> — click the small ✕ on any studio pill in the Remote tab. Use it to prune a studio you don't run there (e.g. a music/video studio that shows 'down' because it was pre-registered by 'Add manually' but never installed). It only comes back if it's actually running next time you Refetch.",
+  ] },
   { v: "1.25.4", date: "2026-07-12", items: [
     "<b>Update the Studio Hub on agent Macs remotely</b> — Remote tab → 'Studio Hub updates (agent Macs)'. Each reachable peer Hub pulls the latest, restarts, and comes back on its own via its startup service; peers already on the latest version are skipped. (Studios still update via the preflight card above.)",
   ] },
@@ -1718,7 +1723,7 @@ function renderMachines() {
     <td class="num"><span class="numbadge">${i + 1}</span></td>
     <td><b>${esc(label)}</b>${named ? ` <span class="sub">(${esc(e.m)})</span>` : ""}${e.m === "local" ? ' <span class="sub">· this Mac</span>' : ""}${disBadge}<br><span class="sub">${e.up}/${e.total} up</span></td>
     <td class="sub">${esc(e.host)}${peerBadge(e.m)}</td>
-    <td>${e.list.map(s => `<span class="pill ${s.busy ? "gen" : (s.status === "up" ? "dl" : "no")}">${esc(s.emoji || "")} ${esc(s.modality)}${s.busy ? " ⚡" : " · " + esc(s.status)}</span>`).join(" ")}</td>
+    <td>${e.list.map(s => `<span class="pill ${s.busy ? "gen" : (s.status === "up" ? "dl" : "no")}">${esc(s.emoji || "")} ${esc(s.modality)}${s.busy ? " ⚡" : " · " + esc(s.status)}${e.m !== "local" ? `<a class="pill-x" title="Remove ${esc(s.modality)} from ${esc(label)} — use for a studio you don't run here" onclick="removeStudio('${jsq(s.id)}')">✕</a>` : ""}</span>`).join(" ")}</td>
     <td style="white-space:nowrap">${toggle} ${e.m !== "local" ? `<button class="btn" onclick="refetchMachine('${jsq(e.m)}','${jsq(e.host)}')" title="Re-probe ${esc(e.host)} and add any studios now online">Refetch</button> ` : ""}<button class="btn" onclick="renameMachine('${jsq(e.m)}')">Rename</button>${e.m !== "local" ? ` <button class="btn stop" onclick="removeMachine('${jsq(e.m)}')">Remove</button>` : ""}</td></tr>`;
   }).join("");
 }
@@ -1738,6 +1743,15 @@ async function loadMachines() {
 async function removeMachine(m) {
   if (!confirm(`Remove all of ${m}'s studios from the Hub? (The machine itself is untouched.)`)) return;
   await api(`/api/hub/registry/machines/${encodeURIComponent(m)}`, { method: "DELETE" });
+  loadMachines(); refresh();
+}
+// Prune ONE studio from a machine (e.g. a music/video studio you never installed
+// there). It only comes back if it's actually running next time you Refetch.
+async function removeStudio(id) {
+  const mod = id.split("@")[0];
+  if (!confirm(`Remove the ${mod} studio from this machine?\nUse this for a studio you don't run here. It reappears only if it's actually running when you Refetch, or if you Add it manually.`)) return;
+  await api(`/api/hub/registry/studios/${encodeURIComponent(id)}`, { method: "DELETE" })
+    .catch(e => alert(`remove failed: ${e}`));
   loadMachines(); refresh();
 }
 // Re-probe a machine's host for the studio family ports and register any studio

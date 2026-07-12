@@ -114,6 +114,20 @@ def test_result_parser_accepts_supported_shapes_and_rejects_unknown_ids():
     assert jobs.parse_scene_results("plain prose", ["scene-1"], "visual") == {"scene-1": "plain prose"}
 
 
+def test_result_parser_salvages_rows_after_reasoning_and_from_truncated_outer_json():
+    content = (
+        "<|channel>thought\nI should reason before answering.\n"
+        '{"results":['
+        '{"scene_id":"scene-1","visual_prompt":"One complete prompt"},'
+        '{"scene_id":"scene-2","visual_prompt":"Two complete prompts"},'
+        '{"scene_id":"scene-3","visual_prompt":"truncated'
+    )
+    assert jobs.parse_scene_results(content, ["scene-1", "scene-2", "scene-3"], "visual") == {
+        "scene-1": "One complete prompt",
+        "scene-2": "Two complete prompts",
+    }
+
+
 @pytest.mark.asyncio
 async def test_ten_servers_process_one_hundred_scenes_in_one_wave(reset, monitor, monkeypatch):
     batch, _ = jobs.create_batch(_payload(10))
