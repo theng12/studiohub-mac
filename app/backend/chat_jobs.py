@@ -20,6 +20,7 @@ MAX_SCENES_PER_PACK = 10
 MAX_TOTAL_SCENES = 5000
 MAX_MESSAGE_CHARS = 500_000
 MAX_TRIES = 3
+TRANSIENT_RETRY_DELAYS = (5, 15)
 TERMINAL_STATES = {"done", "partial", "error", "cancelled"}
 
 batches: dict[str, dict] = {}
@@ -180,6 +181,7 @@ def create_batch(payload: dict) -> tuple[dict, bool]:
             "state": "queued", "tries": 0, "studio": None,
             "duration_seconds": None, "error": None, "results": {},
             "raw_responses": [], "started_at": None, "finished_at": None,
+            "retry_at": None,
         })
     if len(all_scene_ids) > MAX_TOTAL_SCENES:
         raise HTTPException(400, f"batch exceeds {MAX_TOTAL_SCENES} total scenes")
@@ -291,6 +293,7 @@ def summary(batch: dict, include_raw: bool = False, include_results: bool = True
             "scene_ids": pack["scene_ids"], "state": pack["state"],
             "studio": pack.get("studio"), "tries": pack["tries"],
             "max_tries": MAX_TRIES, "started_at": pack.get("started_at"),
+            "retry_at": pack.get("retry_at"),
             "duration_seconds": pack.get("duration_seconds"), "error": pack.get("error"),
             "missing_scene_ids": [scene_id for scene_id in pack["scene_ids"]
                                   if scene_id not in pack.get("results", {})],
@@ -383,9 +386,14 @@ async def dispatch_once(monitor) -> int:
         key=lambda batch: batch["created_at"],
     )
     for position, batch in enumerate(active):
-        queued = [pack for pack in batch["packs"] if pack["state"] == "queued"]
+        now = time.time()
+        queued_all = [pack for pack in batch["packs"] if pack["state"] == "queued"]
+        queued = [pack for pack in queued_all if not pack.get("retry_at")
+                  or pack["retry_at"] <= now]
         if not queued:
-            batch["queue_note"] = None
+            retry_times = [pack["retry_at"] for pack in queued_all if pack.get("retry_at")]
+            batch["queue_note"] = (f"Automatic retry in {max(1, round(min(retry_times) - now))}s"
+                                   if retry_times else None)
             continue
         eligible = await _eligible_studios(monitor, batch["model"])
         if not eligible:
@@ -399,7 +407,7 @@ async def dispatch_once(monitor) -> int:
             owner = f"chat:{batch['id']}:{pack['index']}"
             if not broker.acquire_external_machine(machine, owner):
                 continue
-            pack.update(state="running", studio=studio["id"], error=None,
+            pack.update(state="running", studio=studio["id"], error=None, retry_at=None,
                         started_at=time.time(), tries=pack["tries"] + 1)
             busy_studios.add(studio["id"])
             task = asyncio.create_task(_run_pack(monitor, batch, pack, studio, owner))
@@ -461,7 +469,11 @@ async def _run_pack(monitor, batch: dict, pack: dict, studio: dict, owner: str) 
     except Exception as exc:
         transient = isinstance(exc, (httpx.HTTPError, OSError, ValueError)) or getattr(exc, "transient", False)
         if transient and pack["tries"] < MAX_TRIES and not batch.get("cancelled"):
-            pack.update(state="queued", studio=None, error=f"try {pack['tries']} failed: {exc}")
+            delay = TRANSIENT_RETRY_DELAYS[min(pack["tries"] - 1,
+                                               len(TRANSIENT_RETRY_DELAYS) - 1)]
+            pack.update(state="queued", studio=None,
+                        retry_at=time.time() + delay,
+                        error=f"try {pack['tries']} failed; retrying in {delay}s: {exc}")
         else:
             pack.update(state="partial" if pack["results"] else "error",
                         error=str(exc), finished_at=time.time())
@@ -493,7 +505,8 @@ def restore_batches() -> int:
     for batch in _load_rows("finished = 0"):
         for pack in batch["packs"]:
             if pack["state"] == "running":
-                pack.update(state="queued", studio=None, error="interrupted by Hub restart")
+                pack.update(state="queued", studio=None, retry_at=None,
+                            error="interrupted by Hub restart")
         batches[batch["id"]] = batch
         _save(batch)
         restored += 1
@@ -546,7 +559,7 @@ def retry_batch(batch_id: str) -> tuple[dict | None, int]:
     retried = 0
     for pack in batch["packs"]:
         if pack["state"] in {"partial", "error"}:
-            pack.update(state="queued", error=None, studio=None, tries=0,
+            pack.update(state="queued", error=None, studio=None, tries=0, retry_at=None,
                         started_at=None, finished_at=None)
             retried += 1
     if retried:

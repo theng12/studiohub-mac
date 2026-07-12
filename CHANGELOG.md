@@ -12,6 +12,15 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.32.4] — 2026-07-13
+
+### Fixed — model warm-up no longer exhausts retries immediately
+
+- A transient Chat worker failure now waits 5 seconds before attempt two and 15 seconds before attempt three. Newly activated workers have time to load a cached model into memory or recover from a brief restart instead of consuming all attempts in a tight loop.
+- Jobs shows the automatic retry countdown even while other workers remain active. Manual **Retry missing** still resets exhausted packs without discarding completed scenes.
+
+146 tests.
+
 ## [1.32.3] — 2026-07-13
 
 ### Fixed — remote workers hidden by stale Studio authentication

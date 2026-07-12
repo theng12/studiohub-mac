@@ -661,6 +661,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.32.4", date: "2026-07-13", items: [
+    "Transient Chat failures now retry after <b>5 seconds, then 15 seconds</b>, giving a newly activated worker time to load its cached model into memory. Jobs shows the automatic retry countdown while other workers continue.",
+  ] },
   { v: "1.32.3", date: "2026-07-13", items: [
     "Remote Studio work now travels through each machine's <b>connected peer Hub</b>. A Studio holding an older in-memory fleet token can no longer make its cached models look absent or prevent that machine from joining Chat jobs.",
   ] },
@@ -1424,7 +1427,7 @@ function renderChatBatches(data) {
       </div>
       <div class="prog"><i style="width:${pct}%"></i></div>
       ${workers ? `<div class="runs">${workers}</div>` : ""}
-      ${!workers && b.queue_note ? `<div class="sub" style="margin-top:7px">${esc(b.queue_note)}</div>` : ""}
+      ${b.queue_note ? `<div class="sub" style="margin-top:7px">${esc(b.queue_note)}</div>` : ""}
       <details class="tx-items"${detOpen('chat:' + b.id)} ontoggle="detToggle(this,'chat:${jsq(b.id)}')"><summary>${b.completed_scenes}/${b.total_scenes} scenes · ${b.total_packs} packs · ${fmtDur(b.duration_seconds)} processing</summary>
         <table><thead><tr><th>Pack</th><th>State</th><th>Chat worker</th><th>Scenes</th><th>Time</th><th>Failure / missing IDs</th></tr></thead><tbody>${packs}</tbody></table>
       </details>

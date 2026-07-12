@@ -298,6 +298,29 @@ async def test_remote_chat_pack_uses_connected_peer_hub(reset, monitor, monkeypa
     assert jobs.summary(batch)["status"] == "done"
 
 
+@pytest.mark.asyncio
+async def test_transient_worker_failure_waits_before_retry(reset, monitor, monkeypatch):
+    batch, _ = jobs.create_batch(_payload())
+    _add_chat_workers(monitor, 1)
+
+    async def catalog(studio):
+        return {"models": [{"repo": MODEL, "cache": {"state": "cached"}}]}
+
+    async def post(*args, **kwargs):
+        raise OSError("model server is warming up")
+
+    monkeypatch.setattr(monitor, "get_catalog", catalog)
+    monkeypatch.setattr(monitor._client, "post", post)
+    before = jobs.time.time()
+    assert await jobs.dispatch_once(monitor) == 1
+    await asyncio.gather(*list(jobs._pack_tasks.values()))
+    pack = batch["packs"][0]
+    assert pack["state"] == "queued" and pack["tries"] == 1
+    assert pack["retry_at"] >= before + jobs.TRANSIENT_RETRY_DELAYS[0]
+    assert await jobs.dispatch_once(monitor) == 0
+    assert batch["queue_note"].startswith("Automatic retry in ")
+
+
 def test_restart_recovery_requeues_running_pack(reset):
     batch, _ = jobs.create_batch(_payload())
     batch["packs"][0].update(state="running", studio="chat@mac")
