@@ -281,7 +281,8 @@ def active_assignments() -> dict[str, dict]:
 async def _eligible_studios(monitor, model: str) -> list[dict]:
     eligible = []
     for studio in monitor.registry:
-        if studio.get("modality") != "voice" or studio["id"] in busy_studios:
+        if (studio.get("modality") != "voice" or studio["id"] in busy_studios
+                or broker.in_maintenance(studio["id"])):
             continue
         machine = studio.get("machine", "local")
         if (monitor.status.get(studio["id"], {}).get("status") != "up"

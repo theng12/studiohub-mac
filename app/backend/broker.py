@@ -287,6 +287,10 @@ def set_maintenance(studio_id: str, enabled: bool):
         _wakeup.set()
 
 
+def in_maintenance(studio_id: str) -> bool:
+    return studio_id in _maintenance
+
+
 def _recent_avg(modality: str, model: str, limit: int = 50) -> float | None:
     """Average completed-item duration for this (modality, model) across ALL
     batches — so even a 1-item batch gets an ETA from the model's track record,

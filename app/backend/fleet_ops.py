@@ -232,13 +232,19 @@ async def _run_updates(monitor, job: dict):
     job["finished_at"] = time.time()
 
 
+def _active_studio_leases() -> set[str]:
+    from . import chat_jobs, transcription_jobs
+    return (broker.busy_studios() | set(chat_jobs.busy_studios)
+            | set(transcription_jobs.busy_studios))
+
+
 async def _update_one(monitor, studio: dict, item: dict):
     sid = studio["id"]
     item.update(status="draining", detail="waiting for active work to finish", started_at=time.time())
     broker.set_maintenance(sid, True)
     try:
         deadline = time.monotonic() + DRAIN_TIMEOUT
-        while sid in broker.busy_studios():
+        while sid in _active_studio_leases():
             if time.monotonic() >= deadline:
                 raise RuntimeError("drain timed out; update was not started")
             await asyncio.sleep(2)

@@ -41,6 +41,42 @@ def test_maintenance_drains_broker(reset):
 
 
 @pytest.mark.asyncio
+async def test_maintenance_drains_chat_and_transcription(reset, monitor, monkeypatch):
+    from backend import chat_jobs, transcription_jobs
+
+    chat = next(s for s in monitor.registry if s["id"] == "chat")
+    voice = next(s for s in monitor.registry if s["id"] == "voice")
+    monitor.status["chat"] = {"status": "up"}
+    monitor.status["voice"] = {"status": "up"}
+
+    async def chat_catalog(studio):
+        return {"models": [{"repo": "chat/model", "cache": {"state": "cached"}}]}
+
+    async def transcription_catalog(studio):
+        return {"available": True, "models": [{"repo": "voice/model", "cached": True}]}
+
+    monkeypatch.setattr(monitor, "get_catalog", chat_catalog)
+    monkeypatch.setattr(monitor, "get_transcription", transcription_catalog)
+    assert chat in await chat_jobs._eligible_studios(monitor, "chat/model")
+    assert voice in await transcription_jobs._eligible_studios(monitor, "voice/model")
+    broker.set_maintenance("chat", True)
+    broker.set_maintenance("voice", True)
+    assert await chat_jobs._eligible_studios(monitor, "chat/model") == []
+    assert await transcription_jobs._eligible_studios(monitor, "voice/model") == []
+    broker.set_maintenance("chat", False)
+    broker.set_maintenance("voice", False)
+
+
+def test_rolling_update_waits_for_every_queue_type(reset):
+    from backend import chat_jobs, transcription_jobs
+
+    broker._busy.add("image")
+    chat_jobs.busy_studios.add("chat")
+    transcription_jobs.busy_studios.add("voice")
+    assert fleet_ops._active_studio_leases() == {"image", "chat", "voice"}
+
+
+@pytest.mark.asyncio
 async def test_updates_are_sequential_and_failure_is_contained(monkeypatch, monitor):
     calls = []
 

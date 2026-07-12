@@ -12,6 +12,14 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.33.2] — 2026-07-13
+
+### Fixed — rolling updates drain every queue type
+
+- Fleet maintenance now blocks new Chat packs and transcription chapters as well as generation jobs, then waits for active leases from all three queue systems before restarting a Studio. Rolling authentication upgrades can no longer interrupt an in-flight LLM pack or Whisper chapter.
+
+150 tests.
+
 ## [1.33.1] — 2026-07-13
 
 ### Fixed — verification feedback distinguishes offline from mismatched

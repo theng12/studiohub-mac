@@ -662,6 +662,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.33.2", date: "2026-07-13", items: [
+    "Rolling Studio updates now drain <b>generation, Chat, and transcription</b> work before restart, so an authentication upgrade cannot interrupt an active pack or chapter.",
+  ] },
   { v: "1.33.1", date: "2026-07-13", items: [
     "Save verification now distinguishes <b>credential mismatch</b> (save locally once) from <b>offline/unreachable</b> (retry when online), so its next step is accurate.",
   ] },
