@@ -12,6 +12,12 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ---
 
+## [1.25.5] — 2026-07-12
+
+### Changed — Clear message when a peer Hub is too old to self-update
+
+- Remote Hub update requires the peer to already run ≥1.25.4 (the version that added the `self-update` endpoint) — the bootstrap of any self-update system. When the primary hits a peer that predates it, the fleet Hub update now reports a clear, actionable status (*"Hub vX is too old for remote update — update it once from the Pinokio sidebar on that Mac"*) instead of a raw 404.
+
 ## [1.25.4] — 2026-07-12
 
 ### Added — Remotely update the Studio Hub on agent Macs

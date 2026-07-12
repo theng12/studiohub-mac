@@ -321,6 +321,13 @@ async def _update_hub_one(item: dict, latest: str | None):
             r = await client.post(f"{url}/api/hub/maintenance/self-update", headers=headers)
             if r.status_code == 401:
                 raise RuntimeError("remote Hub rejected the fleet token")
+            if r.status_code == 404:
+                # This peer predates remote self-update (added in 1.25.4). It has
+                # no endpoint to receive the command — a one-time manual update
+                # seeds the capability, then future updates are remote.
+                raise RuntimeError(f"Hub v{cur} is too old for remote update — "
+                                   "update it once from the Pinokio sidebar on that "
+                                   "Mac (then it's remote from here on)")
             r.raise_for_status()
     except Exception as e:
         item.update(status="failed", detail=str(e)[:240], finished_at=time.time())
