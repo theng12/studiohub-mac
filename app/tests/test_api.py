@@ -27,6 +27,12 @@ def test_dashboard_includes_render_studio():
     assert 'id="fleet-save"' in dashboard
     assert 'id="fleet-save-result" role="status" aria-live="polite"' in dashboard
     assert 'JSON.stringify({ token, sync: true })' in dashboard
+    assert 'id="su-rescan"' in dashboard
+    assert 'id="su-progress" class="update-progress hide" role="status"' in dashboard
+    assert 'id="hubupd-status" class="update-progress hide" role="status"' in dashboard
+    assert 'onclick="updateReadyHubs()"' in dashboard
+    assert 'function startHubUpdate(machines = null)' in dashboard
+    assert 'class="btn primary compact"' in dashboard
 
 
 def test_health_and_version(client):

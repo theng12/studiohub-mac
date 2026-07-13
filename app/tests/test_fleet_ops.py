@@ -130,6 +130,44 @@ async def test_updates_are_sequential_and_failure_is_contained(monkeypatch, moni
     assert job["items"][2]["status"] == "complete"
 
 
+@pytest.mark.asyncio
+async def test_remote_update_reconnects_after_status_connection_drop(monkeypatch):
+    studio = {"id": "voice@mac-a", "modality": "voice", "machine": "mac-a",
+              "host": "10.0.0.8", "hub_port": 47873}
+    item = {"studio": studio["id"], "status": "updating", "detail": ""}
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, payload): self.payload = payload
+        def json(self): return self.payload
+        def raise_for_status(self): return None
+
+    class Client:
+        get_calls = 0
+
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def post(self, *args, **kwargs): return Response({"id": "remote-job"})
+        async def get(self, *args, **kwargs):
+            self.get_calls += 1
+            if self.get_calls == 1:
+                raise fleet_ops.httpx.ReadError("server disconnected")
+            return Response({"status": "complete", "items": [
+                {"status": "complete", "detail": "healthy on v2.0.0"}
+            ]})
+
+    client = Client()
+    monkeypatch.setattr(fleet_ops.httpx, "AsyncClient", lambda **kwargs: client)
+
+    async def no_sleep(seconds): return None
+    monkeypatch.setattr(fleet_ops.asyncio, "sleep", no_sleep)
+
+    await fleet_ops._update_remote(studio, item)
+    assert client.get_calls == 2
+    assert item["status"] == "complete" and item["detail"] == "healthy on v2.0.0"
+
+
 def test_start_hub_updates_requires_remote_machines(monitor):
     monitor.registry = [s for s in monitor.registry if s.get("machine", "local") == "local"]
     fleet_ops._hub_updates.clear()

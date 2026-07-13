@@ -316,9 +316,17 @@ async def _update_remote(studio: dict, item: dict):
         deadline = time.monotonic() + UPDATE_TIMEOUT
         while time.monotonic() < deadline:
             await asyncio.sleep(4)
-            status = await client.get(f"{url}/api/hub/maintenance/updates/{remote_id}", headers=headers)
-            status.raise_for_status()
-            data = status.json()
+            try:
+                status = await client.get(f"{url}/api/hub/maintenance/updates/{remote_id}", headers=headers)
+                status.raise_for_status()
+                data = status.json()
+            except (httpx.TransportError, ValueError) as exc:
+                # A Studio restart or a busy peer can drop one status response.
+                # The remote Hub still owns the update job, so reconnect to that
+                # same job instead of turning a transient transport error into a
+                # false failure (or starting the update twice).
+                item.update(status="checking", detail=f"connection dropped; reconnecting ({type(exc).__name__})")
+                continue
             remote_item = data["items"][0]
             item.update(status=remote_item["status"], detail=remote_item["detail"])
             if data["status"] in {"complete", "failed"}:

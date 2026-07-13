@@ -8,6 +8,17 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 - **MINOR** (1.1.x → 1.2.x) — new feature, endpoint, or dashboard tab. **Update** from the Pinokio sidebar (restart the service if you run it as a startup service).
 - **PATCH** (1.2.0 → 1.2.1) — bugfix / UI tweak. **Just Update.**
 
+## [1.34.4] — 2026-07-13
+
+### Changed — visible, consistent Studio and Hub updates
+
+- Studio and agent-Hub updates now show a live progress card, completed count, current machine or Studio, per-row state, and failure details while the job is running.
+- Added a Studio version rescan, individual agent-Hub update actions, and bulk Hub updates that target only reachable machines with an update ready.
+- Studio and Hub update actions now share the same polished primary-button design and clear disabled/updating labels.
+- Remote Studio update polling now reconnects to the same update job after a temporary connection drop instead of reporting a false failure or starting the update twice.
+
+154 tests.
+
 ## [1.34.3] — 2026-07-13
 
 ### Changed — separate Studio update controls from preflight diagnostics
