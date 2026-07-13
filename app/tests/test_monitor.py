@@ -63,6 +63,15 @@ async def test_models_dedup_and_availability(monitor, seed_catalog):
     assert by_repo["org/absent"]["cached_on"] == []
 
 
+def test_is_cloud_lane_excludes_render():
+    assert mon.is_cloud_lane(True, "video") is True
+    assert mon.is_cloud_lane(True, "image") is True
+    assert mon.is_cloud_lane(False, "image") is False
+    # render overloads is_cloud=true as a broker governor bypass — never cloud
+    assert mon.is_cloud_lane(True, "render") is False
+    assert mon.is_cloud_lane(None, "video") is False
+
+
 @pytest.mark.asyncio
 async def test_cloud_models_carry_lane_and_provider(monitor, seed_catalog):
     # Video Studio gateway surfaces cloud + local entries in one catalog.
@@ -80,8 +89,17 @@ async def test_cloud_models_carry_lane_and_provider(monitor, seed_catalog):
         {"repo": "cloudflare/sdxl-base", "label": "SDXL", "is_cloud": True,
          "provider": "cloud", "size_gb": 0},
     ])
+    # render flags is_cloud=true only to bypass the broker gates — it is LOCAL.
+    seed_catalog("render", [
+        {"repo": "episode-assembly-v1", "label": "Episode Assembly",
+         "cache": {"state": "cached"}, "is_cloud": True},
+    ])
     rows = await monitor.models_by_repo()
     by_repo = {r["repo"]: r for r in rows}
+    # render is never in the cloud lane despite is_cloud=true at the source
+    render = by_repo["episode-assembly-v1"]
+    assert render["lane"] == "local"
+    assert render["is_cloud"] is False
     # local entry stays in the local lane, no provider
     assert by_repo["local/ltx"]["lane"] == "local"
     assert by_repo["local/ltx"]["is_cloud"] is False

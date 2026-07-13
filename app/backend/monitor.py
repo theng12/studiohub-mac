@@ -35,6 +35,21 @@ def is_cached(model: dict) -> bool:
     return bool(cache)  # tolerate a studio that ever uses a bool/string
 
 
+# 'render' is a local FFmpeg episode-assembly step. Render studios flag their
+# catalog entry is_cloud=true ONLY to bypass the broker's download/memory gates
+# (a dispatch hint, not a hosting statement), so it must never land in the cloud
+# lane or count as a cloud generation. Any other is_cloud entry is a genuine
+# external-provider (cloud) model.
+LOCAL_ONLY_MODALITIES = {"render"}
+
+
+def is_cloud_lane(is_cloud, modality) -> bool:
+    """Whether an entry belongs in the CLOUD lane (external provider) for the
+    dashboard and ledger — distinct from the broker's raw is_cloud dispatch flag,
+    which render overloads as a governor bypass."""
+    return bool(is_cloud) and modality not in LOCAL_ONLY_MODALITIES
+
+
 def _provider_of(model: dict) -> str:
     """The effective cloud provider used to GROUP a cloud model in the Models
     tab (fal / cloudflare / gemini / …).
@@ -280,7 +295,9 @@ class StudioMonitor:
                 continue
             row = by_repo.get(repo)
             if row is None:
-                is_cloud = bool(m.get("is_cloud"))
+                # cloud LANE classification — not the raw is_cloud dispatch flag
+                # (render sets is_cloud=true purely as a broker governor bypass).
+                is_cloud = is_cloud_lane(m.get("is_cloud"), m.get("hub_modality"))
                 row = by_repo[repo] = {
                     "repo": repo,
                     "label": m.get("label") or repo,

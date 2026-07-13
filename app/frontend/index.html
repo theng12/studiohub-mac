@@ -695,6 +695,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.35.1", date: "2026-07-14", items: [
+    "The <b>render</b> episode-assembly step now correctly shows in the <b>Local</b> lane instead of Cloud — it runs locally; its <code>is_cloud</code> flag was only a broker dispatch hint.",
+  ] },
   { v: "1.35.0", date: "2026-07-14", items: [
     "The <b>Models</b> tab now splits into a <b>Local</b> lane and a <b>Cloud</b> lane (grouped by provider), with a <b>Local / Cloud / All</b> filter. Cloud models show a provider badge, plus <b>new</b> / <b>deprecated</b> badges and a price when available.",
     "Model and generation counts now report <b>local vs cloud as distinct lanes</b>: the Models tab, <code>/api/hub/models</code>, and <code>/api/hub/catalog</code> all carry a lane summary instead of one merged number.",

@@ -8,6 +8,14 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 - **MINOR** (1.1.x → 1.2.x) — new feature, endpoint, or dashboard tab. **Update** from the Pinokio sidebar (restart the service if you run it as a startup service).
 - **PATCH** (1.2.0 → 1.2.1) — bugfix / UI tweak. **Just Update.**
 
+## [1.35.1] — 2026-07-14
+
+### Fixed — render is a local lane, not cloud
+
+- The `render` episode-assembly step no longer appears in the Cloud lane (or counts as a cloud generation). Render Studio flags its catalog entry `is_cloud=true` only to bypass the broker's download/memory gates — that's a dispatch hint, not a hosting statement. The Hub now classifies lanes with `monitor.is_cloud_lane(is_cloud, modality)`, which treats `render` (and any future assembly-type modality in `LOCAL_ONLY_MODALITIES`) as local while leaving the broker's raw dispatch path untouched. Applied in both the Models tab (`models_by_repo`) and the ledger `is_cloud` the broker records at dispatch.
+
+157 tests.
+
 ## [1.35.0] — 2026-07-14
 
 ### Added — local vs cloud model lanes across the dashboard

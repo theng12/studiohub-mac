@@ -27,7 +27,7 @@ import httpx
 
 from . import ledger
 from .peers import studio_headers
-from .monitor import is_cached
+from .monitor import is_cached, is_cloud_lane
 from .registry import base_url, machine_enabled
 from .resources import host_stats
 
@@ -584,7 +584,7 @@ async def _dispatch_loop():
                     item["state"] = "running"
                     item["studio"] = studio["id"]
                     item["tries"] += 1
-                    item["is_cloud"] = bool(entry.get("is_cloud"))
+                    item["is_cloud"] = is_cloud_lane(entry.get("is_cloud"), b["modality"])
                     item["_reserved"] = reserve
                     _reserved["gb"] += reserve
                     _busy.add(studio["id"])
