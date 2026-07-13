@@ -8,6 +8,14 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 - **MINOR** (1.1.x → 1.2.x) — new feature, endpoint, or dashboard tab. **Update** from the Pinokio sidebar (restart the service if you run it as a startup service).
 - **PATCH** (1.2.0 → 1.2.1) — bugfix / UI tweak. **Just Update.**
 
+## [1.34.3] — 2026-07-13
+
+### Changed — separate Studio update controls from preflight diagnostics
+
+- Fleet preflight now focuses on health, capability, model, engine, memory, and other safety checks.
+- Added a dedicated Studio updates table with version, last checked, status, sorting, bulk update, and one-click per-Studio Update actions.
+- Existing rolling drain, verification, and update eligibility rules are unchanged.
+
 ## [1.34.2] — 2026-07-13
 
 ### Fixed — self-healing generation status after connection drops

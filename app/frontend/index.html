@@ -533,7 +533,6 @@
           <option value="status">Status</option><option value="version">Version</option>
         </select>
         <button class="btn" id="pf-run" onclick="runPreflight()">Run preflight</button>
-        <button class="go" id="pf-update" onclick="updateReadyStudios()" disabled>Update ready Studios</button>
       </div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
         <b>Run preflight</b> re-scans every studio and records its <b>version</b> (remembered even after a restart). Updates drain and verify one Studio at a time.
@@ -553,8 +552,25 @@
         <p class="sub" style="margin:8px 0 0 2px">Badge colour: <span class="pill dl">green = pass</span> <span class="pill warn">amber = warning (still eligible)</span> <span class="pill no">grey = failed (blocks the update)</span></p>
       </details>
       <div class="sub" id="pf-summary" style="margin-bottom:8px">Preflight has not run yet.</div>
-      <div style="overflow-x:auto"><table><thead><tr><th>Studio</th><th>Machine</th><th>Version</th><th>Result</th><th>Checks</th><th></th></tr></thead><tbody id="pf-body"></tbody></table></div>
+      <div style="overflow-x:auto"><table><thead><tr><th>Studio</th><th>Machine</th><th>Result</th><th>Checks</th></tr></thead><tbody id="pf-body"></tbody></table></div>
       <div id="upd-status" class="sub" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card section">
+      <div class="top"><span class="emoji">🔄</span><h3>Studio updates</h3>
+        <span style="margin-left:auto"></span>
+        <label class="sub" style="text-transform:uppercase;font-size:11px">Sort</label>
+        <select class="selctl" id="su-sort" onchange="setStudioUpdateSort(this.value)">
+          <option value="machine">Machine</option><option value="app">App</option>
+          <option value="status">Status</option><option value="version">Version</option>
+        </select>
+        <button class="go" id="su-update" onclick="updateReadyStudios()" disabled>Update ready Studios</button>
+      </div>
+      <p class="muted" style="font-size:13px;margin-bottom:10px">
+        Update Studios one at a time after they pass preflight. Active work drains before each update, and the Studio is verified after it restarts. Use an individual <b>Update</b> button for more control.
+      </p>
+      <div class="sub" id="su-summary" style="margin-bottom:8px">Run preflight to load Studio versions and update readiness.</div>
+      <div style="overflow-x:auto"><table><thead><tr><th>Studio</th><th>Machine</th><th>Version</th><th>Last checked</th><th>Status</th><th></th></tr></thead><tbody id="su-body"></tbody></table></div>
     </div>
 
     <div class="card section">
@@ -1830,7 +1846,9 @@ let preflightRows = [];
 let maintenanceBusy = false;
 let lastPreflightData = null;
 let pfSort = localStorage.getItem("pf_sort") || "machine";
+let suSort = localStorage.getItem("su_sort") || "machine";
 function setPreflightSort(v) { pfSort = v; localStorage.setItem("pf_sort", v); if (lastPreflightData) renderPreflight(lastPreflightData); }
+function setStudioUpdateSort(v) { suSort = v; localStorage.setItem("su_sort", v); if (lastPreflightData) renderStudioUpdates(lastPreflightData); }
 function _sortPreflight(rows) {
   const app = r => (r.id || "").split("@")[0];               // modality = the app
   const rank = { pass: 0, warn: 1, fail: 2 };
@@ -1845,22 +1863,50 @@ function renderPreflight(data) {
   lastPreflightData = data;
   preflightRows = _sortPreflight(data && data.studios || []);
   const sel = $("#pf-sort"); if (sel && sel.value !== pfSort) sel.value = pfSort;
-  const summary = $("#pf-summary"), body = $("#pf-body"), update = $("#pf-update");
+  const summary = $("#pf-summary"), body = $("#pf-body");
   if (!preflightRows.length) {
-    summary.textContent = "Preflight has not run yet."; body.innerHTML = ""; update.disabled = true; return;
+    summary.textContent = "Preflight has not run yet."; body.innerHTML = ""; renderStudioUpdates(data); return;
   }
   const good = preflightRows.filter(r => r.status !== "fail");
   summary.textContent = `${good.length}/${preflightRows.length} Studios eligible · fleet ${data.status}`
     + (data.ran_at ? ` · last scanned ${fmtAgo(data.ran_at)}` : "");
-  update.disabled = maintenanceBusy || !good.length;
   body.innerHTML = preflightRows.map(r => {
     const checks = (r.checks || []).map(c => `<span class="pill ${c.status === "pass" ? "dl" : (c.status === "warn" ? "warn" : "no")}" title="${esc(c.detail)}">${esc(c.name)}</span>`).join(" ");
     const result = r.status === "pass" ? "Ready" : (r.status === "warn" ? "Ready with warnings" : "Blocked");
     return `<tr><td><b>${esc(r.title)}</b><br><span class="sub">${esc(r.capabilities || "")}</span></td><td>${esc(mlabel(r.machine))}</td>
-      <td class="sub">${r.version ? "v" + esc(r.version) : "—"}</td>
-      <td><span class="pill ${r.status === "pass" ? "dl" : (r.status === "warn" ? "warn" : "no")}">${result}</span></td><td>${checks}</td>
-      <td>${r.status !== "fail" ? `<button class="btn" onclick="startFleetUpdate(['${jsq(r.id)}'])">Update</button>` : ""}</td></tr>`;
+      <td><span class="pill ${r.status === "pass" ? "dl" : (r.status === "warn" ? "warn" : "no")}">${result}</span></td><td>${checks}</td></tr>`;
   }).join("");
+  renderStudioUpdates(data);
+}
+function _sortStudioUpdates(rows) {
+  const app = r => (r.id || "").split("@")[0];
+  const rank = { pass: 0, warn: 1, fail: 2 };
+  return rows.slice().sort((a, b) => {
+    if (suSort === "app") return app(a).localeCompare(app(b)) || mlabel(a.machine).localeCompare(mlabel(b));
+    if (suSort === "status") return (rank[a.status] ?? 3) - (rank[b.status] ?? 3) || mlabel(a.machine).localeCompare(mlabel(b.machine));
+    if (suSort === "version") return String(b.version || "").localeCompare(String(a.version || "")) || mlabel(a.machine).localeCompare(mlabel(b.machine));
+    return mlabel(a.machine).localeCompare(mlabel(b.machine)) || app(a).localeCompare(app(b));
+  });
+}
+function renderStudioUpdates(data) {
+  const body = $("#su-body"), summary = $("#su-summary"), update = $("#su-update"), sel = $("#su-sort");
+  if (!body || !summary || !update) return;
+  if (sel && sel.value !== suSort) sel.value = suSort;
+  const rows = _sortStudioUpdates(data && data.studios || []);
+  if (!rows.length) { body.innerHTML = ""; summary.textContent = "Run preflight to load Studio versions and update readiness."; update.disabled = true; return; }
+  const eligible = rows.filter(r => r.status !== "fail");
+  summary.textContent = `${eligible.length}/${rows.length} Studios eligible`
+    + (data.ran_at ? ` · last checked ${fmtAgo(data.ran_at)}` : "")
+    + (maintenanceBusy ? " · update in progress" : "");
+  update.disabled = maintenanceBusy || !eligible.length;
+  const result = r => r.status === "pass" ? "Ready" : r.status === "warn" ? "Ready with warnings" : "Blocked";
+  body.innerHTML = rows.map(r => `<tr>
+    <td><b>${esc(r.title)}</b></td><td>${esc(mlabel(r.machine))}</td>
+    <td class="sub">${r.version ? "v" + esc(r.version) : "—"}</td>
+    <td class="sub">${data.ran_at ? fmtAgo(data.ran_at) : "—"}</td>
+    <td><span class="pill ${r.status === "pass" ? "dl" : r.status === "warn" ? "warn" : "no"}">${result(r)}</span></td>
+    <td>${r.status !== "fail" ? `<button class="btn" ${maintenanceBusy ? "disabled" : ""} onclick="startFleetUpdate(['${jsq(r.id)}'])">Update</button>` : "—"}</td>
+  </tr>`).join("");
 }
 async function loadMaintenance() {
   const [pf, jobs, hubJobs, hubVers] = await Promise.all([
@@ -1877,6 +1923,7 @@ async function loadMaintenance() {
   const latest = jobs && jobs.updates && jobs.updates[0];
   maintenanceBusy = !!(latest && ["queued", "running"].includes(latest.status));
   $("#pf-run").disabled = maintenanceBusy;
+  if (pf) renderStudioUpdates(pf);
   if (latest) {
     const items = latest.items.map(i => `${i.studio}: ${i.status} (${i.detail})`).join(" · ");
     $("#upd-status").textContent = `Update ${latest.status}: ${items}`;
@@ -1892,7 +1939,7 @@ async function runPreflight() {
 }
 async function startFleetUpdate(ids) {
   if (!ids.length || !confirm(`Update ${ids.length} Studio${ids.length > 1 ? "s" : ""} one at a time? Active work will drain first.`)) return;
-  maintenanceBusy = true; renderPreflight({ status: "running", studios: preflightRows });
+  maintenanceBusy = true; renderPreflight({ status: "running", ran_at: lastPreflightData && lastPreflightData.ran_at, studios: preflightRows });
   const r = await api("/api/hub/maintenance/updates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ studio_ids: ids }) });
   if (!r.ok) { const e = await r.json().catch(() => ({})); maintenanceBusy = false; alert(e.detail || "Update could not start"); }
   loadMaintenance();
