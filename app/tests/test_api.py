@@ -89,11 +89,17 @@ def test_update_status(authed):
 def test_stats_empty(authed):
     d = authed.get("/api/hub/stats").json()
     assert d["total"] == 0 and d["by_machine"] == {}
+    # lane facet is always present (both lanes reported even when empty)
+    assert d["by_lane"] == {"local": 0, "cloud": 0}
+    assert d["filters"]["lane"] == "all"
 
 
 def test_models_empty_when_all_down(authed):
     d = authed.get("/api/hub/models").json()
     assert d["count"] == 0
+    # lane/provider summaries are always present so the UI can group by lane
+    assert d["lanes"] == {"local": 0, "cloud": 0}
+    assert d["providers"] == {}
 
 
 def test_transcription_empty_when_all_voice_studios_down(authed):

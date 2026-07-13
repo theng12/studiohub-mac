@@ -8,6 +8,18 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 - **MINOR** (1.1.x → 1.2.x) — new feature, endpoint, or dashboard tab. **Update** from the Pinokio sidebar (restart the service if you run it as a startup service).
 - **PATCH** (1.2.0 → 1.2.1) — bugfix / UI tweak. **Just Update.**
 
+## [1.35.0] — 2026-07-14
+
+### Added — local vs cloud model lanes across the dashboard
+
+- The **Models** tab now splits the catalog into a **Local** lane and a **Cloud** lane (grouped by provider) instead of mixing them, with a **Local / Cloud / All** filter. Cloud rows show a provider badge (e.g. `fal`), a **new** badge, a **deprecated** badge (from the studio's `status`), and a price pill when a `price` object is present. The existing modality ordering is kept within each lane.
+- Model counts are reported as **distinct lanes, never one merged number**: `/api/hub/models` and `/api/hub/catalog` now return a `lanes: {local, cloud}` summary (computed before any `cloud=` filter is applied), and `/api/hub/models` adds a `providers: {name: count}` breakdown for the cloud lane.
+- The **Stats** tab gains a **Local / Cloud / All** lane facet next to the existing Source filter. `/api/hub/stats` accepts `lane=local|cloud` and always returns `by_lane: {local, cloud}` for the current window, so the split is visible even while viewing one lane.
+- Cloud generations are now tagged in the ledger: the `assets` table gains an `is_cloud` column (auto-migrated on existing DBs), the broker records it from the studio's own catalog entry, and direct in-studio scans (which can't know a model's provider) count as **local**. Generation/broker routing is unchanged — cloud models still flow through the existing `video` → `/api/generate/txt2video` contract.
+- This is generic across studios: any studio whose `/api/catalog` marks entries `is_cloud=true` with a `provider` (Video, and next Voice) is grouped and counted the same way; existing Image and Chat local catalogs are unaffected and simply stay in the Local lane.
+
+156 tests.
+
 ## [1.34.4] — 2026-07-13
 
 ### Changed — visible, consistent Studio and Hub updates

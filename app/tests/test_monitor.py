@@ -64,6 +64,44 @@ async def test_models_dedup_and_availability(monitor, seed_catalog):
 
 
 @pytest.mark.asyncio
+async def test_cloud_models_carry_lane_and_provider(monitor, seed_catalog):
+    # Video Studio gateway surfaces cloud + local entries in one catalog.
+    seed_catalog("video", [
+        {"repo": "local/ltx", "label": "LTX", "cache": {"state": "cached"},
+         "size_gb": 8.0},
+        {"repo": "fal/kling-v2", "label": "Kling v2", "is_cloud": True,
+         "provider": "fal", "cost_tier": "paid-cloud", "status": "new",
+         "size_gb": 0, "price": {"unit": "second", "amount": 0.05}},
+        {"repo": "fal/old-model", "label": "Old", "is_cloud": True,
+         "provider": "fal", "cost_tier": "paid-cloud", "status": "deprecated",
+         "size_gb": 0},
+        # existing Image/Chat style: generic provider="cloud", real vendor in the
+        # repo prefix — must derive "cloudflare" so it groups on its own.
+        {"repo": "cloudflare/sdxl-base", "label": "SDXL", "is_cloud": True,
+         "provider": "cloud", "size_gb": 0},
+    ])
+    rows = await monitor.models_by_repo()
+    by_repo = {r["repo"]: r for r in rows}
+    # local entry stays in the local lane, no provider
+    assert by_repo["local/ltx"]["lane"] == "local"
+    assert by_repo["local/ltx"]["is_cloud"] is False
+    assert by_repo["local/ltx"]["provider"] is None
+    # cloud entries carry lane + provider + status + price verbatim
+    kling = by_repo["fal/kling-v2"]
+    assert kling["lane"] == "cloud"
+    assert kling["is_cloud"] is True
+    assert kling["provider"] == "fal"
+    assert kling["status"] == "new"
+    assert kling["price"] == {"unit": "second", "amount": 0.05}
+    assert by_repo["fal/old-model"]["status"] == "deprecated"
+    # generic provider="cloud" resolves to the repo-prefix vendor
+    assert by_repo["cloudflare/sdxl-base"]["provider"] == "cloudflare"
+    # local sorts before cloud in the row order
+    lanes = [r["lane"] for r in rows]
+    assert lanes.index("local") < lanes.index("cloud")
+
+
+@pytest.mark.asyncio
 async def test_aggregate_skips_down_studios_no_network(monitor, seed_catalog):
     # only 'up' studios contribute; the 4 other defaults are 'unknown' and must
     # not be fetched (would hang/hit network). Seeding one up studio is enough.

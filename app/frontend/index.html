@@ -90,6 +90,11 @@
   .pill.dl { color: var(--up); border-color: var(--up); }
   .pill.cloud { color: var(--accent); border-color: var(--accent); }
   .pill.no { color: var(--dim); border-color: var(--border); opacity: .7; }
+  .pill.prov { color: var(--accent); border-color: var(--accent); text-transform: uppercase; font-weight: 600; letter-spacing: .03em; }
+  .pill.new { color: var(--up); border-color: var(--up); font-weight: 600; }
+  .pill.deprecated { color: var(--warn); border-color: var(--warn); opacity: .85; }
+  .lane-head td { background: var(--panel); font-weight: 700; letter-spacing: .02em; padding-top: 12px; }
+  .prov-head td { font-weight: 600; color: var(--dim); font-size: 12px; padding-left: 14px; }
   .pill.gen { color: var(--gen); border-color: var(--gen); }
   .numbadge { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: var(--panel2); border: 1px solid var(--border); font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
 
@@ -206,7 +211,8 @@
   .update-progress{margin:2px 0 12px;padding:12px 14px;border:1px solid #cbd9cc;border-radius:13px;background:linear-gradient(135deg,#f2f7ef,#fbfaf4);box-shadow:inset 3px 0 var(--accent)}.update-progress.error{border-color:#e2c2b9;background:#fbf1ed;box-shadow:inset 3px 0 var(--down)}.update-progress.success{border-color:#b9d7c4;background:#edf7ef;box-shadow:inset 3px 0 var(--up)}.update-progress-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.update-progress-title{font-weight:750;color:var(--accent2)}.update-progress-count{font:700 10.5px/1 var(--mono);color:var(--dim);white-space:nowrap}.update-progress .bar{margin:9px 0 6px;height:7px;background:#dce5dc}.update-progress-detail{font-size:11.5px;color:var(--dim)}
   .rows,.table-wrap{border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:var(--shadow)}.lrow{grid-template-columns:22px minmax(0,1.7fr) minmax(0,1fr) 100px minmax(0,1.15fr) 80px 205px;background:#fffef9;border-color:#e2e3da;padding:12px 15px}.lrow .actions{width:100%;justify-content:flex-end}.lrow:hover:not(.lhead){background:#f8f8f2}.lrow.lhead{background:#edf0e9;color:#6f776f;font:700 9px/1 var(--mono);letter-spacing:.09em}
   table{background:#fffef9;border-radius:14px;overflow:hidden;box-shadow:0 8px 28px #2945350a}th,td{padding:11px 12px;border-color:#e2e3da}th{top:0;background:#edf0e9;color:#68736b;font:700 9px/1.2 var(--mono);letter-spacing:.08em;text-transform:uppercase}tbody tr{transition:background .12s}tbody tr:hover{background:#f5f6ef}td{font-size:12.5px}
-  .pill{padding:3px 8px;border-color:#cbd1c8;background:#f5f6f1;font:650 10px/1.2 var(--mono)}.pill.dl,.pill.ok{color:#167a55;border-color:#b6d5c3;background:#eaf5ed}.pill.cloud{color:#287491;border-color:#b9d5dd;background:#eaf3f5}.pill.warn,.pill.gen{background:#fbf1dc}.pill.err{background:#f9e8e4}.numbadge{background:#e8eee8;border-color:#c8d5ca;color:#285944}
+  .pill{padding:3px 8px;border-color:#cbd1c8;background:#f5f6f1;font:650 10px/1.2 var(--mono)}.pill.dl,.pill.ok,.pill.new{color:#167a55;border-color:#b6d5c3;background:#eaf5ed}.pill.cloud,.pill.prov{color:#287491;border-color:#b9d5dd;background:#eaf3f5}.pill.warn,.pill.gen,.pill.deprecated{background:#fbf1dc;color:#8a6d1f;border-color:#e4d3a4}.pill.err{background:#f9e8e4}.numbadge{background:#e8eee8;border-color:#c8d5ca;color:#285944}
+  .lane-head td{background:#eef1ea;font:700 12px/1 var(--sans);color:var(--accent2);letter-spacing:.03em;text-transform:uppercase}.prov-head td{background:#f6f8f4;font:600 11px/1 var(--mono);color:#68736b;padding-left:16px}
   .bar{height:9px;background:#e2e6dd;border-radius:999px}.bar i{background:linear-gradient(90deg,#1c8d62,#67bd87);border-radius:999px}.prog{background:#e4e7df;border-radius:999px}.prog i{background:linear-gradient(90deg,#1b8d61,#51bd83)}
   .hostcard{background:linear-gradient(135deg,#fffef9,#eef4eb)}.hostcard .stat b{font:700 25px/1 var(--display);color:var(--accent2)}.hostcard .stat span{margin-top:4px;font:600 10px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.06em}#mem-line{stroke:#167a55!important;stroke-width:2.2!important}
   .resource-studio-table{table-layout:fixed}.resource-studio-table th,.resource-studio-table td{overflow:hidden;text-overflow:ellipsis}.resource-studio-table td{white-space:nowrap}
@@ -326,6 +332,9 @@
         <option value="avail">Sort: Availability</option><option value="size">Sort: Size</option>
         <option value="ram">Sort: Min RAM</option>
       </select>
+      <div class="seg" id="m-lane">
+        <button data-v="all">All</button><button data-v="local">Local</button><button data-v="cloud">Cloud</button>
+      </div>
     </div>
     <div id="m-count" class="muted" style="margin-bottom:8px"></div>
     <div style="max-height:70vh;overflow:auto">
@@ -460,6 +469,11 @@
       <div class="grp"><label>Source</label>
         <div class="seg" id="st-src">
           <button data-v="all">All</button><button data-v="job">Hub</button><button data-v="direct">Direct</button>
+        </div>
+      </div>
+      <div class="grp"><label>Lane</label>
+        <div class="seg" id="st-lane">
+          <button data-v="all">All</button><button data-v="local">Local</button><button data-v="cloud">Cloud</button>
         </div>
       </div>
       <div class="grp"><label>Machine</label>
@@ -681,6 +695,11 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.35.0", date: "2026-07-14", items: [
+    "The <b>Models</b> tab now splits into a <b>Local</b> lane and a <b>Cloud</b> lane (grouped by provider), with a <b>Local / Cloud / All</b> filter. Cloud models show a provider badge, plus <b>new</b> / <b>deprecated</b> badges and a price when available.",
+    "Model and generation counts now report <b>local vs cloud as distinct lanes</b>: the Models tab, <code>/api/hub/models</code>, and <code>/api/hub/catalog</code> all carry a lane summary instead of one merged number.",
+    "The <b>Stats</b> tab gains a <b>Local / Cloud / All</b> lane facet and a local/cloud split in the totals, so cloud-provider generations are visible alongside local ones. Generation routing is unchanged.",
+  ] },
   { v: "1.34.4", date: "2026-07-13", items: [
     "Studio and agent-Hub updates now show <b>live progress</b>, the current machine or Studio, completed counts, and clear per-row results. Both sections have matching update controls and version rescans.",
     "Remote Studio updates now <b>reconnect to the same job</b> after a temporary connection drop instead of reporting a false failure or starting twice.",
@@ -1106,6 +1125,7 @@ function renderOverview(sum) {
 let modelsData = [];
 let mMachine = localStorage.getItem("m_machine") || "";
 let mSort = localStorage.getItem("m_sort") || "modality";
+let mLane = localStorage.getItem("m_lane") || "all";  // all | local | cloud
 async function loadModels() {
   const p = new URLSearchParams();
   const q = $("#m-search").value.trim(); if (q) p.set("q", q);
@@ -1197,27 +1217,72 @@ function renderModels() {
     size: (a, b) => (b.size_gb || 0) - (a.size_gb || 0),
     ram: (a, b) => (b.min_unified_memory_gb || 0) - (a.min_unified_memory_gb || 0),
   }[mSort];
-  rows = [...rows].sort(cmp);
-  const dlCount = rows.filter(m => m.downloaded && !m.is_cloud).length;
-  $("#m-count").textContent = `${rows.length} models${mMachine ? " on " + mMachine : ""} · ${dlCount} downloaded`;
-  body.innerHTML = rows.map(m => {
+  const sortRows = list => [...list].sort(cmp);
+  // ── lane split: local vs cloud are DISTINCT lanes, never one merged list ──
+  const local = rows.filter(m => !m.is_cloud);
+  const cloud = rows.filter(m => m.is_cloud);
+  const provCount = {};
+  cloud.forEach(m => { const p = m.provider || "cloud"; provCount[p] = (provCount[p] || 0) + 1; });
+  const dlCount = local.filter(m => m.downloaded).length;
+  const provSummary = Object.keys(provCount).sort().map(p => `${p} ${provCount[p]}`).join(", ");
+  $("#m-count").textContent =
+    `${local.length} local · ${dlCount} downloaded` +
+    (cloud.length ? ` — ${cloud.length} cloud${provSummary ? " (" + provSummary + ")" : ""}` : "") +
+    (mMachine ? ` · on ${mMachine}` : "");
+
+  const priceLabel = p => {
+    if (!p || typeof p !== "object") return null;
+    const amt = p.amount ?? p.per_unit ?? p.usd;
+    if (typeof amt !== "number") return null;
+    const unit = p.unit || p.per || "call";
+    return `$${amt}/${unit}`;
+  };
+  const rowHtml = m => {
     let avail;
-    if (m.is_cloud) avail = `<span class="pill cloud">cloud</span>`;
+    if (m.is_cloud) {
+      const badges = [`<span class="pill prov">${esc(m.provider || "cloud")}</span>`];
+      if (m.status === "new") badges.push(`<span class="pill new">new</span>`);
+      if (m.status === "deprecated") badges.push(`<span class="pill deprecated">deprecated</span>`);
+      const pl = priceLabel(m.price);
+      if (pl) badges.push(`<span class="pill">${esc(pl)}</span>`);
+      avail = badges.join(" ");
+    }
     else if (m.cached_on.length) avail = `<span class="numbadge">${m.cached_on.length}</span> ` + m.cached_on.map(mc => `<span class="pill dl">${esc(mc)}</span>`).join("");
     else avail = `<span class="pill no">not downloaded</span>`;
     return `<tr>
       <td><b>${esc(m.label)}</b><br><span class="sub">${esc(m.repo)}</span></td>
-      <td>${esc(m.modality)}</td><td>${esc(m.family_label || "—")}</td>
-      <td class="num">${m.size_gb != null ? m.size_gb + " GB" : "—"}</td>
-      <td class="num">${m.min_unified_memory_gb != null ? m.min_unified_memory_gb + " GB" : "—"}</td>
+      <td>${esc(m.modality)}</td>
+      <td>${m.is_cloud ? "—" : esc(m.family_label || "—")}</td>
+      <td class="num">${m.is_cloud ? "cloud" : (m.size_gb != null ? m.size_gb + " GB" : "—")}</td>
+      <td class="num">${m.is_cloud ? "—" : (m.min_unified_memory_gb != null ? m.min_unified_memory_gb + " GB" : "—")}</td>
       <td>${avail}</td></tr>`;
-  }).join("") || `<tr><td colspan="6" class="empty">No models match</td></tr>`;
+  };
+  const laneHead = (label, n) => `<tr class="lane-head"><td colspan="6">${label} · ${n}</td></tr>`;
+  const provHead = (label, n) => `<tr class="prov-head"><td colspan="6">${esc(label)} · ${n}</td></tr>`;
+
+  let html = "";
+  if (mLane !== "cloud" && local.length) {
+    if (mLane === "all") html += laneHead("Local", local.length);
+    html += sortRows(local).map(rowHtml).join("");
+  }
+  if (mLane !== "local" && cloud.length) {
+    if (mLane === "all") html += laneHead("Cloud", cloud.length);
+    // grouped by provider, then modality-ordered (the chosen sort) within
+    const byProv = {};
+    cloud.forEach(m => { const p = m.provider || "cloud"; (byProv[p] = byProv[p] || []).push(m); });
+    Object.keys(byProv).sort().forEach(p => {
+      html += provHead(p, byProv[p].length);
+      html += sortRows(byProv[p]).map(rowHtml).join("");
+    });
+  }
+  body.innerHTML = html || `<tr><td colspan="6" class="empty">No models match</td></tr>`;
 }
 let mTimer;
 ["m-search", "m-modality", "m-dl"].forEach(id => $("#" + id).addEventListener("input", () => { clearTimeout(mTimer); mTimer = setTimeout(loadModels, 250); }));
 $("#m-machine").addEventListener("change", e => { mMachine = e.target.value; localStorage.setItem("m_machine", mMachine); renderModels(); });
 $("#m-sort").value = mSort;
 $("#m-sort").addEventListener("change", e => { mSort = e.target.value; localStorage.setItem("m_sort", mSort); renderModels(); });
+initSeg("m-lane", mLane, v => { mLane = v; localStorage.setItem("m_lane", v); renderModels(); });
 
 // ── resources ─────────────────────────────────────────────────────────────
 let resGroup = localStorage.getItem("res_group") || "machine";
@@ -1639,10 +1704,12 @@ function renderThroughput(tl) {
 }
 let stWin = localStorage.getItem("st_win") || "0";
 let stSrc = localStorage.getItem("st_src") || "all";
+let stLane = localStorage.getItem("st_lane") || "all";  // all | local | cloud
 let stOp = "";       // operation-type (app) filter — click a tile to set
 let stMach = "";     // machine filter
 initSeg("st-win", stWin, v => { stWin = v; localStorage.setItem("st_win", v); loadStats(); });
 initSeg("st-src", stSrc, v => { stSrc = v; localStorage.setItem("st_src", v); loadStats(); });
+initSeg("st-lane", stLane, v => { stLane = v; localStorage.setItem("st_lane", v); loadStats(); });
 $("#st-mach").addEventListener("change", () => { stMach = $("#st-mach").value; loadStats(); });
 $("#st-clear").addEventListener("click", () => { stOp = ""; stMach = ""; $("#st-mach").value = ""; loadStats(); });
 function setStatOp(m) { stOp = (stOp === m ? "" : m); loadStats(); }   // toggle app filter
@@ -1651,6 +1718,7 @@ async function loadStats() {
   const p = new URLSearchParams();
   if (stWin !== "0") p.set("hours", stWin);
   if (stSrc !== "all") p.set("source", stSrc);
+  if (stLane !== "all") p.set("lane", stLane);
   if (stOp) p.set("modality", stOp);
   if (stMach) p.set("machine", stMach);
   const qs = p.toString();
@@ -1669,11 +1737,15 @@ async function loadStats() {
   // Total line + active-filter summary.
   const active = [];
   if (stSrc !== "all") active.push(stSrc === "job" ? "Hub jobs" : "direct");
+  if (stLane !== "all") active.push(stLane === "cloud" ? "☁ cloud" : "local");
   if (stOp) active.push((MOD_EMOJI[stOp] || "") + " " + stOp);
   if (stMach) active.push(mlabel(stMach));
   $("#st-clear").style.display = (stOp || stMach) ? "" : "none";
   const winTxt = stWin !== "0" ? " · last " + (WIN_LABEL[stWin] || stWin + " h") : "";
-  $("#st-total").textContent = `${d.total} generations${winTxt}${active.length ? " · " + active.join(" · ") : ""}`;
+  // by_lane always reports both lanes for the current window — show the split
+  const bl = d.by_lane || { local: 0, cloud: 0 };
+  const laneTxt = (bl.local || bl.cloud) ? ` · ${bl.local || 0} local / ${bl.cloud || 0} cloud` : "";
+  $("#st-total").textContent = `${d.total} generations${winTxt}${laneTxt}${active.length ? " · " + active.join(" · ") : ""}`;
 
   // tiles per operation type — click to filter every table + the chart
   const mods = Object.keys(d.by_modality).sort((a, b) => d.by_modality[b].count - d.by_modality[a].count);

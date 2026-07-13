@@ -65,6 +65,31 @@ def test_stats_counts_and_speed(reset):
     assert ledger.stats(machine="mac-b")["total"] == 1
 
 
+def test_stats_lane_splits_local_and_cloud(reset):
+    # local video generations + cloud-provider video generations in one ledger
+    for _ in range(3):
+        ledger.record_asset(source="job", modality="video", studio="video",
+                            machine="local", model="local/ltx", duration_s=5.0)
+    for _ in range(2):
+        ledger.record_asset(source="job", modality="video", studio="video",
+                            machine="local", model="fal/kling", duration_s=9.0,
+                            is_cloud=True)
+    # a scan has no cloud knowledge → defaults to the local lane
+    ledger.record_asset(source="scan", modality="video", studio="video",
+                        machine="local", artifact_path="/tmp/v.mp4")
+
+    s = ledger.stats()
+    assert s["total"] == 6
+    assert s["by_lane"] == {"local": 4, "cloud": 2}   # 3 local jobs + 1 scan, 2 cloud
+
+    # lane filter narrows total but by_lane always reflects the filtered window
+    assert ledger.stats(lane="cloud")["total"] == 2
+    assert ledger.stats(lane="local")["total"] == 4
+    # lane is orthogonal to source
+    assert ledger.stats(lane="cloud", source="job")["total"] == 2
+    assert ledger.stats(lane="local", source="direct")["total"] == 1
+
+
 def test_stats_op_splits_voice_and_music(reset):
     # Scanned audio tags modality='audio' but studio tells voice vs music apart.
     ledger.record_asset(source="job", modality="voice", studio="voice",

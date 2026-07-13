@@ -233,11 +233,15 @@ async def hub_catalog(
     if downloaded is not None:
         # hub_cached is the corrected download flag (cache.state == 'cached').
         models = [m for m in models if bool(m.get("hub_cached")) == downloaded]
+    # lanes counted before the cloud filter so both are always reported
+    lanes = {"local": sum(1 for m in models if not m.get("is_cloud")),
+             "cloud": sum(1 for m in models if m.get("is_cloud"))}
     if cloud is not None:
         models = [m for m in models if bool(m.get("is_cloud")) == cloud]
     return {
         "models": models,
         "count": len(models),
+        "lanes": lanes,
         "total_unfiltered": agg["total"],
         "per_studio": agg["per_studio"],
     }
@@ -546,8 +550,10 @@ def hub_assets(q: str | None = None, modality: str | None = None,
 
 @app.get("/api/hub/models")
 async def hub_models(modality: str | None = None, q: str | None = None,
-                     downloaded: bool | None = None, force: bool = False):
-    """Deduped-by-repo model list with per-machine availability (Models tab)."""
+                     downloaded: bool | None = None, cloud: bool | None = None,
+                     force: bool = False):
+    """Deduped-by-repo model list with per-machine availability (Models tab).
+    Reports local vs cloud as distinct lanes (never one merged number)."""
     rows = await monitor.models_by_repo(force=force)
     if modality:
         rows = [r for r in rows if r["modality"] == modality]
@@ -557,7 +563,18 @@ async def hub_models(modality: str | None = None, q: str | None = None,
                 if needle in r["repo"].lower() or needle in r["label"].lower()]
     if downloaded is not None:
         rows = [r for r in rows if r["downloaded"] == downloaded]
-    return {"models": rows, "count": len(rows)}
+    # Lane + per-provider counts are computed BEFORE the cloud filter so the UI
+    # can always show both lanes even while viewing one.
+    lanes = {"local": sum(1 for r in rows if not r["is_cloud"]),
+             "cloud": sum(1 for r in rows if r["is_cloud"])}
+    providers: dict[str, int] = {}
+    for r in rows:
+        if r["is_cloud"]:
+            p = r.get("provider") or "cloud"
+            providers[p] = providers.get(p, 0) + 1
+    if cloud is not None:
+        rows = [r for r in rows if r["is_cloud"] == cloud]
+    return {"models": rows, "count": len(rows), "lanes": lanes, "providers": providers}
 
 
 @app.get("/api/hub/transcription")
@@ -906,16 +923,21 @@ def hub_stats(
                         description="all | job (Hub-dispatched) | direct (in-studio)"),
     modality: str | None = Query(None, description="filter to one operation type"),
     machine: str | None = Query(None, description="filter to one machine"),
+    lane: str = Query("all", pattern="^(all|local|cloud)$",
+                      description="all | local | cloud (cloud-provider generations)"),
 ):
     """Generation analytics: per-machine / operation-type / model counts +
     speed, plus a time-bucketed throughput series (bucket sized to the window).
-    Counts span every source by default; `source`, `modality`, and `machine`
-    narrow the view (and the throughput chart) to match."""
+    Counts span every source by default; `source`, `modality`, `machine`, and
+    `lane` (local vs cloud) narrow the view (and the throughput chart) to match.
+    `by_lane` in the response always reports both lanes for the current window."""
     since = time.time() - hours * 3600 if hours else None
     bucket = 300 if hours == 1 else (3600 if hours == 24 else 86400)
-    result = ledger.stats(since_s=since, source=source, op=modality, machine=machine)
-    result["timeline"] = ledger.timeline(since, bucket, source=source, op=modality, machine=machine)
-    result["filters"] = {"source": source, "modality": modality, "machine": machine, "hours": hours}
+    result = ledger.stats(since_s=since, source=source, op=modality, machine=machine, lane=lane)
+    result["timeline"] = ledger.timeline(since, bucket, source=source, op=modality,
+                                          machine=machine, lane=lane)
+    result["filters"] = {"source": source, "modality": modality, "machine": machine,
+                         "lane": lane, "hours": hours}
     return result
 
 

@@ -417,6 +417,7 @@ def _record_worker_success(b: dict, item: dict, studio: dict, job: dict,
         params=body, artifact_path=item["artifact_path"],
         artifact_url=item["artifact_url"], batch_id=b["id"],
         item_index=item["index"], duration_s=duration,
+        is_cloud=item.get("is_cloud", False),
     )
 
 
@@ -583,6 +584,7 @@ async def _dispatch_loop():
                     item["state"] = "running"
                     item["studio"] = studio["id"]
                     item["tries"] += 1
+                    item["is_cloud"] = bool(entry.get("is_cloud"))
                     item["_reserved"] = reserve
                     _reserved["gb"] += reserve
                     _busy.add(studio["id"])
