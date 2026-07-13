@@ -64,7 +64,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/transcription/jobs` · `GET /api/hub/transcription/jobs/{batch}` | List batches/lifetime totals or read chapter-level status |
 | `GET /api/hub/transcription/jobs/{batch}/items/{index}/artifact` | Download a verified completed SRT through Hub authentication |
 | `DELETE /api/hub/transcription/jobs/{batch}` · `POST /api/hub/transcription/jobs/{batch}/retry` | Cancel unfinished chapters or retry failed/interrupted chapters only |
-| `POST /api/hub/chat/jobs` | Submit visual or motion prompts as worker packs of up to 10 stable scene IDs |
+| `POST /api/hub/chat/jobs` | Submit visual or motion prompts as adaptive worker packs (10 local/free-cloud; up to 30 paid-cloud) |
 | `GET /api/hub/chat/jobs` · `GET /api/hub/chat/jobs/{batch}` | Read compact fleet history or full pack/scene results |
 | `DELETE /api/hub/chat/jobs/{batch}` · `POST /api/hub/chat/jobs/{batch}/retry` | Cancel unfinished packs or retry only missing scene IDs |
 | `GET /api/hub/transcription/settings` · `POST /api/hub/transcription/settings` | Read/set SRT and upload retention (`1`, `3`, `7`, `15`, or `30` days) |
@@ -326,8 +326,10 @@ Cloud-backed models bypass the governor entirely.
 ## Chat prompt packs
 
 Chat work uses a saved queue separate from media generation. Each item is one
-LLM request containing at most 10 scenes. One eligible Chat Studio leases one
-pack at a time. This is an adaptive wave size, not a 100-scene limit: 70 scenes
+LLM request containing at most 10 local/free-cloud scenes or 30 paid-cloud
+scenes. Story Studio defaults paid cloud to 20 for output reliability. One
+eligible Chat Studio leases one pack at a time. This is an adaptive wave size,
+not a 100-scene limit: 70 scenes
 can use seven compatible servers at once; 200 scenes with five compatible
 servers continue over four waves. A batch may contain up to 5,000 scenes.
 Workers pull another pack as soon as they finish, so faster Macs naturally do
@@ -339,6 +341,7 @@ the oldest batch's model, so capable hardware is not left idle.
 curl -X POST http://localhost:47873/api/hub/chat/jobs \
   -H "Content-Type: application/json" -d '{
   "model": "mlx-community/Llama-3.2-3B-Instruct-4bit",
+  "model_cost_tier": "local",
   "kind": "visual",
   "project": "dozing-knight",
   "episode": "DK0001",

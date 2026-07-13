@@ -22,9 +22,11 @@ def _pack(index: int, count: int = 10) -> dict:
     }
 
 
-def _payload(pack_count: int = 1, scenes_per_pack: int = 10) -> dict:
+def _payload(pack_count: int = 1, scenes_per_pack: int = 10,
+             model_cost_tier: str = "local") -> dict:
     return {
         "model": MODEL,
+        "model_cost_tier": model_cost_tier,
         "kind": "visual",
         "label": "Scene visual prompts",
         "project": "dozing-knight",
@@ -86,10 +88,21 @@ def test_api_submission_is_authenticated_persistent_and_idempotent(authed, clien
     assert client.post("/api/hub/chat/jobs", json=_payload()).status_code == 401
 
 
-def test_pack_validation_enforces_ten_scene_limit_and_unique_ids(authed):
+def test_pack_validation_enforces_adaptive_tier_limits_and_unique_ids(authed):
     too_many = _payload()
     too_many["packs"][0]["scene_ids"] = [f"scene-{i}" for i in range(11)]
     assert authed.post("/api/hub/chat/jobs", json=too_many).status_code == 400
+
+    free_too_many = _payload(1, 20, "free")
+    assert authed.post("/api/hub/chat/jobs", json=free_too_many).status_code == 400
+
+    paid_twenty = authed.post("/api/hub/chat/jobs", json=_payload(1, 20, "paid"))
+    assert paid_twenty.status_code == 200
+    assert paid_twenty.json()["scenes"] == 20
+
+    paid_too_many = _payload(1, 10, "paid")
+    paid_too_many["packs"][0]["scene_ids"] = [f"scene-{i}" for i in range(31)]
+    assert authed.post("/api/hub/chat/jobs", json=paid_too_many).status_code == 400
 
     duplicate = _payload(2)
     duplicate["packs"][1]["scene_ids"][0] = duplicate["packs"][0]["scene_ids"][0]

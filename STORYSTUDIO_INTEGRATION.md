@@ -160,10 +160,12 @@ For continuity / style-ref renders, add `reference_images` to an image item's
   lossless isn't needed.
 - Everything else (poll / webhook / `artifact_url`) is identical to txt2img.
 
-## 4c. Visual and motion prompts — 10-scene Chat packs
+## 4c. Visual and motion prompts — adaptive Chat packs
 
 `POST /api/hub/chat/jobs` with one or more packs. A pack is one Chat Studio
-completion containing at most 10 stable scene IDs. Hub leases one pack per
+completion containing at most 10 stable scene IDs for local/free-cloud models,
+or up to 30 for a paid-cloud model. Story Studio should default paid cloud to
+20. Hub leases one pack per
 eligible Chat Studio. The fleet size controls only each wave: 70 scenes can use
 seven compatible servers; 200 scenes with five compatible servers continue
 over four waves. Packs are pulled as workers finish, and a batch can contain up
@@ -172,6 +174,7 @@ to 5,000 scenes. Multiple episodes share workers in fair round-robin turns.
 ```json
 {
   "model": "mlx-community/Llama-3.2-3B-Instruct-4bit",
+  "model_cost_tier": "local",
   "kind": "visual",
   "label": "Scene visual prompts",
   "project": "dozing-knight",

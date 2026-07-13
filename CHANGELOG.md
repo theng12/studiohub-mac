@@ -10,6 +10,16 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 > Entries before 1.16.0 are condensed summaries reconstructed from git history — this changelog began at 1.16.0.
 
+## [1.34.0] — 2026-07-13
+
+### Added — adaptive cloud scene-prompt packs
+
+- Chat batches now declare their model cost tier. Local and free-cloud workers remain hard-limited to 10 scenes per request, while paid-cloud workers accept up to 30; Story Studio defaults paid cloud to 20.
+- The tier participates in idempotency and is returned in batch status, so retries and saved queue history retain the exact batching policy.
+- Existing clients that omit the tier remain safely classified as local and keep the original 10-scene limit.
+
+152 tests.
+
 ---
 
 ## [1.33.4] — 2026-07-13
