@@ -118,6 +118,7 @@ MODALITY_PRIORITY = {"render": 0}
 
 MAX_TRIES = 3
 POLL_S = 2.0
+RECOVERY_WINDOW_S = 120.0  # cover a full slow M1 generation after a dropped connection
 MEMORY_HEADROOM_GB = 1.0  # keep at least this much free beyond the model's need
 
 batches: dict[str, dict] = {}
@@ -390,6 +391,75 @@ async def _post_item_webhook(client: httpx.AsyncClient, b: dict, item: dict):
         pass  # client unreachable — the item is still in the batch/poll + ledger
 
 
+def _record_worker_success(b: dict, item: dict, studio: dict, job: dict,
+                           body: dict, t_start: float):
+    """Adopt a completed worker job into the Hub ledger.
+
+    This is deliberately separate from the normal poll loop: if the network
+    drops after the worker finishes, recovery can record the already-produced
+    artifact instead of submitting a duplicate generation.
+    """
+    item["artifact_path"] = job.get("output_path")
+    item["artifact_url"] = (
+        f"{base_url(studio)}{job['output_url']}" if job.get("output_url") else None)
+    item["state"] = "done"
+    item["sha256"] = job.get("sha256")
+    item["bytes"] = job.get("bytes")
+    item["encoder"] = job.get("encoder")
+    duration = job.get("duration_seconds")
+    if duration is None:
+        duration = round(time.time() - t_start, 2)
+    item["duration_s"] = duration
+    item["asset_id"] = ledger.record_asset(
+        source="job", modality=b["modality"], studio=studio["id"],
+        machine=studio.get("machine", "local"), model=b["model"],
+        seed=job.get("resolved_seed") or item["seed"], prompt=item["prompt"],
+        params=body, artifact_path=item["artifact_path"],
+        artifact_url=item["artifact_url"], batch_id=b["id"],
+        item_index=item["index"], duration_s=duration,
+    )
+
+
+async def _recover_worker_job(client, b: dict, item: dict, studio: dict,
+                              body: dict, t_start: float) -> bool:
+    """Reconcile a worker job after a transport failure.
+
+    A generation request is not safely retryable once the worker has accepted
+    it. Keep the Hub lease while reconnecting and poll the original job for a
+    bounded window. Return True only after adopting a completed result.
+    """
+    job_id = item.get("studio_job_id")
+    if not job_id or b.get("cancelled"):
+        return False
+    deadline = time.monotonic() + RECOVERY_WINDOW_S
+    delay = 1.0
+    while time.monotonic() < deadline:
+        try:
+            jr = await client.get(
+                f"{base_url(studio)}/api/generate/jobs/{job_id}",
+                headers=studio_headers(studio), timeout=10.0)
+            if jr.status_code >= 400:
+                return False  # 404/4xx means the worker no longer has the job
+            job = jr.json().get("job") or {}
+            state = job.get("state")
+            if state in ("queued", "running"):
+                p = job.get("progress")
+                if isinstance(p, (int, float)):
+                    item["progress"] = max(0.0, min(1.0, float(p)))
+                await asyncio.sleep(POLL_S)
+                continue
+            if state == "done" and not job.get("error"):
+                _record_worker_success(b, item, studio, job, body, t_start)
+                return True
+            return False  # the original job genuinely failed or was cancelled
+        except Exception:
+            # Tailscale/Wi-Fi and a busy worker can briefly drop the HTTP
+            # connection. Back off while retaining the same worker lease.
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 8.0)
+    return False
+
+
 async def _maybe_finish(client: httpx.AsyncClient, b: dict):
     """Persist state; when the batch just reached a terminal state, alert on any
     failures and fire the client's webhook (Story Studio et al) once."""
@@ -601,36 +671,22 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             if j.get("error") or state in ("error", "cancelled"):
                 raise RuntimeError(j.get("error") or f"studio job {state}")
             # terminal + no error = success
-            item["artifact_path"] = j.get("output_path")
-            item["artifact_url"] = (
-                f"{base_url(studio)}{j['output_url']}" if j.get("output_url") else None)
-            item["state"] = "done"
-            item["sha256"] = j.get("sha256")
-            item["bytes"] = j.get("bytes")
-            item["encoder"] = j.get("encoder")
-            # Prefer the studio's own generation time; fall back to wall-clock.
-            duration = j.get("duration_seconds")
-            if duration is None:
-                duration = round(time.time() - t_start, 2)
-            item["duration_s"] = duration
-            item["asset_id"] = ledger.record_asset(
-                source="job", modality=b["modality"], studio=studio["id"],
-                machine=studio.get("machine", "local"), model=b["model"],
-                seed=j.get("resolved_seed") or item["seed"],
-                prompt=item["prompt"], params=body,
-                artifact_path=item["artifact_path"],
-                artifact_url=item["artifact_url"],
-                batch_id=b["id"], item_index=item["index"],
-                duration_s=duration,
-            )
+            _record_worker_success(b, item, studio, j, body, t_start)
             return
     except Exception as e:
+        # The worker may have completed even though this status request lost
+        # its connection. Reconcile the original job before considering a
+        # retry; otherwise one image can be generated twice or reported as a
+        # false failure.
+        if await _recover_worker_job(client, b, item, studio, body, t_start):
+            return
+        message = str(e) or type(e).__name__
         if item["tries"] < MAX_TRIES and not b["cancelled"]:
             item["state"] = "queued"  # work-stealing retry, possibly elsewhere
-            item["error"] = f"try {item['tries']} failed: {e}"
+            item["error"] = f"try {item['tries']} failed: {message}"
         else:
             item["state"] = "error"
-            item["error"] = str(e)
+            item["error"] = message
     finally:
         _busy.discard(studio["id"])
         _reserved["gb"] = max(0.0, _reserved["gb"] - item.get("_reserved", 0.0))

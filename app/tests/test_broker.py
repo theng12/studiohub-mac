@@ -54,6 +54,41 @@ class _CapClient:
     async def post(self, url, json=None, timeout=None): self.posts.append((url, json))
 
 
+class _RecoveryResponse:
+    def __init__(self, job): self.status_code, self._job = 200, job
+    def json(self): return {"job": self._job}
+
+
+class _RecoveryClient:
+    def __init__(self, jobs): self.jobs, self.calls = list(jobs), 0
+    async def get(self, url, headers=None, timeout=None):
+        self.calls += 1
+        value = self.jobs.pop(0)
+        if isinstance(value, Exception): raise value
+        return _RecoveryResponse(value)
+
+
+@pytest.mark.asyncio
+async def test_connection_drop_recovers_completed_worker_without_duplicate(reset):
+    r = broker.submit_batch({"modality": "image", "model": "a/b",
+                             "items": [{"prompt": "x"}]})
+    b = broker.batches[r["batch_id"]]
+    item = b["items"][0]
+    item.update(state="running", tries=1, studio="image@mac-b",
+                studio_job_id="worker-1")
+    studio = {"id": "image@mac-b", "machine": "mac-b", "host": "127.0.0.1", "port": 47868}
+    client = _RecoveryClient([
+        httpx.RemoteProtocolError("connection dropped"),
+        {"id": "worker-1", "state": "done", "output_path": "/tmp/x.png",
+         "output_url": "/api/generate/jobs/worker-1/image",
+         "duration_seconds": 81.0, "resolved_seed": 7},
+    ])
+    ok = await broker._recover_worker_job(client, b, item, studio, {}, 0.0)
+    assert ok is True
+    assert item["state"] == "done" and item["asset_id"]
+    assert client.calls == 2
+
+
 @pytest.mark.asyncio
 async def test_item_webhook_fires_once_on_terminal(reset):
     r = broker.submit_batch({"modality": "image", "model": "a/b",

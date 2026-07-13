@@ -1377,8 +1377,28 @@ function renderBatches(batches) {
       <div class="prog"><i style="width:${pct}%"></i></div>
       ${runs ? `<div class="runs">${runs}</div>` : ""}
       <div class="sub" style="margin-top:4px">batch ${esc(b.id)}${b.label ? " · from " + esc(b.label) : ""}${b.avg_s != null ? " · avg " + fmtDur(b.avg_s) + "/item" : ""}${b.cancelled ? " · cancelled" : ""}${b.governor_note ? " · ⏳ " + esc(b.governor_note) : ""}</div>
+      <details class="tx-items" ontoggle="loadGenerationItems(this, '${jsq(b.id)}')">
+        <summary>Show per-image status</summary>
+        <div class="sub">Loading…</div>
+      </details>
     </div>`;
   }).join("") || `<div class="empty">No batches yet</div>`;
+}
+async function loadGenerationItems(details, batchId) {
+  if (!details.open || details.dataset.loaded === "1") return;
+  details.dataset.loaded = "1";
+  const body = details.querySelector("div");
+  const data = await api(`/api/hub/jobs/${encodeURIComponent(batchId)}`).then(r => r.json()).catch(() => null);
+  if (!data || !data.items) { body.innerHTML = `<div class="tx-error">Could not load image statuses.</div>`; return; }
+  body.innerHTML = `<div style="max-height:60vh;overflow:auto"><table><thead><tr>
+    <th>#</th><th>Prompt</th><th>State</th><th>Attempts</th><th>Worker / Mac</th><th>Time</th><th>Failure</th>
+  </tr></thead><tbody>${data.items.map(i => {
+    const machine = i.studio && i.studio.includes("@") ? i.studio.split("@")[1] : (i.studio || "—");
+    return `<tr><td>${i.index + 1}</td><td>${esc(i.prompt || "")}</td>
+      <td>${txStatePill(i.state)}</td><td class="num">${i.tries || 0}/3</td>
+      <td>${esc(mlabel(machine))}</td><td class="num">${fmtDur(i.duration_s)}</td>
+      <td class="tx-error">${esc(i.error || "—")}</td></tr>`;
+  }).join("")}</tbody></table></div>`;
 }
 async function loadBatches() {
   const [r, tx, chat] = await Promise.all([

@@ -8,6 +8,20 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 - **MINOR** (1.1.x → 1.2.x) — new feature, endpoint, or dashboard tab. **Update** from the Pinokio sidebar (restart the service if you run it as a startup service).
 - **PATCH** (1.2.0 → 1.2.1) — bugfix / UI tweak. **Just Update.**
 
+## [1.34.2] — 2026-07-13
+
+### Fixed — self-healing generation status after connection drops
+
+- When a worker accepts an image/audio/video generation but the Hub loses the status response, the Hub now keeps the original lease and reconciles that same worker job for up to 120 seconds before retrying — long enough for a slow M1 generation to finish.
+- A completed worker job is adopted into the Hub ledger instead of being duplicated or reported as a false failure. Empty transport errors now include their exception type for diagnosis.
+
+## [1.34.1] — 2026-07-13
+
+### Added — per-image generation status
+
+- The Jobs tab now has an expandable per-image view for generation batches, showing each prompt's state, retry attempts, worker/Mac, duration, and final failure reason.
+- The existing batch summary, queue behavior, automatic retries, and Assets/Stats views were left unchanged.
+
 > Entries before 1.16.0 are condensed summaries reconstructed from git history — this changelog began at 1.16.0.
 
 ## [1.34.0] — 2026-07-13
