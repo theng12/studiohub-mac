@@ -33,6 +33,8 @@ def test_dashboard_includes_render_studio():
     assert 'onclick="updateReadyHubs()"' in dashboard
     assert 'function startHubUpdate(machines = null)' in dashboard
     assert 'class="btn primary compact"' in dashboard
+    assert 'function providerHealthHTML(s, compact = false)' in dashboard
+    assert 'sum.cloud_providers?.ready_count || 0' in dashboard
 
 
 def test_health_and_version(client):
@@ -58,6 +60,38 @@ def test_hub_health_and_studios(authed):
     studios = authed.get("/api/hub/studios").json()["studios"]
     assert len(studios) == 6
     assert all("machine_label" in s for s in studios)
+
+
+def test_cloud_provider_health_is_aggregated_without_keys(authed):
+    import time
+    from backend import main
+
+    main.monitor.status["voice"] = {"status": "up", "last_seen": time.time()}
+    main.monitor._provider_cache["voice"] = (time.time(), {
+        "supported": True,
+        "providers": [{
+            "key": "genaipro", "name": "GenAIPro", "has_key": True,
+            "paid": True, "enabled": True, "live": True, "models": 4,
+        }, {
+            "key": "fal", "name": "fal.ai", "has_key": True,
+            "paid": False, "enabled": True, "live": False, "models": 0,
+        }],
+    })
+
+    response = authed.get("/api/hub/providers")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["provider_count"] == 2
+    assert data["ready_count"] == 1
+    genaipro = next(row for row in data["providers"] if row["key"] == "genaipro")
+    assert genaipro["ready_on"] == ["local"]
+    assert genaipro["endpoints"][0]["models"] == 4
+    assert "api_key" not in response.text
+
+    summary = authed.get("/api/hub/summary").json()
+    voice = next(row for row in summary["studios"] if row["id"] == "voice")
+    assert voice["cloud_providers"]["providers"][0]["key"] == "genaipro"
+    assert summary["cloud_providers"]["ready_count"] == 1
 
 
 def test_render_asset_stream_round_trip(authed):

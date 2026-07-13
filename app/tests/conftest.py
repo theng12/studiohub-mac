@@ -68,6 +68,7 @@ def _reset_state():
                                 "last_checked": None} for s in monitor.registry}
     monitor._catalog_cache.clear()
     monitor._transcribe_cache.clear()
+    monitor._provider_cache.clear()
 
 
 @pytest.fixture

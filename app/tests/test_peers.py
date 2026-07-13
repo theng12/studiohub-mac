@@ -68,11 +68,21 @@ async def test_refresh_offline_peer_is_graceful(reset):
 
 @pytest.mark.asyncio
 async def test_refresh_success_caches_host(reset):
-    resp = FakeResp(data={"host": {"total_gb": 64}, "studios": {"image": {"rss_gb": 3}}})
+    resp = FakeResp(data={
+        "host": {"total_gb": 64},
+        "studios": {
+            "image": {"rss_gb": 3},
+            "voice": {"cloud_providers": {
+                "supported": True,
+                "providers": [{"key": "genaipro", "live": True}],
+            }},
+        },
+    })
     await peers.refresh(REMOTE, FakeGet(resp=resp))
     c = peers.cached("mac-b")
     assert c["reachable"] and c["host"]["total_gb"] == 64
     assert c["studios"]["image"]["rss_gb"] == 3
+    assert c["studios"]["voice"]["cloud_providers"]["providers"][0]["key"] == "genaipro"
 
 
 @pytest.mark.asyncio

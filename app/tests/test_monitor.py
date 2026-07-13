@@ -14,6 +14,75 @@ def test_is_cached_semantics():
 
 
 @pytest.mark.asyncio
+async def test_provider_health_keeps_only_public_fields(monitor, monkeypatch):
+    studio = next(row for row in monitor.registry if row["id"] == "voice")
+    monitor.status["voice"] = {"status": "up"}
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"providers": [{
+                "key": "genaipro", "name": "GenAIPro", "has_key": True,
+                "paid": True, "enabled": True, "live": True,
+                "models": [{"id": "eleven_v3"}],
+                "api_key": "must-never-leave-voice-studio",
+            }]}
+
+    async def get(*args, **kwargs):
+        return Response()
+
+    monkeypatch.setattr(monitor._client, "get", get)
+    health = await monitor.get_provider_health(studio)
+    assert health == {"supported": True, "stale": False, "providers": [{
+        "key": "genaipro", "name": "GenAIPro", "has_key": True,
+        "paid": True, "enabled": True, "live": True, "models": 1,
+    }]}
+    assert "api_key" not in str(health)
+
+
+@pytest.mark.asyncio
+async def test_old_voice_studio_provider_endpoint_is_compatible(monitor, monkeypatch):
+    studio = next(row for row in monitor.registry if row["id"] == "voice")
+    monitor.status["voice"] = {"status": "up"}
+
+    class Response:
+        status_code = 404
+
+    async def get(*args, **kwargs):
+        return Response()
+
+    monkeypatch.setattr(monitor._client, "get", get)
+    assert await monitor.get_provider_health(studio) == {
+        "supported": False, "providers": [], "stale": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_provider_health_marks_cached_result_stale_after_failure(monitor, monkeypatch):
+    studio = next(row for row in monitor.registry if row["id"] == "voice")
+    monitor.status["voice"] = {"status": "up"}
+    monitor._provider_cache["voice"] = (0, {
+        "supported": True,
+        "stale": False,
+        "providers": [{"key": "genaipro", "live": True}],
+    })
+
+    async def get(*args, **kwargs):
+        raise TimeoutError("provider endpoint timed out")
+
+    monkeypatch.setattr(monitor._client, "get", get)
+    health = await monitor.get_provider_health(studio, force=True)
+    assert health["supported"] is True
+    assert health["stale"] is True
+    assert health["providers"][0]["key"] == "genaipro"
+    assert monitor.provider_health("voice")["stale"] is True
+
+
+@pytest.mark.asyncio
 async def test_active_chat_lease_suppresses_false_health_flap(reset, monitor, monkeypatch):
     from backend import alerts, chat_jobs
 

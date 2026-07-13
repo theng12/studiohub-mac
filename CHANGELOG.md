@@ -8,6 +8,17 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 - **MINOR** (1.1.x → 1.2.x) — new feature, endpoint, or dashboard tab. **Update** from the Pinokio sidebar (restart the service if you run it as a startup service).
 - **PATCH** (1.2.0 → 1.2.1) — bugfix / UI tweak. **Just Update.**
 
+## [1.36.0] — 2026-07-14
+
+### Added — fleet-wide cloud audio provider readiness
+
+- Voice Studio cards now show whether cloud audio providers are ready, configured but unavailable, missing credentials, or not yet supported by an older Voice Studio release. The compact status works in both card and list views and remains readable on mobile.
+- Added `GET /api/hub/providers` and a `cloud_providers` summary payload with ready, configured, available, machine, model-count, and stale-state information. Provider health federates through the existing peer resource snapshots as each agent Hub updates.
+- Provider polling uses a short timeout and cache, keeps the last known state during transient failures, and retains only a strict public-field allowlist. API keys and other provider response data never enter Hub state or fleet snapshots.
+- Mixed-version fleets remain compatible: older Voice Studios that return 404 are marked unsupported instead of breaking the resource poll or dashboard.
+
+161 tests. Responsive dashboard verified at 1440 px and 390 px without horizontal overflow.
+
 ## [1.35.1] — 2026-07-14
 
 ### Fixed — render is a local lane, not cloud

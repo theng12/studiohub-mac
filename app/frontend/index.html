@@ -52,6 +52,8 @@
   .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; font-size: 12.5px; }
   .kv dt { color: var(--dim); }
   .kv dd { text-align: right; font-variant-numeric: tabular-nums; }
+  .provider-mini { display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--warn);font:650 10px/1.3 ui-monospace,monospace;vertical-align:middle }
+  .provider-mini.ready { color:var(--up) }
   a.open { color: var(--accent); text-decoration: none; font-size: 12.5px; }
   a.open:hover { text-decoration: underline; }
   .actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; flex-wrap: wrap; }
@@ -1022,6 +1024,22 @@ function studioActionsHTML(s, sum) {
   else if (controllable) html = `<button class="btn" onclick="lifecycle('${jsq(s.id)}','start')">Start</button>`;
   return { html, controllable, pend };
 }
+function providerHealthRows(s) {
+  return s.modality === "voice" ? (s.cloud_providers?.providers || []) : [];
+}
+function providerHealthHTML(s, compact = false) {
+  const health = s.cloud_providers;
+  if (!health?.supported) return compact ? "" : '<span class="sub">Unavailable until Voice Studio updates</span>';
+  const rows = providerHealthRows(s);
+  if (!rows.length) return compact ? "" : '<span class="sub">No providers reported</span>';
+  const ready = rows.filter(p => p.live);
+  const configured = rows.filter(p => p.has_key && !p.live);
+  const label = ready.length
+    ? `${ready.length} ready: ${ready.map(p => p.name).join(", ")}`
+    : (configured.length ? `${configured.length} configured, not ready` : "No provider keys");
+  if (compact) return `<span class="provider-mini ${ready.length ? "ready" : ""}" title="${esc(label)}">${esc(ready.length ? ready.map(p => p.name).join(", ") : label)}</span>`;
+  return `<span class="provider-mini ${ready.length ? "ready" : ""}" title="${esc(label)}">${esc(label)}</span>`;
+}
 function studioCard(s, sum) {
   const res = sum.resources.studios[s.id];
   const a = studioActionsHTML(s, sum);
@@ -1038,6 +1056,7 @@ function studioCard(s, sum) {
       <dt>Address</dt><dd>${esc(s.host)}:${esc(s.port)}</dd>
       <dt>Latency</dt><dd>${s.latency_ms != null ? s.latency_ms + " ms" : "—"}</dd>
       <dt>Memory</dt><dd>${cardMem(s, sum)}</dd>
+      ${s.modality === "voice" ? `<dt>Cloud audio</dt><dd>${providerHealthHTML(s)}</dd>` : ""}
       <dt>Last seen</dt><dd>${fmtAgo(s.last_seen)}</dd>
     </dl>
     <div class="actions">${a.html}</div>${wd}
@@ -1067,7 +1086,7 @@ function studioRow(s, sum) {
   const a = studioActionsHTML(s, sum);
   return `<div class="lrow">
     <span class="emoji" style="font-size:18px">${esc(s.emoji || "🧩")}</span>
-    <div><span class="name">${esc(s.title)}</span><br><span class="sub">${esc(s.host)}:${esc(s.port)}</span></div>
+    <div><span class="name">${esc(s.title)}</span><br><span class="sub">${esc(s.host)}:${esc(s.port)}</span>${s.modality === "voice" ? `<br>${providerHealthHTML(s, true)}` : ""}</div>
     <div class="sub">${esc(mlabel(s.machine || "local"))}</div>
     <div class="st"><span class="dot ${stDot(s)}"></span>${a.pend ? a.pend.action + "ing…" : (stState(s) === "generating" ? `<span class="genbadge" title="${esc(workloadContext(s))}">⚡ ${esc(workloadLabel(s, true))}</span>` : esc(s.status))}</div>
     <div>${memCell(s, sum)}</div>
@@ -1108,7 +1127,8 @@ function renderOverview(sum) {
   const up = sum.studios.filter(s => s.status === "up").length;
   const gen = sum.studios.filter(s => s.busy).length;
   const machines = new Set(sum.studios.map(s => s.machine || "local")).size;
-  $("#hub-summary").textContent = `${up}/${sum.studios.length} up${gen ? " · ⚡" + gen + " working" : ""} · ${machines} machines`;
+  const cloudReady = sum.cloud_providers?.ready_count || 0;
+  $("#hub-summary").textContent = `${up}/${sum.studios.length} up${gen ? " · ⚡" + gen + " working" : ""} · ${machines} machines${cloudReady ? " · " + cloudReady + " cloud ready" : ""}`;
   const filtered = sum.studios.filter(passStatus);
   const groups = groupStudios(filtered);
   $("#ov-body").innerHTML = groups.map(([title, list]) => {

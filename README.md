@@ -14,6 +14,8 @@ The Hub runs on fixed port **47873** and provides:
   model-specific capabilities.
 - **Resource monitor** — host unified-memory pressure + per-studio process memory
   (RSS) and CPU, resolved port → PID → process tree.
+- **Cloud audio readiness** — Voice Studio cards show which provider gateways are
+  configured and live on each machine without exposing provider credentials.
 - **Host-aware registry** — studios on other machines (LAN/Tailscale) can be added
   via `studios.json`, the foundation for multi-machine federation and Swarm Batch.
 - **Machine-level work leases** — image generation and final rendering take turns
@@ -59,6 +61,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/catalog` | Raw per-studio catalog rows (annotated `hub_cached`, `hub_machine`). Query: `q`, `modality`, `downloaded`, `cloud`, `force` |
 | `GET /api/hub/models` | **Deduped by repo** with per-machine availability (`cached_on`, `machines[]`). Query: `q`, `modality`, `downloaded` |
 | `GET /api/hub/transcription` | Fleet-wide Whisper inventory with `cached_on`, `available_on`, ready counts, and recommended default |
+| `GET /api/hub/providers` | Fleet-wide cloud audio provider readiness, configuration counts, and reporting Voice Studio endpoints |
 | `POST /api/hub/transcribe` | Multipart audio transcription routed to a free Voice Studio that has the selected Whisper model cached |
 | `POST /api/hub/transcription/jobs` | Stream a multi-file episode transcription batch into the persistent fleet queue |
 | `GET /api/hub/transcription/jobs` · `GET /api/hub/transcription/jobs/{batch}` | List batches/lifetime totals or read chapter-level status |
@@ -72,8 +75,8 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `DELETE /api/hub/registry/machines/{machine}` | Unregister a discovered machine's studios |
 | `GET /api/hub/fleet` · `POST /api/hub/fleet` | Fleet token status / set (`{token}`) — enables remote specs + control |
 | `GET /api/hub/resources?local_only=true` | This machine only (peers call with this to prevent recursion) |
-| `GET /api/hub/resources` | Host memory/CPU + per-studio process stats |
-| `GET /api/hub/summary` | One-shot dashboard payload (studios + resources) |
+| `GET /api/hub/resources` | Host memory/CPU + per-studio process stats, including key-free Voice provider health |
+| `GET /api/hub/summary` | One-shot dashboard payload (studios + resources + cloud provider inventory) |
 | `POST /api/hub/studios/{id}/start` | Start a local studio (via Pinokio's `pterm` CLI) |
 | `POST /api/hub/maintenance/preflight` | Check fleet auth, contracts, models, engines, disk, and updates |
 | `POST /api/hub/maintenance/updates` | Start a drained, sequential rolling update |
