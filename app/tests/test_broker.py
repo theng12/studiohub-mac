@@ -219,6 +219,25 @@ def test_multipart_fields():
     assert "seed" not in out and "ignored" not in out
 
 
+def test_video_multipart_fields_are_img2video_only():
+    out = broker._video_multipart_fields({
+        "repo": "fal:provider/image-to-video",
+        "mode": "img2video",
+        "prompt": "gentle camera push",
+        "duration": 5,
+        "aspect_ratio": "16:9",
+        "provider_params": {"secret": "must-not-forward"},
+        "reference_images": [{"asset_id": "asset-1"}],
+    })
+    assert out == {
+        "repo": "fal:provider/image-to-video",
+        "mode": "img2video",
+        "prompt": "gentle camera push",
+        "duration": "5",
+        "aspect_ratio": "16:9",
+    }
+
+
 @pytest.mark.asyncio
 async def test_resolve_reference_b64():
     png = b"\x89PNG\r\n\x1a\n" + b"0" * 20

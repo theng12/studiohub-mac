@@ -71,6 +71,18 @@ def _multipart_fields(body: dict) -> dict:
     return out
 
 
+def _video_multipart_fields(body: dict) -> dict:
+    """Flatten an image-to-video request for Video Studio's multipart API."""
+    out = {}
+    for k in ("repo", "mode", "prompt", "negative_prompt", "width", "height",
+              "frames", "fps", "steps", "guidance", "seed", "duration",
+              "resolution", "aspect_ratio"):
+        v = body.get(k)
+        if v is not None:
+            out[k] = str(v)
+    return out
+
+
 async def _resolve_reference(client: httpx.AsyncClient, ref: dict):
     """Turn a reference_images[] entry into (bytes, mime). Supports inline b64,
     a tailnet url, or an asset_id from the Hub ledger (incl. uploaded refs).
@@ -613,23 +625,27 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
     body[prompt_field] = item["prompt"]
     if item["seed"] is not None:
         body["seed"] = item["seed"]
-    # Reference-image (img2img / edit) — image modality only. References live in
-    # the item params; forward reference_images[0] as multipart to the studio's
-    # img2img/edit route (single-ref: extra references are ignored — the client
-    # pre-selects its primary anchor).
-    refs = body.pop("reference_images", None) if b["modality"] == "image" else None
+    # Reference-image jobs use multipart. Image Studio accepts ``image`` on
+    # img2img/edit; Video Studio accepts ``file`` on video2video with
+    # mode=img2video. One exact source image is used per stable scene id.
+    refs = body.pop("reference_images", None) if b["modality"] in ("image", "video") else None
     ref_mode = body.pop("ref_mode", None)
-    body.pop("reference_images", None)  # never forward as JSON on the txt2img path
+    body.pop("reference_images", None)  # never forward references as JSON
     try:
         if refs:
             entry = await _catalog_entry(studio, b["model"])
             caps = (entry or {}).get("capabilities") or []
-            mode = ref_mode or ("img2img" if "img2img" in caps
-                                else ("edit" if "edit" in caps else None))
-            if not mode or mode not in caps:
+            if b["modality"] == "video":
+                mode = ref_mode or "img2video"
+                supported_modes = ("img2video",)
+            else:
+                mode = ref_mode or ("img2img" if "img2img" in caps
+                                    else ("edit" if "edit" in caps else None))
+                supported_modes = ("img2img", "edit")
+            if not mode or mode not in supported_modes or mode not in caps:
                 item["state"] = "error"
                 item["error"] = (f"model {b['model']} does not support reference "
-                                 f"images (needs img2img/edit capability)")
+                                 f"images (needs {'img2video' if b['modality'] == 'video' else 'img2img/edit'} capability)")
                 return  # terminal — the finally block cleans up
             try:
                 img_bytes, mime = await _resolve_reference(client, refs[0])
@@ -637,11 +653,19 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
                 item["state"] = "error"
                 item["error"] = f"reference image could not be loaded: {e}"
                 return
-            r = await client.post(
-                f"{base_url(studio)}/api/generate/{mode}",
-                data=_multipart_fields(body),
-                files={"image": (f"reference{_ext(mime)}", img_bytes, mime)},
-                headers=studio_headers(studio))
+            if b["modality"] == "video":
+                body["mode"] = "img2video"
+                r = await client.post(
+                    f"{base_url(studio)}/api/generate/video2video",
+                    data=_video_multipart_fields(body),
+                    files={"file": (f"reference{_ext(mime)}", img_bytes, mime)},
+                    headers=studio_headers(studio))
+            else:
+                r = await client.post(
+                    f"{base_url(studio)}/api/generate/{mode}",
+                    data=_multipart_fields(body),
+                    files={"image": (f"reference{_ext(mime)}", img_bytes, mime)},
+                    headers=studio_headers(studio))
         else:
             r = await client.post(f"{base_url(studio)}{endpoint}", json=body,
                                   headers=studio_headers(studio))

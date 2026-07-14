@@ -8,6 +8,16 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 - **MINOR** (1.1.x → 1.2.x) — new feature, endpoint, or dashboard tab. **Update** from the Pinokio sidebar (restart the service if you run it as a startup service).
 - **PATCH** (1.2.0 → 1.2.1) — bugfix / UI tweak. **Just Update.**
 
+## [1.36.1] — 2026-07-14
+
+### Fixed — Video Studio image-to-video dispatch
+
+- Video jobs with a reference image now use Video Studio's multipart `video2video` endpoint in explicit `img2video` mode instead of being sent to the text-to-video endpoint.
+- The Hub validates the selected model's `img2video` capability before dispatch, forwards the exact uploaded source image, and keeps cloud-provider credentials inside Video Studio.
+- Text-to-video remains available to other Hub clients, while Story Studio can enforce its stricter image-to-video-only product boundary.
+
+162 tests.
+
 ## [1.36.0] — 2026-07-14
 
 ### Added — fleet-wide cloud audio provider readiness

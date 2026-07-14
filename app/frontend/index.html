@@ -697,6 +697,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.36.1", date: "2026-07-14", items: [
+    "Video jobs with a source image now route through Video Studio as real <b>image-to-video</b> requests. The Hub preserves the exact image, validates model capability, and no longer sends these jobs to the text-to-video endpoint.",
+  ] },
   { v: "1.35.1", date: "2026-07-14", items: [
     "The <b>render</b> episode-assembly step now correctly shows in the <b>Local</b> lane instead of Cloud — it runs locally; its <code>is_cloud</code> flag was only a broker dispatch hint.",
   ] },
