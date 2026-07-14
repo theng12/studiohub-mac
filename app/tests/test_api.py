@@ -35,6 +35,9 @@ def test_dashboard_includes_render_studio():
     assert 'class="btn primary compact"' in dashboard
     assert 'function providerHealthHTML(s, compact = false)' in dashboard
     assert 'sum.cloud_providers?.ready_count || 0' in dashboard
+    assert '>Cancel image queue</button>' in dashboard
+    assert '>Clear finished image jobs</button>' in dashboard
+    assert 'Generated assets were kept.' in dashboard
 
 
 def test_health_and_version(client):
@@ -242,8 +245,31 @@ def test_jobs_submit_list_get_cancel(authed):
     assert any(b["id"] == bid for b in authed.get("/api/hub/jobs").json()["batches"])
     got = authed.get(f"/api/hub/jobs/{bid}").json()
     assert got["total"] == 1 and got["items"][0]["prompt"] == "x"
-    assert authed.request("DELETE", f"/api/hub/jobs/{bid}").json()["ok"] is True
+    cancelled = authed.request("DELETE", f"/api/hub/jobs/{bid}").json()
+    assert cancelled["ok"] is True and cancelled["queued_cancelled"] == 1
+    cleared = authed.post(f"/api/hub/jobs/{bid}/clear").json()
+    assert cleared["ok"] is True and cleared["cleared"] == 1
+    assert authed.get(f"/api/hub/jobs/{bid}").status_code == 404
     assert authed.get("/api/hub/jobs/does-not-exist").status_code == 404
+
+
+def test_bulk_image_cancel_and_clear_do_not_touch_other_modalities(authed):
+    image = authed.post("/api/hub/jobs", json={
+        "modality": "image", "model": "a/b", "items": [{"prompt": "image"}],
+    }).json()["batch_id"]
+    voice = authed.post("/api/hub/jobs", json={
+        "modality": "voice", "model": "c/d", "items": [{"text": "voice"}],
+    }).json()["batch_id"]
+
+    cancelled = authed.post("/api/hub/jobs/cancel", json={"modality": "image"}).json()
+    assert cancelled["batches_cancelled"] == 1
+    assert authed.get(f"/api/hub/jobs/{image}").json()["cancelled"] is True
+    assert authed.get(f"/api/hub/jobs/{voice}").json()["queued"] == 1
+
+    cleared = authed.post("/api/hub/jobs/clear", json={"modality": "image"}).json()
+    assert cleared["cleared"] == 1
+    assert authed.get(f"/api/hub/jobs/{image}").status_code == 404
+    assert authed.get(f"/api/hub/jobs/{voice}").status_code == 200
 
 
 def test_jobs_bad_modality_400(authed):

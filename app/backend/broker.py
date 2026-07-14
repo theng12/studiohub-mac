@@ -361,16 +361,108 @@ def batch_summary(b: dict) -> dict:
     }
 
 
-def cancel_batch(batch_id: str) -> bool:
+async def _signal_worker_cancel(client: httpx.AsyncClient, item: dict) -> bool:
+    """Ask the exact Studio worker to stop its active generation job."""
+    studio_id = item.get("studio")
+    job_id = item.get("studio_job_id")
+    if not studio_id or not job_id:
+        return False
+    studio = next((s for s in _monitor().registry if s["id"] == studio_id), None)
+    if not studio:
+        item["cancel_error"] = "worker is no longer registered"
+        return False
+    try:
+        response = await client.delete(
+            f"{base_url(studio)}/api/generate/jobs/{job_id}",
+            headers=studio_headers(studio), timeout=15.0)
+        # A 404 means the worker no longer has active work under this id. The
+        # broker poll will reconcile whether it completed just before cancel.
+        if response.status_code in (200, 404):
+            item["cancel_signal_sent_at"] = time.time()
+            item.pop("cancel_error", None)
+            return True
+        item["cancel_error"] = f"worker returned HTTP {response.status_code}"
+    except httpx.HTTPError as e:
+        item["cancel_error"] = str(e) or type(e).__name__
+    return False
+
+
+async def cancel_batch(batch_id: str, client: httpx.AsyncClient | None = None) -> dict | None:
+    """Cancel queued work and immediately signal every known running worker."""
     b = batches.get(batch_id)
     if b is None:
-        return False
+        return None
     b["cancelled"] = True
+    queued_cancelled = 0
     for it in b["items"]:
         if it["state"] == "queued":
             it["state"] = "cancelled"
+            it["error"] = "Cancelled by user"
+            queued_cancelled += 1
     ledger.save_batch(b)
-    return True
+    _wakeup.set()
+
+    running = [it for it in b["items"] if it["state"] == "running"]
+    owns_client = client is None
+    if owns_client:
+        client = httpx.AsyncClient()
+    try:
+        signals = await asyncio.gather(
+            *(_signal_worker_cancel(client, it) for it in running)) if running else []
+        for it in b["items"]:
+            if it["state"] == "cancelled":
+                await _post_item_webhook(client, b, it)
+        await _maybe_finish(client, b)
+    finally:
+        if owns_client:
+            await client.aclose()
+    return {
+        "batch": b,
+        "queued_cancelled": queued_cancelled,
+        "running_signalled": sum(1 for sent in signals if sent),
+        "running_pending": sum(1 for sent in signals if not sent),
+    }
+
+
+async def cancel_batches(modality: str | None = None) -> dict:
+    """Cancel every active batch, optionally limited to one modality."""
+    targets = [
+        b["id"] for b in batches.values()
+        if (modality is None or b.get("modality") == modality)
+        and any(it.get("state") in ("queued", "running") for it in b.get("items", []))
+    ]
+    results = []
+    async with httpx.AsyncClient() as client:
+        for batch_id in targets:
+            result = await cancel_batch(batch_id, client)
+            if result:
+                results.append(result)
+    return {
+        "batches_cancelled": len(results),
+        "queued_cancelled": sum(r["queued_cancelled"] for r in results),
+        "running_signalled": sum(r["running_signalled"] for r in results),
+        "running_pending": sum(r["running_pending"] for r in results),
+    }
+
+
+def clear_finished_batches(modality: str | None = None,
+                           batch_id: str | None = None) -> dict:
+    """Remove terminal job history without deleting any generated assets."""
+    known = {b["id"]: b for b in ledger.load_finished_batches()}
+    known.update({b["id"]: b for b in batches.values()})
+    selected = []
+    for candidate_id, b in known.items():
+        if batch_id is not None and candidate_id != batch_id:
+            continue
+        if modality is not None and b.get("modality") != modality:
+            continue
+        if any(it.get("state") in ("queued", "running") for it in b.get("items", [])):
+            continue
+        selected.append(candidate_id)
+    for candidate_id in selected:
+        batches.pop(candidate_id, None)
+    ledger.delete_batches(selected)
+    return {"cleared": len(selected), "batch_ids": selected}
 
 
 async def _post_item_webhook(client: httpx.AsyncClient, b: dict, item: dict):
@@ -675,9 +767,19 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             raise RuntimeError(f"HTTP {r.status_code}: {detail}")
         job = r.json()["job"]
         item["studio_job_id"] = job["id"]
+        if b["cancelled"]:
+            await _signal_worker_cancel(client, item)
+            item["state"] = "cancelled"
+            item["error"] = "Cancelled by user"
+            return
         # poll the studio's async job until terminal
         while True:
             await asyncio.sleep(POLL_S)
+            if b["cancelled"]:
+                await _signal_worker_cancel(client, item)
+                item["state"] = "cancelled"
+                item["error"] = "Cancelled by user"
+                return
             jr = await client.get(
                 f"{base_url(studio)}/api/generate/jobs/{job['id']}",
                 headers=studio_headers(studio))
@@ -687,12 +789,6 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
                 p = j.get("progress")
                 if isinstance(p, (int, float)):
                     item["progress"] = max(0.0, min(1.0, float(p)))
-                if b["cancelled"]:
-                    await client.delete(
-                        f"{base_url(studio)}/api/generate/jobs/{job['id']}",
-                        headers=studio_headers(studio))
-                    item["state"] = "cancelled"
-                    return
                 continue
             if j.get("error") or state in ("error", "cancelled"):
                 raise RuntimeError(j.get("error") or f"studio job {state}")
@@ -704,6 +800,10 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
         # its connection. Reconcile the original job before considering a
         # retry; otherwise one image can be generated twice or reported as a
         # false failure.
+        if b["cancelled"]:
+            item["state"] = "cancelled"
+            item["error"] = "Cancelled by user"
+            return
         if await _recover_worker_job(client, b, item, studio, body, t_start):
             return
         message = str(e) or type(e).__name__

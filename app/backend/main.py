@@ -611,10 +611,37 @@ async def hub_ack_job_artifact(batch_id: str, item_index: int):
 
 
 @app.delete("/api/hub/jobs/{batch_id}")
-def hub_cancel_batch(batch_id: str):
-    if not broker.cancel_batch(batch_id):
+async def hub_cancel_batch(batch_id: str):
+    result = await broker.cancel_batch(batch_id)
+    if not result:
         raise HTTPException(404, "unknown batch")
-    return {"ok": True}
+    return {"ok": True, **{k: v for k, v in result.items() if k != "batch"}}
+
+
+@app.post("/api/hub/jobs/cancel")
+async def hub_cancel_batches(body: dict):
+    modality = body.get("modality")
+    if modality is not None and modality not in broker.MODALITY:
+        raise HTTPException(400, "unknown modality")
+    return {"ok": True, **await broker.cancel_batches(modality)}
+
+
+@app.post("/api/hub/jobs/clear")
+def hub_clear_finished_batches(body: dict):
+    modality = body.get("modality")
+    if modality is not None and modality not in broker.MODALITY:
+        raise HTTPException(400, "unknown modality")
+    return {"ok": True, **broker.clear_finished_batches(modality=modality)}
+
+
+@app.post("/api/hub/jobs/{batch_id}/clear")
+def hub_clear_finished_batch(batch_id: str):
+    b = broker.batches.get(batch_id) or ledger.load_batch(batch_id)
+    if not b:
+        raise HTTPException(404, "unknown batch")
+    if any(it.get("state") in ("queued", "running") for it in b.get("items", [])):
+        raise HTTPException(409, "cancel the active batch before clearing it")
+    return {"ok": True, **broker.clear_finished_batches(batch_id=batch_id)}
 
 
 # ── asset ledger ───────────────────────────────────────────────────────────

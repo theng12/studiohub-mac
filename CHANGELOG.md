@@ -8,6 +8,18 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 - **MINOR** (1.1.x → 1.2.x) — new feature, endpoint, or dashboard tab. **Update** from the Pinokio sidebar (restart the service if you run it as a startup service).
 - **PATCH** (1.2.0 → 1.2.1) — bugfix / UI tweak. **Just Update.**
 
+## [1.37.0] — 2026-07-15
+
+### Added — acknowledged fleet cancellation and safe image-job cleanup
+
+- Cancelling a Story Studio generation batch now makes Studio Hub immediately signal every known running Studio worker job, while queued items are cancelled before they can dispatch.
+- Cancellation responses report queued cancellations, running stop signals, and any worker signals still pending, so clients no longer silently claim that fleet work stopped.
+- Added **Cancel image queue**, **Clear finished image jobs**, and per-batch **Clear** controls to Jobs. Active work must be cancelled before it can be cleared.
+- Clearing removes Hub job history only. Generated assets, ledger records, and output files are always preserved.
+- Added bulk cancellation and terminal-history cleanup endpoints with modality scoping, plus regression coverage for worker signalling, queue isolation, active-job protection, and asset preservation.
+
+165 tests.
+
 ## [1.36.1] — 2026-07-14
 
 ### Fixed — Video Studio image-to-video dispatch

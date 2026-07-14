@@ -201,13 +201,59 @@ def test_prompt_and_text_both_accepted(reset):
     assert b["items"][0]["prompt"] == "spoken"
 
 
-def test_cancel_batch(reset):
+@pytest.mark.asyncio
+async def test_cancel_batch(reset):
     r = broker.submit_batch({"modality": "image", "model": "a/b",
                              "items": [{"prompt": "x"}]})
-    assert broker.cancel_batch(r["batch_id"]) is True
+    result = await broker.cancel_batch(r["batch_id"])
+    assert result["queued_cancelled"] == 1
     b = broker.batches[r["batch_id"]]
     assert b["cancelled"] and b["items"][0]["state"] == "cancelled"
-    assert broker.cancel_batch("nope") is False
+    assert await broker.cancel_batch("nope") is None
+
+
+class _CancelResponse:
+    def __init__(self, status_code=200): self.status_code = status_code
+
+
+class _CancelClient:
+    def __init__(self, status_code=200): self.status_code, self.deletes = status_code, []
+    async def delete(self, url, **kwargs):
+        self.deletes.append((url, kwargs))
+        return _CancelResponse(self.status_code)
+    async def post(self, *args, **kwargs):
+        return _CancelResponse()
+
+
+@pytest.mark.asyncio
+async def test_cancel_batch_signals_running_worker_immediately(reset):
+    studio = next(s for s in broker._monitor().registry if s["modality"] == "image")
+    r = broker.submit_batch({"modality": "image", "model": "a/b",
+                             "items": [{"prompt": "x"}]})
+    item = broker.batches[r["batch_id"]]["items"][0]
+    item.update(state="running", studio=studio["id"], studio_job_id="worker-42")
+    client = _CancelClient()
+    result = await broker.cancel_batch(r["batch_id"], client)
+    assert result["running_signalled"] == 1 and result["running_pending"] == 0
+    assert client.deletes[0][0].endswith("/api/generate/jobs/worker-42")
+
+
+def test_clear_finished_batches_keeps_generated_assets(reset):
+    r = broker.submit_batch({"modality": "image", "model": "a/b",
+                             "items": [{"prompt": "x"}]})
+    batch_id = r["batch_id"]
+    batch = broker.batches[batch_id]
+    batch["items"][0]["state"] = "done"
+    ledger.save_batch(batch)
+    asset_id = ledger.record_asset(
+        source="job", modality="image", batch_id=batch_id,
+        artifact_path="/tmp/keep-this-image.png")
+
+    result = broker.clear_finished_batches(modality="image")
+
+    assert result == {"cleared": 1, "batch_ids": [batch_id]}
+    assert batch_id not in broker.batches and ledger.load_batch(batch_id) is None
+    assert ledger.get_asset(asset_id)["artifact_path"] == "/tmp/keep-this-image.png"
 
 
 def test_multipart_fields():

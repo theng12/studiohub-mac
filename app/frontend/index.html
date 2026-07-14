@@ -404,6 +404,9 @@
           <option value="status">Status</option><option value="duration">Longest processing</option>
         </select>
       </div>
+      <button class="btn stop" onclick="cancelImageQueue()">Cancel image queue</button>
+      <button class="btn" onclick="clearFinishedImageJobs()">Clear finished image jobs</button>
+      <span class="sub" id="gen-job-action-status" role="status" aria-live="polite"></span>
     </div>
     <div id="j-batches"></div>
 
@@ -697,6 +700,10 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.37.0", date: "2026-07-15", items: [
+    "Story Studio cancellation now receives a real <b>fleet acknowledgement</b>: queued items stop immediately and every known running Studio worker receives a direct stop signal.",
+    "Jobs adds separate <b>Cancel image queue</b> and <b>Clear finished image jobs</b> controls. Clearing removes job history only and always keeps generated assets and files.",
+  ] },
   { v: "1.36.1", date: "2026-07-14", items: [
     "Video jobs with a source image now route through Video Studio as real <b>image-to-video</b> requests. The Hub preserves the exact image, validates model capability, and no longer sends these jobs to the text-to-video endpoint.",
   ] },
@@ -1467,7 +1474,7 @@ function renderBatches(batches) {
   const { rows: list, pages, total } = pageSlice("gen", sorted);
   el.innerHTML = (total ? pagerHTML("gen", total, pages) : "") + list.map(b => {
     const pct = b.total ? Math.round(100 * (b.done + b.error + b.cancelled_items) / b.total) : 0;
-    const active = b.queued + b.running > 0 && !b.cancelled;
+    const active = b.queued + b.running > 0;
     const runs = (b.running_items || []).map(ri => {
       const mlab = mlabel(ri.machine);
       // a studio only counts as reporting real progress when it's > 0 — many
@@ -1487,7 +1494,7 @@ function renderBatches(batches) {
     return `<div class="card section">
       <div class="top"><h3 style="font-size:13.5px">${esc(b.modality)} · ${esc(b.model)}</h3>
         <span class="sub" style="margin-left:auto">${b.done}/${b.total} done${b.error ? ` · ${b.error} failed` : ""}${b.running ? ` · ${b.running} running` : ""}</span>
-        ${active ? `<button class="btn stop" style="margin-left:10px" onclick="cancelBatch('${jsq(b.id)}')">Cancel</button>` : ""}</div>
+        ${active ? `<button class="btn stop" style="margin-left:10px" onclick="cancelBatch('${jsq(b.id)}')">${b.cancelled ? "Retry stop" : "Cancel"}</button>` : `<button class="btn" style="margin-left:10px" onclick="clearGenerationBatch('${jsq(b.id)}')">Clear</button>`}</div>
       <div class="prog"><i style="width:${pct}%"></i></div>
       ${runs ? `<div class="runs">${runs}</div>` : ""}
       <div class="sub" style="margin-top:4px">batch ${esc(b.id)}${b.label ? " · from " + esc(b.label) : ""}${b.avg_s != null ? " · avg " + fmtDur(b.avg_s) + "/item" : ""}${b.cancelled ? " · cancelled" : ""}${b.governor_note ? " · ⏳ " + esc(b.governor_note) : ""}</div>
@@ -1539,7 +1546,46 @@ async function loadActiveJobQueues() {
     activeJobQueuesLoading = false;
   }
 }
-async function cancelBatch(id) { await api(`/api/hub/jobs/${id}`, { method: "DELETE" }); loadBatches(); }
+async function cancelBatch(id) {
+  const response = await api(`/api/hub/jobs/${id}`, { method: "DELETE" });
+  const result = await response.json().catch(() => ({}));
+  const status = $("#gen-job-action-status");
+  if (status) status.textContent = response.ok
+    ? `Cancelled batch ${id}: ${result.queued_cancelled || 0} queued, ${result.running_signalled || 0} running stop signal(s).`
+    : `Could not cancel batch ${id}.`;
+  loadBatches();
+}
+async function cancelImageQueue() {
+  if (!confirm("Cancel all queued and running image generation jobs? Completed images are kept.")) return;
+  const response = await api("/api/hub/jobs/cancel", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ modality: "image" }),
+  });
+  const result = await response.json().catch(() => ({}));
+  $("#gen-job-action-status").textContent = response.ok
+    ? `Cancelled ${result.batches_cancelled || 0} image batch(es); signalled ${result.running_signalled || 0} running worker job(s).`
+    : "Could not cancel the image queue.";
+  loadBatches();
+}
+async function clearFinishedImageJobs() {
+  const response = await api("/api/hub/jobs/clear", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ modality: "image" }),
+  });
+  const result = await response.json().catch(() => ({}));
+  $("#gen-job-action-status").textContent = response.ok
+    ? `Cleared ${result.cleared || 0} finished image job(s). Generated assets were kept.`
+    : "Could not clear finished image jobs.";
+  loadBatches();
+}
+async function clearGenerationBatch(id) {
+  const response = await api(`/api/hub/jobs/${id}/clear`, { method: "POST" });
+  const result = await response.json().catch(() => ({}));
+  $("#gen-job-action-status").textContent = response.ok
+    ? `Cleared batch ${id}. Generated assets were kept.`
+    : (result.detail || `Could not clear batch ${id}.`);
+  loadBatches();
+}
 
 function renderChatBatches(data) {
   const stats = data.stats || {};

@@ -92,6 +92,26 @@ def load_unfinished_batches() -> list[dict]:
     return [json.loads(r[0]) for r in rows]
 
 
+def load_finished_batches() -> list[dict]:
+    """Load terminal broker batches for operator-requested history cleanup."""
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT payload FROM batches WHERE finished = 1").fetchall()
+    return [json.loads(r[0]) for r in rows]
+
+
+def delete_batches(batch_ids: list[str]) -> int:
+    """Delete broker history only; generated assets and files are untouched."""
+    ids = list(dict.fromkeys(batch_ids))
+    if not ids:
+        return 0
+    placeholders = ",".join("?" for _ in ids)
+    with _conn() as conn:
+        cursor = conn.execute(
+            f"DELETE FROM batches WHERE id IN ({placeholders})", ids)
+    return cursor.rowcount
+
+
 def get_asset(asset_id: str) -> dict | None:
     with _conn() as conn:
         row = conn.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)).fetchone()
