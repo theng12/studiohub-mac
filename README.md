@@ -32,7 +32,8 @@ Swarm Batch, recipes).
 2. **Start** — click *Start*. The dashboard opens at `http://localhost:47873`.
 3. **Tabs**: *Overview* (studio cards), *Models* (unified catalog with search and
    filters), *Resources* (host memory bar + per-studio table).
-4. The dashboard refreshes every 5 s automatically.
+4. The dashboard updates continuously over SSE, falls back to 5-second polling
+   if the stream drops, and reconnects automatically with bounded backoff.
 
 ### Adding a studio on another machine
 
@@ -277,6 +278,13 @@ Security: the fleet token is a shared credential accepted by every Hub in
 addition to its own local token. Loopback is always exempt. It lives in
 `.fleet_token` (gitignored) or `STUDIOHUB_FLEET_TOKEN`.
 
+The first Hub creates the owner-only local value; treat the primary Hub as the
+source of truth. **Save & verify** rotates connected peers using the previously
+trusted value and then verifies the replacement. To repair a rejected value,
+open that Mac's Hub locally, paste the primary value, save it once, and
+restart/update Studios that still show an authentication warning. The value is
+sent only in headers or an HttpOnly same-site session—never in a URL.
+
 ## Multiple Macs (registry)
 
 Every Mac keeps running its own studios; ONE Hub coordinates them all:
@@ -307,7 +315,9 @@ Heterogeneity is handled per-dispatch:
 
 Submit N independent prompts; the Hub queues them and free studios of that
 modality pull the next item (work-stealing — a second machine in `studios.json`
-automatically joins the pool). Failed items are retried up to 3 times. Every
+automatically joins the pool). Transient transport, timeout, throttling, and
+server failures are retried up to 3 times with a short delay; authentication
+and validation failures stop immediately with their original reason. Every
 result lands in the asset ledger with full provenance (prompt, model, resolved
 seed, params, batch id) — reproducible by construction.
 
@@ -393,18 +403,23 @@ call returns immediately — poll `/api/hub/studios` to watch the status change.
 
 - **Local (this machine)** — no token needed; everything works as before.
 - **Remote (LAN / Tailscale)** — every API call requires the Hub token via
-  `Authorization: Bearer <token>`, `X-Hub-Token: <token>`, or `?token=`.
+  `Authorization: Bearer <token>` or `X-Hub-Token: <token>`.
   StudioHub also creates an owner-only fleet token automatically and forwards it as
   `X-Studio-Token` to sibling Studio APIs. Local loopback use remains passwordless;
   remote Studio API, OpenAI-compatible, settings, upload, and output routes require it.
   The dashboard page and `/api/health`/`/api/version` stay public; the
-  dashboard prompts for the token once and remembers it.
+  dashboard prompts for the token once and establishes an HttpOnly same-site
+  session for its live stream. Tokens in query strings are rejected so they
+  cannot leak through browser history or access logs.
 - The token is auto-generated into `.hub_token` (gitignored). See it in the
   dashboard's **Remote** tab (only shown when viewed on the Hub machine).
   Rotate it by deleting the file and restarting the Hub.
 - **Control from anywhere:** install Tailscale on your phone/laptop, then open
   the Tailscale URL shown in the Remote tab. Your Mac stays the server; no
   cloud middleman.
+
+Runtime dependency ranges remain in `app/requirements.txt`; the exact tested
+transitive set used by Install and Update is in `app/requirements.lock`.
 
 ## Gateway
 

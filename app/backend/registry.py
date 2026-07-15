@@ -214,10 +214,16 @@ def add_user_entries(entries: list[dict]) -> int:
         except (json.JSONDecodeError, OSError):
             existing = []
     by_id = {e.get("id"): e for e in existing if e.get("id")}
+    endpoints = {(e.get("host"), e.get("port")) for e in existing
+                 if e.get("host") and e.get("port")}
     added = 0
     for entry in entries:
-        if entry.get("id") and entry["id"] not in by_id:
+        endpoint = (entry.get("host"), entry.get("port"))
+        duplicate_endpoint = all(endpoint) and endpoint in endpoints
+        if entry.get("id") and entry["id"] not in by_id and not duplicate_endpoint:
             by_id[entry["id"]] = entry
+            if all(endpoint):
+                endpoints.add(endpoint)
             added += 1
     REGISTRY_FILE.write_text(json.dumps(list(by_id.values()), indent=2) + "\n")
     return added

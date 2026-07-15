@@ -19,6 +19,24 @@ APPNAME="Studio Hub KH"
 mkdir -p "$LA" "$ROOT/logs/service" "$ROOT/service"
 chmod +x "$ROOT/studiohub-serve.sh" "$ROOT/studiohub-watchdog.sh"
 
+_hub_owned_pid() {
+  local pid="$1" command cwd
+  command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
+  [[ "$command" == *"$ROOT"* || "$cwd" == "$ROOT" || "$cwd" == "$ROOT/"* ]]
+}
+
+# Never disrupt an unrelated service that happens to use the configured port.
+# Check before unloading launchd so a failed repair leaves the current Hub intact.
+PORT_PIDS="$(lsof -ti tcp:$PORT -sTCP:LISTEN 2>/dev/null || true)"
+for p in $PORT_PIDS; do
+  if ! _hub_owned_pid "$p"; then
+    echo "❌ Port $PORT is owned by an unrelated process (pid $p)."
+    echo "   Studio Hub repair stopped without terminating it. Free the port or change that service first."
+    exit 1
+  fi
+done
+
 # ── server agent: boot-start + auto-restart on crash ──
 cat > "$LA/$SRV.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -75,7 +93,9 @@ if [ -n "$PORT_PIDS" ]; then
   sleep 2
   STRAGGLERS="$(lsof -ti tcp:$PORT -sTCP:LISTEN 2>/dev/null || true)"
   if [ -n "$STRAGGLERS" ]; then
-    for p in $STRAGGLERS; do kill -9 "$p" 2>/dev/null || true; done
+    for p in $STRAGGLERS; do
+      if _hub_owned_pid "$p"; then kill -9 "$p" 2>/dev/null || true; fi
+    done
     sleep 1
   fi
   echo ""
@@ -87,10 +107,28 @@ _bootstrap "$LA/$SRV.plist"
 _bootstrap "$LA/$WD.plist"
 launchctl kickstart "gui/$UID_NUM/$SRV" 2>/dev/null || true
 
+# A successful bootstrap is not the same as a healthy update. Wait until the
+# new process owns the port and reports the VERSION currently on disk.
+EXPECTED_VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
+LOADED_VERSION=""
+for _ in $(seq 1 60); do
+  HEALTH="$(curl -fsS --max-time 3 "http://127.0.0.1:$PORT/api/health" 2>/dev/null || true)"
+  LIVE_PID="$(lsof -ti tcp:$PORT -sTCP:LISTEN 2>/dev/null | head -n 1 || true)"
+  if [ -n "$HEALTH" ] && [ -n "$LIVE_PID" ] && _hub_owned_pid "$LIVE_PID"; then
+    LOADED_VERSION="$(printf '%s' "$HEALTH" | "$ROOT/conda_env/bin/python" -c 'import json,sys; print(json.load(sys.stdin).get("app_version", ""))' 2>/dev/null || true)"
+    if [ "$LOADED_VERSION" = "$EXPECTED_VERSION" ]; then break; fi
+  fi
+  sleep 1
+done
+if [ "$LOADED_VERSION" != "$EXPECTED_VERSION" ]; then
+  echo "❌ Studio Hub did not become healthy on v$EXPECTED_VERSION within 60 seconds."
+  echo "   Loaded version: ${LOADED_VERSION:-not responding}. Check logs/service/server.err.log."
+  exit 1
+fi
 touch "$ROOT/service/.installed"
 
 echo ""
-echo "✅ $APPNAME is now an always-on service on port $PORT."
+echo "✅ $APPNAME v$LOADED_VERSION is healthy as an always-on service on port $PORT."
 echo "   • Starts automatically at login, restarts itself if it crashes, and a"
 echo "     watchdog re-launches it if it ever stops responding to /api/health."
 echo "   • Logs: $ROOT/logs/service/"

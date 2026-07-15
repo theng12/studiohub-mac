@@ -10,6 +10,16 @@ def test_submit_validation(reset):
     assert "error" in broker.submit_batch({"modality": "bogus", "items": [{}], "model": "m"})
     assert "error" in broker.submit_batch({"modality": "image", "items": [], "model": "m"})
     assert "error" in broker.submit_batch({"modality": "image", "items": [{"prompt": "x"}]})  # no model
+    too_many = [{"prompt": "x"}] * (broker.MAX_BATCH_ITEMS + 1)
+    result = broker.submit_batch({"modality": "image", "items": too_many, "model": "m"})
+    assert "limited" in result["error"]
+
+
+def test_submit_rejects_oversized_json_payload(reset, monkeypatch):
+    monkeypatch.setattr(broker, "MAX_BATCH_JSON_BYTES", 50)
+    result = broker.submit_batch({"modality": "image", "model": "m",
+                                  "items": [{"prompt": "x" * 100}]})
+    assert "25 MB limit" in result["error"]
 
 
 def test_submit_ok_and_summary(reset):
@@ -47,6 +57,17 @@ def test_summary_local_running_item_machine(reset):
                          run_started=time.time(), progress=None)
     ri = broker.batch_summary(b)["running_items"][0]
     assert ri["machine"] == "local" and ri["progress"] is None
+
+
+def test_summary_distinguishes_delayed_retry(reset):
+    import time
+    r = broker.submit_batch({"modality": "image", "model": "a/b",
+                             "items": [{"prompt": "x"}]})
+    item = broker.batches[r["batch_id"]]["items"][0]
+    item.update(error="try 1 failed: disconnected", retry_at=time.time() + 5)
+    summary = broker.batch_summary(broker.batches[r["batch_id"]])
+    assert summary["queued"] == 0 and summary["retrying"] == 1
+    assert summary["next_retry_at"] == item["retry_at"]
 
 
 class _CapClient:
@@ -95,6 +116,26 @@ class _PeerRouteClient:
         }})
 
 
+class _RejectedClient:
+    def __init__(self, status):
+        self.status = status
+
+    async def post(self, *_args, **_kwargs):
+        response = _PeerRouteResponse({"detail": "rejected"})
+        response.status_code = self.status
+        return response
+
+
+class _PollRejectedClient:
+    async def post(self, *_args, **_kwargs):
+        return _PeerRouteResponse({"job": {"id": "worker-1"}})
+
+    async def get(self, *_args, **_kwargs):
+        response = _PeerRouteResponse({"detail": "credential rejected"})
+        response.status_code = 401
+        return response
+
+
 @pytest.mark.asyncio
 async def test_connection_drop_recovers_completed_worker_without_duplicate(reset):
     r = broker.submit_batch({"modality": "image", "model": "a/b",
@@ -103,7 +144,8 @@ async def test_connection_drop_recovers_completed_worker_without_duplicate(reset
     item = b["items"][0]
     item.update(state="running", tries=1, studio="image@mac-b",
                 studio_job_id="worker-1")
-    studio = {"id": "image@mac-b", "machine": "mac-b", "host": "127.0.0.1", "port": 47868}
+    studio = {"id": "image@mac-b", "modality": "image", "machine": "mac-b",
+              "host": "127.0.0.1", "port": 47868}
     client = _RecoveryClient([
         httpx.RemoteProtocolError("connection dropped"),
         {"id": "worker-1", "state": "done", "output_path": "/tmp/x.png",
@@ -160,6 +202,61 @@ async def test_generation_uses_connected_peer_hub_route(reset, monkeypatch):
                for call in client.calls)
     assert all(call[2] == {"X-Hub-Token": "fleet-secret"}
                for call in client.calls)
+
+
+@pytest.mark.asyncio
+async def test_authentication_failure_is_terminal_without_retry(reset):
+    submitted = broker.submit_batch({
+        "modality": "image", "model": "a/b", "items": [{"prompt": "x"}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="running", tries=1, studio="image@mac-b")
+    studio = {"id": "image@mac-b", "modality": "image", "machine": "mac-b",
+              "host": "100.1.1.1", "port": 47868}
+
+    await broker._run_item(_RejectedClient(401), batch, item, studio)
+
+    assert item["state"] == "error"
+    assert item["tries"] == 1 and item["retry_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_transient_worker_failure_requeues_with_delay(reset):
+    submitted = broker.submit_batch({
+        "modality": "image", "model": "a/b", "items": [{"prompt": "x"}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="running", tries=1, studio="image@mac-b")
+    studio = {"id": "image@mac-b", "modality": "image", "machine": "mac-b",
+              "host": "100.1.1.1", "port": 47868}
+
+    await broker._run_item(_RejectedClient(503), batch, item, studio)
+
+    assert item["state"] == "queued" and item["retry_at"]
+    assert item["error"] == "try 1 failed: HTTP 503: rejected"
+
+
+@pytest.mark.asyncio
+async def test_poll_authentication_failure_is_terminal(reset, monkeypatch):
+    submitted = broker.submit_batch({
+        "modality": "image", "model": "a/b", "items": [{"prompt": "x"}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="running", tries=1, studio="image@mac-b")
+    studio = {"id": "image@mac-b", "modality": "image", "machine": "mac-b",
+              "host": "100.1.1.1", "port": 47868}
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(broker.asyncio, "sleep", no_sleep)
+    await broker._run_item(_PollRejectedClient(), batch, item, studio)
+
+    assert item["state"] == "error"
+    assert item["error"] == "HTTP 401: credential rejected"
 
 
 @pytest.mark.asyncio

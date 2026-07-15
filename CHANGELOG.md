@@ -10,6 +10,28 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.38.0] — 2026-07-15
+
+### Fixed — self-healing fleet generation without authentication races
+
+- Every remote Studio request now uses that machine's peer Hub immediately, even before the short peer-status cache has populated. This closes the startup/discovery race that sent newly connected workers a stale direct credential and caused hundreds of image items to fail with HTTP 401.
+- Generation transport, timeout, throttling, and 5xx failures retry up to three times after visible 3-second and 10-second delays. Authentication and other permanent 4xx failures stop immediately with the original reason instead of burning three attempts.
+- Jobs distinguishes **retrying** from queued/running work, shows the next attempt countdown, and preserves the exact worker failure. Batch submissions are capped at 1,000 items and 25 MB.
+- Remote Hub work no longer falls back around the agent Hub, keeping one authority for credentials, machine identity, and lifecycle control.
+
+### Security and reliability
+
+- Removed query-string token authentication. The remote dashboard authenticates with a header once, then uses an HttpOnly same-site session for SSE so credentials do not enter browser history or access logs.
+- Live updates now show live-versus-polling state and reconnect with bounded exponential backoff without stacking reconnect timers.
+- New registry writes reject URL-shaped hosts and unsafe machine IDs, and duplicate host/port worker registrations are refused.
+- Startup-service repair refuses to terminate an unrelated process on port 47873. Install, update, and restart report success only after Hub health is verified; update additionally verifies that the running version matches `VERSION`.
+- Added a reproducible runtime dependency lock used by Install and Update. `pip-audit` found no known vulnerabilities; Bandit found no high-severity issues.
+
+### Documentation
+
+- Expanded the Remote tab and README with the fleet trust model, source-of-truth credential, validation, rotation, revocation, and one-time repair flow.
+- Added regression coverage for peer routing before cache warmup, permanent-versus-transient retry decisions, retry visibility, token transport, request bounds, registry validation, and duplicate endpoint prevention.
+
 ## [1.37.1] — 2026-07-15
 
 ### Fixed — generation uses connected peer Hubs for remote workers

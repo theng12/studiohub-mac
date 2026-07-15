@@ -32,6 +32,15 @@ def test_add_and_remove_machine(reset):
     assert "image@mac-b" not in ids
 
 
+def test_duplicate_network_endpoint_is_not_registered_twice(reset):
+    first = reg.build_machine_entries("100.1.1.1", "mac-b", ["image", "voice"])
+    duplicate_alias = reg.build_machine_entries("100.1.1.1", "renamed-mac", ["image", "voice"])
+    assert reg.add_user_entries(first) == 2
+    assert reg.add_user_entries(duplicate_alias) == 0
+    ids = {s["id"] for s in reg.load_registry()}
+    assert "image@renamed-mac" not in ids and "voice@renamed-mac" not in ids
+
+
 def test_remove_single_studio(reset):
     reg.add_user_entries(reg.build_machine_entries(
         "100.1.1.1", "mac-b", ["image", "music", "video"]))
@@ -71,3 +80,12 @@ def test_malformed_studios_json_falls_back(reset):
     reg.REGISTRY_FILE.write_text("{ not json")
     studios = reg.load_registry()  # must not raise
     assert len(studios) == 6
+
+
+def test_registry_endpoint_rejects_url_shaped_host_and_unsafe_machine(authed):
+    assert authed.post("/api/hub/registry/add", json={
+        "host": "http://127.0.0.1/private", "machine": "mac-b",
+    }).status_code == 400
+    assert authed.post("/api/hub/registry/add", json={
+        "host": "100.1.1.1", "machine": "mac@spoofed",
+    }).status_code == 400

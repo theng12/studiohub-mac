@@ -46,7 +46,7 @@ module.exports = {
         { icon: "fa-solid fa-arrow-up-right-from-square", text: `Port ${servicePort} · Open in Browser`, href: "open_external.js", params: { url: svcUrl } },
         { icon: "fa-solid fa-stethoscope", text: "Check Service Status", href: "service_status.js" },
         { icon: "fa-solid fa-rotate-right", text: "Restart Service", href: "service_restart.js" },
-        { icon: "fa-solid fa-screwdriver-wrench", text: "Repair · take over port", href: "service.js" },
+        { icon: "fa-solid fa-screwdriver-wrench", text: "Repair Startup Service", href: "service.js" },
         { icon: "fa-solid fa-folder-open", text: "Service Logs", href: "logs/service?fs=true" },
         { icon: "fa-regular fa-circle-xmark", text: "Uninstall Startup Service", href: "unservice.js" },
         { icon: "fa-solid fa-rotate", text: "Update", href: "update.js" }

@@ -370,7 +370,8 @@ lifecycle control — foundations only in Phase 1 (host-aware registry + batch-r
 **Resolved in Phase 3 (2026-07-02):**
 - **Auth model = single shared token** (`.hub_token`, auto-generated, gitignored). Loopback is
   exempt so local UX is frictionless; all remote API calls require the token (Bearer /
-  X-Hub-Token / `?token=`). Dashboard page + `/api/health` + `/api/version` stay public.
+  X-Hub-Token, with an HttpOnly same-site session for the dashboard stream). Query-string
+  credentials are rejected. Dashboard page + `/api/health` + `/api/version` stay public.
   Per-client keys deferred until there's a second real client beyond Story Studio.
 - **"Control from anywhere" = Tailscale, not a cloud host.** The studios physically run on this
   Mac, so the Hub cannot move to a cloud VM; instead any Tailscale-connected device reaches the

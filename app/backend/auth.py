@@ -4,7 +4,8 @@ Trust model (SPEC §7 exposure decision):
 - Requests from loopback (this Mac) need no token: the Pinokio webview, local
   scripts and the local dashboard keep working untouched.
 - Requests from anywhere else (LAN / Tailscale) must present the token via
-  `Authorization: Bearer <token>`, `X-Hub-Token: <token>`, or `?token=`.
+  `Authorization: Bearer <token>` or `X-Hub-Token: <token>`. A successful
+  browser request establishes an HttpOnly same-site session for SSE.
 - The static dashboard page itself is served without a token; its API calls
   are what get checked (the page prompts for the token on first 401).
 
@@ -26,6 +27,7 @@ TOKEN_FILE = DATA_DIR / ".hub_token"
 
 # Paths any client may hit without a token.
 PUBLIC_PATHS = {"/", "/api/health", "/api/version"}
+COOKIE_NAME = "kh_hub_token"
 
 
 def load_token() -> str:
@@ -52,7 +54,8 @@ def presented_token(request: Request) -> str | None:
     header = request.headers.get("x-hub-token")
     if header:
         return header.strip()
-    return request.query_params.get("token")
+    cookie = request.cookies.get(COOKIE_NAME)
+    return cookie.strip() if cookie else None
 
 
 def make_middleware(token: str):
@@ -77,6 +80,8 @@ def make_middleware(token: str):
         if offered is not None:
             if secrets.compare_digest(offered, token):
                 response = await call_next(request)
+                response.set_cookie(COOKIE_NAME, offered, httponly=True,
+                                    samesite="strict")
                 fleet = peers.fleet_token()
                 if fleet:
                     response.set_cookie("kh_studio_token", fleet, httponly=True,
@@ -86,6 +91,8 @@ def make_middleware(token: str):
             fleet = peers.fleet_token()
             if fleet and secrets.compare_digest(offered, fleet):
                 response = await call_next(request)
+                response.set_cookie(COOKIE_NAME, offered, httponly=True,
+                                    samesite="strict")
                 response.set_cookie("kh_studio_token", fleet, httponly=True,
                                     samesite="strict")
                 return response

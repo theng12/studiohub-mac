@@ -13,7 +13,7 @@ module.exports = {
         },
         message: [
           "python -m pip install --upgrade pip",
-          "uv pip install -r requirements.txt"
+          "uv pip install -r requirements.lock"
         ]
       }
     }

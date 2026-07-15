@@ -26,7 +26,7 @@ module.exports = {
         conda: { "path": "{{path.resolve(cwd, 'conda_env')}}" },
         message: [
           "python -m pip install --upgrade pip",
-          "uv pip install -r requirements.txt"
+          "uv pip install -r requirements.lock"
         ]
       }
     },

@@ -5,12 +5,23 @@
 # handles crashes on its own; this is the manual "kick".
 #
 set -euo pipefail
+ROOT="$(cd "$(dirname "$0")" && pwd)"
 UID_NUM="$(id -u)"
 SRV="com.kh.studiohub.server"
+PORT=47873
 
 if launchctl kickstart -k "gui/$UID_NUM/$SRV" 2>/dev/null; then
   echo "🔄 Restart signal sent to $SRV."
-  echo "   Give it ~10s, then use 'Check Service Status' to confirm it's up."
+  for _ in $(seq 1 45); do
+    if curl -fsS --max-time 3 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
+      echo "✅ Studio Hub is healthy again on port $PORT."
+      exit 0
+    fi
+    sleep 1
+  done
+  echo "❌ Restart was sent, but Studio Hub did not become healthy within 45 seconds."
+  echo "   Check $ROOT/logs/service/server.err.log."
+  exit 1
 else
   echo "⚠️  Couldn't kick the service — is it installed?"
   echo "   Use 'Install as Startup Service' first."

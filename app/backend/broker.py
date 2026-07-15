@@ -18,6 +18,7 @@ and are forwarded verbatim to the studio's own generate endpoint.
 
 import asyncio
 import base64
+import json
 import logging
 import time
 import uuid
@@ -133,6 +134,9 @@ MODALITY_PRIORITY = {"render": 0}
 MAX_TRIES = 3
 POLL_S = 2.0
 RECOVERY_WINDOW_S = 120.0  # cover a full slow M1 generation after a dropped connection
+RETRY_DELAYS_S = (3.0, 10.0)
+MAX_BATCH_ITEMS = 1000
+MAX_BATCH_JSON_BYTES = 25 * 1024 * 1024
 MEMORY_HEADROOM_GB = 1.0  # keep at least this much free beyond the model's need
 
 batches: dict[str, dict] = {}
@@ -207,6 +211,13 @@ def submit_batch(envelope: dict) -> dict:
     items_in = envelope.get("items") or []
     if not items_in:
         return {"error": "items must be a non-empty list"}
+    if len(items_in) > MAX_BATCH_ITEMS:
+        return {"error": f"items is limited to {MAX_BATCH_ITEMS} per batch"}
+    try:
+        if len(json.dumps(envelope, separators=(",", ":")).encode()) > MAX_BATCH_JSON_BYTES:
+            return {"error": "batch payload exceeds the 25 MB limit"}
+    except (TypeError, ValueError):
+        return {"error": "batch payload must be valid JSON"}
     if not envelope.get("model"):
         return {"error": "model (repo) is required"}
     batch_id = uuid.uuid4().hex[:10]
@@ -235,6 +246,7 @@ def submit_batch(envelope: dict) -> dict:
             "artifact_url": None,
             "asset_id": None,
             "error": None,
+            "retry_at": None,
         } for i, it in enumerate(items_in)],
     }
     ledger.save_batch(batches[batch_id])
@@ -347,13 +359,17 @@ def batch_summary(b: dict) -> dict:
             "progress": i.get("progress"),  # 0..1 or None
             "elapsed_s": elapsed,
         })
+    retrying = [i for i in items if i["state"] == "queued"
+                and (i.get("retry_at") or 0) > now]
     return {
         "id": b["id"], "modality": b["modality"], "model": b["model"],
         "created_at": b["created_at"], "cancelled": b["cancelled"],
         "governor_note": b.get("governor_note"),
         "label": b.get("label"),
         "total": len(states),
-        "queued": states.count("queued"),
+        "queued": states.count("queued") - len(retrying),
+        "retrying": len(retrying),
+        "next_retry_at": min((i["retry_at"] for i in retrying), default=None),
         "running": states.count("running"),
         "done": states.count("done"),
         "error": states.count("error"),
@@ -400,6 +416,7 @@ async def cancel_batch(batch_id: str, client: httpx.AsyncClient | None = None) -
         if it["state"] == "queued":
             it["state"] = "cancelled"
             it["error"] = "Cancelled by user"
+            it["retry_at"] = None
             queued_cancelled += 1
     ledger.save_batch(b)
     _wakeup.set()
@@ -647,7 +664,9 @@ async def _dispatch_loop():
             for b in _queued_batches():
                 if b["cancelled"]:
                     continue
-                queued = [i for i in b["items"] if i["state"] == "queued"]
+                now = time.time()
+                queued = [i for i in b["items"] if i["state"] == "queued"
+                          and (i.get("retry_at") or 0) <= now]
                 if not queued:
                     continue
                 for studio in _eligible_studios(b["modality"], b["routing"]):
@@ -688,7 +707,11 @@ async def _dispatch_loop():
                     b["governor_note"] = None
                     item = queued.pop(0)
                     item["state"] = "running"
+                    item["retry_at"] = None
                     item["studio"] = studio["id"]
+                    # Never let a later dispatch reconcile a previous attempt's
+                    # worker id if the new POST loses its response.
+                    item["studio_job_id"] = None
                     item["tries"] += 1
                     item["is_cloud"] = is_cloud_lane(entry.get("is_cloud"), b["modality"])
                     item["_reserved"] = reserve
@@ -706,6 +729,19 @@ async def _dispatch_loop():
             logging.getLogger("studiohub.broker").exception(
                 "dispatch loop error (continuing)")
             await asyncio.sleep(3)  # the scheduler must never die
+
+
+def _worker_http_error(response) -> RuntimeError:
+    try:
+        detail = (response.json().get("detail")
+                  if "json" in response.headers.get("content-type", "")
+                  else response.text)
+    except (AttributeError, ValueError):
+        detail = response.text or "worker request failed"
+    error = RuntimeError(f"HTTP {response.status_code}: {detail}")
+    error.retryable = (response.status_code in {408, 425, 429}
+                       or response.status_code >= 500)
+    return error
 
 
 async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict):
@@ -766,9 +802,7 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             url, headers = studio_request(studio, endpoint)
             r = await client.post(url, json=body, headers=headers)
         if r.status_code >= 400:
-            detail = (r.json().get("detail")
-                      if "json" in r.headers.get("content-type", "") else r.text)
-            raise RuntimeError(f"HTTP {r.status_code}: {detail}")
+            raise _worker_http_error(r)
         job = r.json()["job"]
         item["studio_job_id"] = job["id"]
         if b["cancelled"]:
@@ -787,6 +821,8 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             url, headers = studio_request(studio, f"/api/generate/jobs/{job['id']}")
             jr = await client.get(
                 url, headers=headers)
+            if jr.status_code >= 400:
+                raise _worker_http_error(jr)
             j = jr.json()["job"]
             state = j.get("state")
             if state in ("queued", "running"):
@@ -811,12 +847,16 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
         if await _recover_worker_job(client, b, item, studio, body, t_start):
             return
         message = str(e) or type(e).__name__
-        if item["tries"] < MAX_TRIES and not b["cancelled"]:
+        retryable = getattr(e, "retryable", True)
+        if retryable and item["tries"] < MAX_TRIES and not b["cancelled"]:
             item["state"] = "queued"  # work-stealing retry, possibly elsewhere
             item["error"] = f"try {item['tries']} failed: {message}"
+            delay_index = min(item["tries"] - 1, len(RETRY_DELAYS_S) - 1)
+            item["retry_at"] = time.time() + RETRY_DELAYS_S[delay_index]
         else:
             item["state"] = "error"
             item["error"] = message
+            item["retry_at"] = None
     finally:
         _busy.discard(studio["id"])
         _reserved["gb"] = max(0.0, _reserved["gb"] - item.get("_reserved", 0.0))

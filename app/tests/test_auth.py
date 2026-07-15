@@ -10,13 +10,17 @@ def _req(host="1.2.3.4", headers=None, query=""):
         client=SimpleNamespace(host=host),
         headers=Headers(headers or {}),
         query_params=QueryParams(query),
+        cookies={},
     )
 
 
 def test_presented_token_forms():
     assert auth.presented_token(_req(headers={"authorization": "Bearer abc"})) == "abc"
     assert auth.presented_token(_req(headers={"x-hub-token": "def"})) == "def"
-    assert auth.presented_token(_req(query="token=ghi")) == "ghi"
+    cookie = _req()
+    cookie.cookies[auth.COOKIE_NAME] = "ghi"
+    assert auth.presented_token(cookie) == "ghi"
+    assert auth.presented_token(_req(query="token=leaks-in-url")) is None
     assert auth.presented_token(_req()) is None
 
 
@@ -35,7 +39,9 @@ def test_remote_requires_token(client):
 
 
 def test_remote_with_token_ok(authed):
-    assert authed.get("/api/hub/health").status_code == 200
+    response = authed.get("/api/hub/health")
+    assert response.status_code == 200
+    assert auth.COOKIE_NAME in response.cookies
 
 
 def test_fleet_token_accepted(app, token):

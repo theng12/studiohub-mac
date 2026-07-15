@@ -428,8 +428,9 @@ async def _sse_summary(request, interval: float = 2.0):
 async def hub_stream(request: Request):
     """Server-Sent Events: pushes the summary every ~2s so the dashboard updates
     live instead of polling. Falls back gracefully — the dashboard reverts to
-    /api/hub/summary polling if the stream drops. Auth: loopback exempt, remote
-    passes ?token= (EventSource can't set headers)."""
+    /api/hub/summary polling if the stream drops. Auth: loopback exempt; a
+    remote dashboard authenticates one normal header-bearing request first,
+    then EventSource uses the resulting HttpOnly same-site session cookie."""
     return StreamingResponse(_sse_summary(request), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
                                       "Connection": "keep-alive",
@@ -1249,6 +1250,35 @@ def reload_registry():
     return {"ok": True, "studios": len(monitor.registry)}
 
 
+def _validated_registry_identity(body: dict) -> tuple[str, str]:
+    """Accept an IPv4 address or ordinary DNS/Tailscale hostname only.
+
+    Registry values become network destinations and stable IDs, so schemes,
+    paths, whitespace and delimiter characters are never valid input.
+    """
+    import ipaddress
+    import re
+
+    host = str(body.get("host") or "").strip().lower()
+    if not host or len(host) > 253:
+        raise HTTPException(400, "host is required (LAN or Tailscale IPv4/DNS name)")
+    try:
+        ipaddress.IPv4Address(host)
+    except ipaddress.AddressValueError:
+        labels = host.rstrip(".").split(".")
+        valid = (all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+                     for label in labels) and all(labels))
+        if not valid:
+            raise HTTPException(400, "host must be an IPv4 address or DNS/Tailscale name")
+        host = host.rstrip(".")
+    default_machine = host.replace(".", "-")
+    machine = str(body.get("machine") or default_machine).strip()
+    if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", machine)
+            or "@" in machine):
+        raise HTTPException(400, "machine name must use letters, numbers, dots, dashes, or underscores")
+    return host, machine
+
+
 @app.delete("/api/hub/registry/machines/{machine}")
 def remove_machine_route(machine: str):
     """Unregister a previously discovered machine's studios."""
@@ -1295,10 +1325,7 @@ def add_machine_manual(body: dict):
     from .registry import (FAMILY_PORTS, add_user_entries,
                            build_machine_entries)
 
-    host = body.get("host")
-    if not host:
-        raise HTTPException(400, "host is required")
-    machine = body.get("machine") or host.replace(".", "-")
+    host, machine = _validated_registry_identity(body)
     modalities = body.get("modalities") or list(FAMILY_PORTS.values())
     valid = set(FAMILY_PORTS.values())
     bad = [m for m in modalities if m not in valid]
@@ -1322,10 +1349,7 @@ async def discover_machine(body: dict):
 
     from .registry import FAMILY_PORTS, MODALITY_EMOJI, add_user_entries
 
-    host = body.get("host")
-    if not host:
-        raise HTTPException(400, "host is required (LAN or Tailscale IP)")
-    machine = body.get("machine") or host.replace(".", "-")
+    host, machine = _validated_registry_identity(body)
     known = {(s["host"], s["port"]) for s in monitor.registry}
     found, entries = [], []
     async with httpx.AsyncClient() as client:

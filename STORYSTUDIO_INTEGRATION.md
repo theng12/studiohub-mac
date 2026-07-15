@@ -43,8 +43,9 @@ a model's params, read that studio's catalog via the gateway
 - **Auth:** requests from *other machines* need the Hub token. Send it as any of:
   - `Authorization: Bearer <token>`
   - `X-Hub-Token: <token>`
-  - `?token=<token>` query param
   - Requests from the Hub's own machine (loopback) need no token.
+- Never put the token in a URL or query string; query-token authentication is
+  rejected to keep credentials out of browser history and access logs.
 - Get the token from the Hub dashboard → **Remote** tab (shown only on the Hub
   machine). Store it in Story Studio's config/secrets.
 

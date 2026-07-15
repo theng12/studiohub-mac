@@ -520,7 +520,7 @@
       <div class="top"><span class="emoji">🌐</span><h3>Reach this Hub from other devices</h3></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
         Any device on your Tailscale network can use these URLs. Remote clients must send the token
-        (<code>Authorization: Bearer …</code>, <code>X-Hub-Token</code>, or <code>?token=</code>).
+        (<code>Authorization: Bearer …</code> or <code>X-Hub-Token</code>). Credentials are never placed in URLs.
       </p>
       <table><thead><tr><th>Network</th><th>URL</th><th></th></tr></thead><tbody id="acc-body"></tbody></table>
       <div id="acc-token-wrap" style="margin-top:14px;display:none">
@@ -543,6 +543,15 @@
       </div>
       <div class="sub" id="fleet-status" style="margin-top:8px"></div>
       <div class="sub" id="fleet-save-result" role="status" aria-live="polite" style="margin-top:7px"></div>
+      <details class="tx-items" style="margin-top:10px"><summary class="sub">How fleet authentication and repair work</summary>
+        <ul style="font-size:12.5px;line-height:1.7;margin:8px 0 0 18px;color:var(--dim)">
+          <li><b>What it protects:</b> remote jobs, status changes, lifecycle controls, settings, uploads, and output access. Local loopback remains passwordless.</li>
+          <li><b>Where it comes from:</b> the first Hub generates one owner-only local value. The primary Hub is the source of truth; use the same value on every agent Hub.</li>
+          <li><b>Test or rotate:</b> click <b>Save &amp; verify</b>. Connected peers are updated with the previously trusted value, then verified with the new one. The old value stops working immediately.</li>
+          <li><b>Repair a mismatch:</b> open the affected Mac's Hub locally, paste the primary Hub's value here, click <b>Save &amp; verify</b>, then restart/update any Studio whose preflight still shows an authentication warning.</li>
+          <li>The value stays in owner-only local files and request headers. It is never included in URLs, logs, screenshots, or fleet diagnostics.</li>
+        </ul>
+      </details>
     </div>
 
     <div class="card section">
@@ -700,6 +709,12 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.38.0", date: "2026-07-15", items: [
+    "Remote work now uses each machine's peer Hub from the <b>first request</b>, closing the short connection-cache race that caused large image batches to fail with HTTP 401.",
+    "Generation retries now wait briefly, show <b>retrying</b> plus the next attempt, and retry only transient transport/5xx failures. Authentication and validation failures stop once with their real reason.",
+    "Live updates authenticate with an HttpOnly session instead of putting credentials in SSE URLs, and reconnect with bounded exponential backoff while polling remains active.",
+    "Startup-service repair only stops Hub-owned processes and reports success after the exact on-disk version answers healthy. Runtime dependencies are now reproducibly locked.",
+  ] },
   { v: "1.37.1", date: "2026-07-15", items: [
     "Remote image, voice, video, render, transcription, and recipe work now travels through each machine's <b>connected peer Hub</b>. A Studio holding an older in-memory fleet credential can no longer drain a batch with repeated HTTP 401 failures.",
     "Local workers still use fast loopback, while a remote direct Studio address is retained only as a fallback when that machine's peer Hub is unavailable.",
@@ -1478,7 +1493,7 @@ function renderBatches(batches) {
   const { rows: list, pages, total } = pageSlice("gen", sorted);
   el.innerHTML = (total ? pagerHTML("gen", total, pages) : "") + list.map(b => {
     const pct = b.total ? Math.round(100 * (b.done + b.error + b.cancelled_items) / b.total) : 0;
-    const active = b.queued + b.running > 0;
+    const active = b.queued + (b.retrying || 0) + b.running > 0;
     const runs = (b.running_items || []).map(ri => {
       const mlab = mlabel(ri.machine);
       // a studio only counts as reporting real progress when it's > 0 — many
@@ -1497,11 +1512,11 @@ function renderBatches(batches) {
     }).join("");
     return `<div class="card section">
       <div class="top"><h3 style="font-size:13.5px">${esc(b.modality)} · ${esc(b.model)}</h3>
-        <span class="sub" style="margin-left:auto">${b.done}/${b.total} done${b.error ? ` · ${b.error} failed` : ""}${b.running ? ` · ${b.running} running` : ""}</span>
+        <span class="sub" style="margin-left:auto">${b.done}/${b.total} done${b.error ? ` · ${b.error} failed` : ""}${b.running ? ` · ${b.running} running` : ""}${b.retrying ? ` · ${b.retrying} retrying` : ""}</span>
         ${active ? `<button class="btn stop" style="margin-left:10px" onclick="cancelBatch('${jsq(b.id)}')">${b.cancelled ? "Retry stop" : "Cancel"}</button>` : `<button class="btn" style="margin-left:10px" onclick="clearGenerationBatch('${jsq(b.id)}')">Clear</button>`}</div>
       <div class="prog"><i style="width:${pct}%"></i></div>
       ${runs ? `<div class="runs">${runs}</div>` : ""}
-      <div class="sub" style="margin-top:4px">batch ${esc(b.id)}${b.label ? " · from " + esc(b.label) : ""}${b.avg_s != null ? " · avg " + fmtDur(b.avg_s) + "/item" : ""}${b.cancelled ? " · cancelled" : ""}${b.governor_note ? " · ⏳ " + esc(b.governor_note) : ""}</div>
+      <div class="sub" style="margin-top:4px">batch ${esc(b.id)}${b.label ? " · from " + esc(b.label) : ""}${b.avg_s != null ? " · avg " + fmtDur(b.avg_s) + "/item" : ""}${b.retrying && b.next_retry_at ? " · retry in " + fmtDur(Math.max(0, b.next_retry_at - Date.now() / 1000)) : ""}${b.cancelled ? " · cancelled" : ""}${b.governor_note ? " · ⏳ " + esc(b.governor_note) : ""}</div>
       <details class="tx-items" ontoggle="loadGenerationItems(this, '${jsq(b.id)}')">
         <summary>Show per-image status</summary>
         <div class="sub">Loading…</div>
@@ -1519,8 +1534,9 @@ async function loadGenerationItems(details, batchId) {
     <th>#</th><th>Prompt</th><th>State</th><th>Attempts</th><th>Worker / Mac</th><th>Time</th><th>Failure</th>
   </tr></thead><tbody>${data.items.map(i => {
     const machine = i.studio && i.studio.includes("@") ? i.studio.split("@")[1] : (i.studio || "—");
+    const retrying = i.state === "queued" && i.retry_at && i.retry_at > Date.now() / 1000;
     return `<tr><td>${i.index + 1}</td><td>${esc(i.prompt || "")}</td>
-      <td>${txStatePill(i.state)}</td><td class="num">${i.tries || 0}/3</td>
+      <td>${txStatePill(retrying ? "retrying" : i.state)}${retrying ? `<br><span class="sub">in ${fmtDur(i.retry_at - Date.now() / 1000)}</span>` : ""}</td><td class="num">${i.tries || 0}/3</td>
       <td>${esc(mlabel(machine))}</td><td class="num">${fmtDur(i.duration_s)}</td>
       <td class="tx-error">${esc(i.error || "—")}</td></tr>`;
   }).join("")}</tbody></table></div>`;
@@ -2453,7 +2469,7 @@ function applySummary(sum) {
   if (vis("jobs")) renderBatches(sum.jobs);
   if (vis("remote")) { renderMachines(); renderFleetStatus(); }
   updateBell(sum.alerts_active || 0);
-  $("#last-refresh").textContent = "updated " + new Date().toLocaleTimeString();
+  $("#last-refresh").textContent = _liveMode + " · " + new Date().toLocaleTimeString();
 }
 async function pollOnce() {
   try { applySummary(await api("/api/hub/summary").then(r => r.json())); }
@@ -2462,25 +2478,33 @@ async function pollOnce() {
 // keep the name 'refresh' — lifecycle/registry actions call it for an instant update
 const refresh = pollOnce;
 
-let _es = null, _pollTimer = null;
+let _es = null, _pollTimer = null, _streamRetryTimer = null, _streamRetryMs = 2000, _liveMode = "starting";
 function _startPolling() { if (!_pollTimer) { pollOnce(); _pollTimer = setInterval(pollOnce, 5000); } }
 function _stopPolling() { if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; } }
 function startStream() {
   if (typeof EventSource === "undefined") { _startPolling(); return; }
   try { if (_es) _es.close(); } catch (e) {}
-  const url = "/api/hub/stream" + (hubToken ? "?token=" + encodeURIComponent(hubToken) : "");
-  _es = new EventSource(url);
-  _es.onopen = () => _stopPolling();                 // stream live → stop polling
+  _es = new EventSource("/api/hub/stream");
+  _es.onopen = () => {                               // stream live → stop polling
+    _stopPolling(); _streamRetryMs = 2000; _liveMode = "live";
+    $("#last-refresh").textContent = "live · connected";
+  };
   _es.onmessage = (e) => { try { applySummary(JSON.parse(e.data)); } catch (x) {} };
   _es.onerror = () => {                               // stream dropped
     try { _es.close(); } catch (e) {}
     _es = null;
+    _liveMode = "polling";
+    $("#last-refresh").textContent = "live disconnected · polling";
     _startPolling();                                 // fall back to polling…
-    setTimeout(startStream, 8000);                   // …and retry the stream later
+    if (!_streamRetryTimer) {
+      _streamRetryTimer = setTimeout(() => {
+        _streamRetryTimer = null; startStream();
+      }, _streamRetryMs);
+      _streamRetryMs = Math.min(_streamRetryMs * 2, 30000);
+    }
   };
 }
-pollOnce();      // instant first paint
-startStream();   // then go live
+pollOnce().finally(startStream); // authenticate first, then establish the cookie-backed stream
 // Detailed job queues have their own endpoints and must keep moving even when
 // the summary stream is delayed by a proxy or a sleeping browser connection.
 const JOB_QUEUE_REFRESH_MS = 3000;
