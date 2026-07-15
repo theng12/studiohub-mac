@@ -68,6 +68,33 @@ class _RecoveryClient:
         return _RecoveryResponse(value)
 
 
+class _PeerRouteResponse:
+    def __init__(self, payload):
+        self.status_code = 200
+        self._payload = payload
+        self.headers = {"content-type": "application/json"}
+        self.text = ""
+
+    def json(self):
+        return self._payload
+
+
+class _PeerRouteClient:
+    def __init__(self):
+        self.calls = []
+
+    async def post(self, url, json=None, headers=None, **_kwargs):
+        self.calls.append(("POST", url, headers))
+        return _PeerRouteResponse({"job": {"id": "worker-1"}})
+
+    async def get(self, url, headers=None, **_kwargs):
+        self.calls.append(("GET", url, headers))
+        return _PeerRouteResponse({"job": {
+            "id": "worker-1", "state": "done", "output_path": "/tmp/x.png",
+            "output_url": "/api/generate/jobs/worker-1/image",
+        }})
+
+
 @pytest.mark.asyncio
 async def test_connection_drop_recovers_completed_worker_without_duplicate(reset):
     r = broker.submit_batch({"modality": "image", "model": "a/b",
@@ -87,6 +114,52 @@ async def test_connection_drop_recovers_completed_worker_without_duplicate(reset
     assert ok is True
     assert item["state"] == "done" and item["asset_id"]
     assert client.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_generation_uses_connected_peer_hub_route(reset, monkeypatch):
+    """The broker must not bypass peers.studio_request for remote workers.
+
+    A remote Studio can have a stale in-memory fleet token while its local Hub
+    is connected with the current token. Routing through that peer Hub avoids a
+    batch-wide 401 storm and keeps the credential inside the Hub fleet.
+    """
+    submitted = broker.submit_batch({
+        "modality": "image", "model": "a/b", "items": [{"prompt": "x"}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="running", tries=1, studio="image@mac-b")
+    studio = {
+        "id": "image@mac-b", "modality": "image", "machine": "mac-b",
+        "host": "100.1.1.1", "port": 47868,
+    }
+    routed_paths = []
+
+    def route(_studio, path):
+        routed_paths.append(path)
+        return f"http://100.1.1.1:47873/studio/image/{path.lstrip('/')}", {
+            "X-Hub-Token": "fleet-secret",
+        }
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(broker, "studio_request", route)
+    monkeypatch.setattr(broker.asyncio, "sleep", no_sleep)
+    client = _PeerRouteClient()
+
+    await broker._run_item(client, batch, item, studio)
+
+    assert item["state"] == "done"
+    assert routed_paths == [
+        "/api/generate/txt2img",
+        "/api/generate/jobs/worker-1",
+    ]
+    assert all(call[1].startswith("http://100.1.1.1:47873/studio/image/")
+               for call in client.calls)
+    assert all(call[2] == {"X-Hub-Token": "fleet-secret"}
+               for call in client.calls)
 
 
 @pytest.mark.asyncio

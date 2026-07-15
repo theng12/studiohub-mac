@@ -700,6 +700,10 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.37.1", date: "2026-07-15", items: [
+    "Remote image, voice, video, render, transcription, and recipe work now travels through each machine's <b>connected peer Hub</b>. A Studio holding an older in-memory fleet credential can no longer drain a batch with repeated HTTP 401 failures.",
+    "Local workers still use fast loopback, while a remote direct Studio address is retained only as a fallback when that machine's peer Hub is unavailable.",
+  ] },
   { v: "1.37.0", date: "2026-07-15", items: [
     "Story Studio cancellation now receives a real <b>fleet acknowledgement</b>: queued items stop immediately and every known running Studio worker receives a direct stop signal.",
     "Jobs adds separate <b>Cancel image queue</b> and <b>Clear finished image jobs</b> controls. Clearing removes job history only and always keeps generated assets and files.",

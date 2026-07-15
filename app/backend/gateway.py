@@ -18,7 +18,7 @@ from fastapi.responses import Response, StreamingResponse
 from starlette.background import BackgroundTask
 
 from .registry import base_url
-from .peers import studio_headers
+from .peers import studio_request
 
 router = APIRouter()
 
@@ -50,14 +50,14 @@ async def proxy(studio_id: str, path: str, request: Request):
     if studio is None:
         return Response(f"unknown studio: {studio_id}", status_code=404)
 
-    upstream = f"{base_url(studio)}/{path}"
+    upstream, upstream_auth = studio_request(studio, f"/{path}")
     headers = {
         k: v for k, v in request.headers.items() if k.lower() not in HOP_HEADERS
     }
     # Replace client-facing Hub credentials with the Studio fleet credential.
     headers.pop("authorization", None)
     headers.pop("x-hub-token", None)
-    headers.update(studio_headers(studio))
+    headers.update(upstream_auth)
     params = [(k, v) for k, v in request.query_params.multi_items() if k != "token"]
 
     req = _client.build_request(

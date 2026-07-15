@@ -26,8 +26,7 @@ import uuid
 import httpx
 
 from . import broker
-from .registry import base_url
-from .peers import studio_headers
+from .peers import studio_request
 
 runs: dict[str, dict] = {}
 
@@ -53,10 +52,11 @@ async def _chat(client: httpx.AsyncClient, model: str, prompt: str,
         raise RuntimeError("no chat studio is up")
     messages = ([{"role": "system", "content": system}] if system else []) \
         + [{"role": "user", "content": prompt}]
+    url, headers = studio_request(chat, "/v1/chat/completions")
     r = await client.post(
-        f"{base_url(chat)}/v1/chat/completions",
+        url,
         json={"model": model, "messages": messages, "stream": False},
-        headers=studio_headers(chat),
+        headers=headers,
         timeout=httpx.Timeout(connect=5, read=600, write=30, pool=5))
     if r.status_code >= 400:
         raise RuntimeError(f"chat HTTP {r.status_code}: {r.text[:200]}")

@@ -569,10 +569,11 @@ def hub_proxy_job_artifact(batch_id: str, item_index: int):
 
     async def stream():
         import httpx
-        from .peers import studio_headers
+        from .peers import studio_request
+        artifact_url, artifact_headers = studio_request(studio, item["artifact_url"])
         async with httpx.AsyncClient(follow_redirects=True) as client:
             async with client.stream(
-                "GET", item["artifact_url"], headers=studio_headers(studio),
+                "GET", artifact_url, headers=artifact_headers,
                 timeout=None,
             ) as response:
                 response.raise_for_status()
@@ -591,7 +592,7 @@ def hub_proxy_job_artifact(batch_id: str, item_index: int):
 async def hub_ack_job_artifact(batch_id: str, item_index: int):
     """Start worker retention only after the main machine verifies receipt."""
     import httpx
-    from .peers import studio_headers
+    from .peers import studio_request
     b = broker.batches.get(batch_id) or ledger.load_batch(batch_id)
     if not b:
         raise HTTPException(404, "unknown batch")
@@ -599,10 +600,11 @@ async def hub_ack_job_artifact(batch_id: str, item_index: int):
     studio = next((s for s in monitor.registry if s["id"] == (item or {}).get("studio")), None)
     if not item or not studio or not item.get("studio_job_id"):
         raise HTTPException(404, "worker job is not available")
+    ack_url, ack_headers = studio_request(
+        studio, f"/api/generate/jobs/{item['studio_job_id']}/ack")
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            f"{base_url(studio)}/api/generate/jobs/{item['studio_job_id']}/ack",
-            headers=studio_headers(studio), timeout=15.0)
+            ack_url, headers=ack_headers, timeout=15.0)
     if response.status_code >= 400:
         raise HTTPException(502, "render worker did not acknowledge receipt")
     item["receipt_acked_at"] = time.time()

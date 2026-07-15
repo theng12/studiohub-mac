@@ -26,7 +26,7 @@ from pathlib import Path
 import httpx
 
 from . import ledger
-from .peers import studio_headers
+from .peers import studio_request
 from .monitor import is_cached, is_cloud_lane
 from .registry import base_url, machine_enabled
 from .resources import host_stats
@@ -48,9 +48,9 @@ def _mime_from_path(p: str) -> str:
     return "image/png"
 
 
-def _studio_headers_for_url(url: str) -> dict[str, str]:
+def _studio_target_for_url(url: str) -> tuple[str, dict[str, str]]:
     studio = next((s for s in _monitor().registry if url.startswith(base_url(s))), None)
-    return studio_headers(studio) if studio else {}
+    return studio_request(studio, url) if studio else (url, {})
 
 
 def _multipart_fields(body: dict) -> dict:
@@ -96,7 +96,8 @@ async def _resolve_reference(client: httpx.AsyncClient, ref: dict):
         except Exception as e:
             raise ValueError(f"invalid base64: {e}")
     if ref.get("url"):
-        r = await client.get(ref["url"], headers=_studio_headers_for_url(ref["url"]), timeout=30.0)
+        url, headers = _studio_target_for_url(ref["url"])
+        r = await client.get(url, headers=headers, timeout=30.0)
         r.raise_for_status()
         return r.content, r.headers.get("content-type", "image/png")
     if ref.get("asset_id"):
@@ -108,7 +109,8 @@ async def _resolve_reference(client: httpx.AsyncClient, ref: dict):
             return Path(p).read_bytes(), _mime_from_path(p)
         u = a.get("artifact_url")
         if u:
-            r = await client.get(u, headers=_studio_headers_for_url(u), timeout=30.0)
+            url, headers = _studio_target_for_url(u)
+            r = await client.get(url, headers=headers, timeout=30.0)
             r.raise_for_status()
             return r.content, r.headers.get("content-type", "image/png")
         raise ValueError("asset has no fetchable bytes")
@@ -372,9 +374,9 @@ async def _signal_worker_cancel(client: httpx.AsyncClient, item: dict) -> bool:
         item["cancel_error"] = "worker is no longer registered"
         return False
     try:
+        url, headers = studio_request(studio, f"/api/generate/jobs/{job_id}")
         response = await client.delete(
-            f"{base_url(studio)}/api/generate/jobs/{job_id}",
-            headers=studio_headers(studio), timeout=15.0)
+            url, headers=headers, timeout=15.0)
         # A 404 means the worker no longer has active work under this id. The
         # broker poll will reconcile whether it completed just before cancel.
         if response.status_code in (200, 404):
@@ -540,9 +542,9 @@ async def _recover_worker_job(client, b: dict, item: dict, studio: dict,
     delay = 1.0
     while time.monotonic() < deadline:
         try:
+            url, headers = studio_request(studio, f"/api/generate/jobs/{job_id}")
             jr = await client.get(
-                f"{base_url(studio)}/api/generate/jobs/{job_id}",
-                headers=studio_headers(studio), timeout=10.0)
+                url, headers=headers, timeout=10.0)
             if jr.status_code >= 400:
                 return False  # 404/4xx means the worker no longer has the job
             job = jr.json().get("job") or {}
@@ -747,20 +749,22 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
                 return
             if b["modality"] == "video":
                 body["mode"] = "img2video"
+                url, headers = studio_request(studio, "/api/generate/video2video")
                 r = await client.post(
-                    f"{base_url(studio)}/api/generate/video2video",
+                    url,
                     data=_video_multipart_fields(body),
                     files={"file": (f"reference{_ext(mime)}", img_bytes, mime)},
-                    headers=studio_headers(studio))
+                    headers=headers)
             else:
+                url, headers = studio_request(studio, f"/api/generate/{mode}")
                 r = await client.post(
-                    f"{base_url(studio)}/api/generate/{mode}",
+                    url,
                     data=_multipart_fields(body),
                     files={"image": (f"reference{_ext(mime)}", img_bytes, mime)},
-                    headers=studio_headers(studio))
+                    headers=headers)
         else:
-            r = await client.post(f"{base_url(studio)}{endpoint}", json=body,
-                                  headers=studio_headers(studio))
+            url, headers = studio_request(studio, endpoint)
+            r = await client.post(url, json=body, headers=headers)
         if r.status_code >= 400:
             detail = (r.json().get("detail")
                       if "json" in r.headers.get("content-type", "") else r.text)
@@ -780,9 +784,9 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
                 item["state"] = "cancelled"
                 item["error"] = "Cancelled by user"
                 return
+            url, headers = studio_request(studio, f"/api/generate/jobs/{job['id']}")
             jr = await client.get(
-                f"{base_url(studio)}/api/generate/jobs/{job['id']}",
-                headers=studio_headers(studio))
+                url, headers=headers)
             j = jr.json()["job"]
             state = j.get("state")
             if state in ("queued", "running"):

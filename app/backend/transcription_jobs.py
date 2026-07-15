@@ -14,8 +14,8 @@ import httpx
 from fastapi import HTTPException, UploadFile
 
 from . import broker, ledger
-from .peers import studio_headers
-from .registry import DATA_DIR, base_url, machine_enabled
+from .peers import studio_request
+from .registry import DATA_DIR, machine_enabled
 
 ROOT = DATA_DIR / "transcription_jobs"
 SETTINGS_FILE = DATA_DIR / "transcription_settings.json"
@@ -340,11 +340,12 @@ async def _run_item(monitor, batch: dict, item: dict, studio: dict, owner: str) 
         }
         if batch.get("language"):
             data["language"] = batch["language"]
+        url, headers = studio_request(studio, "/api/transcribe")
         with input_path.open("rb") as handle:
             response = await monitor._client.post(
-                f"{base_url(studio)}/api/transcribe", data=data,
+                url, data=data,
                 files={"file": (item["filename"], handle, "application/octet-stream")},
-                headers=studio_headers(studio), timeout=300.0,
+                headers=headers, timeout=300.0,
             )
         if response.status_code >= 400:
             try:

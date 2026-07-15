@@ -10,6 +10,17 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.37.1] — 2026-07-15
+
+### Fixed — generation uses connected peer Hubs for remote workers
+
+- Image, voice, video, render, transcription, gateway, recipe, cancellation, polling, acknowledgement, and artifact requests now travel through each remote machine's connected Studio Hub instead of bypassing it for a direct Studio call.
+- A remote Studio that cached an older fleet credential can no longer consume and fail most of a batch with repeated HTTP 401 errors; its local peer Hub securely reaches the worker over loopback with the current machine credential.
+- Local workers remain direct loopback, and a remote worker still falls back to its direct authenticated address only when that machine's peer Hub is unavailable.
+- Added broker regression coverage proving remote generation submission and polling use the peer-Hub URL and Hub credential.
+
+168 tests.
+
 ### Fixed — Studio update status reflects running versus published versions
 
 - Local and remote Studio rows now compare the running version with each Studio's published latest version and explicitly report **Current**, **Update available**, or **Not verified**.
