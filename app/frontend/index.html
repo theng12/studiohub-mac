@@ -188,7 +188,7 @@
   nav:after{content:"FLEET CONTROL  /  LIVE";position:absolute;left:24px;bottom:26px;color:#a8c8b8;font:700 9px/1 var(--mono);letter-spacing:.14em}
   nav button{position:relative;display:flex;align-items:center;gap:12px;width:100%;padding:12px 14px;border:1px solid transparent;border-radius:12px;color:#afc6ba;text-align:left;font:600 13px/1 var(--sans);transition:.18s background,.18s color,.18s transform,.18s border-color}
   nav button:before{display:grid;place-items:center;width:25px;height:25px;border-radius:8px;background:#ffffff0d;font-size:13px}
-  nav button[data-tab="overview"]:before{content:"⌂"}nav button[data-tab="models"]:before{content:"◇"}nav button[data-tab="resources"]:before{content:"◫"}nav button[data-tab="jobs"]:before{content:"↯"}nav button[data-tab="assets"]:before{content:"▧"}nav button[data-tab="stats"]:before{content:"↗"}nav button[data-tab="remote"]:before{content:"◎"}
+  nav button[data-tab="overview"]:before{content:"⌂"}nav button[data-tab="models"]:before{content:"◇"}nav button[data-tab="resources"]:before{content:"◫"}nav button[data-tab="jobs"]:before{content:"↯"}nav button[data-tab="assets"]:before{content:"▧"}nav button[data-tab="stats"]:before{content:"↗"}nav button[data-tab="updates"]:before{content:"↻"}nav button[data-tab="remote"]:before{content:"◎"}
   nav button:hover{color:#fff;background:#ffffff0b;transform:translateX(2px)}
   nav button.active{color:#fff;background:#ffffff14;border-color:#ffffff17;box-shadow:inset 3px 0 #f0c469;border-bottom-color:#ffffff17}
   nav button.active:before{background:#f0c469;color:#173a2c}
@@ -218,12 +218,16 @@
   .bar{height:9px;background:#e2e6dd;border-radius:999px}.bar i{background:linear-gradient(90deg,#1c8d62,#67bd87);border-radius:999px}.prog{background:#e4e7df;border-radius:999px}.prog i{background:linear-gradient(90deg,#1b8d61,#51bd83)}
   .hostcard{background:linear-gradient(135deg,#fffef9,#eef4eb)}.hostcard .stat b{font:700 25px/1 var(--display);color:var(--accent2)}.hostcard .stat span{margin-top:4px;font:600 10px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.06em}#mem-line{stroke:#167a55!important;stroke-width:2.2!important}
   .resource-studio-table{table-layout:fixed}.resource-studio-table th,.resource-studio-table td{overflow:hidden;text-overflow:ellipsis}.resource-studio-table td{white-space:nowrap}
+  .auto-update-controls{display:grid;grid-template-columns:minmax(210px,1.5fr) minmax(145px,.8fr) minmax(155px,.8fr) minmax(175px,1fr);gap:12px;align-items:end;margin:4px 0 12px;padding:14px;border:1px solid var(--border);border-radius:14px;background:#f7f8f2}
+  .auto-update-controls .field-label{display:flex;flex-direction:column;gap:7px}.auto-update-controls .selctl{width:100%;text-transform:none;letter-spacing:0;font-family:var(--sans)}.auto-update-idle{height:39px;margin:0;padding:0 8px;border:1px solid transparent;border-radius:10px;text-transform:none;letter-spacing:0;font:600 11.5px/1.2 var(--sans)}
+  .auto-update-actions{min-height:39px}.auto-update-actions .sub{flex:1;min-width:220px}.auto-update-facts{display:grid;grid-template-columns:repeat(6,minmax(110px,1fr));gap:8px;margin:14px 0 5px}.auto-update-fact{min-width:0;padding:10px 11px;border:1px solid #dfe3da;border-radius:12px;background:#fbfbf6}.auto-update-fact span{display:block;margin-bottom:5px;color:var(--dim);font:700 8.5px/1 var(--mono);letter-spacing:.09em;text-transform:uppercase}.auto-update-fact b{display:block;overflow:hidden;text-overflow:ellipsis;color:var(--accent2);font:700 11.5px/1.35 var(--mono);white-space:nowrap}
+  .auto-update-table{min-width:1040px}.auto-update-table td{vertical-align:middle}.auto-update-table .selctl{min-width:112px;padding:7px 9px}.auto-update-table .actions{margin:0;flex-wrap:nowrap}.auto-update-status{max-width:210px;overflow-wrap:anywhere}.auto-update-app b{display:block}.auto-update-app .sub{display:block;margin-top:2px}.auto-update-unavailable{opacity:.62}.auto-update-spinner{display:inline-block;margin-right:5px;animation:autoSpin 1s linear infinite}@keyframes autoSpin{to{transform:rotate(360deg)}}
   #bell-dropdown{top:37px;right:0;width:370px;padding:8px;border-color:var(--border);border-radius:16px;background:#fffef9;box-shadow:0 22px 55px #18362935}#bell-dropdown .bd-row:hover{background:#eff2ea}
   .modal-backdrop{background:rgba(12,35,26,.66);backdrop-filter:blur(7px)}.modal{max-width:650px;padding:26px;border:1px solid #d9ded5;border-radius:22px;background:#fffef9;box-shadow:0 30px 80px #0a241950}.modal h2{font:700 29px/1 var(--display)}.wn-rel{padding:16px 0;border-color:#dfe2d8}.wn-rel h3{font:700 14px/1.2 var(--mono);color:var(--accent2)}.wn-rel li{font-size:13px}
   .empty{padding:44px;color:#7b847d}.muted,.sub{color:var(--dim)}
-  @media(max-width:1050px){header{margin-left:210px;padding:0 24px}nav{width:210px}main{margin-left:210px;padding:26px 24px 60px}.lrow{grid-template-columns:22px minmax(0,1.7fr) minmax(0,1fr) 90px minmax(0,1.15fr) 170px}.lrow>div:nth-child(6),.lrow.lhead>span:nth-child(6){display:none}}
+  @media(max-width:1050px){header{margin-left:210px;padding:0 24px}nav{width:210px}main{margin-left:210px;padding:26px 24px 60px}.lrow{grid-template-columns:22px minmax(0,1.7fr) minmax(0,1fr) 90px minmax(0,1.15fr) 170px}.lrow>div:nth-child(6),.lrow.lhead>span:nth-child(6){display:none}.auto-update-controls{grid-template-columns:repeat(2,minmax(180px,1fr))}.auto-update-facts{grid-template-columns:repeat(3,minmax(110px,1fr))}}
   @media(max-width:820px){header{margin-left:0;height:68px;padding:0 18px}header .summary{display:none}nav{position:sticky;top:68px;width:auto;height:58px;padding:7px 12px;flex-direction:row;overflow-x:auto;background:#123126;box-shadow:0 8px 20px #1736281c}nav:before,nav:after{display:none}nav button{width:auto;flex:0 0 auto;padding:8px 11px}nav button:hover{transform:none}main{margin-left:0;padding:22px 18px 54px}.workspace-head{padding:25px 26px}.live-chip{display:none}.grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}}
-  @media(max-width:600px){header>span:first-child{display:none}header{gap:9px;padding:0 14px}header h1{font-size:18px}header #last-refresh{display:none}nav button{font-size:0;gap:0;padding:7px 12px}nav button:before{font-size:14px}nav button.active{font-size:11px;gap:7px}main{padding:16px 12px 45px}main>section,.card{min-width:0}.workspace-head{margin-bottom:16px;padding:22px 20px;border-radius:18px}.workspace-head h2{font-size:32px}.workspace-head p{font-size:12.5px}.controls,.toolbar{padding:10px}.controls .grp{width:100%;justify-content:space-between}.seg{max-width:100%;overflow-x:auto}.grid{grid-template-columns:1fr}.card{overflow:hidden;border-radius:15px;padding:16px}table{display:block;max-width:100%;overflow-x:auto}table thead,table tbody{display:table;width:max-content;min-width:100%;table-layout:auto}.lrow{grid-template-columns:20px 1.5fr .8fr auto;gap:8px}.lrow>div:nth-child(3),.lrow>div:nth-child(5),.lrow>div:nth-child(6),.lrow.lhead>span:nth-child(3),.lrow.lhead>span:nth-child(5),.lrow.lhead>span:nth-child(6){display:none}.modal{padding:20px;border-radius:18px}#bell-dropdown{position:fixed;left:12px;right:12px;top:72px;width:auto}}
+  @media(max-width:600px){header>span:first-child{display:none}header{gap:9px;padding:0 14px}header h1{font-size:18px}header #last-refresh{display:none}nav button{font-size:0;gap:0;padding:7px 12px}nav button:before{font-size:14px}nav button.active{font-size:11px;gap:7px}main{padding:16px 12px 45px}main>section,.card{min-width:0}.workspace-head{margin-bottom:16px;padding:22px 20px;border-radius:18px}.workspace-head h2{font-size:32px}.workspace-head p{font-size:12.5px}.controls,.toolbar{padding:10px}.controls .grp{width:100%;justify-content:space-between}.seg{max-width:100%;overflow-x:auto}.grid{grid-template-columns:1fr}.card{overflow:hidden;border-radius:15px;padding:16px}table{display:block;max-width:100%;overflow-x:auto}table thead,table tbody{display:table;width:max-content;min-width:100%;table-layout:auto}.lrow{grid-template-columns:20px 1.5fr .8fr auto;gap:8px}.lrow>div:nth-child(3),.lrow>div:nth-child(5),.lrow>div:nth-child(6),.lrow.lhead>span:nth-child(3),.lrow.lhead>span:nth-child(5),.lrow.lhead>span:nth-child(6){display:none}.modal{padding:20px;border-radius:18px}#bell-dropdown{position:fixed;left:12px;right:12px;top:72px;width:auto}.auto-update-controls{grid-template-columns:1fr;padding:11px}.auto-update-idle{height:auto;padding:7px 2px}.auto-update-actions .btn{flex:1 1 145px}.auto-update-actions .sub{flex-basis:100%}.auto-update-facts{grid-template-columns:repeat(2,minmax(0,1fr))}}
   @media(max-width:600px){.resource-studio-table thead,.resource-studio-table tbody{min-width:720px}}
 </style>
 </head>
@@ -247,6 +251,7 @@
   <button data-tab="jobs">Jobs</button>
   <button data-tab="assets">Assets</button>
   <button data-tab="stats">Stats</button>
+  <button data-tab="updates">Updates</button>
   <button data-tab="remote">Remote</button>
 </nav>
 <main>
@@ -514,6 +519,44 @@
     <p class="muted" style="font-size:11.5px;margin-top:10px">Counts include both <b>Hub</b>-dispatched jobs and <b>direct</b> generations made inside each studio (indexed from their output folders) — use the <b>Source</b> toggle to separate them, and click an app tile or pick a machine to filter. Generation speed and per-model stats are only known for Hub jobs; direct/scanned files contribute to counts only. Voice vs. music is split by the studio that produced each file. Chat/LLM turns aren't recorded as assets.</p>
   </section>
 
+  <!-- AUTOMATIC UPDATES -->
+  <section id="tab-updates" class="hide">
+    <div class="card section auto-update-own">
+      <div class="top"><span class="emoji">🛡️</span><h3>This Studio Hub</h3><span id="hau-state" class="pill">Loading</span></div>
+      <p class="muted" style="font-size:13px;margin-bottom:12px">Optional and Off by default. The Hub waits for generation, Chat, transcription, and fleet maintenance work to finish, then verifies the exact running version and health before reporting success.</p>
+      <div class="auto-update-controls">
+        <label class="field-label">Mode<select class="selctl" id="hau-mode"><option value="off">Off</option><option value="notify">Notify only</option><option value="auto">Download and install automatically</option></select></label>
+        <label class="field-label">Schedule<select class="selctl" id="hau-frequency"><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
+        <label class="field-label">Maintenance hour<select class="selctl" id="hau-hour"></select></label>
+        <label class="wd auto-update-idle"><input type="checkbox" id="hau-idle" checked> Update only while idle</label>
+      </div>
+      <div class="actions auto-update-actions">
+        <button class="btn primary" id="hau-save" onclick="saveHubAutoUpdate()">Save &amp; validate</button>
+        <button class="btn" id="hau-check" onclick="hubAutoAction('check')">Check now</button>
+        <button class="btn" id="hau-update" onclick="hubAutoAction('update')">Update now</button>
+        <button class="btn" id="hau-after" onclick="hubAutoAction('update',true)">Update after current work</button>
+        <button class="btn" id="hau-retry" onclick="hubAutoAction('retry')" style="display:none">Retry</button>
+        <span class="sub" id="hau-message" role="status" aria-live="polite"></span>
+      </div>
+      <div class="auto-update-facts" id="hau-facts"></div>
+      <details class="tx-items"><summary class="sub">Safety details and release notes</summary><p class="sub" style="margin-top:8px">Requires the fixed GitHub remote, <code>main</code>, a clean fast-forward, enough disk, successful dependency/import checks, and an idle Hub. Logs are stored in <code>logs/auto_update/</code>. Turning Off unloads the schedule immediately.</p><a id="hau-notes" class="open" target="_blank" rel="noopener">Open release notes ↗</a><div class="sub" id="hau-details" style="margin-top:6px"></div></details>
+    </div>
+
+    <div class="card section">
+      <div class="top"><span class="emoji">🧭</span><h3>Automatic updates across the fleet</h3><span style="margin-left:auto"></span><button class="btn" id="fau-refresh" onclick="loadAutoUpdates()">Refresh</button><button class="btn" id="fau-check" onclick="checkAllAutoUpdates()">Check all</button><button class="btn primary" id="fau-update" onclick="updateIdleAutoApps()">Update idle apps</button></div>
+      <p class="muted" style="font-size:13px;margin-bottom:10px">Each row uses that app’s own updater and authentication. Updates run one at a time, reconnect after a restart, and verify health before the next app begins. Dirty or divergent repositories are refused by the target app.</p>
+      <div id="fau-progress" class="update-progress hide" role="status" aria-live="polite"></div>
+      <div class="sub" id="fau-summary" style="margin-bottom:8px">Loading automatic-update status…</div>
+      <div style="overflow-x:auto"><table class="auto-update-table"><thead><tr><th>App</th><th>Machine</th><th>Version</th><th>Mode</th><th>Last check</th><th>Next check</th><th>Status</th><th></th></tr></thead><tbody id="fau-body"></tbody></table></div>
+    </div>
+
+    <div class="card section">
+      <div class="top"><span class="emoji">🧰</span><h3>Manual fleet maintenance</h3></div>
+      <p class="muted" style="font-size:13px">The established preflight and one-click rolling-update tools remain in <b>Remote</b> for repairs, first-time upgrades, and apps that have not yet installed the optional updater.</p>
+      <button class="btn" onclick="document.querySelector('nav button[data-tab=&quot;remote&quot;]').click()">Open Remote maintenance</button>
+    </div>
+  </section>
+
   <!-- REMOTE -->
   <section id="tab-remote" class="hide">
     <div class="card section">
@@ -709,6 +752,12 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.39.0", date: "2026-07-15", items: [
+    "A dedicated <b>Updates</b> workspace now gives this Hub clear Off, Notify, and Auto modes, visible schedules, installed/latest versions, last/next checks, live progress, defer reasons, release notes, and retry controls.",
+    "The fleet table provides independent per-app modes plus <b>Check all</b>, individual Update, and <b>Update idle apps</b>. Eligible Studios update one at a time and must answer healthy before the next begins.",
+    "Rolling automatic updates reconnect after the expected restart connection drop, defer active work without cancelling it, and keep the established manual repair tools separate in Remote.",
+    "Every install enforces the fixed origin, main, a clean fast-forward, disk/dependency/import checks, exact-version health, one bounded rollback, locking, redacted logs, and an Off-by-default removable schedule.",
+  ] },
   { v: "1.38.0", date: "2026-07-15", items: [
     "Remote work now uses each machine's peer Hub from the <b>first request</b>, closing the short connection-cache race that caused large image batches to fail with HTTP 401.",
     "Generation retries now wait briefly, show <b>retrying</b> plus the next attempt, and retry only transient transport/5xx failures. Authentication and validation failures stop once with their real reason.",
@@ -943,7 +992,7 @@ async function api(path, opts = {}) {
 }
 
 // ── tabs ──────────────────────────────────────────────────────────────────
-const TABS = ["overview", "models", "resources", "jobs", "assets", "stats", "remote"];
+const TABS = ["overview", "models", "resources", "jobs", "assets", "stats", "updates", "remote"];
 const TAB_META = {
   overview: ["Studio overview", "The live state of every creative worker across your connected Macs."],
   models: ["Model library", "Find what is downloaded, where it lives, and which machine can run it."],
@@ -951,6 +1000,7 @@ const TAB_META = {
   jobs: ["Production queue", "Submit generation batches and follow every item from dispatch to completion."],
   assets: ["Asset ledger", "Browse generated media and trace each result back to its studio and model."],
   stats: ["Fleet intelligence", "Compare throughput, speed, machine contribution, and model performance."],
+  updates: ["Automatic updates", "Choose how each app checks, notifies, and safely installs updates while the fleet is idle."],
   remote: ["Fleet operations", "Secure remote access, machine registration, preflight, updates, and alerts."],
 };
 function updatePageHeading(tab) {
@@ -968,6 +1018,7 @@ document.querySelectorAll("nav button").forEach(btn => {
     TABS.forEach(t => $("#tab-" + t).classList.toggle("hide", t !== btn.dataset.tab));
     updatePageHeading(btn.dataset.tab);
     if (btn.dataset.tab === "models") loadModels();
+    if (btn.dataset.tab === "updates") loadAutoUpdates();
     if (btn.dataset.tab === "remote") { loadAccess(); loadMachines(); loadAlerts(); loadMaintenance(); }
     if (btn.dataset.tab === "jobs") { loadJobModels(); loadBatches(); loadTranscriptionSettings(); }
     if (btn.dataset.tab === "assets") loadAssets();
@@ -2013,6 +2064,278 @@ async function saveFleet() {
     btn.disabled = false; btn.removeAttribute("aria-busy"); btn.textContent = "Save & verify";
   }
 }
+
+// ── optional automatic updates ───────────────────────────────────────────
+let hubAutoStatus = null;
+let fleetAutoData = null;
+let fleetAutoPollTimer = null;
+let fleetAutoBusy = false;
+
+function initAutoUpdateHours() {
+  const select = $("#hau-hour");
+  if (!select || select.options.length) return;
+  for (let hour = 0; hour < 24; hour += 1) {
+    const option = document.createElement("option");
+    option.value = String(hour);
+    option.textContent = `${String(hour).padStart(2, "0")}:00`;
+    select.appendChild(option);
+  }
+}
+
+async function autoJson(path, opts = {}) {
+  const response = await api(path, opts);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.detail || body.error || `Request failed (${response.status})`);
+  return body;
+}
+
+function fmtAutoTime(value) {
+  if (!value) return "Not yet";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString([], {
+    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"
+  });
+}
+
+function autoState(value) {
+  const states = {
+    idle: ["", "Idle"], checking: ["warn", "Checking"], available: ["warn", "Update available"], update_available: ["warn", "Update available"],
+    up_to_date: ["ok", "Up to date"], updating: ["gen", "Updating"], restarting: ["gen", "Restarting"],
+    deferred: ["warn", "Deferred"], failed: ["err", "Needs attention"], succeeded: ["ok", "Updated"],
+    unavailable: ["no", "Unavailable"]
+  };
+  return states[value] || ["", String(value || "Idle")];
+}
+
+function updateHubAutoControlState() {
+  const off = $("#hau-mode").value === "off";
+  $("#hau-frequency").disabled = off;
+  $("#hau-hour").disabled = off;
+  $("#hau-idle").disabled = off;
+}
+
+function renderHubAutoUpdate(status) {
+  hubAutoStatus = status || {};
+  initAutoUpdateHours();
+  const settings = hubAutoStatus.settings || {};
+  $("#hau-mode").value = settings.mode || "off";
+  $("#hau-frequency").value = settings.frequency || "daily";
+  $("#hau-hour").value = String(settings.maintenance_hour ?? 1);
+  $("#hau-idle").checked = settings.idle_only !== false;
+  updateHubAutoControlState();
+
+  const [tone, label] = autoState(hubAutoStatus.state);
+  const badge = $("#hau-state");
+  badge.className = `pill ${tone}`;
+  badge.innerHTML = `${["checking", "updating", "restarting"].includes(hubAutoStatus.state) ? '<span class="auto-update-spinner">↻</span>' : ""}${esc(label)}`;
+  const scheduler = hubAutoStatus.scheduler || {};
+  const result = hubAutoStatus.defer_reason || hubAutoStatus.last_update_result || "No update activity yet";
+  const facts = [
+    ["Installed", hubAutoStatus.installed_version || "Unknown"],
+    ["Latest", hubAutoStatus.latest_version || "Not checked"],
+    ["Last checked", fmtAutoTime(hubAutoStatus.last_checked)],
+    ["Next check", settings.mode === "off" ? "Off" : fmtAutoTime(hubAutoStatus.next_check)],
+    ["Schedule", settings.mode === "off" ? "Not loaded" : (scheduler.installed ? "Loaded" : "Needs attention")],
+    ["Last result", result]
+  ];
+  $("#hau-facts").innerHTML = facts.map(([name, value]) =>
+    `<div class="auto-update-fact" title="${esc(value)}"><span>${esc(name)}</span><b>${esc(value)}</b></div>`).join("");
+  $("#hau-details").textContent = (hubAutoStatus.details || []).join(" · ");
+  const notes = $("#hau-notes");
+  const notesUrl = safeHttpUrl(hubAutoStatus.release_notes_url || "");
+  notes.href = notesUrl || "#";
+  notes.style.display = notesUrl ? "inline-flex" : "none";
+
+  const busy = ["checking", "updating", "restarting"].includes(hubAutoStatus.state);
+  $("#hau-save").disabled = busy;
+  $("#hau-check").disabled = busy;
+  $("#hau-update").disabled = busy || !hubAutoStatus.update_available;
+  $("#hau-after").disabled = busy;
+  $("#hau-retry").style.display = hubAutoStatus.state === "failed" ? "inline-flex" : "none";
+  if (!fleetAutoBusy) $("#hau-message").textContent = result;
+}
+
+function renderFleetAutoProgress(job, apps) {
+  const el = $("#fau-progress");
+  if (!job || !Array.isArray(job.items) || !job.items.length) {
+    el.classList.add("hide");
+    return;
+  }
+  const terminal = new Set(["complete", "current", "deferred", "failed"]);
+  const done = job.items.filter(item => terminal.has(item.status)).length;
+  const failed = job.items.filter(item => item.status === "failed").length;
+  const deferred = job.items.filter(item => item.status === "deferred").length;
+  const busy = ["queued", "running"].includes(job.status);
+  const active = job.items.find(item => !terminal.has(item.status)) || job.items[job.items.length - 1];
+  const row = (apps || []).find(app => app.id === active.target);
+  const name = row ? `${row.title} on ${row.machine}` : active.target;
+  let title = busy ? "Updating idle apps one at a time" : failed ? "Fleet update needs attention" : "Fleet update finished";
+  let detail = busy ? `${name} · ${active.detail || active.status}` : `${done - failed - deferred} updated or current`;
+  if (deferred) detail += ` · ${deferred} deferred until idle`;
+  if (failed) detail += ` · ${failed} failed`;
+  el.className = `update-progress${busy ? "" : failed ? " error" : " success"}`;
+  el.innerHTML = `<div class="update-progress-head"><span class="update-progress-title">${busy ? '<span class="auto-update-spinner">↻</span>' : failed ? "! " : "✓ "}${esc(title)}</span><span class="update-progress-count">${done}/${job.items.length} finished</span></div>
+    <div class="bar"><i style="width:${Math.round(done / job.items.length * 100)}%"></i></div><div class="update-progress-detail">${esc(detail)}</div>`;
+}
+
+function renderFleetAutoUpdates(data) {
+  fleetAutoData = data || { apps: [] };
+  const apps = fleetAutoData.apps || [];
+  const supported = apps.filter(row => row.supported);
+  const available = supported.filter(row => row.update_available);
+  const healthy = supported.filter(row => row.healthy);
+  $("#fau-summary").textContent = `${supported.length}/${apps.length} apps support safe automatic updates · ${healthy.length} reachable · ${available.length} update${available.length === 1 ? "" : "s"} available`;
+  renderFleetAutoProgress(fleetAutoData.job, apps);
+  const jobBusy = fleetAutoData.job && ["queued", "running"].includes(fleetAutoData.job.status);
+  $("#fau-update").disabled = jobBusy || !apps.some(row => row.kind === "studio" && row.supported && row.healthy && row.update_available);
+  $("#fau-body").innerHTML = apps.map(row => {
+    const [tone, label] = autoState(row.state);
+    const unavailable = row.supported ? "" : " auto-update-unavailable";
+    const version = row.latest_version && row.latest_version !== row.installed_version
+      ? `${row.installed_version || "?"} → ${row.latest_version}` : (row.installed_version || "—");
+    const statusDetail = row.error || row.defer_reason || row.last_update_result || label;
+    const settingsUrl = safeHttpUrl(row.settings_url || "");
+    const updateReady = row.supported && row.healthy && row.update_available && !jobBusy;
+    return `<tr class="${unavailable}"><td class="auto-update-app"><b>${esc(row.title)}</b><span class="sub">${esc(row.modality)}</span></td>
+      <td>${esc(mlabel(row.machine))}</td><td class="num">${esc(version)}</td>
+      <td><select class="selctl" aria-label="Update mode for ${esc(row.title)}" ${row.supported && !jobBusy ? "" : "disabled"} onchange="setFleetAutoMode('${jsq(row.id)}',this.value)">
+        <option value="off" ${row.mode === "off" ? "selected" : ""}>Off</option><option value="notify" ${row.mode === "notify" ? "selected" : ""}>Notify</option><option value="auto" ${row.mode === "auto" ? "selected" : ""}>Auto</option></select></td>
+      <td class="num">${esc(fmtAutoTime(row.last_checked))}</td><td class="num">${esc(row.mode === "off" ? "Off" : fmtAutoTime(row.next_check))}</td>
+      <td class="auto-update-status"><span class="pill ${tone}">${esc(label)}</span><div class="sub" title="${esc(statusDetail)}">${esc(statusDetail)}</div></td>
+      <td><div class="actions"><button class="btn compact ${updateReady ? "primary" : ""}" ${updateReady ? "" : "disabled"} onclick="updateOneAutoApp('${jsq(row.id)}')">Update</button>${settingsUrl ? `<a class="btn compact" href="${settingsUrl}" target="_blank" rel="noopener">Settings ↗</a>` : ""}</div></td></tr>`;
+  }).join("");
+}
+
+function scheduleAutoUpdatePoll(delay = 3000) {
+  clearTimeout(fleetAutoPollTimer);
+  fleetAutoPollTimer = setTimeout(loadAutoUpdates, delay);
+}
+
+async function loadAutoUpdates() {
+  initAutoUpdateHours();
+  $("#fau-refresh").disabled = true;
+  try {
+    const [hub, fleet] = await Promise.all([
+      autoJson("/api/auto-update/status"),
+      autoJson("/api/hub/auto-updates")
+    ]);
+    renderHubAutoUpdate(hub);
+    renderFleetAutoUpdates(fleet);
+    const ownBusy = ["checking", "updating", "restarting"].includes(hub.state);
+    const fleetBusy = fleet.job && ["queued", "running"].includes(fleet.job.status);
+    if (ownBusy || fleetBusy) scheduleAutoUpdatePoll();
+    else clearTimeout(fleetAutoPollTimer);
+  } catch (error) {
+    $("#fau-summary").textContent = `Could not load update status: ${error.message}`;
+    scheduleAutoUpdatePoll(5000);
+  } finally {
+    $("#fau-refresh").disabled = false;
+  }
+}
+
+async function saveHubAutoUpdate() {
+  const button = $("#hau-save");
+  fleetAutoBusy = true;
+  button.disabled = true; button.setAttribute("aria-busy", "true"); button.textContent = "Saving…";
+  $("#hau-message").textContent = "Saving settings and validating the schedule…";
+  try {
+    const status = await autoJson("/api/auto-update/settings", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: $("#hau-mode").value, frequency: $("#hau-frequency").value,
+        maintenance_hour: Number($("#hau-hour").value), idle_only: $("#hau-idle").checked })
+    });
+    renderHubAutoUpdate(status);
+    $("#hau-message").textContent = status.settings.mode === "off" ? "Saved. Automatic checks are Off and the schedule is unloaded." : "Saved. The schedule was validated and loaded.";
+  } catch (error) {
+    $("#hau-message").textContent = `Could not save: ${error.message}`;
+  } finally {
+    fleetAutoBusy = false;
+    button.disabled = false; button.removeAttribute("aria-busy"); button.textContent = "Save & validate";
+    scheduleAutoUpdatePoll(1200);
+  }
+}
+
+async function hubAutoAction(action, afterCurrent = false) {
+  const id = action === "check" ? "hau-check" : action === "retry" ? "hau-retry" : afterCurrent ? "hau-after" : "hau-update";
+  const button = $("#" + id);
+  fleetAutoBusy = true;
+  button.disabled = true; button.setAttribute("aria-busy", "true");
+  const labels = { check: "Checking…", update: afterCurrent ? "Queuing…" : "Starting…", retry: "Retrying…" };
+  const old = button.textContent; button.textContent = labels[action];
+  $("#hau-message").textContent = action === "check" ? "Checking GitHub for a clean fast-forward update…" : afterCurrent ? "Queuing the update for the next idle window…" : "Starting the safe updater…";
+  try {
+    const path = action === "check" ? "/api/auto-update/check" : action === "retry" ? "/api/auto-update/retry" : "/api/auto-update/update";
+    const status = await autoJson(path, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: action === "update" ? JSON.stringify({ after_current: afterCurrent }) : undefined
+    });
+    renderHubAutoUpdate(status);
+    scheduleAutoUpdatePoll(1000);
+  } catch (error) {
+    $("#hau-message").textContent = `Action failed: ${error.message}`;
+  } finally {
+    fleetAutoBusy = false;
+    button.disabled = false; button.removeAttribute("aria-busy"); button.textContent = old;
+  }
+}
+
+async function checkAllAutoUpdates() {
+  const button = $("#fau-check");
+  button.disabled = true; button.setAttribute("aria-busy", "true"); button.textContent = "Checking…";
+  $("#fau-summary").textContent = "Asking each reachable app to check for updates…";
+  try {
+    const result = await autoJson("/api/hub/auto-updates/check-all", { method: "POST" });
+    const failed = (result.results || []).filter(row => !row.ok).length;
+    $("#fau-summary").textContent = failed ? `Checks started; ${failed} app${failed === 1 ? " was" : "s were"} unreachable.` : "Checks started on every app. Waiting for results…";
+    scheduleAutoUpdatePoll(1500);
+  } catch (error) {
+    $("#fau-summary").textContent = `Check all failed: ${error.message}`;
+  } finally {
+    button.disabled = false; button.removeAttribute("aria-busy"); button.textContent = "Check all";
+  }
+}
+
+async function setFleetAutoMode(targetId, mode) {
+  $("#fau-summary").textContent = "Saving that app’s update mode…";
+  try {
+    await autoJson(`/api/hub/auto-updates/${encodeURIComponent(targetId)}/mode`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode })
+    });
+    $("#fau-summary").textContent = "Mode saved and its schedule was validated.";
+  } catch (error) {
+    $("#fau-summary").textContent = `Could not save mode: ${error.message}`;
+  }
+  scheduleAutoUpdatePoll(800);
+}
+
+async function startFleetAutoUpdates(targetIds) {
+  $("#fau-update").disabled = true;
+  $("#fau-summary").textContent = "Starting a health-gated rolling update…";
+  try {
+    const job = await autoJson("/api/hub/auto-updates/update-idle", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target_ids: targetIds })
+    });
+    renderFleetAutoProgress(job, fleetAutoData && fleetAutoData.apps);
+    scheduleAutoUpdatePoll(700);
+  } catch (error) {
+    $("#fau-summary").textContent = `Could not start updates: ${error.message}`;
+    $("#fau-update").disabled = false;
+  }
+}
+
+function updateIdleAutoApps() {
+  const ids = ((fleetAutoData && fleetAutoData.apps) || []).filter(row =>
+    row.kind === "studio" && row.supported && row.healthy && row.update_available).map(row => row.id);
+  if (!ids.length) { $("#fau-summary").textContent = "No reachable, idle-ready Studio has an update available."; return; }
+  startFleetAutoUpdates(ids);
+}
+
+function updateOneAutoApp(targetId) {
+  if (targetId === "hub@local") { hubAutoAction("update"); return; }
+  startFleetAutoUpdates([targetId]);
+}
+
+$("#hau-mode").addEventListener("change", updateHubAutoControlState);
 let preflightRows = [];
 let maintenanceBusy = false;
 let lastPreflightData = null;

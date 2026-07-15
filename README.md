@@ -35,6 +35,31 @@ Swarm Batch, recipes).
 4. The dashboard updates continuously over SSE, falls back to 5-second polling
    if the stream drops, and reconnects automatically with bounded backoff.
 
+## Automatic updates (optional)
+
+Open **Updates** and choose Off (the default), Notify only, or Download and
+install automatically for this Hub. Checks can run daily or weekly at the
+selected maintenance hour. Saving reports success only after the short-lived
+LaunchAgent is actually validated; switching Off unloads it immediately.
+
+Keep **Update only while idle** enabled. Active generation, Chat, transcription,
+fleet leases, and rolling maintenance defer installation without cancelling
+work. **Update after current work** creates a one-time retry even if the regular
+mode is Off. Installed/latest versions, last/next checks, live state, the exact
+defer or failure reason, release notes, and Retry are shown in the same card.
+
+The fleet table reads each registered app's own updater. You can change every
+app independently, **Check all**, update one app, or **Update idle apps**. Fleet
+updates run one at a time, reconnect through the expected restart connection
+drop, and require the updated app to answer healthy before the next one starts.
+Manual preflight and rolling repairs remain separate in **Remote**.
+
+Every app independently enforces its expected GitHub origin and `main`, a clean
+fast-forward, free disk, dependency/import checks, healthy restart, and exact
+running version. Dirty, detached, divergent, or rewritten repositories are
+refused without changing files. Failure makes one bounded rollback attempt;
+rotating redacted logs are under `logs/auto_update/` in that app.
+
 ### Adding a studio on another machine
 
 Create `studios.json` in this folder (it's gitignored — per-machine state):
@@ -57,6 +82,12 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 |---|---|
 | `GET /api/health` | Hub liveness (same shape as the sibling studios) |
 | `GET /api/version` | `{app_version, title}` |
+| `GET /api/auto-update/status` · `GET /api/auto-update/readiness` | Hub updater settings/state and idle blockers |
+| `POST /api/auto-update/settings` · `POST /api/auto-update/check` | Save and validate the opt-in schedule / check safely now |
+| `POST /api/auto-update/update` · `POST /api/auto-update/retry` | Update now or after current work / retry a failed update |
+| `GET /api/hub/auto-updates` · `POST /api/hub/auto-updates/check-all` | Fleet automatic-update inventory / ask every app to check |
+| `POST /api/hub/auto-updates/{target}/mode` | Change one app's Off, Notify, or Auto mode while preserving its schedule |
+| `POST /api/hub/auto-updates/update-idle` | Start a staggered, health-gated update for selected idle sibling Studios |
 | `GET /api/hub/studios` | Registry + live status per studio |
 | `GET /api/hub/health` | Aggregate: totals + per-studio statuses |
 | `GET /api/hub/catalog` | Raw per-studio catalog rows (annotated `hub_cached`, `hub_machine`). Query: `q`, `modality`, `downloaded`, `cloud`, `force` |

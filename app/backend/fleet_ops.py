@@ -582,3 +582,26 @@ def hub_update_snapshot(job_id: str | None = None):
     if job_id:
         return _hub_updates.get(job_id)
     return sorted(_hub_updates.values(), key=lambda j: j["created_at"], reverse=True)[:20]
+
+
+def hub_update_blockers() -> list[str]:
+    """Active Hub-owned work that must survive an automatic Hub update."""
+    reasons: list[str] = []
+    if any(job["status"] in {"queued", "running"} for job in _updates.values()):
+        reasons.append("a rolling Studio update is active")
+    if any(job["status"] in {"queued", "running"} for job in _hub_updates.values()):
+        reasons.append("an agent Hub update is active")
+    if _active_studio_leases():
+        reasons.append("a fleet worker owns an active lease")
+    generation_active = any(
+        item.get("state") not in {"done", "error", "cancelled"}
+        for batch in broker.batches.values() for item in batch.get("items", [])
+    )
+    if generation_active:
+        reasons.append("a generation batch is queued or running")
+    from . import chat_jobs, transcription_jobs
+    if any(batch.get("status") in {"queued", "running"} for batch in chat_jobs.list_batches()):
+        reasons.append("a Chat batch is queued or running")
+    if any(batch.get("status") in {"queued", "running"} for batch in transcription_jobs.list_batches()):
+        reasons.append("a transcription batch is queued or running")
+    return reasons

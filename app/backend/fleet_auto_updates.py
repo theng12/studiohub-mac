@@ -1,0 +1,228 @@
+"""Read-only fleet updater inventory plus staggered, health-gated orchestration."""
+from __future__ import annotations
+
+import asyncio
+import time
+import uuid
+from typing import Any
+
+import httpx
+
+from . import peers
+from .registry import base_url
+
+
+TERMINAL_ITEM_STATES = {"complete", "current", "deferred", "failed"}
+APP_ORDER = {"hub": 0, "voice": 1, "chat": 2, "image": 3, "music": 4, "video": 5}
+
+
+class FleetAutoUpdates:
+    """Coordinate fixed registered targets without touching their repositories."""
+
+    def __init__(self, monitor, hub_updater, *, stagger_seconds: float = 3.0,
+                 poll_seconds: float = 3.0, update_timeout: float = 20 * 60):
+        self.monitor = monitor
+        self.hub_updater = hub_updater
+        self.stagger_seconds = stagger_seconds
+        self.poll_seconds = poll_seconds
+        self.update_timeout = update_timeout
+        self._jobs: dict[str, dict[str, Any]] = {}
+
+    def targets(self) -> list[dict[str, Any]]:
+        targets = [{
+            "id": "hub@local", "kind": "hub", "modality": "hub",
+            "title": "Studio Hub KH", "machine": "local", "url": "",
+            "settings_url": "/#updates",
+        }]
+        for studio in self.monitor.registry:
+            modality = str(studio.get("modality") or "")
+            if modality not in {"voice", "chat", "image", "music", "video"}:
+                continue
+            root = base_url(studio)
+            suffix = "" if modality == "video" else "/#/settings"
+            targets.append({
+                "id": studio["id"], "kind": "studio", "modality": modality,
+                "title": studio.get("title", studio["id"]),
+                "machine": studio.get("machine", "local"), "url": root,
+                "settings_url": root + suffix, "studio": studio,
+            })
+        return sorted(targets, key=lambda row: (
+            APP_ORDER.get(row["modality"], 99), str(row["machine"]), str(row["id"])
+        ))
+
+    def _target(self, target_id: str) -> dict[str, Any]:
+        target = next((row for row in self.targets() if row["id"] == target_id), None)
+        if target is None:
+            raise ValueError("unknown automatic-update target")
+        return target
+
+    async def _request(self, target: dict[str, Any], method: str, path: str,
+                       payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        if target["kind"] == "hub":
+            if path.endswith("/status"):
+                return self.hub_updater.public_status()
+            if path.endswith("/readiness"):
+                return self.hub_updater.readiness_status()
+            if path.endswith("/settings"):
+                return self.hub_updater.save_settings(payload or {})
+            if path.endswith("/check"):
+                return self.hub_updater.trigger_check()
+            if path.endswith("/update"):
+                return self.hub_updater.trigger_update(after_current=bool((payload or {}).get("after_current")))
+            if path == "/api/health":
+                return {"ok": True, "app_version": self.hub_updater.installed_version()}
+            raise ValueError("unsupported local updater operation")
+        headers = peers.studio_headers(target["studio"])
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.request(method, target["url"] + path,
+                                            headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data, dict):
+                raise ValueError("invalid updater response")
+            return data
+
+    async def _status_one(self, target: dict[str, Any]) -> dict[str, Any]:
+        healthy = True if target["kind"] == "hub" else (
+            self.monitor.status.get(target["id"], {}).get("status") == "up"
+        )
+        base = {key: target[key] for key in (
+            "id", "kind", "modality", "title", "machine", "settings_url"
+        )}
+        try:
+            status = await self._request(target, "GET", "/api/auto-update/status")
+            settings = status.get("settings") or {}
+            return {
+                **base, "supported": True, "healthy": healthy,
+                "installed_version": status.get("installed_version"),
+                "latest_version": status.get("latest_version"),
+                "mode": settings.get("mode", "off"),
+                "frequency": settings.get("frequency", "daily"),
+                "maintenance_hour": settings.get("maintenance_hour"),
+                "last_checked": status.get("last_checked"),
+                "next_check": status.get("next_check"),
+                "update_available": bool(status.get("update_available")),
+                "state": status.get("state", "idle"),
+                "defer_reason": status.get("defer_reason"),
+                "last_update_result": status.get("last_update_result"),
+                "scheduler_installed": bool((status.get("scheduler") or {}).get("installed")),
+            }
+        except (httpx.HTTPError, ValueError, OSError) as exc:
+            return {**base, "supported": False, "healthy": healthy, "mode": "off",
+                    "state": "unavailable", "update_available": False,
+                    "error": str(exc)[:180]}
+
+    async def snapshot(self) -> dict[str, Any]:
+        rows = await asyncio.gather(*(self._status_one(target) for target in self.targets()))
+        active = next((job for job in self._jobs.values()
+                       if job["status"] in {"queued", "running"}), None)
+        return {"apps": rows, "job": active or self.latest_job(), "checked_at": time.time()}
+
+    async def check_all(self) -> dict[str, Any]:
+        results = []
+        for target in self.targets():
+            try:
+                await self._request(target, "POST", "/api/auto-update/check", {})
+                results.append({"id": target["id"], "ok": True})
+            except (httpx.HTTPError, ValueError, OSError) as exc:
+                results.append({"id": target["id"], "ok": False, "error": str(exc)[:180]})
+            await asyncio.sleep(0.05)
+        return {"results": results, "started_at": time.time()}
+
+    async def set_mode(self, target_id: str, mode: str) -> dict[str, Any]:
+        if mode not in {"off", "notify", "auto"}:
+            raise ValueError("mode must be off, notify, or auto")
+        target = self._target(target_id)
+        status = await self._request(target, "GET", "/api/auto-update/status")
+        settings = dict(status.get("settings") or {})
+        settings.update(mode=mode)
+        settings.setdefault("frequency", "daily")
+        settings.setdefault("maintenance_hour", APP_ORDER.get(target["modality"], 1))
+        settings.setdefault("idle_only", True)
+        return await self._request(target, "POST", "/api/auto-update/settings", settings)
+
+    def start_idle_updates(self, target_ids: list[str] | None = None) -> dict[str, Any]:
+        active = next((job for job in self._jobs.values()
+                       if job["status"] in {"queued", "running"}), None)
+        if active:
+            raise ValueError("an automatic fleet update is already running")
+        known = {target["id"]: target for target in self.targets() if target["kind"] == "studio"}
+        ids = list(dict.fromkeys(target_ids or known.keys()))
+        if any(not isinstance(value, str) or value not in known for value in ids):
+            raise ValueError("choose only known sibling Studio targets")
+        if not ids:
+            raise ValueError("no sibling Studios selected")
+        if len(self._jobs) >= 50:
+            done = sorted((job for job in self._jobs.values()
+                           if job["status"] not in {"queued", "running"}),
+                          key=lambda job: job["created_at"])
+            for old in done[:max(1, len(self._jobs) - 49)]:
+                self._jobs.pop(old["id"], None)
+        job = {"id": uuid.uuid4().hex[:10], "status": "queued",
+               "created_at": time.time(), "finished_at": None,
+               "items": [{"target": value, "status": "queued", "detail": "waiting"}
+                         for value in ids]}
+        self._jobs[job["id"]] = job
+        asyncio.create_task(self._run_updates(job, known))
+        return job
+
+    async def _run_updates(self, job: dict[str, Any], known: dict[str, dict[str, Any]]) -> None:
+        job["status"] = "running"
+        for index, item in enumerate(job["items"]):
+            try:
+                await self._update_one(known[item["target"]], item)
+            except Exception as exc:
+                item.update(status="failed", detail=str(exc)[:220], finished_at=time.time())
+            if index + 1 < len(job["items"]):
+                await asyncio.sleep(self.stagger_seconds)
+        job["status"] = "failed" if any(
+            item["status"] == "failed" for item in job["items"]) else "complete"
+        job["finished_at"] = time.time()
+
+    async def _update_one(self, target: dict[str, Any], item: dict[str, Any]) -> None:
+        item.update(status="checking", detail="checking update and idle state", started_at=time.time())
+        status = await self._request(target, "GET", "/api/auto-update/status")
+        if not status.get("update_available"):
+            item.update(status="current", detail="already current", finished_at=time.time())
+            return
+        readiness = await self._request(target, "GET", "/api/auto-update/readiness")
+        if not readiness.get("idle"):
+            detail = "; ".join(readiness.get("reasons") or ["active work"])
+            item.update(status="deferred", detail=detail[:220], finished_at=time.time())
+            return
+        item.update(status="updating", detail="updater started")
+        await self._request(target, "POST", "/api/auto-update/update", {})
+        deadline = time.monotonic() + self.update_timeout
+        last_error = ""
+        while time.monotonic() < deadline:
+            await asyncio.sleep(self.poll_seconds)
+            try:
+                current = await self._request(target, "GET", "/api/auto-update/status")
+                state = current.get("state")
+                if state == "failed":
+                    raise RuntimeError(current.get("last_update_result") or "update failed")
+                if state == "deferred":
+                    item.update(status="deferred", detail=current.get("defer_reason") or "active work",
+                                finished_at=time.time())
+                    return
+                if state == "succeeded":
+                    health = await self._request(target, "GET", "/api/health")
+                    if health.get("ok"):
+                        item.update(status="complete",
+                                    detail=f"healthy on v{health.get('app_version', current.get('installed_version', '?'))}",
+                                    finished_at=time.time())
+                        return
+            except (httpx.TransportError, httpx.TimeoutException, OSError, ValueError) as exc:
+                last_error = type(exc).__name__
+                item.update(status="checking", detail=f"connection dropped; reconnecting ({last_error})")
+        raise RuntimeError(f"update did not become healthy before timeout{': ' + last_error if last_error else ''}")
+
+    def jobs(self) -> list[dict[str, Any]]:
+        return sorted(self._jobs.values(), key=lambda job: job["created_at"], reverse=True)[:20]
+
+    def latest_job(self) -> dict[str, Any] | None:
+        jobs = self.jobs()
+        return jobs[0] if jobs else None
+
+    def job(self, job_id: str) -> dict[str, Any] | None:
+        return self._jobs.get(job_id)

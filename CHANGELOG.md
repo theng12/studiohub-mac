@@ -10,6 +10,38 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.39.0] — 2026-07-15
+
+### Added — safe optional updates for the Hub and the whole fleet
+
+- Added a dedicated **Updates** workspace with Off, Notify only, and automatic
+  install modes. The default remains Off. Daily or weekly schedules, the local
+  maintenance hour, idle-only protection, installed/latest versions, last and
+  next checks, release notes, live progress, defer reasons, Retry, Check now,
+  Update now, and Update after current work are visible in one place.
+- The fleet table discovers the safe updater on Hub, Voice, Chat, Image, Music,
+  and Video, with independent per-app modes and settings links. **Check all**
+  asks every reachable app to refresh; **Update idle apps** runs eligible sibling
+  Studios one at a time and verifies health before proceeding to the next.
+- Fleet updates tolerate the expected connection drop during an app restart,
+  reconnect to the same update, and do not start a duplicate. Active work is
+  reported as deferred instead of cancelled. Existing manual preflight and
+  rolling maintenance remain available separately in Remote.
+
+### Safety and recovery
+
+- Hub installation is blocked by active generation, Chat, transcription,
+  leases, or fleet maintenance. Every update requires the fixed GitHub origin,
+  `main`, a clean fast-forward, free disk, successful dependency/import checks,
+  a healthy restart, and the exact expected running version.
+- The short-lived LaunchAgent works without an open browser, uses one lock and
+  rotating redacted logs, and is removed immediately when set to Off. Reset
+  unloads it before removing the environment. Failed installs make one bounded,
+  clean-worktree rollback attempt and never discard local changes.
+- Added focused regression coverage for schedule lifecycle, Git safety,
+  deferral, rollback, per-app mode preservation, sequential health gates, and
+  automatic reconnection after restart.
+
 ## [1.38.0] — 2026-07-15
 
 ### Fixed — self-healing fleet generation without authentication races

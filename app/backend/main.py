@@ -17,6 +17,8 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
+
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
@@ -24,6 +26,9 @@ from pydantic import BaseModel, Field
 
 from . import (alerts, broadcast, broker, chat_jobs, fleet_ops, gateway, ledger,
                metrics, peers, recipes, transcription_jobs)
+from .auto_update import UpdateError
+from .auto_update_config import create_updater
+from .fleet_auto_updates import FleetAutoUpdates
 from .auth import is_loopback, load_token, make_middleware
 from .control import control_studio
 from .monitor import StudioMonitor
@@ -36,6 +41,25 @@ FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
 
 class UpdateRequest(BaseModel):
     studio_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class AutoUpdateSettingsBody(BaseModel):
+    mode: str
+    frequency: str
+    maintenance_hour: int
+    idle_only: bool = True
+
+
+class AutoUpdateRequestBody(BaseModel):
+    after_current: bool = False
+
+
+class FleetAutoModeBody(BaseModel):
+    mode: str
+
+
+class FleetAutoRunBody(BaseModel):
+    target_ids: list[str] | None = Field(default=None, max_length=100)
 
 # Give our loggers a handler regardless of how uvicorn configures logging, so
 # structured warnings/alerts actually reach the service log.
@@ -65,6 +89,21 @@ def _app_version() -> str:
 
 
 monitor = StudioMonitor()
+
+
+def _automatic_update_blockers() -> list[str]:
+    reasons = fleet_ops.hub_update_blockers()
+    coordinator = globals().get("fleet_auto_updates")
+    if coordinator:
+        active = next((job for job in coordinator.jobs()
+                       if job["status"] in {"queued", "running"}), None)
+        if active:
+            reasons.append("a staggered automatic fleet update is active")
+    return reasons
+
+
+auto_updater = create_updater(readiness=_automatic_update_blockers)
+fleet_auto_updates = FleetAutoUpdates(monitor, auto_updater)
 
 
 @asynccontextmanager
@@ -161,6 +200,87 @@ def update_status():
 @app.get("/api/version")
 def version():
     return {"app_version": _app_version(), "title": TITLE}
+
+
+@app.get("/api/auto-update/status")
+def automatic_update_status():
+    return auto_updater.public_status()
+
+
+@app.get("/api/auto-update/readiness")
+def automatic_update_readiness():
+    return auto_updater.readiness_status()
+
+
+@app.post("/api/auto-update/settings")
+def automatic_update_settings(body: AutoUpdateSettingsBody):
+    try:
+        return auto_updater.save_settings(body.model_dump())
+    except UpdateError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/auto-update/check")
+def automatic_update_check():
+    try:
+        return auto_updater.trigger_check()
+    except UpdateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/auto-update/update")
+def automatic_update_run(body: AutoUpdateRequestBody):
+    try:
+        return auto_updater.trigger_update(after_current=body.after_current)
+    except UpdateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/auto-update/retry")
+def automatic_update_retry():
+    try:
+        return auto_updater.retry()
+    except UpdateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/hub/auto-updates")
+async def fleet_automatic_update_status():
+    return await fleet_auto_updates.snapshot()
+
+
+@app.post("/api/hub/auto-updates/check-all")
+async def fleet_automatic_update_check_all():
+    return await fleet_auto_updates.check_all()
+
+
+@app.post("/api/hub/auto-updates/{target_id}/mode")
+async def fleet_automatic_update_mode(target_id: str, body: FleetAutoModeBody):
+    try:
+        return await fleet_auto_updates.set_mode(target_id, body.mode)
+    except (ValueError, UpdateError, httpx.HTTPError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/hub/auto-updates/update-idle")
+async def fleet_automatic_update_run(body: FleetAutoRunBody):
+    try:
+        return fleet_auto_updates.start_idle_updates(body.target_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/hub/auto-updates/jobs")
+def fleet_automatic_update_jobs():
+    return {"updates": fleet_auto_updates.jobs()}
+
+
+@app.get("/api/hub/auto-updates/jobs/{job_id}")
+def fleet_automatic_update_job(job_id: str):
+    job = fleet_auto_updates.job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="automatic fleet update not found")
+    return job
 
 
 # ── canonical hub API ──────────────────────────────────────────────────────
