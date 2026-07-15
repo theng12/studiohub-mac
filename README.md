@@ -16,6 +16,9 @@ The Hub runs on fixed port **47873** and provides:
   (RSS) and CPU, resolved port → PID → process tree.
 - **Cloud audio readiness** — Voice Studio cards show which provider gateways are
   configured and live on each machine without exposing provider credentials.
+- **Shared voice library** — upload and transcribe one cloning reference in Hub,
+  review the words, then synchronize the same stable ID, audio hash, and
+  transcript to every Voice Studio Mac. Offline machines catch up automatically.
 - **Host-aware registry** — studios on other machines (LAN/Tailscale) can be added
   via `studios.json`, the foundation for multi-machine federation and Swarm Batch.
 - **Machine-level work leases** — image generation and final rendering take turns
@@ -31,9 +34,25 @@ Swarm Batch, recipes).
    with FastAPI/httpx/psutil; no AI bundle needed — the Hub runs no models).
 2. **Start** — click *Start*. The dashboard opens at `http://localhost:47873`.
 3. **Tabs**: *Overview* (studio cards), *Models* (unified catalog with search and
-   filters), *Resources* (host memory bar + per-studio table).
+   filters), *Voices* (transcribe and share cloning references), and *Resources*
+   (host memory bar + per-studio table).
 4. The dashboard updates continuously over SSE, falls back to 5-second polling
    if the stream drops, and reconnects automatically with bounded backoff.
+
+### Add a shared cloning voice
+
+1. Open **Voices**, choose the short reference recording, name, language, voice
+   type, and usage rights.
+2. Pick a ready Whisper model and click **Transcribe in Hub**. Hub uses the same
+   durable fleet transcription queue as episode work. Review or correct the
+   editable transcript.
+3. Confirm permission and click **Save & sync to all Macs**. The card shows every
+   machine separately. Offline or restarting Macs remain pending and retry every
+   30 seconds; **Sync again** is also available.
+
+Studio Hub stores the canonical files under its ignored `shared_voices/` state
+folder. Existing Voice Studio library entries are left untouched. New workers
+need Voice Studio v1.19.0 or later to accept the authenticated stable-ID sync.
 
 ## Automatic updates (optional)
 
@@ -93,6 +112,11 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/catalog` | Raw per-studio catalog rows (annotated `hub_cached`, `hub_machine`). Query: `q`, `modality`, `downloaded`, `cloud`, `force` |
 | `GET /api/hub/models` | **Deduped by repo** with per-machine availability (`cached_on`, `machines[]`). Query: `q`, `modality`, `downloaded` |
 | `GET /api/hub/transcription` | Fleet-wide Whisper inventory with `cached_on`, `available_on`, ready counts, and recommended default |
+| `GET /api/hub/shared-voices` | List Hub-owned cloning references with transcript and per-machine synchronization state |
+| `POST /api/hub/shared-voices/transcribe` | Transcribe one multipart reference clip through the existing fleet queue and return editable plain text |
+| `POST /api/hub/shared-voices` | Save one multipart reference + reviewed transcript and begin synchronization to all Voice Studio Macs |
+| `PATCH /api/hub/shared-voices/{id}` · `POST /api/hub/shared-voices/{id}/sync` | Correct shared metadata/transcript and resynchronize / manually retry all targets |
+| `GET /api/hub/shared-voices/{id}/audio` | Stream the canonical authenticated reference clip |
 | `GET /api/hub/providers` | Fleet-wide cloud audio provider readiness, configuration counts, and reporting Voice Studio endpoints |
 | `POST /api/hub/transcribe` | Multipart audio transcription routed to a free Voice Studio that has the selected Whisper model cached |
 | `POST /api/hub/transcription/jobs` | Stream a multi-file episode transcription batch into the persistent fleet queue |
@@ -132,6 +156,46 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/recipes/run` | Run a recipe chain (`{recipe, brief}`) |
 | `GET /api/hub/recipes/runs[/{id}]` | Recipe run status |
 | `POST /api/hub/director` | `{brief, auto_run?}` — LLM plans a recipe from plain English |
+
+### Shared voice API examples
+
+The dashboard is the easiest workflow because it performs transcription and
+lets you review the text first. Programmatic clients can submit the reviewed
+reference directly.
+
+```bash
+curl -X POST "$HUB/api/hub/shared-voices" \
+  -H "X-Hub-Token: $HUB_TOKEN" \
+  -F 'audio=@aiden.wav' -F 'name=Aiden' -F 'language=en' \
+  -F 'gender=m' -F 'license=self-owned' \
+  -F 'transcript=The exact reviewed words spoken in the clip.' \
+  -F 'permission_acknowledged=true'
+```
+
+```javascript
+const body = new FormData();
+body.append("audio", referenceFile);
+for (const [key, value] of Object.entries({
+  name: "Aiden", language: "en", gender: "m", license: "self-owned",
+  transcript: reviewedTranscript, permission_acknowledged: "true",
+})) body.append(key, value);
+const sharedVoice = await fetch(`${HUB}/api/hub/shared-voices`, {
+  method: "POST", headers: {"X-Hub-Token": token}, body,
+}).then(response => response.json());
+```
+
+```python
+with open("aiden.wav", "rb") as audio:
+    response = httpx.post(
+        f"{HUB}/api/hub/shared-voices",
+        headers={"X-Hub-Token": token},
+        files={"audio": ("aiden.wav", audio, "audio/wav")},
+        data={"name": "Aiden", "language": "en", "gender": "m",
+              "license": "self-owned", "transcript": reviewed_transcript,
+              "permission_acknowledged": "true"},
+    )
+response.raise_for_status()
+```
 
 ## Client integration (Story Studio KH)
 

@@ -21,7 +21,7 @@ from starlette.testclient import TestClient
 
 def _reset_state():
     from backend import (alerts, auth, broker, chat_jobs, fleet_ops, ledger,
-                         metrics, peers, transcription_jobs)
+                         metrics, peers, shared_voices, transcription_jobs)
     from backend import main
     from backend import registry as reg
     from backend.main import monitor
@@ -50,6 +50,8 @@ def _reset_state():
     chat_jobs.reset_for_tests()
     import shutil
     shutil.rmtree(transcription_jobs.ROOT, ignore_errors=True)
+    shutil.rmtree(shared_voices.ROOT, ignore_errors=True)
+    shared_voices._tasks.clear()
     try:
         transcription_jobs.SETTINGS_FILE.unlink()
     except FileNotFoundError:

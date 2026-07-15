@@ -28,6 +28,7 @@ machine_flags.json
 uploads/
 transcription_jobs/
 transcription_settings.json
+shared_voices/
 service/
 logs/service/
 .pytest_cache/

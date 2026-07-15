@@ -188,7 +188,7 @@
   nav:after{content:"FLEET CONTROL  /  LIVE";position:absolute;left:24px;bottom:26px;color:#a8c8b8;font:700 9px/1 var(--mono);letter-spacing:.14em}
   nav button{position:relative;display:flex;align-items:center;gap:12px;width:100%;padding:12px 14px;border:1px solid transparent;border-radius:12px;color:#afc6ba;text-align:left;font:600 13px/1 var(--sans);transition:.18s background,.18s color,.18s transform,.18s border-color}
   nav button:before{display:grid;place-items:center;width:25px;height:25px;border-radius:8px;background:#ffffff0d;font-size:13px}
-  nav button[data-tab="overview"]:before{content:"⌂"}nav button[data-tab="models"]:before{content:"◇"}nav button[data-tab="resources"]:before{content:"◫"}nav button[data-tab="jobs"]:before{content:"↯"}nav button[data-tab="assets"]:before{content:"▧"}nav button[data-tab="stats"]:before{content:"↗"}nav button[data-tab="updates"]:before{content:"↻"}nav button[data-tab="remote"]:before{content:"◎"}
+  nav button[data-tab="overview"]:before{content:"⌂"}nav button[data-tab="models"]:before{content:"◇"}nav button[data-tab="voices"]:before{content:"♬"}nav button[data-tab="resources"]:before{content:"◫"}nav button[data-tab="jobs"]:before{content:"↯"}nav button[data-tab="assets"]:before{content:"▧"}nav button[data-tab="stats"]:before{content:"↗"}nav button[data-tab="updates"]:before{content:"↻"}nav button[data-tab="remote"]:before{content:"◎"}
   nav button:hover{color:#fff;background:#ffffff0b;transform:translateX(2px)}
   nav button.active{color:#fff;background:#ffffff14;border-color:#ffffff17;box-shadow:inset 3px 0 #f0c469;border-bottom-color:#ffffff17}
   nav button.active:before{background:#f0c469;color:#173a2c}
@@ -222,12 +222,20 @@
   .auto-update-controls .field-label{display:flex;flex-direction:column;gap:7px}.auto-update-controls .selctl{width:100%;text-transform:none;letter-spacing:0;font-family:var(--sans)}.auto-update-idle{height:39px;margin:0;padding:0 8px;border:1px solid transparent;border-radius:10px;text-transform:none;letter-spacing:0;font:600 11.5px/1.2 var(--sans)}
   .auto-update-actions{min-height:39px}.auto-update-actions .sub{flex:1;min-width:220px}.auto-update-facts{display:grid;grid-template-columns:repeat(6,minmax(110px,1fr));gap:8px;margin:14px 0 5px}.auto-update-fact{min-width:0;padding:10px 11px;border:1px solid #dfe3da;border-radius:12px;background:#fbfbf6}.auto-update-fact span{display:block;margin-bottom:5px;color:var(--dim);font:700 8.5px/1 var(--mono);letter-spacing:.09em;text-transform:uppercase}.auto-update-fact b{display:block;overflow:hidden;text-overflow:ellipsis;color:var(--accent2);font:700 11.5px/1.35 var(--mono);white-space:nowrap}
   .auto-update-table{min-width:1040px}.auto-update-table td{vertical-align:middle}.auto-update-table .selctl{min-width:112px;padding:7px 9px}.auto-update-table .actions{margin:0;flex-wrap:nowrap}.auto-update-status{max-width:210px;overflow-wrap:anywhere}.auto-update-app b{display:block}.auto-update-app .sub{display:block;margin-top:2px}.auto-update-unavailable{opacity:.62}.auto-update-spinner{display:inline-block;margin-right:5px;animation:autoSpin 1s linear infinite}@keyframes autoSpin{to{transform:rotate(360deg)}}
+  .voice-create{background:linear-gradient(145deg,#fffef9,#edf5ec)}
+  .voice-form-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1.2fr;gap:11px;margin-top:12px}
+  .voice-field{display:flex;flex-direction:column;gap:6px;min-width:0}.voice-field>span{font:700 9px/1 var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}
+  .voice-field input,.voice-field select,.voice-field textarea{width:100%;margin:0;background:#fffefb;border:1px solid #ced4ca;color:var(--text);border-radius:10px;padding:10px 11px;font:inherit;outline:none}.voice-field input:focus,.voice-field select:focus,.voice-field textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px #167a5515}
+  .voice-field.wide{grid-column:span 2}.voice-field.full{grid-column:1/-1}.voice-field textarea{min-height:116px;resize:vertical;line-height:1.55}
+  .voice-audio-row{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;padding:13px;border:1px solid #d8dfd5;border-radius:14px;background:#f8faf5}.voice-audio-row .voice-field{flex:1;min-width:260px}.voice-audio-row .voice-field.model{min-width:240px}.voice-audio-row .btn{min-height:39px}
+  .voice-consent{display:flex;align-items:flex-start;gap:8px;margin:12px 0;color:var(--dim);font-size:12px}.voice-consent input{margin-top:3px}.voice-help{margin:-2px 0 12px;color:var(--dim);font-size:12px}
+  .voice-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(350px,1fr));gap:14px}.voice-card{display:flex;flex-direction:column;min-width:0}.voice-card .voice-name{font:700 20px/1.1 var(--display);color:var(--accent2)}.voice-card .voice-meta{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.voice-card code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.voice-sync-line{display:flex;align-items:center;gap:8px;margin-top:auto;padding-top:10px;border-top:1px solid #e1e5dc}.voice-sync-line .sub{flex:1}.voice-targets{margin-top:10px}.voice-targets summary{cursor:pointer;color:var(--accent);font-size:11.5px;font-weight:700}.voice-target{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 10px;padding:8px 0;border-bottom:1px solid #e6e8e1}.voice-target:last-child{border-bottom:0}.voice-target .message{grid-column:1/-1;color:var(--dim);font-size:10.5px;overflow-wrap:anywhere}
   #bell-dropdown{top:37px;right:0;width:370px;padding:8px;border-color:var(--border);border-radius:16px;background:#fffef9;box-shadow:0 22px 55px #18362935}#bell-dropdown .bd-row:hover{background:#eff2ea}
   .modal-backdrop{background:rgba(12,35,26,.66);backdrop-filter:blur(7px)}.modal{max-width:650px;padding:26px;border:1px solid #d9ded5;border-radius:22px;background:#fffef9;box-shadow:0 30px 80px #0a241950}.modal h2{font:700 29px/1 var(--display)}.wn-rel{padding:16px 0;border-color:#dfe2d8}.wn-rel h3{font:700 14px/1.2 var(--mono);color:var(--accent2)}.wn-rel li{font-size:13px}
   .empty{padding:44px;color:#7b847d}.muted,.sub{color:var(--dim)}
-  @media(max-width:1050px){header{margin-left:210px;padding:0 24px}nav{width:210px}main{margin-left:210px;padding:26px 24px 60px}.lrow{grid-template-columns:22px minmax(0,1.7fr) minmax(0,1fr) 90px minmax(0,1.15fr) 170px}.lrow>div:nth-child(6),.lrow.lhead>span:nth-child(6){display:none}.auto-update-controls{grid-template-columns:repeat(2,minmax(180px,1fr))}.auto-update-facts{grid-template-columns:repeat(3,minmax(110px,1fr))}}
+  @media(max-width:1050px){header{margin-left:210px;padding:0 24px}nav{width:210px}main{margin-left:210px;padding:26px 24px 60px}.lrow{grid-template-columns:22px minmax(0,1.7fr) minmax(0,1fr) 90px minmax(0,1.15fr) 170px}.lrow>div:nth-child(6),.lrow.lhead>span:nth-child(6){display:none}.auto-update-controls{grid-template-columns:repeat(2,minmax(180px,1fr))}.auto-update-facts{grid-template-columns:repeat(3,minmax(110px,1fr))}.voice-form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
   @media(max-width:820px){header{margin-left:0;height:68px;padding:0 18px}header .summary{display:none}nav{position:sticky;top:68px;width:auto;height:58px;padding:7px 12px;flex-direction:row;overflow-x:auto;background:#123126;box-shadow:0 8px 20px #1736281c}nav:before,nav:after{display:none}nav button{width:auto;flex:0 0 auto;padding:8px 11px}nav button:hover{transform:none}main{margin-left:0;padding:22px 18px 54px}.workspace-head{padding:25px 26px}.live-chip{display:none}.grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}}
-  @media(max-width:600px){header>span:first-child{display:none}header{gap:9px;padding:0 14px}header h1{font-size:18px}header #last-refresh{display:none}nav button{font-size:0;gap:0;padding:7px 12px}nav button:before{font-size:14px}nav button.active{font-size:11px;gap:7px}main{padding:16px 12px 45px}main>section,.card{min-width:0}.workspace-head{margin-bottom:16px;padding:22px 20px;border-radius:18px}.workspace-head h2{font-size:32px}.workspace-head p{font-size:12.5px}.controls,.toolbar{padding:10px}.controls .grp{width:100%;justify-content:space-between}.seg{max-width:100%;overflow-x:auto}.grid{grid-template-columns:1fr}.card{overflow:hidden;border-radius:15px;padding:16px}table{display:block;max-width:100%;overflow-x:auto}table thead,table tbody{display:table;width:max-content;min-width:100%;table-layout:auto}.lrow{grid-template-columns:20px 1.5fr .8fr auto;gap:8px}.lrow>div:nth-child(3),.lrow>div:nth-child(5),.lrow>div:nth-child(6),.lrow.lhead>span:nth-child(3),.lrow.lhead>span:nth-child(5),.lrow.lhead>span:nth-child(6){display:none}.modal{padding:20px;border-radius:18px}#bell-dropdown{position:fixed;left:12px;right:12px;top:72px;width:auto}.auto-update-controls{grid-template-columns:1fr;padding:11px}.auto-update-idle{height:auto;padding:7px 2px}.auto-update-actions .btn{flex:1 1 145px}.auto-update-actions .sub{flex-basis:100%}.auto-update-facts{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  @media(max-width:600px){header>span:first-child{display:none}header{gap:9px;padding:0 14px}header h1{font-size:18px}header #last-refresh{display:none}nav button{font-size:0;gap:0;padding:7px 12px}nav button:before{font-size:14px}nav button.active{font-size:11px;gap:7px}main{padding:16px 12px 45px}main>section,.card{min-width:0}.workspace-head{margin-bottom:16px;padding:22px 20px;border-radius:18px}.workspace-head h2{font-size:32px}.workspace-head p{font-size:12.5px}.controls,.toolbar{padding:10px}.controls .grp{width:100%;justify-content:space-between}.seg{max-width:100%;overflow-x:auto}.grid{grid-template-columns:1fr}.card{overflow:hidden;border-radius:15px;padding:16px}table{display:block;max-width:100%;overflow-x:auto}table thead,table tbody{display:table;width:max-content;min-width:100%;table-layout:auto}.lrow{grid-template-columns:20px 1.5fr .8fr auto;gap:8px}.lrow>div:nth-child(3),.lrow>div:nth-child(5),.lrow>div:nth-child(6),.lrow.lhead>span:nth-child(3),.lrow.lhead>span:nth-child(5),.lrow.lhead>span:nth-child(6){display:none}.modal{padding:20px;border-radius:18px}#bell-dropdown{position:fixed;left:12px;right:12px;top:72px;width:auto}.auto-update-controls{grid-template-columns:1fr;padding:11px}.auto-update-idle{height:auto;padding:7px 2px}.auto-update-actions .btn{flex:1 1 145px}.auto-update-actions .sub{flex-basis:100%}.auto-update-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.voice-form-grid{grid-template-columns:1fr}.voice-field.wide{grid-column:auto}.voice-list{grid-template-columns:1fr}.voice-audio-row .voice-field,.voice-audio-row .voice-field.model{min-width:100%}}
   @media(max-width:600px){.resource-studio-table thead,.resource-studio-table tbody{min-width:720px}}
 </style>
 </head>
@@ -247,6 +255,7 @@
 <nav>
   <button class="active" data-tab="overview">Overview</button>
   <button data-tab="models">Models</button>
+  <button data-tab="voices">Voices</button>
   <button data-tab="resources">Resources</button>
   <button data-tab="jobs">Jobs</button>
   <button data-tab="assets">Assets</button>
@@ -349,6 +358,37 @@
         <th>Model</th><th>Type</th><th>Family</th><th class="num">Size</th><th class="num">Min RAM</th><th>Availability</th>
       </tr></thead><tbody id="m-body"></tbody></table>
     </div>
+  </section>
+
+  <!-- SHARED VOICES -->
+  <section id="tab-voices" class="hide">
+    <div class="card section voice-create">
+      <div class="top"><span class="emoji">🎙️</span><h3>Add one voice, use it on every Voice Studio Mac</h3><span class="pill new">Hub library</span></div>
+      <p class="voice-help">Studio Hub keeps the master reference and reviewed transcript. Each connected Mac receives the same stable voice ID; offline Macs catch up automatically when they reconnect.</p>
+      <div class="voice-audio-row">
+        <label class="voice-field"><span>Reference audio</span><input id="sv-audio" type="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.opus,.aac"></label>
+        <label class="voice-field model"><span>Transcription model</span><select id="sv-model"><option value="">Loading available Whisper models…</option></select></label>
+        <button class="btn primary" id="sv-transcribe" onclick="transcribeSharedVoice()">Transcribe in Hub</button>
+      </div>
+      <div class="voice-form-grid">
+        <label class="voice-field wide"><span>Voice name</span><input id="sv-name" maxlength="200" placeholder="e.g. Aiden"></label>
+        <label class="voice-field"><span>Language</span><input id="sv-language" maxlength="40" value="en" placeholder="en"></label>
+        <label class="voice-field"><span>Voice type</span><select id="sv-gender"><option value="m">Male</option><option value="f">Female</option><option value="n">Neutral / unspecified</option></select></label>
+        <label class="voice-field"><span>Usage rights</span><select id="sv-license"><option value="self-owned">Self-owned</option><option value="permission">Permission granted</option><option value="public-domain">Public domain</option><option value="unknown">Other / unknown</option></select></label>
+        <label class="voice-field wide"><span>Source URL (optional)</span><input id="sv-source" type="url" placeholder="https://…"></label>
+        <label class="voice-field wide"><span>Notes (optional)</span><input id="sv-notes" placeholder="Recording details or usage notes"></label>
+        <label class="voice-field full"><span>Transcript — review and correct before saving</span><textarea id="sv-transcript" placeholder="Select the audio and click Transcribe in Hub, or type the exact words spoken in the clip."></textarea></label>
+      </div>
+      <label class="voice-consent"><input id="sv-consent" type="checkbox"><span>I confirm I have permission to clone this voice and distribute this reference clip to my connected Voice Studio Macs.</span></label>
+      <div class="actions">
+        <button class="btn primary" id="sv-save" onclick="saveSharedVoice()">Save &amp; sync to all Macs</button>
+        <button class="btn" onclick="clearSharedVoiceForm()">Clear form</button>
+        <span class="sub" id="sv-status" role="status" aria-live="polite"></span>
+      </div>
+    </div>
+
+    <div class="group-head"><h2>Shared voice library</h2><span class="meta" id="sv-summary">Loading…</span><span style="flex:1"></span><button class="btn" onclick="loadSharedVoices(true)">Refresh</button></div>
+    <div id="sv-list" class="voice-list"><div class="card empty">No shared voices yet</div></div>
   </section>
 
   <!-- RESOURCES -->
@@ -752,6 +792,11 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.40.0", date: "2026-07-16", items: [
+    "A new <b>Voices</b> workspace lets you upload one cloning reference, transcribe it inside Studio Hub, review the transcript, and synchronize the same stable voice ID to every Voice Studio Mac.",
+    "Per-machine status distinguishes synchronized, offline/pending, old Voice Studio versions, conflicts, and failures. Connection drops retry automatically until the machine catches up.",
+    "Existing local voices are never merged, overwritten, or deleted. Hub verifies the reference audio hash on every worker and leaves provider mappings and embedding caches machine-local.",
+  ] },
   { v: "1.39.0", date: "2026-07-15", items: [
     "A dedicated <b>Updates</b> workspace now gives this Hub clear Off, Notify, and Auto modes, visible schedules, installed/latest versions, last/next checks, live progress, defer reasons, release notes, and retry controls.",
     "The fleet table provides independent per-app modes plus <b>Check all</b>, individual Update, and <b>Update idle apps</b>. Eligible Studios update one at a time and must answer healthy before the next begins.",
@@ -992,10 +1037,11 @@ async function api(path, opts = {}) {
 }
 
 // ── tabs ──────────────────────────────────────────────────────────────────
-const TABS = ["overview", "models", "resources", "jobs", "assets", "stats", "updates", "remote"];
+const TABS = ["overview", "models", "voices", "resources", "jobs", "assets", "stats", "updates", "remote"];
 const TAB_META = {
   overview: ["Studio overview", "The live state of every creative worker across your connected Macs."],
   models: ["Model library", "Find what is downloaded, where it lives, and which machine can run it."],
+  voices: ["Shared voices", "Create, transcribe, and synchronize cloning references across every Voice Studio Mac."],
   resources: ["Fleet resources", "Unified memory, CPU pressure, and studio footprint across the fleet."],
   jobs: ["Production queue", "Submit generation batches and follow every item from dispatch to completion."],
   assets: ["Asset ledger", "Browse generated media and trace each result back to its studio and model."],
@@ -1018,6 +1064,7 @@ document.querySelectorAll("nav button").forEach(btn => {
     TABS.forEach(t => $("#tab-" + t).classList.toggle("hide", t !== btn.dataset.tab));
     updatePageHeading(btn.dataset.tab);
     if (btn.dataset.tab === "models") loadModels();
+    if (btn.dataset.tab === "voices") loadSharedVoices();
     if (btn.dataset.tab === "updates") loadAutoUpdates();
     if (btn.dataset.tab === "remote") { loadAccess(); loadMachines(); loadAlerts(); loadMaintenance(); }
     if (btn.dataset.tab === "jobs") { loadJobModels(); loadBatches(); loadTranscriptionSettings(); }
@@ -1027,6 +1074,137 @@ document.querySelectorAll("nav button").forEach(btn => {
   };
 });
 updatePageHeading("overview");
+
+// ── shared voice library ────────────────────────────────────────────────
+let sharedVoiceModelsLoaded = false;
+function sharedVoiceStatusPill(status) {
+  const cls = status === "synced" ? "ok" : (status === "failed" || status === "conflict" ? "err" : "warn");
+  return `<span class="pill ${cls}">${esc(status || "pending")}</span>`;
+}
+function renderSharedVoices(voices) {
+  const total = voices.length;
+  const synced = voices.reduce((n, v) => n + (v.sync?.synced || 0), 0);
+  const targets = voices.reduce((n, v) => n + (v.sync?.total || 0), 0);
+  $("#sv-summary").textContent = `${total} voice${total === 1 ? "" : "s"} · ${synced}/${targets} machine copies ready`;
+  if (!voices.length) {
+    $("#sv-list").innerHTML = '<div class="card empty">No shared voices yet. Add your first reference above.</div>';
+    return;
+  }
+  $("#sv-list").innerHTML = voices.map(v => {
+    const s = v.sync || {};
+    const complete = s.total > 0 && s.synced === s.total;
+    const headline = s.syncing ? "Synchronizing…" : complete ? "Ready everywhere" : `${s.synced || 0}/${s.total || 0} Macs ready`;
+    const targetsHtml = (v.targets || []).map(t => `
+      <div class="voice-target">
+        <span><b>${esc(mlabel(t.machine || "local"))}</b> <span class="sub">${esc(t.studio_id || "")}</span></span>
+        ${sharedVoiceStatusPill(t.status)}
+        <span class="message">${esc(t.message || "")}</span>
+      </div>`).join("");
+    return `<article class="card voice-card">
+      <div class="top"><span class="emoji">🎧</span><div style="min-width:0;flex:1"><div class="voice-name">${esc(v.name)}</div><div class="sub">${esc(v.language)} · ${esc(v.license)}</div></div>${sharedVoiceStatusPill(complete ? "synced" : (s.conflict || s.failed ? "failed" : "pending"))}</div>
+      <div class="voice-meta"><span class="pill">ID ${esc(v.id)}</span><span class="pill ${v.has_transcript ? "ok" : "warn"}">${v.has_transcript ? "transcript ready" : "no transcript"}</span><span class="pill">${esc(v.audio_extension)}</span></div>
+      ${v.notes ? `<p class="sub" style="margin-bottom:8px">${esc(v.notes)}</p>` : ""}
+      <code title="${esc(v.audio_sha256)}">SHA-256 ${esc((v.audio_sha256 || "").slice(0, 16))}…</code>
+      <details class="voice-targets"><summary>Per-machine status (${s.synced || 0}/${s.total || 0})</summary>${targetsHtml || '<div class="sub" style="padding-top:8px">No Voice Studio machines are registered.</div>'}</details>
+      <div class="voice-sync-line"><span class="sub">${esc(headline)}</span><button class="btn compact" onclick="playSharedVoice('${jsq(v.id)}',this)">Play</button><button class="btn compact" ${s.syncing ? "disabled" : ""} onclick="retrySharedVoice('${jsq(v.id)}',this)">${s.syncing ? "Syncing…" : "Sync again"}</button></div>
+    </article>`;
+  }).join("");
+}
+async function loadSharedVoiceModels(force = false) {
+  if (sharedVoiceModelsLoaded && !force) return;
+  try {
+    const response = await api(`/api/hub/transcription${force ? "?force=true" : ""}`);
+    const data = await response.json();
+    const models = (data.models || []).filter(m => m.cached && (m.available_on || []).length);
+    const select = $("#sv-model");
+    const previous = select.value;
+    select.innerHTML = models.length
+      ? models.map(m => `<option value="${esc(m.repo)}" ${m.repo === data.default_model ? "data-default=\"true\"" : ""}>${esc(m.label || m.repo)} · ${esc((m.available_on || []).length)} Mac${(m.available_on || []).length === 1 ? "" : "s"}</option>`).join("")
+      : '<option value="">No ready Whisper model found</option>';
+    if (models.some(m => m.repo === previous)) select.value = previous;
+    else if (data.default_model && models.some(m => m.repo === data.default_model)) select.value = data.default_model;
+    sharedVoiceModelsLoaded = true;
+  } catch (_) {
+    $("#sv-model").innerHTML = '<option value="">Could not load transcription models</option>';
+  }
+}
+async function loadSharedVoices(force = false) {
+  await loadSharedVoiceModels(force);
+  try {
+    const response = await api("/api/hub/shared-voices");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    renderSharedVoices((await response.json()).voices || []);
+  } catch (error) {
+    $("#sv-summary").textContent = "Could not load shared voices";
+    $("#sv-list").innerHTML = `<div class="card empty">${esc(error.message)}</div>`;
+  }
+}
+async function transcribeSharedVoice() {
+  const file = $("#sv-audio").files[0], model = $("#sv-model").value;
+  if (!file) { $("#sv-status").textContent = "Choose a reference audio file first."; return; }
+  if (!model) { $("#sv-status").textContent = "No ready Whisper model is available. Download one in Models first."; return; }
+  const button = $("#sv-transcribe");
+  button.disabled = true; button.setAttribute("aria-busy", "true"); button.textContent = "Transcribing…";
+  $("#sv-status").textContent = "Studio Hub is sending the clip to an available Voice Studio…";
+  const fd = new FormData(); fd.append("audio", file); fd.append("model", model);
+  if ($("#sv-language").value.trim()) fd.append("language", $("#sv-language").value.trim());
+  try {
+    const response = await api("/api/hub/shared-voices/transcribe", {method:"POST", body:fd});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    $("#sv-transcript").value = data.transcript || "";
+    $("#sv-status").textContent = "Transcript ready — review and correct it before saving.";
+  } catch (error) { $("#sv-status").textContent = `Transcription failed: ${error.message}`; }
+  finally { button.disabled = false; button.removeAttribute("aria-busy"); button.textContent = "Transcribe in Hub"; }
+}
+async function saveSharedVoice() {
+  const file = $("#sv-audio").files[0];
+  if (!file) { $("#sv-status").textContent = "Choose a reference audio file first."; return; }
+  const fields = {name:"#sv-name", language:"#sv-language", gender:"#sv-gender", license:"#sv-license", notes:"#sv-notes", source_url:"#sv-source", transcript:"#sv-transcript"};
+  if (!$("#sv-name").value.trim()) { $("#sv-status").textContent = "Enter a voice name."; return; }
+  if (!$("#sv-consent").checked) { $("#sv-status").textContent = "Confirm permission before saving."; return; }
+  const fd = new FormData(); fd.append("audio", file);
+  Object.entries(fields).forEach(([key, selector]) => fd.append(key, $(selector).value));
+  fd.append("permission_acknowledged", "true");
+  const button = $("#sv-save"); button.disabled = true; button.setAttribute("aria-busy", "true"); button.textContent = "Saving…";
+  $("#sv-status").textContent = "Saving the master reference and starting fleet synchronization…";
+  try {
+    const response = await api("/api/hub/shared-voices", {method:"POST", body:fd});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    clearSharedVoiceForm();
+    $("#sv-status").textContent = `${data.voice.name} saved. Offline Macs will catch up automatically.`;
+    await loadSharedVoices();
+  } catch (error) { $("#sv-status").textContent = `Could not save voice: ${error.message}`; }
+  finally { button.disabled = false; button.removeAttribute("aria-busy"); button.textContent = "Save & sync to all Macs"; }
+}
+function clearSharedVoiceForm() {
+  ["#sv-audio", "#sv-name", "#sv-source", "#sv-notes", "#sv-transcript"].forEach(selector => $(selector).value = "");
+  $("#sv-language").value = "en"; $("#sv-gender").value = "m"; $("#sv-license").value = "self-owned"; $("#sv-consent").checked = false;
+}
+async function retrySharedVoice(id, button) {
+  button.disabled = true; button.textContent = "Starting…";
+  try {
+    const response = await api(`/api/hub/shared-voices/${encodeURIComponent(id)}/sync`, {method:"POST"});
+    const data = await response.json(); if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    await loadSharedVoices();
+  } catch (error) { $("#sv-status").textContent = `Sync could not start: ${error.message}`; }
+  finally { button.disabled = false; button.textContent = "Sync again"; }
+}
+async function playSharedVoice(id, button) {
+  const original = button.textContent; button.disabled = true; button.textContent = "Loading…";
+  try {
+    const response = await api(`/api/hub/shared-voices/${encodeURIComponent(id)}/audio`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const url = URL.createObjectURL(await response.blob());
+    const audio = new Audio(url); audio.onended = () => URL.revokeObjectURL(url); await audio.play();
+  } catch (error) { $("#sv-status").textContent = `Audio could not play: ${error.message}`; }
+  finally { button.disabled = false; button.textContent = original; }
+}
+$("#sv-audio").addEventListener("change", () => {
+  const file = $("#sv-audio").files[0];
+  if (file && !$("#sv-name").value.trim()) $("#sv-name").value = file.name.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ");
+});
 
 // generic segmented-control wiring
 function initSeg(id, val, setter) {
@@ -2844,6 +3022,7 @@ setInterval(() => {
   const ae = document.activeElement;
   if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return;
   if (vis("models")) loadModels();
+  else if (vis("voices")) loadSharedVoices();
   else if (vis("assets")) loadAssets();
   else if (vis("stats")) loadStats();
 }, 12000);

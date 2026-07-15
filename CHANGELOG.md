@@ -10,6 +10,36 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.40.0] — 2026-07-16
+
+### Added — one shared, transcribed voice library for the fleet
+
+- Added a dedicated **Voices** workspace. Select a reference recording,
+  transcribe it through the existing fleet Whisper queue inside Studio Hub,
+  review or correct the text, confirm permission, then save and synchronize it
+  to every registered Voice Studio Mac.
+- Studio Hub is the source of truth for the reference audio, metadata, and
+  transcript. Every worker receives the same stable 12-character voice ID and
+  verified SHA-256, so Hub-dispatched cloning jobs resolve consistently.
+- Added per-machine synchronized, pending/offline, unsupported-version,
+  conflict, and failed states with manual **Sync again** control and authenticated
+  reference-audio playback.
+
+### Automatic recovery and safety
+
+- Connection drops and offline machines stay pending and retry every 30 seconds.
+  Updating or reconnecting an older Voice Studio is enough for it to catch up;
+  no voice re-upload is needed.
+- Shared sync routes remote traffic through each machine's authenticated peer
+  Hub. Audio hashes and returned IDs are verified before a target is marked
+  synchronized.
+- Existing local voices are never merged, overwritten, or deleted. Provider
+  mappings and generated model embeddings remain machine-local.
+- Added isolated tests for canonical storage, validation, authentication,
+  transcription-to-editable-text, peer routing, old-worker reporting, a forced
+  connection drop, and successful automatic retry. No new dependency or model
+  installation is required.
+
 ## [1.39.0] — 2026-07-15
 
 ### Added — safe optional updates for the Hub and the whole fleet

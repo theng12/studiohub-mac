@@ -110,6 +110,11 @@ Legend: ⭐ high-value + uniquely enabled by this setup · ○ strong · ◦ nic
 - ⭐ **Config / model broadcaster** — Push one setting (HF token, provider keys) or one model
   download to *all* studios at once, instead of editing five `ENVIRONMENT` files. Snapshot and
   restore studio configs.
+- ⭐ **Shared cloning voice library** — Studio Hub owns one permission-acknowledged
+  reference, reviewed Whisper transcript, stable ID, and audio hash, then
+  synchronizes that exact record to every Voice Studio. Remote writes route
+  through peer Hubs; offline or restarting workers retry automatically, while
+  pre-existing local voices, provider mappings, and embedding caches stay local.
 - ⭐ **Credential pool / key rotation** — For cloud-backed models, manage multiple accounts per
   provider (Pollinations, OpenRouter, NVIDIA, Groq, …) and rotate keys to maximize free-tier
   throughput and avoid rate limits. Since cloud models don't touch local unified memory, this

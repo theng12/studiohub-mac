@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import (alerts, broadcast, broker, chat_jobs, fleet_ops, gateway, ledger,
-               metrics, peers, recipes, transcription_jobs)
+               metrics, peers, recipes, shared_voices, transcription_jobs)
 from .auto_update import UpdateError
 from .auto_update_config import create_updater
 from .fleet_auto_updates import FleetAutoUpdates
@@ -60,6 +60,16 @@ class FleetAutoModeBody(BaseModel):
 
 class FleetAutoRunBody(BaseModel):
     target_ids: list[str] | None = Field(default=None, max_length=100)
+
+
+class SharedVoiceUpdateBody(BaseModel):
+    name: str | None = None
+    language: str | None = None
+    gender: str | None = None
+    license: str | None = None
+    notes: str | None = None
+    source_url: str | None = None
+    transcript: str | None = None
 
 # Give our loggers a handler regardless of how uvicorn configures logging, so
 # structured warnings/alerts actually reach the service log.
@@ -121,7 +131,9 @@ async def lifespan(app: FastAPI):
     if chat_restored:
         print(f"[hub] resumed {chat_restored} Chat batch(es) from hub.db")
     chat_jobs.start_dispatcher(monitor)
+    shared_voices.start_reconciler(monitor)
     yield
+    await shared_voices.stop()
     await chat_jobs.stop()
     await transcription_jobs.stop()
     await monitor.stop()
@@ -811,6 +823,103 @@ async def hub_transcription(force: bool = False):
     return await monitor.transcription_inventory(force=force)
 
 
+# ── Hub-owned shared voice library ────────────────────────────────────────
+@app.get("/api/hub/shared-voices")
+def hub_shared_voices():
+    return {"voices": shared_voices.list_voices(monitor)}
+
+
+@app.post("/api/hub/shared-voices/transcribe")
+async def hub_transcribe_shared_voice(
+    audio: UploadFile = File(...),
+    model: str = Form(...),
+    language: str | None = Form(None),
+):
+    """Transcribe a reference clip in Hub before the shared voice is saved."""
+    payload = await _run_single_transcription(
+        audio, model, language, False, label="shared-voice-transcription"
+    )
+    transcript = str(payload.get("text") or "").strip()
+    if not transcript:
+        transcript = shared_voices.srt_to_text(str(payload.get("srt") or ""))
+    if not transcript:
+        raise HTTPException(502, "transcription completed without readable text")
+    return {
+        "transcript": transcript,
+        "model": model,
+        "language": payload.get("language") or language,
+        "studio": payload.get("studio"),
+        "elapsed_seconds": payload.get("elapsed_seconds"),
+    }
+
+
+@app.post("/api/hub/shared-voices")
+async def hub_create_shared_voice(
+    audio: UploadFile = File(...),
+    name: str = Form(...),
+    language: str = Form(...),
+    gender: str = Form(...),
+    license: str = Form(...),
+    notes: str = Form(""),
+    source_url: str = Form(""),
+    transcript: str = Form(""),
+    permission_acknowledged: bool = Form(False),
+):
+    try:
+        data = await audio.read(shared_voices.MAX_BYTES + 1)
+        voice = shared_voices.create(
+            audio_bytes=data, filename=audio.filename or "reference.wav",
+            name=name, language=language, gender=gender, license=license,
+            notes=notes, source_url=source_url or None, transcript=transcript or None,
+            permission_acknowledged=permission_acknowledged,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    shared_voices.start_sync(monitor, voice["id"])
+    return {"voice": shared_voices.serialize(voice, monitor), "sync_started": True}
+
+
+@app.get("/api/hub/shared-voices/{voice_id}/audio")
+def hub_shared_voice_audio(voice_id: str):
+    try:
+        path = shared_voices.audio_path(voice_id)
+    except ValueError:
+        path = None
+    if not path:
+        raise HTTPException(404, "shared voice audio not found")
+    mime = {
+        ".wav": "audio/wav", ".mp3": "audio/mpeg", ".m4a": "audio/mp4",
+        ".aac": "audio/aac", ".flac": "audio/flac", ".ogg": "audio/ogg",
+        ".opus": "audio/ogg",
+    }.get(path.suffix.lower(), "application/octet-stream")
+    return FileResponse(path, media_type=mime, filename=path.name)
+
+
+@app.patch("/api/hub/shared-voices/{voice_id}")
+async def hub_update_shared_voice(voice_id: str, body: SharedVoiceUpdateBody):
+    changes = body.model_dump(exclude_unset=True)
+    try:
+        voice = shared_voices.update(voice_id, changes)
+    except KeyError:
+        raise HTTPException(404, "shared voice not found")
+    except (ValueError, shared_voices.SharedVoiceConflict) as exc:
+        raise HTTPException(400, str(exc))
+    shared_voices.start_sync(monitor, voice_id)
+    return {"voice": shared_voices.serialize(voice, monitor), "sync_started": True}
+
+
+@app.post("/api/hub/shared-voices/{voice_id}/sync")
+async def hub_retry_shared_voice_sync(voice_id: str):
+    try:
+        exists = any(v["id"] == voice_id for v in shared_voices.list_voices(monitor))
+    except ValueError:
+        exists = False
+    if not exists:
+        raise HTTPException(404, "shared voice not found")
+    started = shared_voices.start_sync(monitor, voice_id)
+    return {"voice_id": voice_id, "sync_started": started, "already_running": not started}
+
+
 # Kept as a public compatibility alias for diagnostics and older tests.
 _transcription_busy = transcription_jobs.busy_studios
 
@@ -963,18 +1072,19 @@ def hub_clear_chat_job(batch_id: str):
     return {"ok": True, "removed": batch_id}
 
 
-@app.post("/api/hub/transcribe")
-async def hub_transcribe(
-    file: UploadFile = File(...),
-    model: str = Form(...),
-    language: str | None = Form(None),
-    word_timestamps: bool = Form(False),
-):
-    """Backward-compatible one-file request, implemented through the queue."""
+async def _run_single_transcription(
+    file: UploadFile,
+    model: str,
+    language: str | None,
+    word_timestamps: bool,
+    *,
+    label: str = "single-file-api",
+) -> dict:
+    """Run one file through the durable fleet queue and return its payload."""
     item_id = Path(file.filename or "audio").stem or "audio"
     batch, _ = await transcription_jobs.create_batch(
         [file], [item_id], model, language, word_timestamps,
-        "single-file-api", None, None, deduplicate=False)
+        label, None, None, deduplicate=False)
     transcription_jobs.start_dispatcher(monitor)
     deadline = time.monotonic() + 305.0
     item = batch["items"][0]
@@ -986,7 +1096,22 @@ async def hub_transcribe(
             raise HTTPException(503, f"No free Voice Studio has '{model}' ready")
         raise HTTPException(502, item.get("error") or "Voice Studio transcription failed")
     artifact = Path(item["artifact_path"])
-    return {**(item.get("metadata") or {}), "srt": artifact.read_text(encoding="utf-8")}
+    return {
+        **(item.get("metadata") or {}),
+        "studio": item.get("studio"),
+        "srt": artifact.read_text(encoding="utf-8"),
+    }
+
+
+@app.post("/api/hub/transcribe")
+async def hub_transcribe(
+    file: UploadFile = File(...),
+    model: str = Form(...),
+    language: str | None = Form(None),
+    word_timestamps: bool = Form(False),
+):
+    """Backward-compatible one-file request, implemented through the queue."""
+    return await _run_single_transcription(file, model, language, word_timestamps)
 
 
 @app.post("/api/hub/assets/scan")
