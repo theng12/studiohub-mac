@@ -273,6 +273,20 @@ def test_self_update_endpoint_requires_auth(client):
     assert client.post("/api/hub/maintenance/hub-updates", json={}).status_code == 401
 
 
+def test_automatic_hub_update_ignores_cancelled_batch_leftovers(reset):
+    from backend import broker, fleet_ops
+
+    broker.batches["old"] = {
+        "cancelled": True, "items": [{"state": "queued"}],
+    }
+    assert "a generation batch is queued or running" not in fleet_ops.hub_update_blockers()
+
+    broker.batches["active"] = {
+        "cancelled": False, "items": [{"state": "queued"}],
+    }
+    assert "a generation batch is queued or running" in fleet_ops.hub_update_blockers()
+
+
 @pytest.mark.asyncio
 async def test_preflight_401_is_warning_not_block(monkeypatch, monitor):
     import httpx as _httpx

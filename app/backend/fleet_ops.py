@@ -595,7 +595,8 @@ def hub_update_blockers() -> list[str]:
         reasons.append("a fleet worker owns an active lease")
     generation_active = any(
         item.get("state") not in {"done", "error", "cancelled"}
-        for batch in broker.batches.values() for item in batch.get("items", [])
+        for batch in broker.batches.values() if not batch.get("cancelled")
+        for item in batch.get("items", [])
     )
     if generation_active:
         reasons.append("a generation batch is queued or running")

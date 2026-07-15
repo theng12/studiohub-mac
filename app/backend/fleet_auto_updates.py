@@ -34,10 +34,21 @@ class FleetAutoUpdates:
             "title": "Studio Hub KH", "machine": "local", "url": "",
             "settings_url": "/#updates",
         }]
-        for studio in self.monitor.registry:
-            modality = str(studio.get("modality") or "")
-            if modality not in {"voice", "chat", "image", "music", "video"}:
+        registry = list(self.monitor.registry)
+        for modality in ("voice", "chat", "image", "music", "video"):
+            candidates = [studio for studio in registry
+                          if str(studio.get("modality") or "") == modality]
+            if not candidates:
                 continue
+            # This view represents the six repositories in this release, not
+            # every remote worker registered for production. Prefer the fixed
+            # canonical local row; remote agent-Hub maintenance remains in
+            # Remote where machine versions and reachability belong.
+            studio = min(candidates, key=lambda row: (
+                0 if row.get("id") == modality else 1,
+                0 if row.get("machine") == "local" else 1,
+                str(row.get("id") or ""),
+            ))
             root = base_url(studio)
             suffix = "" if modality == "video" else "/#/settings"
             targets.append({

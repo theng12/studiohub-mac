@@ -140,6 +140,18 @@ def test_per_app_mode_preserves_its_schedule(monkeypatch):
                      "maintenance_hour": 22, "weekday": 3, "idle_only": False}
 
 
+def test_inventory_shows_one_canonical_row_per_repository():
+    monitor = FakeMonitor()
+    monitor.registry.extend([
+        {"id": "voice@remote", "title": "Remote Voice", "modality": "voice",
+         "host": "10.0.0.8", "port": 47870, "machine": "remote"},
+        {"id": "voice", "title": "Voice Studio KH", "modality": "voice",
+         "host": "127.0.0.1", "port": 47870, "machine": "local"},
+    ])
+    rows = FleetAutoUpdates(monitor, FakeHubUpdater()).targets()
+    assert [row["id"] for row in rows] == ["hub@local", "voice", "chat@b"]
+
+
 def test_update_idle_api_starts_from_the_async_server_loop(authed, monkeypatch):
     from backend.main import fleet_auto_updates
 
