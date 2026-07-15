@@ -2083,26 +2083,53 @@ function renderStudioUpdates(data) {
   const rows = _sortStudioUpdates(data && data.studios || []);
   renderUpdateProgress($("#su-progress"), studioUpdateJob, "studio");
   if (!rows.length) { body.innerHTML = ""; summary.textContent = "Run preflight to load Studio versions and update readiness."; update.disabled = true; if (rescan) rescan.disabled = maintenanceBusy; return; }
-  const eligible = rows.filter(r => r.status !== "fail");
-  summary.textContent = `${eligible.length}/${rows.length} Studios eligible`
+  const outdated = rows.filter(r => r.update_available === true);
+  const available = outdated.filter(r => r.status !== "fail");
+  const current = rows.filter(r => r.version_status === "current");
+  const unverified = rows.filter(r => r.version_status === "unknown");
+  const blockedUpdates = outdated.length - available.length;
+  summary.textContent = `${outdated.length} update${outdated.length === 1 ? "" : "s"} available · ${current.length} current`
+    + (unverified.length ? ` · ${unverified.length} unverified` : "")
+    + (blockedUpdates ? ` · ${blockedUpdates} blocked` : "")
     + (data.ran_at ? ` · last checked ${fmtAgo(data.ran_at)}` : "")
     + (maintenanceBusy ? " · update in progress" : "");
-  update.disabled = maintenanceBusy || !eligible.length;
+  update.disabled = maintenanceBusy || !available.length;
   update.setAttribute("aria-busy", maintenanceBusy ? "true" : "false");
-  update.textContent = maintenanceBusy ? "Updating Studios…" : "Update ready Studios";
+  update.textContent = maintenanceBusy ? "Updating Studios…"
+    : available.length ? `Update ${available.length} available Studio${available.length === 1 ? "" : "s"}`
+    : outdated.length ? "Available updates are blocked"
+    : unverified.length ? "No confirmed updates" : "All checked Studios current";
   if (rescan) rescan.disabled = maintenanceBusy;
   const jobItems = new Map(((studioUpdateJob && studioUpdateJob.items) || []).map(i => [i.studio, i]));
-  const result = r => r.status === "pass" ? "Ready" : r.status === "warn" ? "Ready with warnings" : "Blocked";
+  const versionStatus = r => {
+    const failures = (r.checks || []).filter(c => c.status === "fail").map(c => `${c.name}: ${c.detail}`);
+    let state;
+    if (r.version_status === "current") state = { cls: "ok", label: "Current", detail: r.version_detail };
+    else if (r.version_status === "update_available") state = { cls: "warn", label: "Update available", detail: r.version_detail };
+    else state = { cls: "dl", label: "Not verified", detail: r.version_detail || "Latest published version could not be verified" };
+    if (failures.length) state.detail += ` · Update blocked: ${failures.join(" · ")}`;
+    return state;
+  };
   body.innerHTML = rows.map(r => {
     const item = jobItems.get(r.id);
-    const state = item && _updateState(item.status);
-    const status = item
+    const showJob = item && (maintenanceBusy || item.status === "failed");
+    const state = showJob && _updateState(item.status);
+    const truth = versionStatus(r);
+    const status = showJob
       ? `<span class="pill ${state[0]}">${esc(state[1])}</span>${item.detail ? `<br><span class="sub">${esc(item.detail)}</span>` : ""}`
-      : `<span class="pill ${r.status === "pass" ? "dl" : r.status === "warn" ? "warn" : "no"}">${result(r)}</span>`;
+      : `<span class="pill ${truth.cls}">${esc(truth.label)}</span><br><span class="sub">${esc(truth.detail)}</span>`;
+    const version = r.version ? `Running v${esc(r.version)}` : "Running version unknown";
+    const latest = r.latest_version ? `<br><span class="sub">Latest v${esc(r.latest_version)}</span>` : "";
+    let action = "—";
+    if (!maintenanceBusy && r.status !== "fail" && r.update_available === true) {
+      action = `<button class="btn primary compact" onclick="startFleetUpdate(['${jsq(r.id)}'])">Update</button>`;
+    } else if (!maintenanceBusy && r.status !== "fail" && r.version_status === "unknown") {
+      action = `<button class="btn compact" title="Latest version could not be verified" onclick="startFleetUpdate(['${jsq(r.id)}'])">Update anyway</button>`;
+    }
     return `<tr><td><b>${esc(r.title)}</b></td><td>${esc(mlabel(r.machine))}</td>
-      <td class="sub">${r.version ? "v" + esc(r.version) : "—"}</td>
+      <td class="sub">${version}${latest}</td>
       <td class="sub">${data.ran_at ? fmtAgo(data.ran_at) : "—"}</td><td>${status}</td>
-      <td>${r.status !== "fail" ? `<button class="btn primary compact" ${maintenanceBusy ? "disabled" : ""} onclick="startFleetUpdate(['${jsq(r.id)}'])">Update</button>` : "—"}</td></tr>`;
+      <td>${action}</td></tr>`;
   }).join("");
 }
 async function loadMaintenance() {
@@ -2157,7 +2184,7 @@ async function startFleetUpdate(ids) {
   renderStudioUpdates(lastPreflightData || { studios: preflightRows });
   scheduleMaintenancePoll();
 }
-function updateReadyStudios() { startFleetUpdate(preflightRows.filter(r => r.status !== "fail").map(r => r.id)); }
+function updateReadyStudios() { startFleetUpdate(preflightRows.filter(r => r.status !== "fail" && r.update_available === true).map(r => r.id)); }
 let hubUpdateBusy = false;
 let lastHubVersionData = null;
 function renderHubUpdate(job) {

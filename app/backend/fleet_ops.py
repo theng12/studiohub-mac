@@ -73,6 +73,91 @@ def _diag_state(data: dict) -> str:
     return "pass"
 
 
+def _version_key(value: object) -> tuple[int, int, int] | None:
+    """Comparable release triplet used by every Studio's update-status API."""
+    try:
+        parts = [int(part) for part in str(value).strip().lstrip("v").split(".")[:3]]
+    except (TypeError, ValueError):
+        return None
+    if not parts:
+        return None
+    return tuple((parts + [0, 0, 0])[:3])
+
+
+def _apply_version_status(row: dict, update: dict | None) -> None:
+    """Record what is running, what is published, and the honest relationship.
+
+    `update_available: false` without a `latest_version` is deliberately NOT
+    treated as current: sibling Studios fetch the published VERSION in a
+    background thread, so their first response can contain a temporary null.
+    """
+    update = update or {}
+    current = update.get("app_version") or row.get("version")
+    latest = update.get("latest_version")
+    row["version"] = str(current) if current else None
+    row["latest_version"] = str(latest) if latest else None
+    current_key = _version_key(current)
+    latest_key = _version_key(latest)
+
+    if current_key is not None and latest_key is not None:
+        if current_key >= latest_key:
+            row["version_status"] = "current"
+            row["update_available"] = False
+            relation = "matches" if current_key == latest_key else "is newer than"
+            row["version_detail"] = (
+                f"Running v{current} {relation} latest published v{latest}"
+            )
+        else:
+            row["version_status"] = "update_available"
+            row["update_available"] = True
+            row["version_detail"] = f"Running v{current}; latest published v{latest}"
+    elif update.get("update_available") is True:
+        row["version_status"] = "update_available"
+        row["update_available"] = True
+        row["version_detail"] = (
+            f"Running v{current or 'unknown'}; the Studio reports an update is available"
+        )
+    else:
+        row["version_status"] = "unknown"
+        row["update_available"] = None
+        if current:
+            row["version_detail"] = (
+                f"Running v{current}; latest published version could not be verified"
+            )
+        else:
+            row["version_detail"] = "Running and latest published versions could not be verified"
+
+
+async def _fetch_update_status(client: httpx.AsyncClient, studio: dict,
+                               headers: dict[str, str]) -> dict | None:
+    """Read a Studio's public update contract, allowing its async refresh time.
+
+    Current Studios populate `latest_version` in a background thread. A short,
+    bounded retry makes a user-initiated rescan return the resolved comparison
+    instead of persisting the first transient null response.
+    """
+    last: dict | None = None
+    for attempt, delay in enumerate((0.0, 0.4, 0.8)):
+        if delay:
+            await asyncio.sleep(delay)
+        try:
+            response = await client.get(
+                f"{base_url(studio)}/api/update-status", headers=headers)
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data, dict):
+                return None
+            last = data
+            if data.get("latest_version") or data.get("update_available") is True:
+                return data
+        except (httpx.HTTPError, ValueError):
+            if attempt == 2:
+                return last
+    return last
+
+
 async def run_preflight(monitor) -> dict:
     global _preflight
     rows = await asyncio.gather(*(_preflight_one(monitor, s) for s in monitor.registry))
@@ -123,7 +208,10 @@ async def _preflight_one(monitor, studio: dict) -> dict:
                    "detail": f"{studio.get('host')}:{studio.get('port')}" if len(same_port) == 1
                    else "conflicts with " + ", ".join(same_port)})
     row = {"id": sid, "title": studio.get("title", sid),
-           "machine": studio.get("machine", "local"), "checks": checks, "version": None}
+           "machine": studio.get("machine", "local"), "checks": checks,
+           "version": None, "latest_version": None,
+           "version_status": "unknown", "version_detail": "Version scan has not completed",
+           "update_available": None}
     headers = peers.studio_headers(studio)
     timeout = httpx.Timeout(PREFLIGHT_TIMEOUT)
     try:
@@ -133,6 +221,13 @@ async def _preflight_one(monitor, studio: dict) -> dict:
                 row["version"] = vr.json().get("app_version")
             except (httpx.HTTPError, ValueError):
                 pass
+            update_status = await _fetch_update_status(client, studio, headers)
+            _apply_version_status(row, update_status)
+            checks.append({
+                "name": "version",
+                "status": "pass" if row["version_status"] == "current" else "warn",
+                "detail": row["version_detail"],
+            })
             cap_r = await client.get(f"{base_url(studio)}/api/capabilities")
             cap_r.raise_for_status()
             cap = cap_r.json()
@@ -165,7 +260,8 @@ async def _preflight_one(monitor, studio: dict) -> dict:
             checks.append({"name": "API contract", "status": "fail",
                            "detail": f"HTTP {e.response.status_code}"})
     except (httpx.HTTPError, ValueError) as e:
-        checks.append({"name": "API contract", "status": "fail", "detail": str(e)[:160]})
+        detail = str(e).strip() or type(e).__name__
+        checks.append({"name": "API contract", "status": "fail", "detail": detail[:160]})
 
     if studio.get("machine", "local") == "local" and studio.get("app"):
         app_dir = PINOKIO_HOME / "api" / studio["app"]
@@ -229,7 +325,15 @@ async def _run_updates(monitor, job: dict):
             await _update_one(monitor, studio, item)
         except Exception as e:
             item.update(status="failed", detail=str(e)[:240], finished_at=time.time())
-    job["status"] = "failed" if any(i["status"] == "failed" for i in job["items"]) else "complete"
+    final_status = "failed" if any(i["status"] == "failed" for i in job["items"]) else "complete"
+    # Refresh the source-of-truth rows before exposing a terminal job. This
+    # guarantees the next UI poll replaces action history ("Updated") with the
+    # real running-vs-published comparison, including for remote Studios.
+    try:
+        await run_preflight(monitor)
+    except Exception as exc:
+        job["refresh_warning"] = f"post-update version scan failed: {str(exc)[:160]}"
+    job["status"] = final_status
     job["finished_at"] = time.time()
 
 
@@ -329,6 +433,9 @@ async def _update_remote(studio: dict, item: dict):
                 continue
             remote_item = data["items"][0]
             item.update(status=remote_item["status"], detail=remote_item["detail"])
+            for key in ("from_version", "expected_version", "to_version"):
+                if key in remote_item:
+                    item[key] = remote_item[key]
             if data["status"] in {"complete", "failed"}:
                 if data["status"] == "failed":
                     raise RuntimeError(remote_item["detail"])

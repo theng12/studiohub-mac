@@ -8,6 +8,14 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 - **MINOR** (1.1.x → 1.2.x) — new feature, endpoint, or dashboard tab. **Update** from the Pinokio sidebar (restart the service if you run it as a startup service).
 - **PATCH** (1.2.0 → 1.2.1) — bugfix / UI tweak. **Just Update.**
 
+## Unreleased
+
+### Fixed — Studio update status reflects running versus published versions
+
+- Local and remote Studio rows now compare the running version with each Studio's published latest version and explicitly report **Current**, **Update available**, or **Not verified**.
+- Completed update history no longer leaves a misleading **Updated** badge and active Update button behind. The Hub rescans every Studio before marking a rolling-update job complete, and only confirmed outdated Studios are included in bulk updates.
+- Version truth remains visible when a separate preflight check blocks updating; the blocking check and its detail are shown separately.
+
 ## [1.37.0] — 2026-07-15
 
 ### Added — acknowledged fleet cancellation and safe image-job cleanup

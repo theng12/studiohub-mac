@@ -30,6 +30,70 @@ async def test_preflight_reports_port_conflicts(monkeypatch, monitor):
     assert port["status"] == "fail" and "duplicate" in port["detail"]
 
 
+def test_version_status_requires_a_real_published_comparison():
+    row = {"version": "1.2.3"}
+    fleet_ops._apply_version_status(row, {"app_version": "1.2.3",
+                                          "latest_version": None,
+                                          "update_available": False})
+    assert row["version_status"] == "unknown"
+    assert row["update_available"] is None
+    assert "could not be verified" in row["version_detail"]
+
+    fleet_ops._apply_version_status(row, {"app_version": "1.2.3.build7",
+                                          "latest_version": "1.2.3",
+                                          "update_available": False})
+    assert row["version_status"] == "current"
+    assert row["update_available"] is False
+    assert "matches latest published" in row["version_detail"]
+
+    fleet_ops._apply_version_status(row, {"app_version": "1.2.3",
+                                          "latest_version": "1.3.0",
+                                          "update_available": True})
+    assert row["version_status"] == "update_available"
+    assert row["update_available"] is True
+    assert row["latest_version"] == "1.3.0"
+
+
+@pytest.mark.asyncio
+async def test_preflight_uses_remote_studio_update_contract(monkeypatch, monitor):
+    studio = {**monitor.registry[0], "id": "image@mac-a", "machine": "mac-a",
+              "host": "10.0.0.8"}
+    monitor.registry = [studio]
+    monitor.status[studio["id"]] = {"status": "up"}
+
+    class Resp:
+        status_code = 200
+
+        def __init__(self, payload): self.payload = payload
+        def json(self): return self.payload
+        def raise_for_status(self): return None
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, url, **kwargs):
+            if url.endswith("/api/version"):
+                return Resp({"app_version": "1.2.0"})
+            if url.endswith("/api/update-status"):
+                return Resp({"app_version": "1.2.0", "latest_version": "1.3.0",
+                             "update_available": True})
+            if url.endswith("/api/capabilities"):
+                return Resp({"schema_version": 1, "studio": {"modality": "image"},
+                             "operations": ["txt2img"]})
+            if url.endswith("/api/catalog"):
+                return Resp({"models": [{"is_cloud": True}]})
+            raise AssertionError(url)
+
+    monkeypatch.setattr(fleet_ops.httpx, "AsyncClient", lambda **kwargs: Client())
+    monkeypatch.setattr(fleet_ops.peers, "cached", lambda machine: None)
+    row = await fleet_ops._preflight_one(monitor, studio)
+    assert row["machine"] == "mac-a"
+    assert row["version"] == "1.2.0"
+    assert row["latest_version"] == "1.3.0"
+    assert row["version_status"] == "update_available"
+    assert row["update_available"] is True
+
+
 def test_maintenance_drains_broker(reset):
     mon = broker._monitor()
     image = next(s for s in mon.registry if s["id"] == "image")
@@ -110,6 +174,7 @@ async def test_update_health_waits_for_new_disk_version(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_updates_are_sequential_and_failure_is_contained(monkeypatch, monitor):
     calls = []
+    refreshed = []
 
     async def fake_update(mon, studio, item):
         calls.append(studio["id"])
@@ -118,6 +183,10 @@ async def test_updates_are_sequential_and_failure_is_contained(monkeypatch, moni
         item.update(status="complete", detail="healthy")
 
     monkeypatch.setattr(fleet_ops, "_update_one", fake_update)
+    async def fake_preflight(mon):
+        refreshed.append(True)
+        return {"status": "pass", "studios": []}
+    monkeypatch.setattr(fleet_ops, "run_preflight", fake_preflight)
     job = {"id": "x", "status": "queued", "created_at": 0, "finished_at": None,
            "items": [{"studio": "image", "status": "queued", "detail": ""},
                      {"studio": "music", "status": "queued", "detail": ""},
@@ -128,6 +197,7 @@ async def test_updates_are_sequential_and_failure_is_contained(monkeypatch, moni
     assert job["items"][0]["status"] == "complete"
     assert job["items"][1]["status"] == "failed"
     assert job["items"][2]["status"] == "complete"
+    assert refreshed == [True]
 
 
 @pytest.mark.asyncio
@@ -154,7 +224,8 @@ async def test_remote_update_reconnects_after_status_connection_drop(monkeypatch
             if self.get_calls == 1:
                 raise fleet_ops.httpx.ReadError("server disconnected")
             return Response({"status": "complete", "items": [
-                {"status": "complete", "detail": "healthy on v2.0.0"}
+                {"status": "complete", "detail": "healthy on v2.0.0",
+                 "from_version": "1.0.0", "expected_version": "2.0.0"}
             ]})
 
     client = Client()
@@ -166,6 +237,7 @@ async def test_remote_update_reconnects_after_status_connection_drop(monkeypatch
     await fleet_ops._update_remote(studio, item)
     assert client.get_calls == 2
     assert item["status"] == "complete" and item["detail"] == "healthy on v2.0.0"
+    assert item["from_version"] == "1.0.0" and item["expected_version"] == "2.0.0"
 
 
 def test_start_hub_updates_requires_remote_machines(monitor):
@@ -204,7 +276,8 @@ def test_self_update_endpoint_requires_auth(client):
 @pytest.mark.asyncio
 async def test_preflight_401_is_warning_not_block(monkeypatch, monitor):
     import httpx as _httpx
-    studio = dict(monitor.registry[0])
+    studio = {**monitor.registry[0], "id": "image@mac-a", "machine": "mac-a",
+              "host": "10.0.0.8"}
     monitor.registry = [studio]
     monitor.status[studio["id"]] = {"status": "up"}
 
@@ -228,6 +301,10 @@ async def test_preflight_401_is_warning_not_block(monkeypatch, monitor):
         async def get(self, url, **kw):
             if url.endswith("/api/version"):
                 return Resp(200, {"app_version": "9.9.9"})
+            if url.endswith("/api/update-status"):
+                return Resp(200, {"app_version": "9.9.9",
+                                  "latest_version": "9.9.9",
+                                  "update_available": False})
             if url.endswith("/api/capabilities"):
                 return Resp(200, {"schema_version": 1,
                                   "studio": {"modality": studio["modality"]},

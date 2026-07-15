@@ -78,7 +78,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/resources` | Host memory/CPU + per-studio process stats, including key-free Voice provider health |
 | `GET /api/hub/summary` | One-shot dashboard payload (studios + resources + cloud provider inventory) |
 | `POST /api/hub/studios/{id}/start` | Start a local studio (via Pinokio's `pterm` CLI) |
-| `POST /api/hub/maintenance/preflight` | Check fleet auth, contracts, models, engines, disk, and updates |
+| `POST /api/hub/maintenance/preflight` | Check fleet auth, contracts, models, engines, disk, and explicit running-vs-published version state (`version_status`, `update_available`) |
 | `POST /api/hub/maintenance/updates` | Start a drained, sequential rolling update |
 | `GET /api/hub/maintenance/updates/{id}` | Follow rolling-update progress and health verification |
 | `POST /api/hub/studios/{id}/stop` | Stop a local studio |
