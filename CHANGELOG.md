@@ -10,6 +10,23 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.41.0] — 2026-07-16
+
+### Added — one local ElevenLabs gateway for the fleet
+
+- ElevenLabs cloud voice batches now always wait for the Voice Studio running
+  on the main Studio Hub Mac. Remote Voice Studios remain eligible for local
+  TTS models but no longer need duplicate cloud credentials or account pools.
+- The scheduler reports that it is waiting for the local ElevenLabs gateway
+  when that Voice Studio is offline, busy, disabled, or under maintenance,
+  instead of silently spilling a paid cloud request onto another Mac.
+- Central routing keeps account selection, quota state, per-account voice IDs,
+  and connection-drop recovery in one place. Stable per-item request IDs make a
+  lost Hub-to-Voice submit response idempotent, and uncertain paid outcomes are
+  never requeued. Added broker tests proving that
+  ElevenLabs uses only the local gateway while ordinary local TTS still uses
+  every eligible Voice Studio.
+
 ## [1.40.0] — 2026-07-16
 
 ### Added — one shared, transcribed voice library for the fleet

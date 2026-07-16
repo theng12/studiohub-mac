@@ -617,7 +617,17 @@ async def _maybe_finish(client: httpx.AsyncClient, b: dict):
             pass  # client unreachable — batch state is still queryable
 
 
-def _eligible_studios(modality: str, routing: str) -> list[dict]:
+def _uses_local_elevenlabs_gateway(modality: str, model: str) -> bool:
+    """ElevenLabs secrets and account quotas live only on the Hub Mac.
+
+    Remote Voice Studios remain available for local TTS engines. Cloud
+    ElevenLabs batches always wait for the local Voice Studio gateway, which
+    owns account selection, per-account voice IDs, and safe paid-call recovery.
+    """
+    return modality == "voice" and str(model).startswith("provider:elevenlabs:")
+
+
+def _eligible_studios(modality: str, routing: str, model: str = "") -> list[dict]:
     mon = _monitor()
     out = []
     leased_machines = busy_machines()
@@ -625,6 +635,8 @@ def _eligible_studios(modality: str, routing: str) -> list[dict]:
         if routing.startswith("studio:") and s["id"] != routing.split(":", 1)[1]:
             continue
         machine = s.get("machine", "local")
+        if _uses_local_elevenlabs_gateway(modality, model) and machine != "local":
+            continue
         if (s["modality"] != modality or s["id"] in _busy
                 or s["id"] in _maintenance or machine in leased_machines):
             continue
@@ -669,7 +681,17 @@ async def _dispatch_loop():
                           and (i.get("retry_at") or 0) <= now]
                 if not queued:
                     continue
-                for studio in _eligible_studios(b["modality"], b["routing"]):
+                eligible = _eligible_studios(
+                    b["modality"], b["routing"], b.get("model", ""),
+                )
+                if not eligible and _uses_local_elevenlabs_gateway(
+                    b["modality"], b.get("model", ""),
+                ):
+                    b["governor_note"] = (
+                        "Waiting for the local Voice Studio ElevenLabs gateway "
+                        "on this Hub Mac"
+                    )
+                for studio in eligible:
                     if not queued:
                         break
                     # ── model-aware dispatch (heterogeneous machines) ──
@@ -744,6 +766,15 @@ def _worker_http_error(response) -> RuntimeError:
     return error
 
 
+def _worker_terminal_error(message: str) -> RuntimeError:
+    error = RuntimeError(message)
+    # Voice Studio uses this exact class prefix when a paid ElevenLabs call may
+    # have completed but could not be uniquely recovered. Retrying the batch
+    # would risk a duplicate charge, so the Hub must preserve the terminal state.
+    error.retryable = not message.startswith("ProviderResultUncertain:")
+    return error
+
+
 async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict):
     endpoint, prompt_field, artifact_kind = MODALITY[b["modality"]]
     t_start = time.time()  # wall-clock fallback for generation duration
@@ -753,6 +784,8 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
     body.update(item["params"])
     body["repo"] = b["model"]
     body[prompt_field] = item["prompt"]
+    if b["modality"] == "voice":
+        body["client_request_id"] = f"studiohub:{b['id']}:{item['index']}"
     if item["seed"] is not None:
         body["seed"] = item["seed"]
     # Reference-image jobs use multipart. Image Studio accepts ``image`` on
@@ -831,7 +864,9 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
                     item["progress"] = max(0.0, min(1.0, float(p)))
                 continue
             if j.get("error") or state in ("error", "cancelled"):
-                raise RuntimeError(j.get("error") or f"studio job {state}")
+                raise _worker_terminal_error(
+                    j.get("error") or f"studio job {state}"
+                )
             # terminal + no error = success
             _record_worker_success(b, item, studio, j, body, t_start)
             return

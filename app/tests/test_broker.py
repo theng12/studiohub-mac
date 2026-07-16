@@ -364,11 +364,40 @@ def test_render_workers_rank_by_reported_hardware_score(reset):
         mon.status.pop(remote["id"], None)
 
 
+def test_elevenlabs_cloud_jobs_only_use_local_voice_gateway(reset):
+    mon = broker._monitor()
+    local = next(s for s in mon.registry if s["id"] == "voice")
+    remote = {**local, "id": "voice@macmini-m1-01", "machine": "macmini-m1-01",
+              "host": "10.0.0.3"}
+    mon.registry.append(remote)
+    mon.status[local["id"]] = {"status": "up"}
+    mon.status[remote["id"]] = {"status": "up"}
+    try:
+        elevenlabs = broker._eligible_studios(
+            "voice", "pool", "provider:elevenlabs:eleven_multilingual_v2",
+        )
+        local_tts = broker._eligible_studios("voice", "pool", "mlx-community/Kokoro")
+        assert [s["id"] for s in elevenlabs] == ["voice"]
+        assert {s["id"] for s in local_tts} == {"voice", "voice@macmini-m1-01"}
+    finally:
+        mon.registry.remove(remote)
+        mon.status.pop(remote["id"], None)
+
+
 def test_prompt_and_text_both_accepted(reset):
     r = broker.submit_batch({"modality": "voice", "model": "a/b",
                              "items": [{"text": "spoken"}]})
     b = broker.batches[r["batch_id"]]
     assert b["items"][0]["prompt"] == "spoken"
+
+
+def test_uncertain_paid_worker_result_is_never_retryable():
+    uncertain = broker._worker_terminal_error(
+        "ProviderResultUncertain: paid result could not be recovered"
+    )
+    ordinary = broker._worker_terminal_error("RuntimeError: temporary worker failure")
+    assert uncertain.retryable is False
+    assert ordinary.retryable is True
 
 
 @pytest.mark.asyncio

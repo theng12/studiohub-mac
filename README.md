@@ -16,6 +16,10 @@ The Hub runs on fixed port **47873** and provides:
   (RSS) and CPU, resolved port → PID → process tree.
 - **Cloud audio readiness** — Voice Studio cards show which provider gateways are
   configured and live on each machine without exposing provider credentials.
+- **Central ElevenLabs gateway** — cloud ElevenLabs batches always use Voice
+  Studio on the main Hub Mac, where the named account pool, quotas, per-account
+  voice IDs, and safe paid-call recovery live. Remote Voice Studios need no
+  ElevenLabs keys and remain available for local TTS models.
 - **Shared voice library** — upload and transcribe one cloning reference in Hub,
   review the words, then synchronize the same stable ID, audio hash, and
   transcript to every Voice Studio Mac. Offline machines catch up automatically.
