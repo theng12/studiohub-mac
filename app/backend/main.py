@@ -186,7 +186,7 @@ def _parse_ver(v):
 
 def _refresh_latest_version():
     try:
-        url = f"https://raw.githubusercontent.com/{_UPDATE_REPO}/main/VERSION"
+        url = f"https://raw.githubusercontent.com/{_UPDATE_REPO}/refs/heads/main/VERSION"
         with _urlreq.urlopen(url, timeout=5) as r:
             _update_state["latest"] = r.read().decode("utf-8").strip()
     except Exception:

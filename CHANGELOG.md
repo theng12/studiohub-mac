@@ -10,6 +10,14 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.43.1] — 2026-07-17
+
+### Fixed — immediate GitHub release visibility
+
+- Release checks now use GitHub's fully qualified `refs/heads/main` raw path.
+  GitHub can briefly serve stale content from the shorthand `/main/VERSION`
+  path after a push; the qualified ref exposes the new version immediately.
+
 ## [1.43.0] — 2026-07-17
 
 ### Improved — simple, consistent fleet updates

@@ -12,6 +12,11 @@ def test_catalog_and_diagnostic_summaries():
     assert fleet_ops._diag_state({"available": True}) == "pass"
 
 
+def test_published_version_urls_use_fully_qualified_main_ref():
+    assert all("/refs/heads/main/VERSION" in url
+               for url in fleet_ops.PUBLISHED_VERSION_URLS.values())
+
+
 @pytest.mark.asyncio
 async def test_preflight_reports_port_conflicts(monkeypatch, monitor):
     studio = dict(monitor.registry[0])

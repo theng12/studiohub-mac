@@ -30,13 +30,13 @@ DRAIN_TIMEOUT = 30 * 60
 # parameter and no-cache headers avoid a stale raw.githubusercontent CDN
 # response immediately after VERSION is pushed.
 PUBLISHED_VERSION_URLS = {
-    "hub": "https://raw.githubusercontent.com/theng12/studiohub-mac/main/VERSION",
-    "voice": "https://raw.githubusercontent.com/theng12/voicestudio-mac/main/VERSION",
-    "chat": "https://raw.githubusercontent.com/theng12/chatstudio-mac/main/VERSION",
-    "image": "https://raw.githubusercontent.com/theng12/imagestudio-mac/main/VERSION",
-    "music": "https://raw.githubusercontent.com/theng12/musicstudio-mac/main/VERSION",
-    "video": "https://raw.githubusercontent.com/theng12/videostudio-mac/main/VERSION",
-    "render": "https://raw.githubusercontent.com/theng12/renderstudio-mac/main/VERSION",
+    "hub": "https://raw.githubusercontent.com/theng12/studiohub-mac/refs/heads/main/VERSION",
+    "voice": "https://raw.githubusercontent.com/theng12/voicestudio-mac/refs/heads/main/VERSION",
+    "chat": "https://raw.githubusercontent.com/theng12/chatstudio-mac/refs/heads/main/VERSION",
+    "image": "https://raw.githubusercontent.com/theng12/imagestudio-mac/refs/heads/main/VERSION",
+    "music": "https://raw.githubusercontent.com/theng12/musicstudio-mac/refs/heads/main/VERSION",
+    "video": "https://raw.githubusercontent.com/theng12/videostudio-mac/refs/heads/main/VERSION",
+    "render": "https://raw.githubusercontent.com/theng12/renderstudio-mac/refs/heads/main/VERSION",
 }
 PUBLISHED_REFRESH_SECONDS = 60.0
 

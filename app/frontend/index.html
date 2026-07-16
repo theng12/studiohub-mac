@@ -829,6 +829,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.43.1", date: "2026-07-17", items: [
+    "GitHub release checks now use the fully qualified main-branch ref, so a just-pushed Studio or Hub version appears immediately instead of waiting for the shorthand raw URL's stale cache.",
+  ] },
   { v: "1.43.0", date: "2026-07-17", items: [
     "Remote Studio updates now use the same simple UI as agent Hub updates: app tabs, Rescan versions, Update ready, and one-row Update buttons.",
     "The old fleet preflight checklist is gone from update control. Version scans now show only running/latest versions and reachability; work still drains safely and every restart is verified.",
