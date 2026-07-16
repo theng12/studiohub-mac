@@ -10,6 +10,25 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.43.0] — 2026-07-17
+
+### Improved — simple, consistent fleet updates
+
+- Replaced Remote's fleet preflight checklist with the same focused controls as
+  agent-Hub updates: app tabs, running/latest versions, reachability, Rescan,
+  update-all-ready, and one-Studio Update buttons.
+- Studio version scans now call only the public version/update endpoints. Health,
+  model, engine, port, memory, and disk checks no longer gate or clutter manual
+  update control; active work still drains and the restarted Studio is verified.
+
+### Fixed — complete machine removal
+
+- Removing a machine now immediately clears its Studios from live health and
+  model/provider caches, peer resources, saved Studio/Hub version rows, labels,
+  and enable/disable settings. Historical jobs and assets remain available.
+- Saved update views automatically exclude machines no longer in the registry,
+  and the Machines table now waits for fresh state before repainting.
+
 ## [1.42.3] — 2026-07-16
 
 ### Fixed — immediate authoritative release discovery

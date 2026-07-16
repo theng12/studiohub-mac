@@ -33,9 +33,10 @@ def _reset_state():
         pass
     # wipe ALL persisted state between tests (incl. tokens, or one test's token
     # leaks into the next)
-    for f in (ledger.DB_FILE, reg.REGISTRY_FILE, reg.LABELS_FILE,
+    for f in (ledger.DB_FILE, reg.REGISTRY_FILE, reg.LABELS_FILE, reg.FLAGS_FILE,
               peers.FLEET_TOKEN_FILE, peers.SHARED_STUDIO_TOKEN_FILE,
-              auth.TOKEN_FILE, metrics.STATE_FILE, job_storage.SETTINGS_FILE):
+              auth.TOKEN_FILE, metrics.STATE_FILE, job_storage.SETTINGS_FILE,
+              fleet_ops._STATE_FILE):
         try:
             f.unlink()
         except FileNotFoundError:
@@ -59,6 +60,10 @@ def _reset_state():
         pass
     peers._cache.clear()
     fleet_ops._updates.clear()
+    fleet_ops._hub_updates.clear()
+    fleet_ops._hub_versions.clear()
+    fleet_ops._studio_versions = {"checked_at": None, "studios": []}
+    fleet_ops._preflight = {"ran_at": None, "status": "never", "studios": []}
     fleet_ops._published_versions.clear()
     fleet_ops._published_errors.clear()
     fleet_ops._published_checked_at = time.time()

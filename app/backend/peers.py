@@ -180,6 +180,11 @@ def cached(machine: str) -> dict | None:
     return entry[1] if entry else None
 
 
+def forget_machine(machine: str) -> None:
+    """Drop a removed machine's peer-resource snapshot immediately."""
+    _cache.pop(machine, None)
+
+
 async def control_remote(client: httpx.AsyncClient, studio: dict, action: str) -> dict:
     """Proxy a start/stop to the studio's own machine's Hub, which runs pterm
     locally there. The peer addresses the studio by its local id = modality."""

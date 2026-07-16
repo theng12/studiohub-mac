@@ -1445,6 +1445,16 @@ async def run_fleet_preflight():
     return await fleet_ops.run_preflight(monitor)
 
 
+@app.get("/api/hub/maintenance/studio-versions")
+def get_studio_versions():
+    return fleet_ops.studio_versions_snapshot(monitor)
+
+
+@app.post("/api/hub/maintenance/studio-versions")
+async def rescan_studio_versions():
+    return await fleet_ops.scan_studio_versions(monitor)
+
+
 @app.get("/api/hub/maintenance/updates")
 def list_fleet_updates():
     return {"updates": fleet_ops.update_snapshot()}
@@ -1513,7 +1523,7 @@ def get_hub_update(job_id: str):
 def get_hub_versions():
     """Last-known Hub version per agent Mac (persisted, survives restarts)."""
     return {"latest": _update_state["latest"],
-            "machines": fleet_ops.hub_versions_snapshot()}
+            "machines": fleet_ops.hub_versions_snapshot(monitor)}
 
 
 @app.post("/api/hub/maintenance/hub-versions")
@@ -1564,21 +1574,22 @@ def _validated_registry_identity(body: dict) -> tuple[str, str]:
 
 @app.delete("/api/hub/registry/machines/{machine}")
 def remove_machine_route(machine: str):
-    """Unregister a previously discovered machine's studios."""
+    """Unregister a machine and purge its live fleet-control state."""
     from .registry import remove_machine
 
     if machine == "local":
         raise HTTPException(400, "the local machine's studios can't be removed")
+    studio_ids = {studio["id"] for studio in monitor.registry
+                  if studio.get("machine") == machine}
     removed = remove_machine(machine)
     if not removed:
         raise HTTPException(404, f"no registered studios for machine {machine!r}")
-    # Drop them from live status too, not just the file.
     monitor.reload_registry()
-    monitor.registry = [s for s in monitor.registry
-                        if s.get("machine") != machine]
-    for sid in list(monitor.status):
-        if not any(s["id"] == sid for s in monitor.registry):
-            del monitor.status[sid]
+    monitor.forget_studios(studio_ids)
+    peers.forget_machine(machine)
+    fleet_ops.forget_machine(machine, studio_ids)
+    for sid in studio_ids:
+        broker.set_maintenance(sid, False)
     return {"ok": True, "removed": removed}
 
 
@@ -1595,8 +1606,11 @@ def remove_studio_route(studio_id: str):
     if not removed:
         raise HTTPException(404, f"no registered studio {studio_id!r}")
     monitor.reload_registry()
-    monitor.registry = [s for s in monitor.registry if s["id"] != studio_id]
-    monitor.status.pop(studio_id, None)
+    monitor.forget_studios({studio_id})
+    fleet_ops.forget_studios({studio_id})
+    if entry:
+        peers.forget_machine(entry.get("machine", "local"))
+    broker.set_maintenance(studio_id, False)
     return {"ok": True, "removed": studio_id}
 
 

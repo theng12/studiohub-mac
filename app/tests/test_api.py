@@ -248,6 +248,42 @@ def test_registry_add_rename_remove(authed):
     assert authed.request("DELETE", "/api/hub/registry/machines/mac-z").json()["removed"] == 2
 
 
+def test_remove_machine_purges_live_inventory_and_update_state(authed):
+    import time
+    from backend import fleet_ops, peers, registry as reg
+    from backend.main import monitor
+
+    authed.post("/api/hub/registry/add",
+                json={"host": "100.9.9.8", "machine": "mac-clean",
+                      "modalities": ["image", "voice"]})
+    studio_ids = {"image@mac-clean", "voice@mac-clean"}
+    reg.set_label("mac-clean", "Cleanup Mac")
+    reg.set_machine_enabled("mac-clean", False)
+    for studio_id in studio_ids:
+        monitor._catalog_cache[studio_id] = (time.time(), {"models": []})
+        monitor._provider_cache[studio_id] = (time.time(), {"providers": []})
+    peers._cache["mac-clean"] = (time.time(), {"reachable": True})
+    fleet_ops._studio_versions = {
+        "checked_at": time.time(),
+        "studios": [{"id": studio_id, "machine": "mac-clean"}
+                    for studio_id in studio_ids],
+    }
+    fleet_ops._hub_versions["mac-clean"] = {"version": "1.0.0"}
+
+    response = authed.delete("/api/hub/registry/machines/mac-clean")
+
+    assert response.status_code == 200
+    assert not studio_ids.intersection({row["id"] for row in monitor.registry})
+    assert not studio_ids.intersection(monitor.status)
+    assert not studio_ids.intersection(monitor._catalog_cache)
+    assert not studio_ids.intersection(monitor._provider_cache)
+    assert "mac-clean" not in peers._cache
+    assert "mac-clean" not in reg.load_labels()
+    assert "mac-clean" not in reg.load_flags()
+    assert fleet_ops._studio_versions["studios"] == []
+    assert "mac-clean" not in fleet_ops._hub_versions
+
+
 def test_cannot_remove_local(authed):
     assert authed.request("DELETE", "/api/hub/registry/machines/local").status_code == 400
 

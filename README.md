@@ -79,10 +79,9 @@ as the fleet target. You can change every app independently, **Check all**,
 update one app, or **Update idle apps**. Fleet updates run one at a time,
 reconnect through the expected restart connection drop, and require the updated
 app to reach the published version and answer healthy before the next one starts.
-Manual preflight and rolling repairs remain separate in **Remote**. There, use
-the app tabs to focus on one Studio family across every machine, use **All
-apps** for the fleet-wide rolling action, or use a row's **Update** button for
-one machine.
+Remote uses the same simple version controls for Studios and agent Hubs: rescan,
+compare running with latest, update everything ready, or update one row. Studio
+app tabs focus the action on one family; **All apps** targets the fleet.
 
 Every app independently enforces its expected GitHub origin and `main`, a clean
 fast-forward, free disk, dependency/import checks, healthy restart, and exact
@@ -141,13 +140,13 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/transcription/settings` · `POST /api/hub/transcription/settings` | Read/set SRT and upload retention (`1`, `3`, `7`, `15`, or `30` days) |
 | `POST /api/hub/transcription/cleanup` | Clean expired terminal transcription files; active batches are never removed |
 | `GET` / `POST /api/hub/job-storage` · `POST /api/hub/job-storage/cleanup` | Read/save the optional Hub-local job-file cap (`{enabled, max_gb}`) or enforce it now; default is off |
-| `DELETE /api/hub/registry/machines/{machine}` | Unregister a discovered machine's studios |
+| `DELETE /api/hub/registry/machines/{machine}` | Unregister a machine and purge its live inventory/update state (history is retained) |
 | `GET /api/hub/fleet` · `POST /api/hub/fleet` | Fleet token status / set (`{token}`) — enables remote specs + control |
 | `GET /api/hub/resources?local_only=true` | This machine only (peers call with this to prevent recursion) |
 | `GET /api/hub/resources` | Host memory/CPU + per-studio process stats, including key-free Voice provider health |
 | `GET /api/hub/summary` | One-shot dashboard payload (studios + resources + cloud provider inventory) |
 | `POST /api/hub/studios/{id}/start` | Start a local studio (via Pinokio's `pterm` CLI) |
-| `POST /api/hub/maintenance/preflight` | Check fleet auth, contracts, models, engines, disk, and explicit running-vs-published version state (`version_status`, `update_available`) |
+| `GET` / `POST /api/hub/maintenance/studio-versions` | Read saved or rescan running/latest Studio versions and reachability |
 | `POST /api/hub/maintenance/updates` | Start a drained, sequential rolling update |
 | `GET /api/hub/maintenance/updates/{id}` | Follow rolling-update progress and health verification |
 | `POST /api/hub/studios/{id}/stop` | Stop a local studio |

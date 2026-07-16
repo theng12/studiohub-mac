@@ -665,8 +665,8 @@
 
     <div class="card section">
       <div class="top"><span class="emoji">🧰</span><h3>Manual fleet maintenance</h3></div>
-      <p class="muted" style="font-size:13px">The established preflight and one-click rolling-update tools remain in <b>Remote</b> for repairs, first-time upgrades, and apps that have not yet installed the optional updater.</p>
-      <button class="btn" onclick="document.querySelector('nav button[data-tab=&quot;remote&quot;]').click()">Open Remote maintenance</button>
+      <p class="muted" style="font-size:13px">Use <b>Remote</b> to compare every Studio and agent Hub with the latest published version, then update one app, one machine, or everything ready.</p>
+      <button class="btn" onclick="document.querySelector('nav button[data-tab=&quot;remote&quot;]').click()">Open Remote updates</button>
     </div>
   </section>
 
@@ -704,59 +704,22 @@
           <li><b>What it protects:</b> remote jobs, status changes, lifecycle controls, settings, uploads, and output access. Local loopback remains passwordless.</li>
           <li><b>Where it comes from:</b> the first Hub generates one owner-only local value. The primary Hub is the source of truth; use the same value on every agent Hub.</li>
           <li><b>Test or rotate:</b> click <b>Save &amp; verify</b>. Connected peers are updated with the previously trusted value, then verified with the new one. The old value stops working immediately.</li>
-          <li><b>Repair a mismatch:</b> open the affected Mac's Hub locally, paste the primary Hub's value here, click <b>Save &amp; verify</b>, then restart/update any Studio whose preflight still shows an authentication warning.</li>
+          <li><b>Repair a mismatch:</b> open the affected Mac's Hub locally, paste the primary Hub's value here, click <b>Save &amp; verify</b>, then restart or update the affected Studio.</li>
           <li>The value stays in owner-only local files and request headers. It is never included in URLs, logs, screenshots, or fleet diagnostics.</li>
         </ul>
       </details>
     </div>
 
     <div class="card section">
-      <div class="top"><span class="emoji">🩺</span><h3>Fleet preflight &amp; rolling updates</h3>
-        <span style="margin-left:auto"></span>
-        <label class="sub" style="text-transform:uppercase;font-size:11px">Sort</label>
-        <select class="selctl" id="pf-sort" onchange="setPreflightSort(this.value)">
-          <option value="machine">Machine</option><option value="app">App</option>
-          <option value="status">Status</option><option value="version">Version</option>
-        </select>
-        <button class="btn" id="pf-run" onclick="runPreflight()">Run preflight</button>
-      </div>
-      <p class="muted" style="font-size:13px;margin-bottom:10px">
-        <b>Run preflight</b> re-scans every studio and records its <b>version</b> (remembered even after a restart). Updates drain and verify one Studio at a time.
-      </p>
-      <div class="fleet-app-tabs" id="studio-app-tabs" role="tablist" aria-label="Filter fleet maintenance by app"></div>
-      <details class="tx-items" style="margin-bottom:10px"><summary class="sub">What the checks mean</summary>
-        <ul style="font-size:12.5px;line-height:1.7;margin:8px 0 0 18px;color:var(--dim)">
-          <li><b>health</b> — the studio answers and reports itself running (up).</li>
-          <li><b>port</b> — exactly one studio owns this host:port (no duplicate/conflict in the registry).</li>
-          <li><b>capability contract</b> — <code>/api/capabilities</code> reports the right modality + a valid schema (the Hub knows how to drive it).</li>
-          <li><b>fleet authentication</b> — the studio accepts this Hub's fleet token. A warning here means it cached an old token and just needs a restart — <b>updating fixes it</b>, so it doesn't block.</li>
-          <li><b>models</b> — how many of its catalog models are downloaded/ready.</li>
-          <li><b>generation engine</b> — the local ML engine (MLX etc.) is installed and ready to generate.</li>
-          <li><b>update workflow</b> — an <code>update.js</code> exists to run the update (local studios only).</li>
-          <li><b>disk space</b> — enough free disk for a model update (local only).</li>
-          <li><b>memory</b> — free unified memory on that machine.</li>
-        </ul>
-        <p class="sub" style="margin:8px 0 0 2px">Badge colour: <span class="pill dl">green = pass</span> <span class="pill warn">amber = warning (still eligible)</span> <span class="pill no">grey = failed (blocks the update)</span></p>
-      </details>
-      <div class="sub" id="pf-summary" style="margin-bottom:8px">Preflight has not run yet.</div>
-      <div style="overflow-x:auto"><table><thead><tr><th>Studio</th><th>Machine</th><th>Result</th><th>Checks</th></tr></thead><tbody id="pf-body"></tbody></table></div>
-    </div>
-
-    <div class="card section">
       <div class="top"><span class="emoji">🔄</span><h3>Studio updates</h3>
         <span style="margin-left:auto"></span>
-        <label class="sub" style="text-transform:uppercase;font-size:11px">Sort</label>
-        <select class="selctl" id="su-sort" onchange="setStudioUpdateSort(this.value)">
-          <option value="machine">Machine</option><option value="app">App</option>
-          <option value="status">Status</option><option value="version">Version</option>
-        </select>
         <button class="btn" id="su-rescan" onclick="rescanStudioVersions()">↻&nbsp; Rescan versions</button>
         <button class="btn primary" id="su-update" onclick="updateReadyStudios()" disabled>Update ready Studios</button>
       </div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        Update Studios one at a time after they pass preflight. Active work drains before each update, and the Studio is verified after it restarts. Use an individual <b>Update</b> button for more control.
+        Compares every Studio with the latest published version. Pick an app below, update all ready Studios in that app, or use an individual <b>Update</b> button. Active work drains first and each Studio is verified after restart.
       </p>
-      <div class="sub" id="su-summary" style="margin-bottom:8px">Run preflight to load Studio versions and update readiness.</div>
+      <div class="fleet-app-tabs" id="studio-app-tabs" role="tablist" aria-label="Filter Studio updates by app"></div>
       <div id="su-progress" class="update-progress hide" role="status" aria-live="polite"></div>
       <div style="overflow-x:auto"><table><thead><tr><th>Studio</th><th>Machine</th><th>Version</th><th>Last checked</th><th>Status</th><th></th></tr></thead><tbody id="su-body"></tbody></table></div>
     </div>
@@ -768,7 +731,7 @@
         <button class="btn primary" id="hubupd-run" onclick="updateReadyHubs()" disabled>Update ready Hubs</button>
       </div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        Updates the <b>Studio Hub itself</b> on every reachable agent Mac (not the studios — those use preflight above). Each peer Hub pulls the latest, restarts, and comes back on its own via its startup service. <b>Rescan versions</b> re-checks what each Hub is on; the last-known version is remembered even after a restart.
+        Updates the <b>Studio Hub itself</b> on every reachable agent Mac. Each peer Hub pulls the latest, restarts, and comes back on its own via its startup service. <b>Rescan versions</b> re-checks what each Hub is on; the last-known version is remembered even after a restart.
       </p>
       <div id="hubupd-status" class="update-progress hide" role="status" aria-live="polite"></div>
       <div style="overflow-x:auto"><table><thead><tr><th>Machine</th><th>Address</th><th>Version</th><th>Last checked</th><th>Status</th><th></th></tr></thead><tbody id="hubupd-body"><tr><td colspan="6" class="empty">Click “Rescan versions” to check each agent Mac's Hub.</td></tr></tbody></table></div>
@@ -866,6 +829,11 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.43.0", date: "2026-07-17", items: [
+    "Remote Studio updates now use the same simple UI as agent Hub updates: app tabs, Rescan versions, Update ready, and one-row Update buttons.",
+    "The old fleet preflight checklist is gone from update control. Version scans now show only running/latest versions and reachability; work still drains safely and every restart is verified.",
+    "Removing a machine now also clears its live Studio/model/provider caches, peer resources, saved update rows, label, and enabled state while preserving historical jobs and assets.",
+  ] },
   { v: "1.42.3", date: "2026-07-16", items: [
     "Studio Hub now checks every Studio's canonical GitHub release once per minute instead of waiting for each worker's scheduled updater cache.",
     "Updates and Remote refresh themselves while visible, so a newly published Voice Studio version appears automatically and consistently across the fleet.",
@@ -1136,7 +1104,7 @@ const TAB_META = {
   assets: ["Asset ledger", "Browse generated media and trace each result back to its studio and model."],
   stats: ["Fleet intelligence", "Compare throughput, speed, machine contribution, and model performance."],
   updates: ["Automatic updates", "Choose how each app checks, notifies, and safely installs updates while the fleet is idle."],
-  remote: ["Fleet operations", "Secure remote access, machine registration, preflight, updates, and alerts."],
+  remote: ["Fleet operations", "Secure remote access, machine registration, simple version updates, and alerts."],
 };
 function updatePageHeading(tab) {
   const meta = TAB_META[tab] || TAB_META.overview;
@@ -2713,21 +2681,17 @@ function updateOneAutoApp(targetId) {
 }
 
 $("#hau-mode").addEventListener("change", updateHubAutoControlState);
-let preflightRows = [];
+let studioVersionRows = [];
 let maintenanceBusy = false;
-let lastPreflightData = null;
+let lastStudioVersionData = null;
 let studioUpdateJob = null;
 let maintenancePollTimer = null;
-let pfSort = localStorage.getItem("pf_sort") || "machine";
-let suSort = localStorage.getItem("su_sort") || "machine";
 let studioUpdateApp = localStorage.getItem("studio_update_app") || "all";
-function setPreflightSort(v) { pfSort = v; localStorage.setItem("pf_sort", v); if (lastPreflightData) renderPreflight(lastPreflightData); }
-function setStudioUpdateSort(v) { suSort = v; localStorage.setItem("su_sort", v); if (lastPreflightData) renderStudioUpdates(lastPreflightData); }
 function studioAppKey(row) { return row.modality || String(row.id || "").split("@")[0]; }
 function filterStudioApp(rows) { return studioUpdateApp === "all" ? rows : rows.filter(r => studioAppKey(r) === studioUpdateApp); }
 function setStudioUpdateApp(app) {
   studioUpdateApp = app; localStorage.setItem("studio_update_app", app);
-  if (lastPreflightData) renderPreflight(lastPreflightData);
+  if (lastStudioVersionData) renderStudioUpdates(lastStudioVersionData);
 }
 function renderStudioAppTabs(rows) {
   const el = $("#studio-app-tabs"); if (!el) return;
@@ -2749,7 +2713,7 @@ function _updateState(status) {
 }
 function _updateItemName(item, kind) {
   if (kind === "hub") return mlabel(item.machine);
-  const row = preflightRows.find(r => r.id === item.studio);
+  const row = studioVersionRows.find(r => r.id === item.studio);
   return row ? `${row.title} on ${mlabel(row.machine)}` : item.studio;
 }
 function renderUpdateProgress(el, job, kind) {
@@ -2773,110 +2737,62 @@ function scheduleMaintenancePoll() {
   clearTimeout(maintenancePollTimer);
   maintenancePollTimer = setTimeout(loadMaintenance, 3000);
 }
-function _sortPreflight(rows) {
-  const app = r => (r.id || "").split("@")[0];               // modality = the app
-  const rank = { pass: 0, warn: 1, fail: 2 };
-  return rows.slice().sort((a, b) => {
-    if (pfSort === "app") return app(a).localeCompare(app(b)) || mlabel(a.machine).localeCompare(mlabel(b.machine));
-    if (pfSort === "status") return (rank[a.status] ?? 3) - (rank[b.status] ?? 3) || app(a).localeCompare(app(b));
-    if (pfSort === "version") return String(b.version || "").localeCompare(String(a.version || "")) || app(a).localeCompare(app(b));
-    return mlabel(a.machine).localeCompare(mlabel(b.machine)) || app(a).localeCompare(app(b));  // machine (default)
-  });
-}
-function renderPreflight(data) {
-  lastPreflightData = data;
-  preflightRows = _sortPreflight(data && data.studios || []);
-  const sel = $("#pf-sort"); if (sel && sel.value !== pfSort) sel.value = pfSort;
-  const summary = $("#pf-summary"), body = $("#pf-body");
-  if (!preflightRows.length) {
-    summary.textContent = "Preflight has not run yet."; body.innerHTML = ""; renderStudioUpdates(data); return;
-  }
-  renderStudioAppTabs(preflightRows);
-  const shownRows = filterStudioApp(preflightRows);
-  const good = shownRows.filter(r => r.status !== "fail");
-  summary.textContent = `${good.length}/${shownRows.length} shown Studios eligible · fleet ${data.status}`
-    + (shownRows.length !== preflightRows.length ? ` · ${preflightRows.length} total` : "")
-    + (data.ran_at ? ` · last scanned ${fmtAgo(data.ran_at)}` : "");
-  body.innerHTML = shownRows.map(r => {
-    const checks = (r.checks || []).map(c => `<span class="pill ${c.status === "pass" ? "dl" : (c.status === "warn" ? "warn" : "no")}" title="${esc(c.detail)}">${esc(c.name)}</span>`).join(" ");
-    const result = r.status === "pass" ? "Ready" : (r.status === "warn" ? "Ready with warnings" : "Blocked");
-    return `<tr><td><b>${esc(r.title)}</b><br><span class="sub">${esc(r.capabilities || "")}</span></td><td>${esc(mlabel(r.machine))}</td>
-      <td><span class="pill ${r.status === "pass" ? "dl" : (r.status === "warn" ? "warn" : "no")}">${result}</span></td><td>${checks}</td></tr>`;
-  }).join("");
-  renderStudioUpdates(data);
-}
 function _sortStudioUpdates(rows) {
   const app = r => (r.id || "").split("@")[0];
-  const rank = { pass: 0, warn: 1, fail: 2 };
-  return rows.slice().sort((a, b) => {
-    if (suSort === "app") return app(a).localeCompare(app(b)) || mlabel(a.machine).localeCompare(mlabel(b));
-    if (suSort === "status") return (rank[a.status] ?? 3) - (rank[b.status] ?? 3) || mlabel(a.machine).localeCompare(mlabel(b.machine));
-    if (suSort === "version") return String(b.version || "").localeCompare(String(a.version || "")) || mlabel(a.machine).localeCompare(mlabel(b.machine));
-    return mlabel(a.machine).localeCompare(mlabel(b.machine)) || app(a).localeCompare(app(b));
-  });
+  return rows.slice().sort((a, b) => (b.reachable ? 1 : 0) - (a.reachable ? 1 : 0)
+    || mlabel(a.machine).localeCompare(mlabel(b.machine)) || app(a).localeCompare(app(b)));
 }
 function renderStudioUpdates(data) {
-  const body = $("#su-body"), summary = $("#su-summary"), update = $("#su-update"), rescan = $("#su-rescan"), sel = $("#su-sort");
-  if (!body || !summary || !update) return;
-  if (sel && sel.value !== suSort) sel.value = suSort;
+  const body = $("#su-body"), progress = $("#su-progress"), update = $("#su-update"), rescan = $("#su-rescan");
+  if (!body || !progress || !update) return;
+  lastStudioVersionData = data;
   const allRows = _sortStudioUpdates(data && data.studios || []);
+  studioVersionRows = allRows;
+  renderStudioAppTabs(allRows);
   const rows = filterStudioApp(allRows);
-  renderUpdateProgress($("#su-progress"), studioUpdateJob, "studio");
-  if (!rows.length) { body.innerHTML = ""; summary.textContent = "Run preflight to load Studio versions and update readiness."; update.disabled = true; if (rescan) rescan.disabled = maintenanceBusy; return; }
-  const outdated = rows.filter(r => r.update_available === true);
-  const available = outdated.filter(r => r.status !== "fail");
-  const current = rows.filter(r => r.version_status === "current");
-  const unverified = rows.filter(r => r.version_status === "unknown");
-  const blockedUpdates = outdated.length - available.length;
-  const scope = studioUpdateApp === "all" ? "all apps" : `${studioUpdateApp} app`;
-  summary.textContent = `${outdated.length} update${outdated.length === 1 ? "" : "s"} available · ${current.length} current · ${scope}`
-    + (rows.length !== allRows.length ? ` · ${rows.length}/${allRows.length} shown` : "")
-    + (unverified.length ? ` · ${unverified.length} unverified` : "")
-    + (blockedUpdates ? ` · ${blockedUpdates} blocked` : "")
-    + (data.ran_at ? ` · last checked ${fmtAgo(data.ran_at)}` : "")
-    + (maintenanceBusy ? " · update in progress" : "");
-  update.disabled = maintenanceBusy || !available.length;
+  if (maintenanceBusy && studioUpdateJob) renderUpdateProgress(progress, studioUpdateJob, "studio");
+  if (!rows.length) {
+    body.innerHTML = `<tr><td colspan="6" class="empty">Click “Rescan versions” to check every Studio.</td></tr>`;
+    progress.classList.add("hide"); update.disabled = true;
+    if (rescan) rescan.disabled = maintenanceBusy; return;
+  }
+  const connected = rows.filter(r => r.reachable);
+  const current = connected.filter(r => r.version_status === "current");
+  const ready = connected.filter(r => r.version_status !== "current");
+  update.disabled = maintenanceBusy || !ready.length;
   update.setAttribute("aria-busy", maintenanceBusy ? "true" : "false");
   update.textContent = maintenanceBusy ? "Updating Studios…"
-    : available.length ? `Update ${available.length} ${studioUpdateApp === "all" ? "available Studio" : studioUpdateApp + " Studio"}${available.length === 1 ? "" : "s"}`
-    : outdated.length ? "Available updates are blocked"
-    : unverified.length ? "No confirmed updates" : "All checked Studios current";
+    : ready.length ? `Update ${ready.length} ready Studio${ready.length === 1 ? "" : "s"}`
+    : "All Studios up to date";
   if (rescan) rescan.disabled = maintenanceBusy;
   const jobItems = new Map(((studioUpdateJob && studioUpdateJob.items) || []).map(i => [i.studio, i]));
-  const versionStatus = r => {
-    const failures = (r.checks || []).filter(c => c.status === "fail").map(c => `${c.name}: ${c.detail}`);
-    let state;
-    if (r.version_status === "current") state = { cls: "ok", label: "Current", detail: r.version_detail };
-    else if (r.version_status === "update_available") state = { cls: "warn", label: "Update available", detail: r.version_detail };
-    else state = { cls: "dl", label: "Not verified", detail: r.version_detail || "Latest published version could not be verified" };
-    if (failures.length) state.detail += ` · Update blocked: ${failures.join(" · ")}`;
-    return state;
-  };
   body.innerHTML = rows.map(r => {
     const item = jobItems.get(r.id);
     const showJob = item && (maintenanceBusy || item.status === "failed");
     const state = showJob && _updateState(item.status);
-    const truth = versionStatus(r);
-    const status = showJob
-      ? `<span class="pill ${state[0]}">${esc(state[1])}</span>${item.detail ? `<br><span class="sub">${esc(item.detail)}</span>` : ""}`
-      : `<span class="pill ${truth.cls}">${esc(truth.label)}</span><br><span class="sub">${esc(truth.detail)}</span>`;
-    const version = r.version ? `Running v${esc(r.version)}` : "Running version unknown";
-    const latest = r.latest_version ? `<br><span class="sub">Latest v${esc(r.latest_version)}</span>` : "";
-    let action = "—";
-    if (!maintenanceBusy && r.status !== "fail" && r.update_available === true) {
-      action = `<button class="btn primary compact" onclick="startFleetUpdate(['${jsq(r.id)}'])">Update</button>`;
-    } else if (!maintenanceBusy && r.status !== "fail" && r.version_status === "unknown") {
-      action = `<button class="btn compact" title="Latest version could not be verified" onclick="startFleetUpdate(['${jsq(r.id)}'])">Update anyway</button>`;
-    }
+    let status;
+    if (showJob) status = `<span class="pill ${state[0]}">${esc(state[1])}</span>${item.detail ? `<br><span class="sub">${esc(item.detail)}</span>` : ""}`;
+    else if (!r.reachable) status = `<span class="pill no">last known · not reachable this scan</span>`;
+    else if (r.version_status === "current") status = `<span class="pill ok">up to date</span>`;
+    else if (r.latest_version) status = `<span class="pill warn">update available → v${esc(r.latest_version)}</span>`;
+    else status = `<span class="pill dl">connected · latest version unknown</span>`;
+    const canUpdate = !maintenanceBusy && r.reachable && r.version_status !== "current";
     return `<tr><td><b>${esc(r.title)}</b></td><td>${esc(mlabel(r.machine))}</td>
-      <td class="sub">${version}${latest}</td>
-      <td class="sub">${data.ran_at ? fmtAgo(data.ran_at) : "—"}</td><td>${status}</td>
-      <td>${action}</td></tr>`;
+      <td class="sub">${r.version ? "v" + esc(r.version) : "—"}</td>
+      <td class="sub">${data.checked_at ? fmtAgo(data.checked_at) : "—"}</td><td>${status}</td>
+      <td>${canUpdate ? `<button class="btn primary compact" onclick="startFleetUpdate(['${jsq(r.id)}'])">Update</button>` : "—"}</td></tr>`;
   }).join("");
+  if (!maintenanceBusy && studioUpdateJob && Array.isArray(studioUpdateJob.items)) {
+    renderUpdateProgress(progress, studioUpdateJob, "studio");
+  } else if (!maintenanceBusy) {
+    progress.className = "update-progress";
+    progress.innerHTML = `<div class="update-progress-head"><span class="update-progress-title">✓ Studio versions checked</span><span class="update-progress-count">${current.length}/${connected.length} current</span></div>
+      <div class="update-progress-detail">${connected.length} connected · ${studioUpdateApp === "all" ? "all apps" : esc(studioUpdateApp) + " app"}</div>`;
+  }
 }
 async function loadMaintenance() {
-  const [pf, jobs, hubJobs, hubVers] = await Promise.all([
-    api("/api/hub/maintenance/preflight").then(r => r.json()).catch(() => null),
+  const [studioVersions, jobs, hubJobs, hubVers] = await Promise.all([
+    api("/api/hub/maintenance/studio-versions").then(r => r.json()).catch(() => null),
     api("/api/hub/maintenance/updates").then(r => r.json()).catch(() => null),
     api("/api/hub/maintenance/hub-updates").then(r => r.json()).catch(() => null),
     api("/api/hub/maintenance/hub-versions").then(r => r.json()).catch(() => null)
@@ -2884,7 +2800,7 @@ async function loadMaintenance() {
   const latest = jobs && jobs.updates && jobs.updates[0];
   studioUpdateJob = latest || studioUpdateJob;
   maintenanceBusy = !!(studioUpdateJob && ["queued", "running"].includes(studioUpdateJob.status));
-  if (pf) renderPreflight(pf);
+  if (studioVersions) renderStudioUpdates(studioVersions);
   const hubLatest = hubJobs && hubJobs.updates && hubJobs.updates[0];
   const hubJobRunning = hubLatest && ["queued", "running"].includes(hubLatest.status);
   if (hubJobRunning) renderHubUpdate(hubLatest);
@@ -2893,40 +2809,36 @@ async function loadMaintenance() {
     const hubRun = $("#hubupd-run"); if (hubRun) { hubRun.removeAttribute("aria-busy"); hubRun.textContent = "Update ready Hubs"; }
     if (hubVers) renderHubVersions(hubVers, hubLatest);      // persistent version table + last result
   }
-  $("#pf-run").disabled = maintenanceBusy;
   if (maintenanceBusy || hubJobRunning) scheduleMaintenancePoll();
 }
-async function runPreflight() {
-  await _rescanStudios("pf-run", "pf-summary", "Checking every Studio in parallel…");
-}
 async function rescanStudioVersions() {
-  studioUpdateJob = null;
-  await _rescanStudios("su-rescan", "su-summary", "Checking Studio versions and update readiness…");
-}
-async function _rescanStudios(buttonId, statusId, message) {
   if (maintenanceBusy) return;
-  const btn = $("#" + buttonId), status = $("#" + statusId);
-  btn.disabled = true; btn.setAttribute("aria-busy", "true"); status.textContent = message;
-  const data = await api("/api/hub/maintenance/preflight", { method: "POST" }).then(r => r.json()).catch(() => null);
+  studioUpdateJob = null;
+  const btn = $("#su-rescan"), progress = $("#su-progress");
+  btn.disabled = true; btn.setAttribute("aria-busy", "true");
+  progress.className = "update-progress";
+  progress.innerHTML = `<div class="update-progress-title">↻ Checking every Studio version…</div><div class="update-progress-detail">Running and latest versions will appear below when the scan finishes.</div>`;
+  const data = await api("/api/hub/maintenance/studio-versions", { method: "POST" }).then(r => r.json()).catch(() => null);
   btn.disabled = false; btn.removeAttribute("aria-busy");
-  if (data) renderPreflight(data); else status.textContent = "The version scan could not complete. Try again.";
+  if (data) renderStudioUpdates(data);
+  else { progress.className = "update-progress error"; progress.innerHTML = `<div class="update-progress-title">! Version scan failed</div><div class="update-progress-detail">Try again.</div>`; }
 }
 async function startFleetUpdate(ids) {
   if (!ids.length || !confirm(`Update ${ids.length} Studio${ids.length > 1 ? "s" : ""} one at a time? Active work will drain first.`)) return;
   maintenanceBusy = true;
   studioUpdateJob = { status: "queued", items: ids.map(studio => ({ studio, status: "queued", detail: "waiting" })) };
-  renderStudioUpdates(lastPreflightData || { studios: preflightRows });
+  renderStudioUpdates(lastStudioVersionData || { studios: studioVersionRows });
   const r = await api("/api/hub/maintenance/updates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ studio_ids: ids }) });
   if (!r.ok) {
     const e = await r.json().catch(() => ({})); maintenanceBusy = false;
     studioUpdateJob = { status: "failed", items: ids.map(studio => ({ studio, status: "failed", detail: e.detail || "Update could not start" })) };
-    renderStudioUpdates(lastPreflightData || { studios: preflightRows }); return;
+    renderStudioUpdates(lastStudioVersionData || { studios: studioVersionRows }); return;
   }
   studioUpdateJob = await r.json();
-  renderStudioUpdates(lastPreflightData || { studios: preflightRows });
+  renderStudioUpdates(lastStudioVersionData || { studios: studioVersionRows });
   scheduleMaintenancePoll();
 }
-function updateReadyStudios() { startFleetUpdate(filterStudioApp(preflightRows).filter(r => r.status !== "fail" && r.update_available === true).map(r => r.id)); }
+function updateReadyStudios() { startFleetUpdate(filterStudioApp(studioVersionRows).filter(r => r.reachable && r.version_status !== "current").map(r => r.id)); }
 let hubUpdateBusy = false;
 let lastHubVersionData = null;
 function renderHubUpdate(job) {
@@ -3109,7 +3021,8 @@ async function loadMachines() {
 async function removeMachine(m) {
   if (!confirm(`Remove all of ${m}'s studios from the Hub? (The machine itself is untouched.)`)) return;
   await api(`/api/hub/registry/machines/${encodeURIComponent(m)}`, { method: "DELETE" });
-  loadMachines(); refresh();
+  await refresh();
+  renderMachines();
 }
 // Prune ONE studio from a machine (e.g. a music/video studio you never installed
 // there). It only comes back if it's actually running next time you Refetch.
@@ -3118,7 +3031,8 @@ async function removeStudio(id) {
   if (!confirm(`Remove the ${mod} studio from this machine?\nUse this for a studio you don't run here. It reappears only if it's actually running when you Refetch, or if you Add it manually.`)) return;
   await api(`/api/hub/registry/studios/${encodeURIComponent(id)}`, { method: "DELETE" })
     .catch(e => alert(`remove failed: ${e}`));
-  loadMachines(); refresh();
+  await refresh();
+  renderMachines();
 }
 // Re-probe a machine's host for the studio family ports and register any studio
 // that has come online since the machine was first added (registration only

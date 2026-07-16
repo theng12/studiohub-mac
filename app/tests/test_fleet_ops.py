@@ -54,6 +54,47 @@ def test_version_status_requires_a_real_published_comparison():
     assert row["latest_version"] == "1.3.0"
 
 
+@pytest.mark.asyncio
+async def test_studio_version_scan_only_reads_version_endpoints(monkeypatch, monitor):
+    studio = {**monitor.registry[0], "id": "image@mac-a", "machine": "mac-a",
+              "host": "10.0.0.8"}
+    monitor.registry = [studio]
+    requested = []
+
+    class Response:
+        status_code = 200
+        def __init__(self, payload): self.payload = payload
+        def json(self): return self.payload
+        def raise_for_status(self): return None
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, url, **kwargs):
+            requested.append(url)
+            if url.endswith("/api/version"):
+                return Response({"app_version": "1.2.0"})
+            if url.endswith("/api/update-status"):
+                return Response({"app_version": "1.2.0", "latest_version": "1.3.0"})
+            raise AssertionError(f"unexpected preflight request: {url}")
+
+    async def published(*, force=False):
+        fleet_ops._published_versions["image"] = "1.3.0"
+        return fleet_ops.published_version_snapshot()
+
+    monkeypatch.setattr(fleet_ops.httpx, "AsyncClient", lambda **kwargs: Client())
+    monkeypatch.setattr(fleet_ops, "refresh_published_versions", published)
+
+    result = await fleet_ops.scan_studio_versions(monitor)
+
+    row = result["studios"][0]
+    assert row["reachable"] is True
+    assert row["version"] == "1.2.0"
+    assert row["latest_version"] == "1.3.0"
+    assert row["update_available"] is True
+    assert all(url.endswith(("/api/version", "/api/update-status")) for url in requested)
+
+
 def test_local_published_version_is_applied_to_every_worker_of_the_same_app():
     local = {"id": "voice", "modality": "voice", "machine": "local",
              "version": "1.20.3", "latest_version": "1.20.3",
@@ -258,10 +299,10 @@ async def test_updates_are_sequential_and_failure_is_contained(monkeypatch, moni
         item.update(status="complete", detail="healthy")
 
     monkeypatch.setattr(fleet_ops, "_update_one", fake_update)
-    async def fake_preflight(mon):
+    async def fake_version_scan(mon):
         refreshed.append(True)
-        return {"status": "pass", "studios": []}
-    monkeypatch.setattr(fleet_ops, "run_preflight", fake_preflight)
+        return {"checked_at": 1, "studios": []}
+    monkeypatch.setattr(fleet_ops, "scan_studio_versions", fake_version_scan)
     job = {"id": "x", "status": "queued", "created_at": 0, "finished_at": None,
            "items": [{"studio": "image", "status": "queued", "detail": ""},
                      {"studio": "music", "status": "queued", "detail": ""},

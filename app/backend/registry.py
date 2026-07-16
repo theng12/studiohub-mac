@@ -91,6 +91,21 @@ def set_label(machine: str, name: str):
 def label_for(machine: str) -> str:
     return load_labels().get(machine, machine)
 
+
+def prune_machine_metadata(known_machines: set[str]) -> None:
+    """Remove aliases/toggles whose machine is no longer registered."""
+    global _labels_cache, _flags_cache
+    labels = {key: value for key, value in load_labels().items()
+              if key in known_machines}
+    flags = {key: value for key, value in load_flags().items()
+             if key in known_machines}
+    if labels != load_labels():
+        LABELS_FILE.write_text(json.dumps(labels, indent=2) + "\n")
+    if flags != load_flags():
+        FLAGS_FILE.write_text(json.dumps(flags, indent=2) + "\n")
+    _labels_cache = labels
+    _flags_cache = flags
+
 # The five sibling studios and their fixed family ports. `app` is the Pinokio
 # launcher folder name under PINOKIO_HOME/api — used by lifecycle control
 # (pterm --ref). Override in studios.json if your folder names differ.
@@ -174,7 +189,8 @@ def build_machine_entries(host: str, machine: str, modalities: list[str]) -> lis
 
 
 def remove_machine(machine: str) -> int:
-    """Drop all studios.json entries for a machine (defaults are untouchable)."""
+    """Drop a machine's registry entries and machine-specific UI settings."""
+    global _labels_cache, _flags_cache
     if not REGISTRY_FILE.exists():
         return 0
     try:
@@ -185,6 +201,14 @@ def remove_machine(machine: str) -> int:
     removed = len(existing) - len(kept)
     if removed:
         REGISTRY_FILE.write_text(json.dumps(kept, indent=2) + "\n")
+        labels = dict(load_labels())
+        if labels.pop(machine, None) is not None:
+            LABELS_FILE.write_text(json.dumps(labels, indent=2) + "\n")
+        _labels_cache = labels
+        flags = dict(load_flags())
+        if flags.pop(machine, None) is not None:
+            FLAGS_FILE.write_text(json.dumps(flags, indent=2) + "\n")
+        _flags_cache = flags
     return removed
 
 

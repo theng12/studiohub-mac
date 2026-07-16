@@ -14,7 +14,7 @@ import httpx
 
 log = logging.getLogger("studiohub.monitor")
 
-from .registry import base_url, load_registry
+from .registry import base_url, load_registry, prune_machine_metadata
 from .peers import studio_request
 
 POLL_INTERVAL_S = 5.0
@@ -75,6 +75,8 @@ def _provider_of(model: dict) -> str:
 class StudioMonitor:
     def __init__(self):
         self.registry: list[dict] = load_registry()
+        prune_machine_metadata({studio.get("machine", "local")
+                                for studio in self.registry})
         self.status: dict[str, dict] = {
             s["id"]: {"status": "unknown", "last_seen": None, "last_checked": None}
             for s in self.registry
@@ -97,11 +99,25 @@ class StudioMonitor:
     def reload_registry(self):
         """Pick up studios.json edits without a restart."""
         self.registry = load_registry()
+        prune_machine_metadata({studio.get("machine", "local")
+                                for studio in self.registry})
         for s in self.registry:
             self.status.setdefault(
                 s["id"],
                 {"status": "unknown", "last_seen": None, "last_checked": None},
             )
+
+    def forget_studios(self, studio_ids: set[str]) -> None:
+        """Drop removed Studios from status and all live inventory caches."""
+        if not studio_ids:
+            return
+        self.registry = [studio for studio in self.registry
+                         if studio["id"] not in studio_ids]
+        for studio_id in studio_ids:
+            self.status.pop(studio_id, None)
+            self._catalog_cache.pop(studio_id, None)
+            self._transcribe_cache.pop(studio_id, None)
+            self._provider_cache.pop(studio_id, None)
 
     # ── health ───────────────────────────────────────────────────────────
     async def _poll_loop(self):

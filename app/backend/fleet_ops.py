@@ -1,4 +1,4 @@
-"""Fleet preflight and one-at-a-time drained Studio updates."""
+"""Fleet version discovery and one-at-a-time drained Studio updates."""
 
 from __future__ import annotations
 
@@ -47,6 +47,7 @@ _published_task: asyncio.Task | None = None
 _published_lock: asyncio.Lock | None = None
 
 _preflight = {"ran_at": None, "status": "never", "studios": []}
+_studio_versions = {"checked_at": None, "studios": []}
 _updates: dict[str, dict] = {}
 _hub_updates: dict[str, dict] = {}
 # machine -> {version, checked_at, host, reachable}: last-known peer Hub versions
@@ -56,17 +57,32 @@ _hub_versions: dict[str, dict] = {}
 def _save_state() -> None:
     try:
         _STATE_FILE.write_text(json.dumps(
-            {"preflight": _preflight, "hub_versions": _hub_versions}, indent=2) + "\n")
+            {"studio_versions": _studio_versions,
+             "hub_versions": _hub_versions}, indent=2) + "\n")
     except OSError:
         pass
 
 
 def _load_state() -> None:
-    global _preflight, _hub_versions
+    global _preflight, _studio_versions, _hub_versions
     try:
         d = json.loads(_STATE_FILE.read_text())
+        if isinstance(d.get("studio_versions"), dict):
+            _studio_versions = d["studio_versions"]
+        # One-time migration from the old preflight persistence. Only retain
+        # the version fields; the health/model/disk checklist is intentionally
+        # no longer part of fleet update control.
         if isinstance(d.get("preflight"), dict):
             _preflight = d["preflight"]
+            if not _studio_versions.get("studios"):
+                _studio_versions = {
+                    "checked_at": d["preflight"].get("ran_at"),
+                    "studios": [{k: row.get(k) for k in (
+                        "id", "title", "modality", "machine", "host",
+                        "version", "latest_version", "version_status",
+                        "version_detail", "update_available", "reachable",
+                    )} for row in d["preflight"].get("studios", [])],
+                }
         if isinstance(d.get("hub_versions"), dict):
             _hub_versions = d["hub_versions"]
     except (OSError, ValueError):
@@ -278,6 +294,95 @@ async def run_preflight(monitor) -> dict:
     return _preflight
 
 
+async def _studio_version_one(studio: dict) -> dict:
+    """Read only the version information needed by the update UI."""
+    sid = studio["id"]
+    row = {
+        "id": sid,
+        "title": studio.get("title", sid),
+        "modality": studio.get("modality", ""),
+        "machine": studio.get("machine", "local"),
+        "host": studio.get("host"),
+        "version": None,
+        "latest_version": None,
+        "version_status": "unknown",
+        "version_detail": "Version scan has not completed",
+        "update_available": None,
+        "reachable": False,
+    }
+    headers = peers.studio_headers(studio)
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(PREFLIGHT_TIMEOUT)) as client:
+            try:
+                response = await client.get(f"{base_url(studio)}/api/version")
+                response.raise_for_status()
+                row["version"] = response.json().get("app_version")
+                row["reachable"] = True
+            except (httpx.HTTPError, ValueError):
+                pass
+            update_status = await _fetch_update_status(client, studio, headers)
+            _apply_version_status(row, update_status)
+            if update_status:
+                row["reachable"] = True
+    except (httpx.HTTPError, ValueError):
+        _apply_version_status(row, None)
+    return row
+
+
+async def scan_studio_versions(monitor) -> dict:
+    """Refresh running/latest versions without the retired fleet preflight."""
+    global _studio_versions
+    await refresh_published_versions(force=True)
+    rows = await asyncio.gather(*(
+        _studio_version_one(studio) for studio in monitor.registry
+    ))
+    _apply_canonical_published_versions(rows)
+    _studio_versions = {"checked_at": time.time(), "studios": rows}
+    _save_state()
+    return _studio_versions
+
+
+def studio_versions_snapshot(monitor=None) -> dict:
+    """Return saved versions, excluding machines no longer in the registry."""
+    rows = list(_studio_versions.get("studios") or [])
+    if monitor is not None:
+        known = {studio["id"] for studio in monitor.registry}
+        rows = [row for row in rows if row.get("id") in known]
+    if rows:
+        _apply_canonical_published_versions(rows)
+    return {"checked_at": _studio_versions.get("checked_at"), "studios": rows}
+
+
+def forget_studios(studio_ids: set[str]) -> None:
+    """Purge removed Studios from live update-control persistence."""
+    global _studio_versions, _preflight
+    if not studio_ids:
+        return
+    _studio_versions = {
+        **_studio_versions,
+        "studios": [row for row in _studio_versions.get("studios", [])
+                    if row.get("id") not in studio_ids],
+    }
+    _preflight = {
+        **_preflight,
+        "studios": [row for row in _preflight.get("studios", [])
+                    if row.get("id") not in studio_ids],
+    }
+    _save_state()
+
+
+def forget_machine(machine: str, studio_ids: set[str] | None = None) -> None:
+    """Purge a removed machine from every live fleet-control cache."""
+    global _hub_versions
+    ids = set(studio_ids or ())
+    if not ids:
+        ids = {row.get("id") for row in _studio_versions.get("studios", [])
+               if row.get("machine") == machine and row.get("id")}
+    forget_studios(ids)
+    _hub_versions.pop(machine, None)
+    _save_state()
+
+
 def _apply_canonical_published_versions(rows: list[dict],
                                         published: dict[str, str] | None = None) -> None:
     """Compare every worker to one published version per Studio app.
@@ -350,12 +455,18 @@ async def scan_hub_versions(monitor) -> dict:
                                       "checked_at": time.time(), "reachable": False}
 
     await asyncio.gather(*(one(m, h) for m, h in hosts.items()))
+    for machine in set(_hub_versions) - set(hosts):
+        _hub_versions.pop(machine, None)
     _save_state()
     return _hub_versions
 
 
-def hub_versions_snapshot() -> dict:
-    return _hub_versions
+def hub_versions_snapshot(monitor=None) -> dict:
+    if monitor is None:
+        return _hub_versions
+    known = set(_remote_hosts(monitor))
+    return {machine: row for machine, row in _hub_versions.items()
+            if machine in known}
 
 
 async def _preflight_one(monitor, studio: dict) -> dict:
@@ -499,7 +610,7 @@ async def _run_updates(monitor, job: dict):
     # guarantees the next UI poll replaces action history ("Updated") with the
     # real running-vs-published comparison, including for remote Studios.
     try:
-        await run_preflight(monitor)
+        await scan_studio_versions(monitor)
     except Exception as exc:
         job["refresh_warning"] = f"post-update version scan failed: {str(exc)[:160]}"
     job["status"] = final_status
