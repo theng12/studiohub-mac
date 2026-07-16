@@ -3,7 +3,7 @@ import base64
 import httpx
 import pytest
 
-from backend import broker, ledger
+from backend import broker, ledger, shared_voices
 
 
 def test_submit_validation(reset):
@@ -29,6 +29,26 @@ def test_submit_ok_and_summary(reset):
     b = broker.batches[r["batch_id"]]
     s = broker.batch_summary(b)
     assert s["total"] == 2 and s["queued"] == 2 and s["label"] == "t"
+
+
+def test_shared_clone_only_allows_synchronized_voice_workers(reset, monkeypatch):
+    monkeypatch.setattr(
+        shared_voices, "synced_studio_ids", lambda voice_id: {"voice@mac-a"}
+        if voice_id == "074743daa991" else None,
+    )
+    batch = {
+        "modality": "voice", "shared_params": {},
+    }
+    item = {"params": {"voice_library_id": "074743daa991"}}
+
+    assert broker._shared_voice_allows_studio(
+        batch, item, {"id": "voice@mac-a"}) is True
+    assert broker._shared_voice_allows_studio(
+        batch, item, {"id": "voice@mac-b"}) is False
+    assert broker._shared_voice_allows_studio(
+        batch, {"params": {"voice_library_id": "direct-only-id"}},
+        {"id": "voice@mac-b"},
+    ) is True
 
 
 def test_summary_running_items_and_avg(reset):

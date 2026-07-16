@@ -262,6 +262,22 @@ def list_voices(monitor=None) -> list[dict]:
     return rows
 
 
+def synced_studio_ids(voice_id: str) -> set[str] | None:
+    """Return workers that hold a Hub voice, or None for a non-Hub voice id."""
+    try:
+        voice = _load(voice_id)
+    except ValueError:
+        return None
+    if not voice:
+        return None
+    targets = (_state(voice_id).get("targets") or {}).values()
+    return {
+        str(target.get("studio_id"))
+        for target in targets
+        if target.get("status") == "synced" and target.get("studio_id")
+    }
+
+
 async def _sync_target(monitor, voice: dict, studio: dict) -> dict:
     now = time.time()
     base = {

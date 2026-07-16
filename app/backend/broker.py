@@ -26,7 +26,7 @@ from pathlib import Path
 
 import httpx
 
-from . import ledger
+from . import ledger, shared_voices
 from .peers import studio_request
 from .monitor import is_cached, is_cloud_lane
 from .registry import base_url, machine_enabled
@@ -657,6 +657,24 @@ def _eligible_studios(modality: str, routing: str, model: str = "") -> list[dict
     return out
 
 
+def _shared_voice_allows_studio(batch: dict, item: dict, studio: dict) -> bool:
+    """Keep Hub-owned clones on workers where their stable id is synchronized.
+
+    Unknown ids retain the legacy behavior because they may be direct-only
+    Voice Studio library entries. Hub-owned ids with no successful targets
+    wait in queue until the background synchronizer heals one worker.
+    """
+    if batch.get("modality") != "voice":
+        return True
+    params = dict(batch.get("shared_params") or {})
+    params.update(item.get("params") or {})
+    voice_id = str(params.get("voice_library_id") or "").strip()
+    if not voice_id:
+        return True
+    synced = shared_voices.synced_studio_ids(voice_id)
+    return synced is None or studio.get("id") in synced
+
+
 def _queued_batches() -> list[dict]:
     """Queued work in priority/fair-turn order; running work is never preempted."""
     return sorted(
@@ -694,6 +712,17 @@ async def _dispatch_loop():
                 for studio in eligible:
                     if not queued:
                         break
+                    compatible_index = next(
+                        (index for index, candidate in enumerate(queued)
+                         if _shared_voice_allows_studio(b, candidate, studio)),
+                        None,
+                    )
+                    if compatible_index is None:
+                        b["governor_note"] = (
+                            "Waiting for a Voice Studio where the selected "
+                            "shared voice is synchronized"
+                        )
+                        continue
                     # ── model-aware dispatch (heterogeneous machines) ──
                     # A studio only gets work for models it actually has. This
                     # is what lets a 3-model Mac and a 1-model Mac share pools.
@@ -727,7 +756,7 @@ async def _dispatch_loop():
                     if studio.get("machine", "local") in busy_machines():
                         continue
                     b["governor_note"] = None
-                    item = queued.pop(0)
+                    item = queued.pop(compatible_index)
                     item["state"] = "running"
                     item["retry_at"] = None
                     item["studio"] = studio["id"]

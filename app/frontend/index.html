@@ -792,6 +792,11 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.41.1", date: "2026-07-16", items: [
+    "Shared cloned-voice jobs now run only on Voice Studio workers where that exact stable voice ID has synchronized successfully.",
+    "Jobs wait safely with a clear queue explanation while voice synchronization catches up, instead of reaching the wrong worker and failing.",
+    "Direct-only Voice Studio voices keep their existing behavior; this protection applies specifically to the canonical Hub voice library.",
+  ] },
   { v: "1.41.0", date: "2026-07-16", items: [
     "ElevenLabs cloud voice jobs now always use <b>Voice Studio on this Hub Mac</b>, keeping the named account pool, quotas, per-account voice IDs, and paid-call recovery in one place.",
     "Remote Voice Studio Macs no longer need ElevenLabs keys. They remain fully available for local TTS models while the scheduler waits clearly when the central gateway is busy or offline.",

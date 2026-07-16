@@ -40,6 +40,17 @@ def test_canonical_voice_uses_stable_id_hash_and_reviewed_transcript(reset, moni
     assert shared_voices.audio_path(voice["id"]).read_bytes() == b"small-reference-audio"
 
 
+def test_synced_studio_ids_distinguishes_hub_and_direct_voice_ids(reset):
+    voice = _create()
+    shared_voices._save_state(voice["id"], {"targets": {
+        "voice@mac-a": {"studio_id": "voice@mac-a", "status": "synced"},
+        "voice@mac-b": {"studio_id": "voice@mac-b", "status": "pending"},
+    }})
+
+    assert shared_voices.synced_studio_ids(voice["id"]) == {"voice@mac-a"}
+    assert shared_voices.synced_studio_ids("ffffffffffff") is None
+
+
 def test_shared_voice_validation_rejects_unsafe_or_unapproved_uploads(reset):
     with pytest.raises(ValueError, match="permission"):
         _create(permission_acknowledged=False)

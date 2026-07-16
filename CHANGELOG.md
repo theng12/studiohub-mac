@@ -10,6 +10,19 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.41.1] — 2026-07-16
+
+### Fixed — shared cloned voices dispatch only where synchronized
+
+- Voice jobs using a canonical Hub voice ID now wait for a Voice Studio that
+  has successfully synchronized that exact voice instead of dispatching to an
+  arbitrary model-compatible worker.
+- Direct-only Voice Studio voice IDs retain their existing behavior, while an
+  unsynchronized shared voice remains safely queued for the background sync
+  process to heal.
+- The queue status explains when it is waiting for a compatible shared-voice
+  worker, preventing silent wrong-voice requests and avoidable worker errors.
+
 ## [1.41.0] — 2026-07-16
 
 ### Added — one local ElevenLabs gateway for the fleet
