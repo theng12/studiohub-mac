@@ -40,6 +40,7 @@
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
   .card .top { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .fleet-app-tabs { display:flex; flex-wrap:wrap; gap:7px; margin:0 0 12px; }
   .card .emoji { font-size: 22px; }
   .card h3 { font-size: 15px; flex: 1; }
   .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
@@ -704,6 +705,7 @@
       <p class="muted" style="font-size:13px;margin-bottom:10px">
         <b>Run preflight</b> re-scans every studio and records its <b>version</b> (remembered even after a restart). Updates drain and verify one Studio at a time.
       </p>
+      <div class="fleet-app-tabs" id="studio-app-tabs" role="tablist" aria-label="Filter fleet maintenance by app"></div>
       <details class="tx-items" style="margin-bottom:10px"><summary class="sub">What the checks mean</summary>
         <ul style="font-size:12.5px;line-height:1.7;margin:8px 0 0 18px;color:var(--dim)">
           <li><b>health</b> — the studio answers and reports itself running (up).</li>
@@ -2687,8 +2689,24 @@ let studioUpdateJob = null;
 let maintenancePollTimer = null;
 let pfSort = localStorage.getItem("pf_sort") || "machine";
 let suSort = localStorage.getItem("su_sort") || "machine";
+let studioUpdateApp = localStorage.getItem("studio_update_app") || "all";
 function setPreflightSort(v) { pfSort = v; localStorage.setItem("pf_sort", v); if (lastPreflightData) renderPreflight(lastPreflightData); }
 function setStudioUpdateSort(v) { suSort = v; localStorage.setItem("su_sort", v); if (lastPreflightData) renderStudioUpdates(lastPreflightData); }
+function studioAppKey(row) { return row.modality || String(row.id || "").split("@")[0]; }
+function filterStudioApp(rows) { return studioUpdateApp === "all" ? rows : rows.filter(r => studioAppKey(r) === studioUpdateApp); }
+function setStudioUpdateApp(app) {
+  studioUpdateApp = app; localStorage.setItem("studio_update_app", app);
+  if (lastPreflightData) renderPreflight(lastPreflightData);
+}
+function renderStudioAppTabs(rows) {
+  const el = $("#studio-app-tabs"); if (!el) return;
+  const counts = rows.reduce((out, row) => { const key = studioAppKey(row); out[key] = (out[key] || 0) + 1; return out; }, {});
+  if (studioUpdateApp !== "all" && !counts[studioUpdateApp]) studioUpdateApp = "all";
+  const labels = { voice: "Voice", chat: "Chat", image: "Image", music: "Music", video: "Video", render: "Render" };
+  const apps = Object.keys(counts).sort((a, b) => (labels[a] || a).localeCompare(labels[b] || b));
+  el.innerHTML = [["all", `All apps · ${rows.length}`], ...apps.map(app => [app, `${labels[app] || app} · ${counts[app]}`])]
+    .map(([app, label]) => `<button class="btn compact ${studioUpdateApp === app ? "primary" : ""}" role="tab" aria-selected="${studioUpdateApp === app}" onclick="setStudioUpdateApp('${jsq(app)}')">${esc(label)}</button>`).join("");
+}
 function _updateTerminal(status) { return ["complete", "current", "failed"].includes(status); }
 function _updateState(status) {
   const states = {
@@ -2742,10 +2760,13 @@ function renderPreflight(data) {
   if (!preflightRows.length) {
     summary.textContent = "Preflight has not run yet."; body.innerHTML = ""; renderStudioUpdates(data); return;
   }
-  const good = preflightRows.filter(r => r.status !== "fail");
-  summary.textContent = `${good.length}/${preflightRows.length} Studios eligible · fleet ${data.status}`
+  renderStudioAppTabs(preflightRows);
+  const shownRows = filterStudioApp(preflightRows);
+  const good = shownRows.filter(r => r.status !== "fail");
+  summary.textContent = `${good.length}/${shownRows.length} shown Studios eligible · fleet ${data.status}`
+    + (shownRows.length !== preflightRows.length ? ` · ${preflightRows.length} total` : "")
     + (data.ran_at ? ` · last scanned ${fmtAgo(data.ran_at)}` : "");
-  body.innerHTML = preflightRows.map(r => {
+  body.innerHTML = shownRows.map(r => {
     const checks = (r.checks || []).map(c => `<span class="pill ${c.status === "pass" ? "dl" : (c.status === "warn" ? "warn" : "no")}" title="${esc(c.detail)}">${esc(c.name)}</span>`).join(" ");
     const result = r.status === "pass" ? "Ready" : (r.status === "warn" ? "Ready with warnings" : "Blocked");
     return `<tr><td><b>${esc(r.title)}</b><br><span class="sub">${esc(r.capabilities || "")}</span></td><td>${esc(mlabel(r.machine))}</td>
@@ -2767,7 +2788,8 @@ function renderStudioUpdates(data) {
   const body = $("#su-body"), summary = $("#su-summary"), update = $("#su-update"), rescan = $("#su-rescan"), sel = $("#su-sort");
   if (!body || !summary || !update) return;
   if (sel && sel.value !== suSort) sel.value = suSort;
-  const rows = _sortStudioUpdates(data && data.studios || []);
+  const allRows = _sortStudioUpdates(data && data.studios || []);
+  const rows = filterStudioApp(allRows);
   renderUpdateProgress($("#su-progress"), studioUpdateJob, "studio");
   if (!rows.length) { body.innerHTML = ""; summary.textContent = "Run preflight to load Studio versions and update readiness."; update.disabled = true; if (rescan) rescan.disabled = maintenanceBusy; return; }
   const outdated = rows.filter(r => r.update_available === true);
@@ -2775,7 +2797,9 @@ function renderStudioUpdates(data) {
   const current = rows.filter(r => r.version_status === "current");
   const unverified = rows.filter(r => r.version_status === "unknown");
   const blockedUpdates = outdated.length - available.length;
-  summary.textContent = `${outdated.length} update${outdated.length === 1 ? "" : "s"} available · ${current.length} current`
+  const scope = studioUpdateApp === "all" ? "all apps" : `${studioUpdateApp} app`;
+  summary.textContent = `${outdated.length} update${outdated.length === 1 ? "" : "s"} available · ${current.length} current · ${scope}`
+    + (rows.length !== allRows.length ? ` · ${rows.length}/${allRows.length} shown` : "")
     + (unverified.length ? ` · ${unverified.length} unverified` : "")
     + (blockedUpdates ? ` · ${blockedUpdates} blocked` : "")
     + (data.ran_at ? ` · last checked ${fmtAgo(data.ran_at)}` : "")
@@ -2783,7 +2807,7 @@ function renderStudioUpdates(data) {
   update.disabled = maintenanceBusy || !available.length;
   update.setAttribute("aria-busy", maintenanceBusy ? "true" : "false");
   update.textContent = maintenanceBusy ? "Updating Studios…"
-    : available.length ? `Update ${available.length} available Studio${available.length === 1 ? "" : "s"}`
+    : available.length ? `Update ${available.length} ${studioUpdateApp === "all" ? "available Studio" : studioUpdateApp + " Studio"}${available.length === 1 ? "" : "s"}`
     : outdated.length ? "Available updates are blocked"
     : unverified.length ? "No confirmed updates" : "All checked Studios current";
   if (rescan) rescan.disabled = maintenanceBusy;
@@ -2871,7 +2895,7 @@ async function startFleetUpdate(ids) {
   renderStudioUpdates(lastPreflightData || { studios: preflightRows });
   scheduleMaintenancePoll();
 }
-function updateReadyStudios() { startFleetUpdate(preflightRows.filter(r => r.status !== "fail" && r.update_available === true).map(r => r.id)); }
+function updateReadyStudios() { startFleetUpdate(filterStudioApp(preflightRows).filter(r => r.status !== "fail" && r.update_available === true).map(r => r.id)); }
 let hubUpdateBusy = false;
 let lastHubVersionData = null;
 function renderHubUpdate(job) {

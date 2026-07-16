@@ -161,11 +161,51 @@ async def _fetch_update_status(client: httpx.AsyncClient, studio: dict,
 async def run_preflight(monitor) -> dict:
     global _preflight
     rows = await asyncio.gather(*(_preflight_one(monitor, s) for s in monitor.registry))
+    _apply_canonical_published_versions(rows)
     status = "fail" if any(r["status"] == "fail" for r in rows) else (
         "warn" if any(r["status"] == "warn" for r in rows) else "pass")
     _preflight = {"ran_at": time.time(), "status": status, "studios": rows}
     _save_state()
     return _preflight
+
+
+def _apply_canonical_published_versions(rows: list[dict]) -> None:
+    """Compare every worker to one published version per Studio app.
+
+    A worker's ``/api/update-status`` cache is intentionally local and may be
+    several hours old.  That must not make an older worker look current just
+    because it has not refreshed yet.  Prefer the local Studio's published
+    value for each modality, falling back to the highest verified value from a
+    reachable worker when the local Studio is unavailable.
+    """
+    targets: dict[str, tuple[tuple[int, int, int], str, bool]] = {}
+    for row in rows:
+        modality = str(row.get("modality") or "")
+        latest = row.get("latest_version")
+        key = _version_key(latest)
+        if not modality or key is None:
+            continue
+        is_local = row.get("machine") == "local"
+        previous = targets.get(modality)
+        if previous is None or (is_local and not previous[2]) or (
+            is_local == previous[2] and key > previous[0]
+        ):
+            targets[modality] = (key, str(latest), is_local)
+
+    for row in rows:
+        target = targets.get(str(row.get("modality") or ""))
+        if target is None:
+            continue
+        _, latest, _ = target
+        # Keep the running version discovered from /api/version, but apply the
+        # fleet-wide published target to this individual machine.
+        _apply_version_status(row, {"app_version": row.get("version"),
+                                    "latest_version": latest})
+        check = next((item for item in row.get("checks", [])
+                      if item.get("name") == "version"), None)
+        if check is not None:
+            check.update(status="pass" if row["version_status"] == "current" else "warn",
+                         detail=row["version_detail"])
 
 
 async def scan_hub_versions(monitor) -> dict:
@@ -208,6 +248,7 @@ async def _preflight_one(monitor, studio: dict) -> dict:
                    "detail": f"{studio.get('host')}:{studio.get('port')}" if len(same_port) == 1
                    else "conflicts with " + ", ".join(same_port)})
     row = {"id": sid, "title": studio.get("title", sid),
+           "modality": studio.get("modality", ""),
            "machine": studio.get("machine", "local"), "checks": checks,
            "version": None, "latest_version": None,
            "version_status": "unknown", "version_detail": "Version scan has not completed",

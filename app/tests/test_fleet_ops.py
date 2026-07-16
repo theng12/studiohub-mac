@@ -54,6 +54,23 @@ def test_version_status_requires_a_real_published_comparison():
     assert row["latest_version"] == "1.3.0"
 
 
+def test_local_published_version_is_applied_to_every_worker_of_the_same_app():
+    local = {"id": "voice", "modality": "voice", "machine": "local",
+             "version": "1.20.3", "latest_version": "1.20.3",
+             "checks": [{"name": "version", "status": "pass", "detail": "old"}]}
+    remote = {"id": "voice@mac-a", "modality": "voice", "machine": "mac-a",
+              "version": "1.20.2", "latest_version": "1.20.2",
+              "checks": [{"name": "version", "status": "pass", "detail": "old"}]}
+
+    fleet_ops._apply_canonical_published_versions([local, remote])
+
+    assert remote["latest_version"] == "1.20.3"
+    assert remote["version_status"] == "update_available"
+    assert remote["update_available"] is True
+    assert remote["checks"][-1]["status"] == "warn"
+    assert "latest published v1.20.3" in remote["checks"][-1]["detail"]
+
+
 @pytest.mark.asyncio
 async def test_preflight_uses_remote_studio_update_contract(monkeypatch, monitor):
     studio = {**monitor.registry[0], "id": "image@mac-a", "machine": "mac-a",

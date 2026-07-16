@@ -16,6 +16,21 @@ TERMINAL_ITEM_STATES = {"complete", "current", "deferred", "failed"}
 APP_ORDER = {"hub": 0, "voice": 1, "chat": 2, "image": 3, "music": 4, "video": 5}
 
 
+def _version_key(value: object) -> tuple[int, int, int] | None:
+    try:
+        parts = [int(part) for part in str(value).strip().lstrip("v").split(".")[:3]]
+    except (TypeError, ValueError):
+        return None
+    return tuple((parts + [0, 0, 0])[:3]) if parts else None
+
+
+def _latest_version(*values: object) -> str | None:
+    """Choose the newest valid version, never a stale downgrade."""
+    candidates = [(key, str(value)) for value in values
+                  if (key := _version_key(value)) is not None]
+    return max(candidates, default=(None, None))[1]
+
+
 class FleetAutoUpdates:
     """Coordinate fixed registered targets without touching their repositories."""
 
@@ -102,17 +117,34 @@ class FleetAutoUpdates:
         )}
         try:
             status = await self._request(target, "GET", "/api/auto-update/status")
+            # The updater's persisted last-check record may predate a manual
+            # Pinokio update.  The public Studio version contract tracks the
+            # published VERSION separately; use the newest verified value so
+            # the Updates tab can never render a fake downgrade.
+            release = {}
+            if target["kind"] == "studio":
+                try:
+                    release = await self._request(target, "GET", "/api/update-status")
+                except (httpx.HTTPError, ValueError, OSError):
+                    pass
             settings = status.get("settings") or {}
+            installed = release.get("app_version") or status.get("installed_version")
+            latest = _latest_version(status.get("latest_version"), release.get("latest_version"))
+            installed_key = _version_key(installed)
+            latest_key = _version_key(latest)
             return {
                 **base, "supported": True, "healthy": healthy,
-                "installed_version": status.get("installed_version"),
-                "latest_version": status.get("latest_version"),
+                "installed_version": installed,
+                "latest_version": latest,
                 "mode": settings.get("mode", "off"),
                 "frequency": settings.get("frequency", "daily"),
                 "maintenance_hour": settings.get("maintenance_hour"),
                 "last_checked": status.get("last_checked"),
                 "next_check": status.get("next_check"),
-                "update_available": bool(status.get("update_available")),
+                "update_available": (
+                    latest_key > installed_key if latest_key is not None and installed_key is not None
+                    else bool(status.get("update_available"))
+                ),
                 "state": status.get("state", "idle"),
                 "defer_reason": status.get("defer_reason"),
                 "last_update_result": status.get("last_update_result"),

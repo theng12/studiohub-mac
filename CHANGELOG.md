@@ -10,6 +10,25 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.42.1] — 2026-07-16
+
+### Fixed — authoritative fleet versions
+
+- Remote maintenance now compares every worker against one published version per
+  Studio app. A stale worker cache can no longer make Voice Studio v1.20.2 look
+  current after v1.20.3 is published.
+- The Updates dashboard now reconciles an app's saved updater history with its
+  published-version contract, preventing false downgrade displays such as
+  `1.20.3 → 1.20.2`.
+
+### Improved — focused remote Studio updates
+
+- Added app tabs to Remote maintenance. Choose All apps or a single app to
+  filter both preflight checks and the rolling-update list.
+- The existing bulk action now updates all eligible Studios in the selected app
+  tab; All apps remains the fleet-wide action, and per-machine Update buttons
+  remain available.
+
 ## [1.42.0] — 2026-07-16
 
 ### Fixed — durable production-job details

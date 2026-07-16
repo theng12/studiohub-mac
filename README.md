@@ -75,7 +75,10 @@ The fleet table reads each registered app's own updater. You can change every
 app independently, **Check all**, update one app, or **Update idle apps**. Fleet
 updates run one at a time, reconnect through the expected restart connection
 drop, and require the updated app to answer healthy before the next one starts.
-Manual preflight and rolling repairs remain separate in **Remote**.
+Manual preflight and rolling repairs remain separate in **Remote**. There, use
+the app tabs to focus on one Studio family across every machine, use **All
+apps** for the fleet-wide rolling action, or use a row's **Update** button for
+one machine.
 
 Every app independently enforces its expected GitHub origin and `main`, a clean
 fast-forward, free disk, dependency/import checks, healthy restart, and exact

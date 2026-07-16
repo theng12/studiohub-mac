@@ -140,6 +140,27 @@ def test_per_app_mode_preserves_its_schedule(monkeypatch):
                      "maintenance_hour": 22, "weekday": 3, "idle_only": False}
 
 
+def test_inventory_prefers_published_version_over_stale_updater_history(monkeypatch):
+    coordinator = FleetAutoUpdates(FakeMonitor(), FakeHubUpdater())
+
+    async def request(target, method, path, payload=None):
+        if path.endswith("/auto-update/status"):
+            return {"settings": {"mode": "auto"}, "installed_version": "1.20.3",
+                    "latest_version": "1.20.2", "update_available": True,
+                    "state": "succeeded"}
+        if path == "/api/update-status":
+            return {"app_version": "1.20.3", "latest_version": "1.20.3",
+                    "update_available": False}
+        raise AssertionError((method, path, payload))
+
+    monkeypatch.setattr(coordinator, "_request", request)
+    row = asyncio.run(coordinator._status_one(coordinator._target("voice@a")))
+
+    assert row["installed_version"] == "1.20.3"
+    assert row["latest_version"] == "1.20.3"
+    assert row["update_available"] is False
+
+
 def test_inventory_shows_one_canonical_row_per_repository():
     monitor = FakeMonitor()
     monitor.registry.extend([
