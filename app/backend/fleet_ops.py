@@ -25,6 +25,27 @@ PREFLIGHT_TIMEOUT = 12.0
 UPDATE_TIMEOUT = 20 * 60
 DRAIN_TIMEOUT = 30 * 60
 
+# Studio Hub watches the repositories itself instead of waiting for each
+# Studio's scheduled updater to refresh its persisted status.  The query
+# parameter and no-cache headers avoid a stale raw.githubusercontent CDN
+# response immediately after VERSION is pushed.
+PUBLISHED_VERSION_URLS = {
+    "hub": "https://raw.githubusercontent.com/theng12/studiohub-mac/main/VERSION",
+    "voice": "https://raw.githubusercontent.com/theng12/voicestudio-mac/main/VERSION",
+    "chat": "https://raw.githubusercontent.com/theng12/chatstudio-mac/main/VERSION",
+    "image": "https://raw.githubusercontent.com/theng12/imagestudio-mac/main/VERSION",
+    "music": "https://raw.githubusercontent.com/theng12/musicstudio-mac/main/VERSION",
+    "video": "https://raw.githubusercontent.com/theng12/videostudio-mac/main/VERSION",
+    "render": "https://raw.githubusercontent.com/theng12/renderstudio-mac/main/VERSION",
+}
+PUBLISHED_REFRESH_SECONDS = 60.0
+
+_published_versions: dict[str, str] = {}
+_published_checked_at = 0.0
+_published_errors: dict[str, str] = {}
+_published_task: asyncio.Task | None = None
+_published_lock: asyncio.Lock | None = None
+
 _preflight = {"ran_at": None, "status": "never", "studios": []}
 _updates: dict[str, dict] = {}
 _hub_updates: dict[str, dict] = {}
@@ -82,6 +103,92 @@ def _version_key(value: object) -> tuple[int, int, int] | None:
     if not parts:
         return None
     return tuple((parts + [0, 0, 0])[:3])
+
+
+def published_version_snapshot() -> dict:
+    return {
+        "versions": dict(_published_versions),
+        "checked_at": _published_checked_at or None,
+        "errors": dict(_published_errors),
+        "refresh_seconds": PUBLISHED_REFRESH_SECONDS,
+    }
+
+
+async def refresh_published_versions(*, force: bool = False) -> dict:
+    """Refresh the canonical GitHub VERSION files, retaining last-known values.
+
+    This is deliberately independent from every Studio's own updater cache.
+    One unreachable repository cannot erase or delay the other app versions.
+    """
+    global _published_checked_at, _published_errors, _published_lock
+    now = time.time()
+    if not force and now - _published_checked_at < PUBLISHED_REFRESH_SECONDS:
+        return published_version_snapshot()
+    if _published_lock is None:
+        _published_lock = asyncio.Lock()
+    async with _published_lock:
+        now = time.time()
+        if not force and now - _published_checked_at < PUBLISHED_REFRESH_SECONDS:
+            return published_version_snapshot()
+        cache_buster = str(int(now * 1000))
+        results: dict[str, str] = {}
+        errors: dict[str, str] = {}
+        async with httpx.AsyncClient(
+            timeout=6.0,
+            headers={"Cache-Control": "no-cache", "Pragma": "no-cache"},
+        ) as client:
+            async def fetch(modality: str, url: str) -> tuple[str, str | Exception]:
+                try:
+                    response = await client.get(url, params={"_": cache_buster})
+                    response.raise_for_status()
+                    version = response.text.strip()
+                    if _version_key(version) is None:
+                        raise ValueError("invalid VERSION response")
+                    return modality, version
+                except Exception as exc:
+                    return modality, exc
+
+            fetched = await asyncio.gather(*(
+                fetch(modality, url) for modality, url in PUBLISHED_VERSION_URLS.items()
+            ))
+        for modality, value in fetched:
+            if isinstance(value, Exception):
+                errors[modality] = (str(value).strip() or type(value).__name__)[:160]
+            else:
+                results[modality] = value
+        _published_versions.update(results)
+        _published_errors = errors
+        _published_checked_at = time.time()
+        return published_version_snapshot()
+
+
+async def _published_version_loop() -> None:
+    try:
+        while True:
+            try:
+                await refresh_published_versions(force=True)
+            except Exception as exc:
+                print(f"[updates] GitHub VERSION refresh failed: {exc}", flush=True)
+            await asyncio.sleep(PUBLISHED_REFRESH_SECONDS)
+    except asyncio.CancelledError:
+        pass
+
+
+def start_published_version_monitor() -> None:
+    global _published_task
+    if _published_task is None or _published_task.done():
+        _published_task = asyncio.create_task(_published_version_loop())
+
+
+async def stop_published_version_monitor() -> None:
+    global _published_task
+    if _published_task is not None:
+        _published_task.cancel()
+        try:
+            await _published_task
+        except asyncio.CancelledError:
+            pass
+        _published_task = None
 
 
 def _apply_version_status(row: dict, update: dict | None) -> None:
@@ -160,6 +267,8 @@ async def _fetch_update_status(client: httpx.AsyncClient, studio: dict,
 
 async def run_preflight(monitor) -> dict:
     global _preflight
+    # A user-initiated scan always bypasses the one-minute background cache.
+    await refresh_published_versions(force=True)
     rows = await asyncio.gather(*(_preflight_one(monitor, s) for s in monitor.registry))
     _apply_canonical_published_versions(rows)
     status = "fail" if any(r["status"] == "fail" for r in rows) else (
@@ -169,7 +278,8 @@ async def run_preflight(monitor) -> dict:
     return _preflight
 
 
-def _apply_canonical_published_versions(rows: list[dict]) -> None:
+def _apply_canonical_published_versions(rows: list[dict],
+                                        published: dict[str, str] | None = None) -> None:
     """Compare every worker to one published version per Studio app.
 
     A worker's ``/api/update-status`` cache is intentionally local and may be
@@ -178,19 +288,26 @@ def _apply_canonical_published_versions(rows: list[dict]) -> None:
     value for each modality, falling back to the highest verified value from a
     reachable worker when the local Studio is unavailable.
     """
-    targets: dict[str, tuple[tuple[int, int, int], str, bool]] = {}
+    # source priority: GitHub > local Studio > remote Studio when versions are
+    # equal. A numerically newer verified value always wins, which also keeps a
+    # just-built worker from ever looking like it should downgrade.
+    targets: dict[str, tuple[tuple[int, int, int], str, int]] = {}
+    for modality, latest in (published or _published_versions).items():
+        key = _version_key(latest)
+        if key is not None:
+            targets[modality] = (key, str(latest), 2)
     for row in rows:
         modality = str(row.get("modality") or "")
         latest = row.get("latest_version")
         key = _version_key(latest)
         if not modality or key is None:
             continue
-        is_local = row.get("machine") == "local"
+        priority = 1 if row.get("machine") == "local" else 0
         previous = targets.get(modality)
-        if previous is None or (is_local and not previous[2]) or (
-            is_local == previous[2] and key > previous[0]
+        if previous is None or key > previous[0] or (
+            key == previous[0] and priority > previous[2]
         ):
-            targets[modality] = (key, str(latest), is_local)
+            targets[modality] = (key, str(latest), priority)
 
     for row in rows:
         target = targets.get(str(row.get("modality") or ""))
@@ -206,6 +323,11 @@ def _apply_canonical_published_versions(rows: list[dict]) -> None:
         if check is not None:
             check.update(status="pass" if row["version_status"] == "current" else "warn",
                          detail=row["version_detail"])
+        checks = row.get("checks") or []
+        if checks:
+            row["status"] = "fail" if any(c.get("status") == "fail" for c in checks) else (
+                "warn" if any(c.get("status") == "warn" for c in checks) else "pass"
+            )
 
 
 async def scan_hub_versions(monitor) -> dict:
@@ -331,6 +453,12 @@ async def _preflight_one(monitor, studio: dict) -> dict:
 
 
 def preflight_snapshot() -> dict:
+    rows = _preflight.get("studios") or []
+    if rows:
+        _apply_canonical_published_versions(rows)
+        _preflight["status"] = "fail" if any(r.get("status") == "fail" for r in rows) else (
+            "warn" if any(r.get("status") == "warn" for r in rows) else "pass"
+        )
     return _preflight
 
 

@@ -71,6 +71,64 @@ def test_local_published_version_is_applied_to_every_worker_of_the_same_app():
     assert "latest published v1.20.3" in remote["checks"][-1]["detail"]
 
 
+def test_github_published_version_overrides_every_stale_worker_cache():
+    local = {"id": "voice", "modality": "voice", "machine": "local",
+             "version": "1.20.3", "latest_version": "1.20.3",
+             "checks": [{"name": "version", "status": "pass", "detail": "old"}],
+             "status": "pass"}
+    remote = {"id": "voice@mac-a", "modality": "voice", "machine": "mac-a",
+              "version": "1.20.2", "latest_version": "1.20.2",
+              "checks": [{"name": "version", "status": "pass", "detail": "old"}],
+              "status": "pass"}
+
+    fleet_ops._apply_canonical_published_versions(
+        [local, remote], {"voice": "1.20.4"})
+
+    assert local["latest_version"] == "1.20.4"
+    assert remote["latest_version"] == "1.20.4"
+    assert local["update_available"] is True
+    assert remote["update_available"] is True
+    assert local["status"] == "warn"
+    assert remote["status"] == "warn"
+
+
+@pytest.mark.asyncio
+async def test_github_refresh_is_cache_busted_and_retains_last_known_on_error(monkeypatch):
+    requested = []
+
+    class Response:
+        def __init__(self, text, *, fail=False):
+            self.text = text
+            self.fail = fail
+
+        def raise_for_status(self):
+            if self.fail:
+                raise fleet_ops.httpx.ConnectError("offline")
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+
+        async def get(self, url, params=None):
+            requested.append((url, params))
+            if "voicestudio" in url:
+                return Response("", fail=True)
+            return Response("9.8.7\n")
+
+    monkeypatch.setattr(fleet_ops.httpx, "AsyncClient", lambda **kwargs: Client())
+    monkeypatch.setattr(fleet_ops, "_published_versions", {"voice": "1.20.4"})
+    monkeypatch.setattr(fleet_ops, "_published_checked_at", 0.0)
+    monkeypatch.setattr(fleet_ops, "_published_errors", {})
+    monkeypatch.setattr(fleet_ops, "_published_lock", None)
+
+    result = await fleet_ops.refresh_published_versions(force=True)
+
+    assert result["versions"]["voice"] == "1.20.4"
+    assert result["versions"]["hub"] == "9.8.7"
+    assert "voice" in result["errors"]
+    assert all(params and params.get("_") for _, params in requested)
+
+
 @pytest.mark.asyncio
 async def test_preflight_uses_remote_studio_update_contract(monkeypatch, monitor):
     studio = {**monitor.registry[0], "id": "image@mac-a", "machine": "mac-a",

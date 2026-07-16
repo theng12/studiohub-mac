@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from . import peers
+from . import fleet_ops, peers
 from .registry import base_url
 
 
@@ -129,7 +129,11 @@ class FleetAutoUpdates:
                     pass
             settings = status.get("settings") or {}
             installed = release.get("app_version") or status.get("installed_version")
-            latest = _latest_version(status.get("latest_version"), release.get("latest_version"))
+            latest = _latest_version(
+                status.get("latest_version"),
+                release.get("latest_version"),
+                fleet_ops.published_version_snapshot()["versions"].get(target["modality"]),
+            )
             installed_key = _version_key(installed)
             latest_key = _version_key(latest)
             return {
@@ -156,12 +160,16 @@ class FleetAutoUpdates:
                     "error": str(exc)[:180]}
 
     async def snapshot(self) -> dict[str, Any]:
+        published = await fleet_ops.refresh_published_versions()
         rows = await asyncio.gather(*(self._status_one(target) for target in self.targets()))
         active = next((job for job in self._jobs.values()
                        if job["status"] in {"queued", "running"}), None)
-        return {"apps": rows, "job": active or self.latest_job(), "checked_at": time.time()}
+        return {"apps": rows, "job": active or self.latest_job(), "checked_at": time.time(),
+                "github_checked_at": published["checked_at"],
+                "github_errors": published["errors"]}
 
     async def check_all(self) -> dict[str, Any]:
+        published = await fleet_ops.refresh_published_versions(force=True)
         results = []
         for target in self.targets():
             try:
@@ -170,7 +178,9 @@ class FleetAutoUpdates:
             except (httpx.HTTPError, ValueError, OSError) as exc:
                 results.append({"id": target["id"], "ok": False, "error": str(exc)[:180]})
             await asyncio.sleep(0.05)
-        return {"results": results, "started_at": time.time()}
+        return {"results": results, "started_at": time.time(),
+                "github_versions": published["versions"],
+                "github_errors": published["errors"]}
 
     async def set_mode(self, target_id: str, mode: str) -> dict[str, Any]:
         if mode not in {"off", "notify", "auto"}:
@@ -223,9 +233,24 @@ class FleetAutoUpdates:
         job["finished_at"] = time.time()
 
     async def _update_one(self, target: dict[str, Any], item: dict[str, Any]) -> None:
-        item.update(status="checking", detail="checking update and idle state", started_at=time.time())
-        status = await self._request(target, "GET", "/api/auto-update/status")
-        if not status.get("update_available"):
+        item.update(status="checking", detail="refreshing GitHub and app update state",
+                    started_at=time.time())
+        published = await fleet_ops.refresh_published_versions(force=True)
+        expected = published["versions"].get(target["modality"])
+        await self._request(target, "POST", "/api/auto-update/check", {})
+        check_deadline = time.monotonic() + 45.0
+        while True:
+            status = await self._request(target, "GET", "/api/auto-update/status")
+            if status.get("state") != "checking" or time.monotonic() >= check_deadline:
+                break
+            await asyncio.sleep(min(self.poll_seconds, 0.5))
+        installed = status.get("installed_version")
+        centrally_available = bool(
+            _version_key(expected) is not None
+            and _version_key(installed) is not None
+            and _version_key(expected) > _version_key(installed)
+        )
+        if not status.get("update_available") and not centrally_available:
             item.update(status="current", detail="already current", finished_at=time.time())
             return
         readiness = await self._request(target, "GET", "/api/auto-update/readiness")
@@ -250,9 +275,15 @@ class FleetAutoUpdates:
                     return
                 if state == "succeeded":
                     health = await self._request(target, "GET", "/api/health")
-                    if health.get("ok"):
+                    running = health.get("app_version", current.get("installed_version"))
+                    reached_expected = not expected or (
+                        _version_key(running) is not None
+                        and _version_key(expected) is not None
+                        and _version_key(running) >= _version_key(expected)
+                    )
+                    if health.get("ok") and reached_expected:
                         item.update(status="complete",
-                                    detail=f"healthy on v{health.get('app_version', current.get('installed_version', '?'))}",
+                                    detail=f"healthy on v{running or '?'}",
                                     finished_at=time.time())
                         return
             except (httpx.TransportError, httpx.TimeoutException, OSError, ValueError) as exc:

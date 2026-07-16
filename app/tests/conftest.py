@@ -9,6 +9,7 @@ need studio data seed monitor state directly.
 
 import os
 import tempfile
+import time
 from pathlib import Path
 
 # MUST happen before importing backend.* anywhere.
@@ -58,6 +59,10 @@ def _reset_state():
         pass
     peers._cache.clear()
     fleet_ops._updates.clear()
+    fleet_ops._published_versions.clear()
+    fleet_ops._published_errors.clear()
+    fleet_ops._published_checked_at = time.time()
+    fleet_ops._published_lock = None
     metrics.samples.clear()
     metrics.watchdog.clear()
     metrics._last_sample = 0.0

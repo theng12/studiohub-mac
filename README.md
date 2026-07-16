@@ -71,10 +71,14 @@ work. **Update after current work** creates a one-time retry even if the regular
 mode is Off. Installed/latest versions, last/next checks, live state, the exact
 defer or failure reason, release notes, and Retry are shown in the same card.
 
-The fleet table reads each registered app's own updater. You can change every
-app independently, **Check all**, update one app, or **Update idle apps**. Fleet
-updates run one at a time, reconnect through the expected restart connection
-drop, and require the updated app to answer healthy before the next one starts.
+Studio Hub checks every app's canonical GitHub `VERSION` file once per minute,
+independently of the registered app's own scheduled updater. The visible
+Updates and Remote views refresh automatically, retain last-known release
+versions through temporary GitHub failures, and never use an older worker cache
+as the fleet target. You can change every app independently, **Check all**,
+update one app, or **Update idle apps**. Fleet updates run one at a time,
+reconnect through the expected restart connection drop, and require the updated
+app to reach the published version and answer healthy before the next one starts.
 Manual preflight and rolling repairs remain separate in **Remote**. There, use
 the app tabs to focus on one Studio family across every machine, use **All
 apps** for the fleet-wide rolling action, or use a row's **Update** button for

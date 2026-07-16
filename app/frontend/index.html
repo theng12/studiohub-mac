@@ -866,6 +866,11 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.42.3", date: "2026-07-16", items: [
+    "Studio Hub now checks every Studio's canonical GitHub release once per minute instead of waiting for each worker's scheduled updater cache.",
+    "Updates and Remote refresh themselves while visible, so a newly published Voice Studio version appears automatically and consistently across the fleet.",
+    "Starting an update forces a fresh GitHub check and the Studio's own safety check, then verifies the restarted app actually reached the published version.",
+  ] },
   { v: "1.41.1", date: "2026-07-16", items: [
     "Shared cloned-voice jobs now run only on Voice Studio workers where that exact stable voice ID has synchronized successfully.",
     "Jobs wait safely with a clear queue explanation while voice synchronization catches up, instead of reaching the wrong worker and failing.",
@@ -2554,7 +2559,9 @@ function renderFleetAutoUpdates(data) {
   const supported = apps.filter(row => row.supported);
   const available = supported.filter(row => row.update_available);
   const healthy = supported.filter(row => row.healthy);
-  $("#fau-summary").textContent = `${supported.length}/${apps.length} apps support safe automatic updates · ${healthy.length} reachable · ${available.length} update${available.length === 1 ? "" : "s"} available`;
+  const githubFailures = Object.keys(fleetAutoData.github_errors || {}).length;
+  $("#fau-summary").textContent = `${supported.length}/${apps.length} apps support safe automatic updates · ${healthy.length} reachable · ${available.length} update${available.length === 1 ? "" : "s"} available · GitHub checked ${fmtAgo(fleetAutoData.github_checked_at)}`
+    + (githubFailures ? ` · ${githubFailures} release check${githubFailures === 1 ? "" : "s"} temporarily unavailable` : "");
   renderFleetAutoProgress(fleetAutoData.job, apps);
   const jobBusy = fleetAutoData.job && ["queued", "running"].includes(fleetAutoData.job.status);
   $("#fau-update").disabled = jobBusy || !apps.some(row => row.kind === "studio" && row.supported && row.healthy && row.update_available);
@@ -3240,6 +3247,16 @@ setInterval(() => {
   else if (vis("assets")) loadAssets();
   else if (vis("stats")) loadStats();
 }, 12000);
+// GitHub release discovery runs in the Hub every minute. Keep the two update
+// workspaces fresh while visible so a newly pushed Studio VERSION appears
+// without a manual Refresh or tab switch.
+setInterval(() => {
+  if (document.hidden) return;
+  const ae = document.activeElement;
+  if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return;
+  if (vis("updates")) loadAutoUpdates();
+  else if (vis("remote")) loadMaintenance();
+}, 30000);
 </script>
   <!-- ── KH auto-update banner (self-contained; mirrors the studios) ── -->
   <script>

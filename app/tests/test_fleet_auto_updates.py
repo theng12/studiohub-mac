@@ -4,7 +4,9 @@ import asyncio
 import time
 
 import httpx
+import pytest
 
+from backend import fleet_ops
 from backend.fleet_auto_updates import FleetAutoUpdates
 
 
@@ -33,6 +35,19 @@ def _job(*target_ids: str) -> dict:
     }
 
 
+@pytest.fixture(autouse=True)
+def published_versions(monkeypatch):
+    """Unit tests control release discovery without contacting live GitHub."""
+    state = {"versions": {}, "checked_at": time.time(), "errors": {}}
+
+    async def refresh(*, force=False):
+        return state
+
+    monkeypatch.setattr(fleet_ops, "refresh_published_versions", refresh)
+    monkeypatch.setattr(fleet_ops, "published_version_snapshot", lambda: state)
+    return state
+
+
 def test_updates_are_staggered_and_health_gated(monkeypatch):
     coordinator = FleetAutoUpdates(FakeMonitor(), FakeHubUpdater(),
                                    stagger_seconds=0, poll_seconds=0, update_timeout=1)
@@ -41,6 +56,8 @@ def test_updates_are_staggered_and_health_gated(monkeypatch):
 
     async def request(target, method, path, payload=None):
         target_id = target["id"]
+        if path.endswith("/check"):
+            return {"state": "checking"}
         if path.endswith("/status"):
             return {"update_available": True, "state": "succeeded" if target_id in started else "idle"}
         if path.endswith("/readiness"):
@@ -73,6 +90,8 @@ def test_connection_drop_reconnects_before_marking_success(monkeypatch):
 
     async def request(target, method, path, payload=None):
         nonlocal polls
+        if path.endswith("/check"):
+            return {"state": "checking"}
         if path.endswith("/status") and method == "GET":
             polls += 1
             if polls == 1:
@@ -103,6 +122,8 @@ def test_active_target_is_deferred_without_starting_update(monkeypatch):
     updates = []
 
     async def request(target, method, path, payload=None):
+        if path.endswith("/check"):
+            return {"state": "checking"}
         if path.endswith("/status"):
             return {"update_available": True, "state": "idle"}
         if path.endswith("/readiness"):
@@ -159,6 +180,29 @@ def test_inventory_prefers_published_version_over_stale_updater_history(monkeypa
     assert row["installed_version"] == "1.20.3"
     assert row["latest_version"] == "1.20.3"
     assert row["update_available"] is False
+
+
+def test_inventory_uses_hub_github_watch_over_stale_studio_answers(
+        monkeypatch, published_versions):
+    published_versions["versions"] = {"voice": "1.20.4"}
+    coordinator = FleetAutoUpdates(FakeMonitor(), FakeHubUpdater())
+
+    async def request(target, method, path, payload=None):
+        if path.endswith("/auto-update/status"):
+            return {"settings": {"mode": "auto"}, "installed_version": "1.20.3",
+                    "latest_version": "1.20.3", "update_available": False,
+                    "state": "succeeded"}
+        if path == "/api/update-status":
+            return {"app_version": "1.20.3", "latest_version": "1.20.3",
+                    "update_available": False}
+        raise AssertionError((method, path, payload))
+
+    monkeypatch.setattr(coordinator, "_request", request)
+    row = asyncio.run(coordinator._status_one(coordinator._target("voice@a")))
+
+    assert row["installed_version"] == "1.20.3"
+    assert row["latest_version"] == "1.20.4"
+    assert row["update_available"] is True
 
 
 def test_inventory_shows_one_canonical_row_per_repository():

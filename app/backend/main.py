@@ -119,6 +119,7 @@ fleet_auto_updates = FleetAutoUpdates(monitor, auto_updater)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     monitor.start()
+    fleet_ops.start_published_version_monitor()
     restored = broker.restore_batches()
     if restored:
         print(f"[hub] resumed {restored} unfinished batch(es) from hub.db")
@@ -132,11 +133,14 @@ async def lifespan(app: FastAPI):
         print(f"[hub] resumed {chat_restored} Chat batch(es) from hub.db")
     chat_jobs.start_dispatcher(monitor)
     shared_voices.start_reconciler(monitor)
-    yield
-    await shared_voices.stop()
-    await chat_jobs.stop()
-    await transcription_jobs.stop()
-    await monitor.stop()
+    try:
+        yield
+    finally:
+        await fleet_ops.stop_published_version_monitor()
+        await shared_voices.stop()
+        await chat_jobs.stop()
+        await transcription_jobs.stop()
+        await monitor.stop()
 
 
 app = FastAPI(title=TITLE, lifespan=lifespan)

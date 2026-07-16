@@ -10,6 +10,22 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.42.3] — 2026-07-16
+
+### Fixed — immediate authoritative release discovery
+
+- Studio Hub now checks the canonical GitHub `VERSION` files for Hub, Voice,
+  Chat, Image, Music, Video, and Render Studio every minute. Detection no
+  longer waits for each Studio's daily/weekly updater cache to refresh.
+- GitHub requests bypass stale CDN responses and preserve the last-known good
+  version per app when one repository is temporarily unreachable.
+- Both Updates and Remote use the Hub's canonical release value. Their visible
+  views refresh automatically, so a newly pushed Voice Studio release appears
+  without changing tabs or pressing Refresh.
+- Starting an automatic fleet update now forces both the Hub's GitHub check and
+  the target Studio's own safe update check before deciding that it is current.
+  Completion also requires the restarted Studio to reach the published version.
+
 ## [1.42.2] — 2026-07-16
 
 ### Added — remote-only final rendering
