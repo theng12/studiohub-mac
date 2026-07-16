@@ -65,6 +65,7 @@ def _reset_state():
     fleet_ops._studio_versions = {"checked_at": None, "studios": []}
     fleet_ops._preflight = {"ran_at": None, "status": "never", "studios": []}
     fleet_ops._published_versions.clear()
+    fleet_ops._published_refs.clear()
     fleet_ops._published_errors.clear()
     fleet_ops._published_checked_at = time.time()
     fleet_ops._published_lock = None

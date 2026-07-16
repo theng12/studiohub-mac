@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import shutil
 import time
 import uuid
@@ -26,21 +27,21 @@ UPDATE_TIMEOUT = 20 * 60
 DRAIN_TIMEOUT = 30 * 60
 
 # Studio Hub watches the repositories itself instead of waiting for each
-# Studio's scheduled updater to refresh its persisted status.  The query
-# parameter and no-cache headers avoid a stale raw.githubusercontent CDN
-# response immediately after VERSION is pushed.
-PUBLISHED_VERSION_URLS = {
-    "hub": "https://raw.githubusercontent.com/theng12/studiohub-mac/refs/heads/main/VERSION",
-    "voice": "https://raw.githubusercontent.com/theng12/voicestudio-mac/refs/heads/main/VERSION",
-    "chat": "https://raw.githubusercontent.com/theng12/chatstudio-mac/refs/heads/main/VERSION",
-    "image": "https://raw.githubusercontent.com/theng12/imagestudio-mac/refs/heads/main/VERSION",
-    "music": "https://raw.githubusercontent.com/theng12/musicstudio-mac/refs/heads/main/VERSION",
-    "video": "https://raw.githubusercontent.com/theng12/videostudio-mac/refs/heads/main/VERSION",
-    "render": "https://raw.githubusercontent.com/theng12/renderstudio-mac/refs/heads/main/VERSION",
+# Studio's scheduled updater. Branch-named raw URLs can be stale after a push,
+# so discovery resolves main's commit first and reads immutable commit content.
+PUBLISHED_REPOSITORIES = {
+    "hub": "theng12/studiohub-mac",
+    "voice": "theng12/voicestudio-mac",
+    "chat": "theng12/chatstudio-mac",
+    "image": "theng12/imagestudio-mac",
+    "music": "theng12/musicstudio-mac",
+    "video": "theng12/videostudio-mac",
+    "render": "theng12/renderstudio-mac",
 }
 PUBLISHED_REFRESH_SECONDS = 60.0
 
 _published_versions: dict[str, str] = {}
+_published_refs: dict[str, str] = {}
 _published_checked_at = 0.0
 _published_errors: dict[str, str] = {}
 _published_task: asyncio.Task | None = None
@@ -146,32 +147,48 @@ async def refresh_published_versions(*, force: bool = False) -> dict:
         now = time.time()
         if not force and now - _published_checked_at < PUBLISHED_REFRESH_SECONDS:
             return published_version_snapshot()
-        cache_buster = str(int(now * 1000))
         results: dict[str, str] = {}
         errors: dict[str, str] = {}
         async with httpx.AsyncClient(
             timeout=6.0,
             headers={"Cache-Control": "no-cache", "Pragma": "no-cache"},
         ) as client:
-            async def fetch(modality: str, url: str) -> tuple[str, str | Exception]:
+            async def fetch(modality: str, repository: str) -> tuple[str, tuple[str, str] | Exception]:
                 try:
-                    response = await client.get(url, params={"_": cache_buster})
+                    refs = await client.get(
+                        f"https://github.com/{repository}.git/info/refs",
+                        params={"service": "git-upload-pack"},
+                    )
+                    refs.raise_for_status()
+                    match = re.search(
+                        rb"([0-9a-f]{40}) refs/heads/main(?:\x00|\n)", refs.content)
+                    if not match:
+                        raise ValueError("main branch ref was not advertised")
+                    commit = match.group(1).decode("ascii")
+                    if (_published_refs.get(modality) == commit
+                            and modality in _published_versions):
+                        return modality, (_published_versions[modality], commit)
+                    response = await client.get(
+                        f"https://raw.githubusercontent.com/{repository}/{commit}/VERSION")
                     response.raise_for_status()
                     version = response.text.strip()
                     if _version_key(version) is None:
                         raise ValueError("invalid VERSION response")
-                    return modality, version
+                    return modality, (version, commit)
                 except Exception as exc:
                     return modality, exc
 
             fetched = await asyncio.gather(*(
-                fetch(modality, url) for modality, url in PUBLISHED_VERSION_URLS.items()
+                fetch(modality, repository)
+                for modality, repository in PUBLISHED_REPOSITORIES.items()
             ))
         for modality, value in fetched:
             if isinstance(value, Exception):
                 errors[modality] = (str(value).strip() or type(value).__name__)[:160]
             else:
-                results[modality] = value
+                version, commit = value
+                results[modality] = version
+                _published_refs[modality] = commit
         _published_versions.update(results)
         _published_errors = errors
         _published_checked_at = time.time()

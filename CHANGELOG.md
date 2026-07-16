@@ -10,6 +10,14 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.43.2] — 2026-07-17
+
+### Fixed — cache-proof release discovery
+
+- Studio Hub now resolves each repository's current `main` commit through
+  GitHub's Git transport endpoint, then reads `VERSION` from that immutable
+  commit. This avoids stale raw branch URLs without consuming GitHub API quota.
+
 ## [1.43.1] — 2026-07-17
 
 ### Fixed — immediate GitHub release visibility

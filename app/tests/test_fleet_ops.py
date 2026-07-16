@@ -12,9 +12,9 @@ def test_catalog_and_diagnostic_summaries():
     assert fleet_ops._diag_state({"available": True}) == "pass"
 
 
-def test_published_version_urls_use_fully_qualified_main_ref():
-    assert all("/refs/heads/main/VERSION" in url
-               for url in fleet_ops.PUBLISHED_VERSION_URLS.values())
+def test_published_version_repositories_cover_every_studio_family():
+    assert set(fleet_ops.PUBLISHED_REPOSITORIES) == {
+        "hub", "voice", "chat", "image", "music", "video", "render"}
 
 
 @pytest.mark.asyncio
@@ -145,6 +145,7 @@ async def test_github_refresh_is_cache_busted_and_retains_last_known_on_error(mo
     class Response:
         def __init__(self, text, *, fail=False):
             self.text = text
+            self.content = text.encode()
             self.fail = fail
 
         def raise_for_status(self):
@@ -157,12 +158,15 @@ async def test_github_refresh_is_cache_busted_and_retains_last_known_on_error(mo
 
         async def get(self, url, params=None):
             requested.append((url, params))
+            if ".git/info/refs" in url:
+                return Response(f"003d{'a' * 40} refs/heads/main\n")
             if "voicestudio" in url:
                 return Response("", fail=True)
             return Response("9.8.7\n")
 
     monkeypatch.setattr(fleet_ops.httpx, "AsyncClient", lambda **kwargs: Client())
     monkeypatch.setattr(fleet_ops, "_published_versions", {"voice": "1.20.4"})
+    monkeypatch.setattr(fleet_ops, "_published_refs", {})
     monkeypatch.setattr(fleet_ops, "_published_checked_at", 0.0)
     monkeypatch.setattr(fleet_ops, "_published_errors", {})
     monkeypatch.setattr(fleet_ops, "_published_lock", None)
@@ -172,7 +176,12 @@ async def test_github_refresh_is_cache_busted_and_retains_last_known_on_error(mo
     assert result["versions"]["voice"] == "1.20.4"
     assert result["versions"]["hub"] == "9.8.7"
     assert "voice" in result["errors"]
-    assert all(params and params.get("_") for _, params in requested)
+    ref_requests = [(url, params) for url, params in requested if ".git/info/refs" in url]
+    assert len(ref_requests) == len(fleet_ops.PUBLISHED_REPOSITORIES)
+    assert all(params and params.get("service") == "git-upload-pack"
+               for _, params in ref_requests)
+    assert all("/" + "a" * 40 + "/VERSION" in url
+               for url, _ in requested if "raw.githubusercontent.com" in url)
 
 
 @pytest.mark.asyncio

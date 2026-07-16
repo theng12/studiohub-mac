@@ -186,9 +186,18 @@ def _parse_ver(v):
 
 def _refresh_latest_version():
     try:
-        url = f"https://raw.githubusercontent.com/{_UPDATE_REPO}/refs/heads/main/VERSION"
-        with _urlreq.urlopen(url, timeout=5) as r:
-            _update_state["latest"] = r.read().decode("utf-8").strip()
+        import re
+        ref_url = (f"https://github.com/{_UPDATE_REPO}.git/info/refs"
+                   "?service=git-upload-pack")
+        with _urlreq.urlopen(ref_url, timeout=5) as response:
+            advertised = response.read()
+        match = re.search(rb"([0-9a-f]{40}) refs/heads/main(?:\x00|\n)", advertised)
+        if not match:
+            raise ValueError("main branch ref was not advertised")
+        commit = match.group(1).decode("ascii")
+        url = f"https://raw.githubusercontent.com/{_UPDATE_REPO}/{commit}/VERSION"
+        with _urlreq.urlopen(url, timeout=5) as response:
+            _update_state["latest"] = response.read().decode("utf-8").strip()
     except Exception:
         pass
     finally:

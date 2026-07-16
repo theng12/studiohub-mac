@@ -829,6 +829,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.43.2", date: "2026-07-17", items: [
+    "Release discovery now resolves each repository's current Git commit and reads VERSION from that immutable revision, avoiding stale raw branch caches without using GitHub API quota.",
+  ] },
   { v: "1.43.1", date: "2026-07-17", items: [
     "GitHub release checks now use the fully qualified main-branch ref, so a just-pushed Studio or Hub version appears immediately instead of waiting for the shorthand raw URL's stale cache.",
   ] },
