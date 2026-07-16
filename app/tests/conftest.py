@@ -20,8 +20,8 @@ from starlette.testclient import TestClient
 
 
 def _reset_state():
-    from backend import (alerts, auth, broker, chat_jobs, fleet_ops, ledger,
-                         metrics, peers, shared_voices, transcription_jobs)
+    from backend import (alerts, auth, broker, chat_jobs, fleet_ops, job_storage,
+                         ledger, metrics, peers, shared_voices, transcription_jobs)
     from backend import main
     from backend import registry as reg
     from backend.main import monitor
@@ -34,7 +34,7 @@ def _reset_state():
     # leaks into the next)
     for f in (ledger.DB_FILE, reg.REGISTRY_FILE, reg.LABELS_FILE,
               peers.FLEET_TOKEN_FILE, peers.SHARED_STUDIO_TOKEN_FILE,
-              auth.TOKEN_FILE, metrics.STATE_FILE):
+              auth.TOKEN_FILE, metrics.STATE_FILE, job_storage.SETTINGS_FILE):
         try:
             f.unlink()
         except FileNotFoundError:

@@ -61,6 +61,35 @@ def test_empty_upload_and_mismatched_ids_are_rejected(authed):
     assert mismatch.status_code == 400
 
 
+def test_clear_finished_transcription_removes_history_and_local_files(authed):
+    created = authed.post(
+        "/api/hub/transcription/jobs",
+        data={"item_ids": ["chapter"], "model": "mlx/whisper"},
+        files=_multipart(("clip.wav",), (b"audio",)),
+    ).json()
+    batch = jobs.get_batch(created["batch_id"])
+    batch["items"][0]["state"] = "done"
+    jobs._save(batch)
+    batch_dir = jobs.ROOT / batch["id"]
+    assert batch_dir.is_dir()
+
+    active = authed.post(f"/api/hub/transcription/jobs/{batch['id']}/clear")
+    assert active.status_code == 200
+    assert active.json()["reclaimed_bytes"] >= len(b"audio")
+    assert jobs.get_batch(batch["id"]) is None
+    assert not batch_dir.exists()
+
+
+def test_clear_active_transcription_is_refused(authed):
+    created = authed.post(
+        "/api/hub/transcription/jobs",
+        data={"item_ids": ["chapter"], "model": "mlx/whisper"},
+        files=_multipart(("clip.wav",), (b"audio",)),
+    ).json()
+    response = authed.post(f"/api/hub/transcription/jobs/{created['batch_id']}/clear")
+    assert response.status_code == 409
+
+
 def test_completed_plus_queued_transcription_is_not_claimed_running(reset):
     batch = {
         "id": "status", "model": "mlx/whisper", "created_at": 1,

@@ -101,7 +101,7 @@ def load_finished_batches() -> list[dict]:
 
 
 def delete_batches(batch_ids: list[str]) -> int:
-    """Delete broker history only; generated assets and files are untouched."""
+    """Delete broker batch history. Asset records are managed separately."""
     ids = list(dict.fromkeys(batch_ids))
     if not ids:
         return 0
@@ -110,6 +110,49 @@ def delete_batches(batch_ids: list[str]) -> int:
         cursor = conn.execute(
             f"DELETE FROM batches WHERE id IN ({placeholders})", ids)
     return cursor.rowcount
+
+
+def remove_job_assets(batch_ids: list[str]) -> dict:
+    """Remove Hub-owned asset records for finished batches.
+
+    Worker output normally remains on the worker that produced it.  The Hub
+    must never unlink an arbitrary path returned by a worker, so this only
+    removes a file when it is physically inside this Hub's ``DATA_DIR``.  The
+    ledger row is still removed in either case, which keeps a cleared job out
+    of the Assets view without reaching into another Mac.
+    """
+    ids = list(dict.fromkeys(batch_ids))
+    if not ids:
+        return {"assets_removed": 0, "files_removed": 0, "reclaimed_bytes": 0}
+    placeholders = ",".join("?" for _ in ids)
+    with _conn() as conn:
+        rows = [dict(row) for row in conn.execute(
+            f"SELECT id, artifact_path FROM assets "
+            f"WHERE source = 'job' AND batch_id IN ({placeholders})", ids)]
+        conn.execute(
+            f"DELETE FROM assets WHERE source = 'job' AND batch_id IN ({placeholders})", ids)
+
+    root = DATA_DIR.resolve()
+    files_removed = reclaimed = 0
+    for row in rows:
+        raw_path = row.get("artifact_path")
+        if not raw_path:
+            continue
+        try:
+            path = Path(raw_path).resolve()
+            safe = path.is_relative_to(root)
+        except (OSError, ValueError):
+            safe = False
+        if not safe or not path.is_file():
+            continue
+        try:
+            reclaimed += path.stat().st_size
+            path.unlink()
+            files_removed += 1
+        except OSError:
+            pass
+    return {"assets_removed": len(rows), "files_removed": files_removed,
+            "reclaimed_bytes": reclaimed}
 
 
 def get_asset(asset_id: str) -> dict | None:

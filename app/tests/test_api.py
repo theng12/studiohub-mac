@@ -36,8 +36,22 @@ def test_dashboard_includes_render_studio():
     assert 'function providerHealthHTML(s, compact = false)' in dashboard
     assert 'sum.cloud_providers?.ready_count || 0' in dashboard
     assert '>Cancel image queue</button>' in dashboard
-    assert '>Clear finished image jobs</button>' in dashboard
-    assert 'Generated assets were kept.' in dashboard
+    assert 'data-job-kind="image"' in dashboard
+    assert 'data-job-kind="voice"' in dashboard
+    assert 'data-job-kind="transcription"' in dashboard
+    assert 'data-job-kind="chat"' in dashboard
+    assert 'per: 10' in dashboard
+    assert 'generationDetailToggle(this' in dashboard
+
+
+def test_job_storage_cap_is_optional_and_configurable(authed):
+    initial = authed.get("/api/hub/job-storage")
+    assert initial.status_code == 200
+    assert initial.json()["enabled"] is False
+    saved = authed.post("/api/hub/job-storage", json={"enabled": True, "max_gb": 5})
+    assert saved.status_code == 200
+    assert saved.json()["enabled"] is True
+    assert saved.json()["max_bytes"] == 5 * 1024 ** 3
 
 
 def test_health_and_version(client):

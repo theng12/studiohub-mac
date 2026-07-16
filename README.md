@@ -127,11 +127,13 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/transcription/jobs` · `GET /api/hub/transcription/jobs/{batch}` | List batches/lifetime totals or read chapter-level status |
 | `GET /api/hub/transcription/jobs/{batch}/items/{index}/artifact` | Download a verified completed SRT through Hub authentication |
 | `DELETE /api/hub/transcription/jobs/{batch}` · `POST /api/hub/transcription/jobs/{batch}/retry` | Cancel unfinished chapters or retry failed/interrupted chapters only |
+| `POST /api/hub/transcription/jobs/clear` · `POST /api/hub/transcription/jobs/{batch}/clear` | Permanently clear terminal transcription history and its Hub-local input/SRT files; active work is refused |
 | `POST /api/hub/chat/jobs` | Submit visual or motion prompts as adaptive worker packs (10 local/free-cloud; up to 30 paid-cloud) |
 | `GET /api/hub/chat/jobs` · `GET /api/hub/chat/jobs/{batch}` | Read compact fleet history or full pack/scene results |
 | `DELETE /api/hub/chat/jobs/{batch}` · `POST /api/hub/chat/jobs/{batch}/retry` | Cancel unfinished packs or retry only missing scene IDs |
 | `GET /api/hub/transcription/settings` · `POST /api/hub/transcription/settings` | Read/set SRT and upload retention (`1`, `3`, `7`, `15`, or `30` days) |
 | `POST /api/hub/transcription/cleanup` | Clean expired terminal transcription files; active batches are never removed |
+| `GET` / `POST /api/hub/job-storage` · `POST /api/hub/job-storage/cleanup` | Read/save the optional Hub-local job-file cap (`{enabled, max_gb}`) or enforce it now; default is off |
 | `DELETE /api/hub/registry/machines/{machine}` | Unregister a discovered machine's studios |
 | `GET /api/hub/fleet` · `POST /api/hub/fleet` | Fleet token status / set (`{token}`) — enables remote specs + control |
 | `GET /api/hub/resources?local_only=true` | This machine only (peers call with this to prevent recursion) |
@@ -151,6 +153,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/broadcast/env` | `{key, value, studios?}` — set an env var in studios' ENVIRONMENT files (restart to apply) |
 | `POST /api/hub/jobs` | **Swarm Batch** — submit a batch (envelope below) |
 | `GET /api/hub/jobs` · `GET /api/hub/jobs/{batch}` · `DELETE /api/hub/jobs/{batch}` | Track / cancel batches |
+| `POST /api/hub/jobs/clear` · `POST /api/hub/jobs/{batch}/clear` | Clear terminal generation history and Hub-owned ledger/files only; remote worker output is never removed |
 | `GET /api/hub/assets` · `POST /api/hub/assets/scan` | Asset ledger (query: `q`, `modality`, `studio`, `batch_id`) |
 | `POST /api/hub/assets/upload` | Upload a reference image once → `{asset_id}` (for img2img continuity) |
 | `POST /api/hub/render-assets` | Stream an immutable render input; returns path, bytes, and SHA-256 |

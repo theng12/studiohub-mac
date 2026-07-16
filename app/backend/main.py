@@ -24,8 +24,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import (alerts, broadcast, broker, chat_jobs, fleet_ops, gateway, ledger,
-               metrics, peers, recipes, shared_voices, transcription_jobs)
+from . import (alerts, broadcast, broker, chat_jobs, fleet_ops, gateway, job_storage,
+               ledger, metrics, peers, recipes, shared_voices, transcription_jobs)
 from .auto_update import UpdateError
 from .auto_update_config import create_updater
 from .fleet_auto_updates import FleetAutoUpdates
@@ -766,7 +766,9 @@ def hub_clear_finished_batches(body: dict):
     modality = body.get("modality")
     if modality is not None and modality not in broker.MODALITY:
         raise HTTPException(400, "unknown modality")
-    return {"ok": True, **broker.clear_finished_batches(modality=modality)}
+    result = broker.clear_finished_batches(modality=modality)
+    return {"ok": True, **result,
+            **ledger.remove_job_assets(result["batch_ids"])}
 
 
 @app.post("/api/hub/jobs/{batch_id}/clear")
@@ -776,7 +778,9 @@ def hub_clear_finished_batch(batch_id: str):
         raise HTTPException(404, "unknown batch")
     if any(it.get("state") in ("queued", "running") for it in b.get("items", [])):
         raise HTTPException(409, "cancel the active batch before clearing it")
-    return {"ok": True, **broker.clear_finished_batches(batch_id=batch_id)}
+    result = broker.clear_finished_batches(batch_id=batch_id)
+    return {"ok": True, **result,
+            **ledger.remove_job_assets(result["batch_ids"])}
 
 
 # ── asset ledger ───────────────────────────────────────────────────────────
@@ -967,6 +971,36 @@ def hub_cleanup_transcription(body: dict | None = None):
     body = body or {}
     return transcription_jobs.cleanup(
         batch_id=body.get("batch_id"), expired_only=not bool(body.get("all_terminal")))
+
+
+@app.post("/api/hub/transcription/jobs/clear")
+def hub_clear_transcription_jobs():
+    """Permanently remove all completed transcription batches and their files."""
+    return {"ok": True, **transcription_jobs.clear_terminal()}
+
+
+@app.post("/api/hub/transcription/jobs/{batch_id}/clear")
+def hub_clear_transcription_job(batch_id: str):
+    """Permanently remove one completed transcription batch and its files."""
+    result = transcription_jobs.remove_batch(batch_id)
+    if not result:
+        raise HTTPException(409, "batch is still active or unknown — cancel it first")
+    return {"ok": True, **result}
+
+
+@app.get("/api/hub/job-storage")
+def hub_job_storage_status():
+    return job_storage.status()
+
+
+@app.post("/api/hub/job-storage")
+def hub_save_job_storage(body: dict):
+    return job_storage.save(body.get("enabled"), body.get("max_gb"))
+
+
+@app.post("/api/hub/job-storage/cleanup")
+def hub_enforce_job_storage():
+    return job_storage.enforce_budget()
 
 
 @app.get("/api/hub/transcription/jobs/{batch_id}")

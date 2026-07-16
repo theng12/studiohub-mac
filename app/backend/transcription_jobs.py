@@ -528,9 +528,54 @@ def cleanup(batch_id: str | None = None, expired_only: bool = True) -> dict:
     return {"cleaned": cleaned, "reclaimed_bytes": reclaimed}
 
 
+def _remove_terminal_batch(batch: dict) -> int:
+    """Delete one terminal batch and its Hub-local input/output directory."""
+    batch_dir = ROOT / batch["id"]
+    reclaimed = 0
+    if batch_dir.exists():
+        try:
+            reclaimed = sum(p.stat().st_size for p in batch_dir.rglob("*") if p.is_file())
+        except OSError:
+            reclaimed = 0
+        shutil.rmtree(batch_dir, ignore_errors=True)
+    batches.pop(batch["id"], None)
+    for item in batch.get("items", []):
+        _item_tasks.pop((batch["id"], item.get("index")), None)
+    with _conn() as conn:
+        conn.execute("DELETE FROM transcription_batches WHERE id = ?", (batch["id"],))
+    return reclaimed
+
+
+def remove_batch(batch_id: str) -> dict | None:
+    """Permanently clear one completed/cancelled batch and its local files.
+
+    Active work is intentionally not clearable: cancel it first, then clear
+    it once every chapter has reached a terminal state.
+    """
+    batch = get_batch(batch_id)
+    if not batch or any(item["state"] not in TERMINAL_STATES for item in batch["items"]):
+        return None
+    return {"removed": batch_id, "reclaimed_bytes": _remove_terminal_batch(batch)}
+
+
+def clear_terminal() -> dict:
+    """Permanently clear all terminal transcription history and local files."""
+    cleared = reclaimed = 0
+    for batch in _load_rows():
+        if any(item["state"] not in TERMINAL_STATES for item in batch["items"]):
+            continue
+        reclaimed += _remove_terminal_batch(batch)
+        cleared += 1
+    return {"cleared": cleared, "reclaimed_bytes": reclaimed}
+
+
 async def _cleanup_loop() -> None:
     while True:
         cleanup()
+        # Optional storage-cap enforcement lives beside the normal retention
+        # sweep.  Importing here avoids a module cycle during app startup.
+        from . import job_storage
+        job_storage.enforce_budget()
         await asyncio.sleep(3600)
 
 

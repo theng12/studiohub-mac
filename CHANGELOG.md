@@ -10,6 +10,28 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.42.0] — 2026-07-16
+
+### Fixed — durable production-job details
+
+- Expanded image/voice item status now survives live queue refreshes instead of
+  closing after a few seconds. The Hub preserves the open panel and reuses its
+  loaded item detail while fresh queue summaries continue arriving.
+
+### Added — unified production-job control and safe cleanup
+
+- Jobs is now organized into Image, Voice, Transcription, and Chat tabs. Each
+  has independent sort controls, ten jobs per page, pagination, and matching
+  terminal-job clear controls.
+- Clearing a transcription job permanently removes its Hub-local uploaded
+  source and subtitle files. Clearing an image/voice job removes its Hub asset
+  ledger entries and only unlinks a file when it is owned by this Hub; worker
+  output and shared voice references are never deleted.
+- Added an optional, off-by-default local job-storage cap. Set a 1–50 GB limit
+  and the Hub will remove oldest completed transcription jobs only when its
+  own job files exceed that limit. A "Check now" control makes the result
+  visible without waiting for the hourly sweep.
+
 ## [1.41.1] — 2026-07-16
 
 ### Fixed — shared cloned voices dispatch only where synchronized

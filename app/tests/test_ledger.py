@@ -1,4 +1,5 @@
 from backend import ledger
+from backend.registry import DATA_DIR
 
 
 def test_record_and_get_asset(reset):
@@ -141,3 +142,18 @@ def test_duration_migration_on_old_db(reset):
     aid = ledger.record_asset(source="job", modality="image", machine="local",
                               duration_s=3.0)
     assert ledger.get_asset(aid)["duration_s"] == 3.0
+
+
+def test_clearing_job_assets_only_unlinks_files_owned_by_this_hub(reset):
+    local = DATA_DIR / "owned.png"
+    local.write_bytes(b"owned")
+    outside = DATA_DIR.parent / "outside.png"
+    outside.write_bytes(b"outside")
+    ledger.record_asset(source="job", batch_id="finished", artifact_path=str(local))
+    ledger.record_asset(source="job", batch_id="finished", artifact_path=str(outside))
+
+    result = ledger.remove_job_assets(["finished"])
+    assert result == {"assets_removed": 2, "files_removed": 1, "reclaimed_bytes": 5}
+    assert not local.exists()
+    assert outside.read_bytes() == b"outside"
+    outside.unlink()
