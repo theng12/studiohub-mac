@@ -13,6 +13,9 @@ def test_submit_validation(reset):
     too_many = [{"prompt": "x"}] * (broker.MAX_BATCH_ITEMS + 1)
     result = broker.submit_batch({"modality": "image", "items": too_many, "model": "m"})
     assert "limited" in result["error"]
+    assert "routing" in broker.submit_batch({
+        "modality": "image", "model": "m", "routing": "wherever", "items": [{"prompt": "x"}],
+    })["error"]
 
 
 def test_submit_rejects_oversized_json_payload(reset, monkeypatch):
@@ -29,6 +32,7 @@ def test_submit_ok_and_summary(reset):
     b = broker.batches[r["batch_id"]]
     s = broker.batch_summary(b)
     assert s["total"] == 2 and s["queued"] == 2 and s["label"] == "t"
+    assert s["routing"] == "pool"
 
 
 def test_shared_clone_only_allows_synchronized_voice_workers(reset, monkeypatch):
@@ -379,6 +383,21 @@ def test_render_workers_rank_by_reported_hardware_score(reset):
     try:
         eligible = broker._eligible_studios("render", "pool")
         assert [s["id"] for s in eligible[:2]] == [remote["id"], local["id"]]
+    finally:
+        mon.registry.remove(remote)
+        mon.status.pop(remote["id"], None)
+
+
+def test_remote_render_routing_excludes_hub_machine(reset):
+    mon = broker._monitor()
+    local = next(s for s in mon.registry if s["modality"] == "render")
+    remote = {**local, "id": "render@m4-16", "machine": "m4-16", "host": "10.0.0.2"}
+    mon.registry.append(remote)
+    mon.status[local["id"]] = {"status": "up", "health": {"render_score": 500}}
+    mon.status[remote["id"]] = {"status": "up", "health": {"render_score": 1}}
+    try:
+        eligible = broker._eligible_studios("render", "remote")
+        assert [s["id"] for s in eligible] == [remote["id"]]
     finally:
         mon.registry.remove(remote)
         mon.status.pop(remote["id"], None)

@@ -138,7 +138,7 @@
   .check { display:inline-flex; align-items:center; gap:6px; color:var(--dim); font-size:12px; white-space:nowrap; }
   @media (max-width:760px) { .job-storage { grid-template-columns:1fr; } .job-storage-controls { justify-content:flex-start; } }
   .pager { display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-bottom: 1px solid var(--border); background: var(--panel2, transparent); }
-  #j-image .pager, #j-voice .pager { border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; }
+  #j-image .pager, #j-voice .pager, #j-render .pager { border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; }
   .pager .btn[disabled] { opacity: .45; cursor: default; }
   .tx-batch { padding: 15px 17px; border-bottom: 1px solid var(--border); }
   .tx-batch:last-child { border-bottom: 0; }
@@ -469,6 +469,7 @@
     <div class="job-tabs" role="tablist" aria-label="Production job types">
       <button class="active" data-job-kind="image" onclick="selectJobKind('image')">Image <span class="numbadge" id="job-count-image">0</span></button>
       <button data-job-kind="voice" onclick="selectJobKind('voice')">Voice <span class="numbadge" id="job-count-voice">0</span></button>
+      <button data-job-kind="render" onclick="selectJobKind('render')">Render <span class="numbadge" id="job-count-render">0</span></button>
       <button data-job-kind="transcription" onclick="selectJobKind('transcription')">Transcription <span class="numbadge" id="job-count-transcription">0</span></button>
       <button data-job-kind="chat" onclick="selectJobKind('chat')">Chat <span class="numbadge" id="job-count-chat">0</span></button>
     </div>
@@ -503,6 +504,23 @@
       <span class="sub" id="voice-job-action-status" role="status" aria-live="polite"></span>
     </div>
     <div id="j-voice"></div>
+    </div>
+
+    <div class="job-panel hide" data-job-panel="render">
+    <div class="group-head"><h2>Final video renders</h2><span class="meta" id="render-stats">Remote Render Studio queue</span></div>
+    <p class="muted" style="font-size:12px;margin:-6px 0 10px">Remote jobs stay off this Hub Mac. Follow the selected worker, live percentage, and queue state here.</p>
+    <div class="controls">
+      <div class="grp"><label for="render-sort">Sort</label>
+        <select class="selctl" id="render-sort" onchange="jobsSort('render', this.value)">
+          <option value="recent">Newest first</option><option value="oldest">Oldest first</option>
+          <option value="status">Status</option><option value="duration">Longest processing</option>
+        </select>
+      </div>
+      <button class="btn stop" onclick="cancelGenerationQueue('render')">Cancel render queue</button>
+      <button class="btn" onclick="clearFinishedGenerationJobs('render')">Clear finished</button>
+      <span class="sub" id="render-job-action-status" role="status" aria-live="polite"></span>
+    </div>
+    <div id="j-render"></div>
     </div>
 
     <div class="job-panel hide" data-job-panel="chat">
@@ -1761,11 +1779,12 @@ function detToggle(el, key) { el.open ? openDetails.add(key) : openDetails.delet
 // per-list sort + page state; survives re-renders so live updates don't reset it
 const jobsView = {
   image: { sort: "recent", page: 0, per: 10 }, voice: { sort: "recent", page: 0, per: 10 },
+  render: { sort: "recent", page: 0, per: 10 },
   tx: { sort: "recent", page: 0, per: 10 }, chat: { sort: "recent", page: 0, per: 10 },
 };
 let _txData = null, _genData = null, _chatData = null;
 let activeJobKind = localStorage.getItem("hub_job_kind") || "image";
-if (!["image", "voice", "transcription", "chat"].includes(activeJobKind)) activeJobKind = "image";
+if (!["image", "voice", "render", "transcription", "chat"].includes(activeJobKind)) activeJobKind = "image";
 const generationItemCache = new Map();
 function sortBatches(list, sort) {
   const n = v => (typeof v === "number" ? v : 0);
@@ -1807,6 +1826,7 @@ function updateJobCounts() {
   const gen = (_genData?.batches || []);
   $("#job-count-image").textContent = gen.filter(b => b.modality === "image").length;
   $("#job-count-voice").textContent = gen.filter(b => b.modality === "voice").length;
+  $("#job-count-render").textContent = gen.filter(b => b.modality === "render").length;
   $("#job-count-transcription").textContent = (_txData?.batches || []).length;
   $("#job-count-chat").textContent = (_chatData?.batches || []).length;
 }
@@ -1815,12 +1835,14 @@ function renderBatches(batches) {
   _genData = { batches: batches || [] };
   renderGenerationBatches("image");
   renderGenerationBatches("voice");
+  renderGenerationBatches("render");
   updateJobCounts();
 }
 function renderGenerationBatches(modality) {
   const el = $("#j-" + modality); if (!el) return;
   const all = (_genData?.batches || []).filter(batch => batch.modality === modality);
-  $("#" + modality + "-stats").textContent = `${all.length} batch${all.length === 1 ? "" : "es"} · Swarm queue`;
+  const queueLabel = modality === "render" ? "Remote Render Studio queue" : "Swarm queue";
+  $("#" + modality + "-stats").textContent = `${all.length} batch${all.length === 1 ? "" : "es"} · ${queueLabel}`;
   const sorted = sortBatches(all, jobsView[modality].sort);
   const { rows: list, pages, total } = pageSlice(modality, sorted);
   el.innerHTML = (total ? pagerHTML(modality, total, pages) : "") + list.map(b => {
@@ -1848,7 +1870,7 @@ function renderGenerationBatches(modality) {
         ${active ? `<button class="btn stop" style="margin-left:10px" onclick="cancelBatch('${jsq(b.id)}')">${b.cancelled ? "Retry stop" : "Cancel"}</button>` : `<button class="btn" style="margin-left:10px" onclick="clearGenerationBatch('${jsq(b.id)}')">Clear</button>`}</div>
       <div class="prog"><i style="width:${pct}%"></i></div>
       ${runs ? `<div class="runs">${runs}</div>` : ""}
-      <div class="sub" style="margin-top:4px">batch ${esc(b.id)}${b.label ? " · from " + esc(b.label) : ""}${b.avg_s != null ? " · avg " + fmtDur(b.avg_s) + "/item" : ""}${b.retrying && b.next_retry_at ? " · retry in " + fmtDur(Math.max(0, b.next_retry_at - Date.now() / 1000)) : ""}${b.cancelled ? " · cancelled" : ""}${b.governor_note ? " · ⏳ " + esc(b.governor_note) : ""}</div>
+      <div class="sub" style="margin-top:4px">batch ${esc(b.id)}${b.label ? " · from " + esc(b.label) : ""}${b.routing === "remote" ? " · remote workers only" : ""}${b.avg_s != null ? " · avg " + fmtDur(b.avg_s) + "/item" : ""}${b.retrying && b.next_retry_at ? " · retry in " + fmtDur(Math.max(0, b.next_retry_at - Date.now() / 1000)) : ""}${b.cancelled ? " · cancelled" : ""}${b.governor_note ? " · ⏳ " + esc(b.governor_note) : ""}</div>
       <details class="tx-items" data-batch-id="${jsq(b.id)}"${detOpen('gen:' + b.id)} ontoggle="generationDetailToggle(this, '${jsq(b.id)}')">
         <summary>Show per-${esc(modality)} status</summary>
         <div class="sub">Loading…</div>
@@ -1869,7 +1891,7 @@ async function loadGenerationItems(details, batchId) {
   if (details.dataset.loaded === "1") return;
   details.dataset.loaded = "1";
   const data = await api(`/api/hub/jobs/${encodeURIComponent(batchId)}`).then(r => r.json()).catch(() => null);
-  if (!data || !data.items) { body.innerHTML = `<div class="tx-error">Could not load image statuses.</div>`; return; }
+  if (!data || !data.items) { body.innerHTML = `<div class="tx-error">Could not load worker statuses.</div>`; return; }
   const html = `<div style="max-height:60vh;overflow:auto"><table><thead><tr>
     <th>#</th><th>Prompt</th><th>State</th><th>Attempts</th><th>Worker / Mac</th><th>Time</th><th>Failure</th>
   </tr></thead><tbody>${data.items.map(i => {
@@ -1901,10 +1923,12 @@ async function loadActiveJobQueues() {
   if (activeJobQueuesLoading) return;
   activeJobQueuesLoading = true;
   try {
-    const [tx, chat] = await Promise.all([
+    const [r, tx, chat] = await Promise.all([
+      api("/api/hub/jobs").then(x => x.json()).catch(() => null),
       api("/api/hub/transcription/jobs").then(x => x.json()).catch(() => null),
       api("/api/hub/chat/jobs").then(x => x.json()).catch(() => null),
     ]);
+    if (r) renderBatches(r.batches);
     if (tx) renderTranscriptionBatches(tx);
     if (chat) renderChatBatches(chat);
     updateJobCounts();

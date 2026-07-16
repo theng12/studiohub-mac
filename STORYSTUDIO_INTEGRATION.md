@@ -118,8 +118,10 @@ normal JSON result (`srt`, `vtt`, segments, and detected language).
 - `sharedParams` merge into every item (item `params` win on conflict).
 - `label`: free string; who submitted (shows in the Hub dashboard).
 - `webhook`: optional; the Hub POSTs the finished batch here (see §6). Recommended.
-- `routing`: optional; `"pool"` (default, any machine with the model) or
-  `"studio:<id>"` to pin to one.
+- `routing`: optional; `"pool"` (default, any eligible machine), `"remote"`
+  (exclude the Hub Mac and wait for an external worker), or `"studio:<id>"`
+  to pin to one. Story Studio uses `"remote"` for a Remote Render Studio
+  export preset so its main Mac remains the control centre.
 
 Response: `{ "batch_id": "0e13ca4f16", "items": 2 }`.
 

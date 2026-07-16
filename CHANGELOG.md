@@ -10,6 +10,16 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.42.2] — 2026-07-16
+
+### Added — remote-only final rendering
+
+- Added a dedicated Render view in Jobs with live worker name, progress, queue
+  state, cancellation, and safe history cleanup for Story Studio final videos.
+- Added the `routing: "remote"` batch route. It deliberately excludes the Hub
+  Mac, so final-video work waits for an external Render Studio worker instead
+  of silently consuming the control centre.
+
 ## [1.42.1] — 2026-07-16
 
 ### Fixed — authoritative fleet versions

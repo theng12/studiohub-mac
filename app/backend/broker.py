@@ -220,13 +220,18 @@ def submit_batch(envelope: dict) -> dict:
         return {"error": "batch payload must be valid JSON"}
     if not envelope.get("model"):
         return {"error": "model (repo) is required"}
+    routing = str(envelope.get("routing") or "pool")
+    if routing not in {"pool", "remote"} and not (
+        routing.startswith("studio:") and routing.split(":", 1)[1]
+    ):
+        return {"error": "routing must be pool, remote, or studio:<id>"}
     batch_id = uuid.uuid4().hex[:10]
     batches[batch_id] = {
         "id": batch_id,
         "modality": modality,
         "model": envelope["model"],
         "shared_params": envelope.get("sharedParams") or {},
-        "routing": envelope.get("routing", "pool"),
+        "routing": routing,
         "label": envelope.get("label"),        # who submitted (e.g. "storystudio")
         "webhook": envelope.get("webhook"),    # POSTed the summary on completion
         "item_webhook": envelope.get("itemWebhook"),  # POSTed per item as each finishes
@@ -364,6 +369,7 @@ def batch_summary(b: dict) -> dict:
     return {
         "id": b["id"], "modality": b["modality"], "model": b["model"],
         "created_at": b["created_at"], "cancelled": b["cancelled"],
+        "routing": b.get("routing", "pool"),
         "governor_note": b.get("governor_note"),
         "label": b.get("label"),
         "total": len(states),
@@ -635,6 +641,11 @@ def _eligible_studios(modality: str, routing: str, model: str = "") -> list[dict
         if routing.startswith("studio:") and s["id"] != routing.split(":", 1)[1]:
             continue
         machine = s.get("machine", "local")
+        # A remote render deliberately keeps the Hub Mac as the control plane.
+        # It waits for an external Render Studio rather than quietly consuming
+        # the Hub machine's CPU / Media Engine as a fallback.
+        if routing == "remote" and machine == "local":
+            continue
         if _uses_local_elevenlabs_gateway(modality, model) and machine != "local":
             continue
         if (s["modality"] != modality or s["id"] in _busy
@@ -702,7 +713,11 @@ async def _dispatch_loop():
                 eligible = _eligible_studios(
                     b["modality"], b["routing"], b.get("model", ""),
                 )
-                if not eligible and _uses_local_elevenlabs_gateway(
+                if not eligible and b.get("routing") == "remote":
+                    b["governor_note"] = (
+                        "Waiting for an online remote worker; this Hub Mac is intentionally excluded"
+                    )
+                elif not eligible and _uses_local_elevenlabs_gateway(
                     b["modality"], b.get("model", ""),
                 ):
                     b["governor_note"] = (
