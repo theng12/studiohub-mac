@@ -459,7 +459,7 @@
       <div><b>Automatic job-file cleanup</b><p class="sub">Optional. When enabled, the Hub clears oldest completed transcription jobs only after its local files exceed the limit. Worker output and shared voices are never touched.</p></div>
       <div class="job-storage-controls">
         <label class="check"><input type="checkbox" id="job-storage-enabled" onchange="saveJobStorage()"> Enable</label>
-        <label class="grp">Limit <select class="selctl" id="job-storage-limit" onchange="saveJobStorage()"><option value="1">1 GB</option><option value="2">2 GB</option><option value="5">5 GB</option><option value="10">10 GB</option><option value="20">20 GB</option><option value="50">50 GB</option></select></label>
+        <label class="grp">Limit <select class="selctl" id="job-storage-limit" onchange="saveJobStorage()"><option value="1">1 GB</option><option value="2">2 GB</option><option value="5" selected>5 GB</option><option value="10">10 GB</option><option value="20">20 GB</option><option value="50">50 GB</option></select></label>
         <button class="btn" onclick="runJobStorageCleanup()">Check now</button>
       </div>
       <span class="sub" id="job-storage-status" role="status" aria-live="polite"></span>
