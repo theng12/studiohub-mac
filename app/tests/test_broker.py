@@ -83,6 +83,24 @@ def test_summary_local_running_item_machine(reset):
     assert ri["machine"] == "local" and ri["progress"] is None
 
 
+def test_summary_exposes_batch_elapsed_and_stalled_worker(reset, monkeypatch):
+    r = broker.submit_batch({"modality": "image", "model": "a/b",
+                             "items": [{"prompt": "x"}]})
+    b = broker.batches[r["batch_id"]]
+    b["created_at"] = 100.0
+    b["items"][0].update(state="running", studio="image@macmini-m1-01",
+                           run_started=110.0, last_progress_at=120.0)
+    monkeypatch.setattr(broker.time, "time", lambda: 1100.0)
+
+    summary = broker.batch_summary(b)
+
+    assert summary["processing_started_at"] == 110.0
+    assert summary["processing_elapsed_s"] == 990.0
+    assert summary["last_activity_at"] == 120.0
+    assert summary["no_progress_s"] == 980.0
+    assert summary["stalled"] is True
+
+
 def test_summary_distinguishes_delayed_retry(reset):
     import time
     r = broker.submit_batch({"modality": "image", "model": "a/b",

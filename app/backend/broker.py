@@ -348,14 +348,31 @@ def batch_summary(b: dict) -> dict:
                  if i.get("state") == "done" and isinstance(i.get("duration_s"), (int, float))]
     avg_s = (round(sum(done_durs) / len(done_durs), 1) if done_durs
              else _recent_avg(b["modality"], b["model"]))
-    # per-item live detail for whatever is running right now (machine tag + progress)
+    # Per-item live detail for whatever is running right now (machine tag + progress).
+    # Keep batch-level timing separately: the Jobs page needs to answer both
+    # "how long has this been processing?" and "has anything moved recently?".
     running_items = []
+    started_at = []
+    activity_at = [b.get("created_at", now), b.get("last_dispatched_at", 0)]
     for i in items:
+        run_started = i.get("run_started")
+        if isinstance(run_started, (int, float)):
+            started_at.append(run_started)
+            activity_at.append(run_started)
+        for key in ("last_progress_at", "finished_at"):
+            value = i.get(key)
+            if isinstance(value, (int, float)):
+                activity_at.append(value)
+        # Batches saved before explicit terminal timestamps still have enough
+        # information to estimate their most recent completed item.
+        if (i.get("state") == "done" and isinstance(run_started, (int, float))
+                and isinstance(i.get("duration_s"), (int, float))):
+            activity_at.append(run_started + i["duration_s"])
         if i.get("state") != "running":
             continue
         sid = i.get("studio") or ""
         machine = sid.split("@", 1)[1] if "@" in sid else "local"
-        started = i.get("run_started")
+        started = run_started
         elapsed = round(now - started, 1) if started else None
         running_items.append({
             "index": i.get("index"),
@@ -366,9 +383,19 @@ def batch_summary(b: dict) -> dict:
         })
     retrying = [i for i in items if i["state"] == "queued"
                 and (i.get("retry_at") or 0) > now]
+    active = bool(states.count("queued") or states.count("running"))
+    processing_started_at = min(started_at) if started_at else None
+    last_activity_at = max(activity_at)
+    # A missing worker progress report is normal for some local MLX models, so
+    # do not call a job stuck merely because a single poll had no percentage.
+    # Fifteen minutes, or five times its measured per-item average, is a useful
+    # conservative warning threshold rather than an automatic cancellation.
+    stalled_after_s = max(15 * 60, round((avg_s or 0) * 5))
+    no_progress_s = round(max(0, now - last_activity_at), 1) if active else None
     return {
         "id": b["id"], "modality": b["modality"], "model": b["model"],
-        "created_at": b["created_at"], "cancelled": b["cancelled"],
+        "created_at": b["created_at"], "finished_at": b.get("finished_at"),
+        "cancelled": b["cancelled"],
         "routing": b.get("routing", "pool"),
         "governor_note": b.get("governor_note"),
         "label": b.get("label"),
@@ -382,6 +409,14 @@ def batch_summary(b: dict) -> dict:
         "cancelled_items": states.count("cancelled"),
         "avg_s": avg_s,
         "running_items": running_items,
+        "processing_started_at": processing_started_at,
+        "processing_elapsed_s": (round(max(0, now - processing_started_at), 1)
+                                 if active and processing_started_at else None),
+        "last_activity_at": last_activity_at,
+        "no_progress_s": no_progress_s,
+        "stalled_after_s": stalled_after_s,
+        "stalled": bool(active and no_progress_s is not None
+                        and no_progress_s >= stalled_after_s),
     }
 
 
@@ -539,6 +574,8 @@ def _record_worker_success(b: dict, item: dict, studio: dict, job: dict,
     if duration is None:
         duration = round(time.time() - t_start, 2)
     item["duration_s"] = duration
+    item["finished_at"] = time.time()
+    item["last_progress_at"] = item["finished_at"]
     item["asset_id"] = ledger.record_asset(
         source="job", modality=b["modality"], studio=studio["id"],
         machine=studio.get("machine", "local"), model=b["model"],
@@ -573,9 +610,7 @@ async def _recover_worker_job(client, b: dict, item: dict, studio: dict,
             job = jr.json().get("job") or {}
             state = job.get("state")
             if state in ("queued", "running"):
-                p = job.get("progress")
-                if isinstance(p, (int, float)):
-                    item["progress"] = max(0.0, min(1.0, float(p)))
+                _record_worker_progress(item, job.get("progress"))
                 await asyncio.sleep(POLL_S)
                 continue
             if state == "done" and not job.get("error"):
@@ -599,6 +634,8 @@ async def _maybe_finish(client: httpx.AsyncClient, b: dict):
     states = {i["state"] for i in b["items"]}
     if states & {"queued", "running"}:
         return  # not terminal yet
+    if not b.get("finished_at"):
+        b["finished_at"] = time.time()
     b["done_notified"] = True
     ledger.save_batch(b)
     summary = batch_summary(b)
@@ -819,11 +856,23 @@ def _worker_terminal_error(message: str) -> RuntimeError:
     return error
 
 
+def _record_worker_progress(item: dict, progress) -> None:
+    """Keep a real activity timestamp without treating an unchanged poll as progress."""
+    if not isinstance(progress, (int, float)):
+        return
+    value = max(0.0, min(1.0, float(progress)))
+    previous = item.get("progress")
+    item["progress"] = value
+    if previous is None or value > previous + 0.001:
+        item["last_progress_at"] = time.time()
+
+
 async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict):
     endpoint, prompt_field, artifact_kind = MODALITY[b["modality"]]
     t_start = time.time()  # wall-clock fallback for generation duration
     item["run_started"] = t_start   # surfaced live for elapsed/ETA in the UI
     item["progress"] = None         # 0..1 as reported by the studio while running
+    item["last_progress_at"] = t_start
     body = dict(b["shared_params"])
     body.update(item["params"])
     body["repo"] = b["model"]
@@ -903,9 +952,7 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             j = jr.json()["job"]
             state = j.get("state")
             if state in ("queued", "running"):
-                p = j.get("progress")
-                if isinstance(p, (int, float)):
-                    item["progress"] = max(0.0, min(1.0, float(p)))
+                _record_worker_progress(item, j.get("progress"))
                 continue
             if j.get("error") or state in ("error", "cancelled"):
                 raise _worker_terminal_error(
@@ -927,6 +974,7 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             return
         message = str(e) or type(e).__name__
         retryable = getattr(e, "retryable", True)
+        item["last_progress_at"] = time.time()
         if retryable and item["tries"] < MAX_TRIES and not b["cancelled"]:
             item["state"] = "queued"  # work-stealing retry, possibly elsewhere
             item["error"] = f"try {item['tries']} failed: {message}"
@@ -937,6 +985,9 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             item["error"] = message
             item["retry_at"] = None
     finally:
+        if item["state"] in ("done", "error", "cancelled"):
+            item.setdefault("finished_at", time.time())
+            item["last_progress_at"] = item["finished_at"]
         _busy.discard(studio["id"])
         _reserved["gb"] = max(0.0, _reserved["gb"] - item.get("_reserved", 0.0))
         item["_reserved"] = 0.0

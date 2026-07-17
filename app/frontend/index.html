@@ -118,6 +118,8 @@
   .run { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .run .prog { flex: 1; min-width: 90px; margin-top: 0; height: 5px; }
   .run .prog i.indet { width: 30% !important; animation: indet 1.3s ease-in-out infinite; }
+  .job-timing { margin-top: 8px; }
+  .job-timing .stalled { color: var(--down); font-weight: 700; }
   @keyframes indet { 0%{margin-left:-30%} 100%{margin-left:100%} }
   .pill.warn { color: var(--warn); border-color: var(--warn); }
   .pill.err { color: var(--down); border-color: var(--down); }
@@ -866,6 +868,10 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.44.3", date: "2026-07-17", items: [
+    "Jobs now show a live <b>Processing for</b> timer (or queue wait), the time since the last real activity, and a clear advisory warning when a running worker appears stalled.",
+    "The timing view is consistent across image, voice, render, transcription, and chat jobs; it never cancels a job automatically.",
+  ] },
   { v: "1.43.2", date: "2026-07-17", items: [
     "Release discovery now resolves each repository's current Git commit and reads VERSION from that immutable revision, avoiding stale raw branch caches without using GitHub API quota.",
   ] },
@@ -1883,6 +1889,29 @@ function fmtDur(s) {
   const h = Math.floor(m / 60);
   return h + "h " + (m % 60) + "m";
 }
+function jobTimingHTML(batch) {
+  const now = Date.now() / 1000;
+  const running = Number(batch.running || 0);
+  const queued = Number(batch.queued || 0) + Number(batch.retrying || 0);
+  if (!running && !queued) {
+    const finished = Number(batch.finished_at || 0);
+    const created = Number(batch.created_at || 0);
+    return finished && created ? `Completed in ${fmtDur(Math.max(0, finished - created))}` : "";
+  }
+  const created = Number(batch.created_at || now);
+  const started = Number(batch.processing_started_at || 0);
+  const elapsed = running && batch.processing_elapsed_s != null
+    ? Number(batch.processing_elapsed_s)
+    : Math.max(0, now - (running ? (started || created) : created));
+  const label = running ? "⏱ Processing for" : "⌛ Waiting in queue for";
+  const activityAt = Number(batch.last_activity_at || batch.updated_at || 0);
+  const idle = batch.no_progress_s != null
+    ? Number(batch.no_progress_s) : (activityAt ? Math.max(0, now - activityAt) : null);
+  const threshold = Number(batch.stalled_after_s || 15 * 60);
+  const stalled = Boolean(batch.stalled) || (running && idle != null && idle >= threshold);
+  return `${label} ${fmtDur(elapsed)}${idle != null ? ` · last activity ${fmtDur(idle)} ago` : ""}`
+    + (stalled ? ` · <span class="stalled">⚠ No progress for ${fmtDur(idle)} — check worker</span>` : "");
+}
 function fmtBytes(bytes) {
   const n = Number(bytes) || 0;
   if (n < 1024) return n + " B";
@@ -1992,6 +2021,7 @@ function renderGenerationBatches(modality) {
         ${active ? `<button class="btn stop" style="margin-left:10px" onclick="cancelBatch('${jsq(b.id)}')">${b.cancelled ? "Retry stop" : "Cancel"}</button>` : `<button class="btn" style="margin-left:10px" onclick="clearGenerationBatch('${jsq(b.id)}')">Clear</button>`}</div>
       <div class="prog"><i style="width:${pct}%"></i></div>
       ${runs ? `<div class="runs">${runs}</div>` : ""}
+      <div class="sub job-timing">${jobTimingHTML(b)}</div>
       <div class="sub" style="margin-top:4px">batch ${esc(b.id)}${b.label ? " · from " + esc(b.label) : ""}${b.routing === "remote" ? " · remote workers only" : ""}${b.avg_s != null ? " · avg " + fmtDur(b.avg_s) + "/item" : ""}${b.retrying && b.next_retry_at ? " · retry in " + fmtDur(Math.max(0, b.next_retry_at - Date.now() / 1000)) : ""}${b.cancelled ? " · cancelled" : ""}${b.governor_note ? " · ⏳ " + esc(b.governor_note) : ""}</div>
       <details class="tx-items" data-batch-id="${jsq(b.id)}"${detOpen('gen:' + b.id)} ontoggle="generationDetailToggle(this, '${jsq(b.id)}')">
         <summary>Show per-${esc(modality)} status</summary>
@@ -2146,6 +2176,7 @@ function renderChatBatches(data) {
       </div>
       <div class="prog"><i style="width:${pct}%"></i></div>
       ${workers ? `<div class="runs">${workers}</div>` : ""}
+      <div class="sub job-timing">${jobTimingHTML(b)}</div>
       ${b.queue_note ? `<div class="sub" style="margin-top:7px">${esc(b.queue_note)}</div>` : ""}
       <details class="tx-items"${detOpen('chat:' + b.id)} ontoggle="detToggle(this,'chat:${jsq(b.id)}')"><summary>${b.completed_scenes}/${b.total_scenes} scenes · ${b.total_packs} packs · ${fmtDur(b.duration_seconds)} processing</summary>
         <table><thead><tr><th>Pack</th><th>State</th><th>Chat worker</th><th>Scenes</th><th>Time</th><th>Failure / missing IDs</th></tr></thead><tbody>${packs}</tbody></table>
@@ -2198,6 +2229,7 @@ function renderTranscriptionBatches(data) {
         <div class="tx-actions">${canRetry ? `<button class="btn" onclick="retryTranscription('${jsq(b.id)}')">Retry failed</button>` : ""}${terminal && !b.storage_cleaned ? `<button class="btn" onclick="cleanupTranscription('${jsq(b.id)}')">Clean files</button>` : ""}${terminal ? `<button class="btn" onclick="clearTranscriptionBatch('${jsq(b.id)}')">Clear</button>` : `<button class="btn stop" onclick="cancelTranscription('${jsq(b.id)}')">Cancel</button>`}</div>
       </div>
       <div class="prog"><i style="width:${pct}%"></i></div>
+      <div class="sub job-timing">${jobTimingHTML(b)}</div>
       <details class="tx-items"${detOpen('tx:' + b.id)} ontoggle="detToggle(this,'tx:${jsq(b.id)}')"><summary>${b.total} chapters · ${fmtDur(b.duration_seconds)} processing${b.storage_cleaned ? " · files cleaned" : ""}</summary>
         <table><thead><tr><th>Chapter</th><th>State</th><th>Voice worker / task</th><th>Time</th><th>Artifact</th><th>Failure</th></tr></thead><tbody>${items}</tbody></table>
       </details>

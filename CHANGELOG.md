@@ -10,6 +10,18 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.44.3] — 2026-07-17
+
+### Added — live job elapsed time and stall warning
+
+- Every image, voice, render, transcription, and chat job now shows how long
+  it has been processing (or waiting in queue) and when the last real activity
+  occurred.
+- Generation batches track actual worker progress changes and show a visible
+  warning when a running batch has made no progress for at least 15 minutes,
+  or five times its measured per-item average. The warning is advisory; it
+  never cancels work automatically.
+
 ## [1.44.2] — 2026-07-17
 
 ### Changed — simple owner password
