@@ -368,7 +368,7 @@ service (same as the sibling studios): sidebar → **Install as Startup Service*
 ## Remote browser sign-in
 
 For normal dashboard use, open **Remote → Owner sign-in** on the Hub Mac and
-set one password (12+ characters). Remote browsers on your Tailscale network
+set any non-empty password. Remote browsers on your Tailscale network
 then see a normal sign-in screen; Chrome can save the password and a successful
 sign-in is remembered for 90 days. The password is salted and scrypt-hashed,
 and the Hub keeps only hashes of remembered-device sessions.

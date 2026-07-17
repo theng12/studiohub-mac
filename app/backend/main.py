@@ -73,7 +73,7 @@ class SharedVoiceUpdateBody(BaseModel):
 
 
 class OwnerPasswordBody(BaseModel):
-    password: str = Field(min_length=12, max_length=256)
+    password: str = Field(min_length=1, max_length=1024)
 
 # Give our loggers a handler regardless of how uvicorn configures logging, so
 # structured warnings/alerts actually reach the service log.

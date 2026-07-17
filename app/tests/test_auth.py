@@ -88,6 +88,11 @@ def test_owner_password_is_hashed_and_revokes_existing_sessions(reset):
     assert not auth.valid_browser_session(session)
 
 
+def test_owner_password_accepts_a_single_character(reset):
+    auth.set_owner_password("1")
+    assert auth.verify_owner_password("1")
+
+
 def test_tailscale_password_login_creates_remembered_session(app):
     from starlette.testclient import TestClient
     client = TestClient(app, client=("100.66.3.3", 50000))

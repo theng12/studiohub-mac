@@ -85,8 +85,8 @@ def clear_browser_sessions() -> None:
 
 
 def set_owner_password(password: str) -> None:
-    if not isinstance(password, str) or not 12 <= len(password) <= 256:
-        raise ValueError("Password must be 12 to 256 characters.")
+    if not isinstance(password, str) or not 1 <= len(password) <= 1024:
+        raise ValueError("Enter a password.")
     salt = secrets.token_bytes(16)
     digest = _password_digest(password, salt)
     _write_private(PASSWORD_FILE, {

@@ -10,6 +10,14 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.44.2] — 2026-07-17
+
+### Changed — simple owner password
+
+- Owner sign-in now accepts any non-empty password; there is no 12-character
+  requirement. Password storage, remembered-device sessions, and Tailscale-only
+  access remain protected exactly as before.
+
 ## [1.44.1] — 2026-07-17
 
 ### Hardened — Tailscale-only password sign-in

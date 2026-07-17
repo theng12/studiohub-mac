@@ -691,8 +691,8 @@
       <p class="muted" id="owner-password-copy" style="font-size:13px;margin-bottom:10px">Loading sign-in settings…</p>
       <div id="owner-password-local" class="hide">
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-          <input id="owner-password" type="password" autocomplete="new-password" minlength="12" placeholder="Choose an owner password (12+ characters)" style="flex:1;min-width:240px">
-          <input id="owner-password-confirm" type="password" autocomplete="new-password" minlength="12" placeholder="Confirm password" style="flex:1;min-width:220px">
+          <input id="owner-password" type="password" autocomplete="new-password" placeholder="Choose any password" style="flex:1;min-width:240px">
+          <input id="owner-password-confirm" type="password" autocomplete="new-password" placeholder="Confirm password" style="flex:1;min-width:220px">
           <button class="go" onclick="saveOwnerPassword()">Save password</button>
         </div>
         <div class="sub" id="owner-password-result" role="status" aria-live="polite" style="margin-top:8px"></div>
@@ -1159,7 +1159,7 @@ async function saveOwnerPassword() {
   const password = $("#owner-password").value;
   const confirmPassword = $("#owner-password-confirm").value;
   const result = $("#owner-password-result");
-  if (password.length < 12) { result.textContent = "Use at least 12 characters."; return; }
+  if (!password) { result.textContent = "Enter a password."; return; }
   if (password !== confirmPassword) { result.textContent = "The two passwords do not match."; return; }
   result.textContent = "Saving…";
   const response = await fetch("/api/auth/setup", {
