@@ -373,6 +373,10 @@ then see a normal sign-in screen; Chrome can save the password and a successful
 sign-in is remembered for 90 days. The password is salted and scrypt-hashed,
 and the Hub keeps only hashes of remembered-device sessions.
 
+Password sign-in is deliberately accepted only through the Hub's Tailscale
+address, not the ordinary HTTP LAN address. Use the LAN address with the Hub
+token only when necessary for API/recovery access.
+
 The existing Hub token is still required for scripts, API clients, peer Hubs,
 and recovery. It is shown only locally in **Remote**. Replacing the owner
 password signs every remembered browser out immediately.

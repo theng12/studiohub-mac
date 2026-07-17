@@ -29,7 +29,7 @@ from . import (alerts, auth, broadcast, broker, chat_jobs, fleet_ops, gateway, j
 from .auto_update import UpdateError
 from .auto_update_config import create_updater
 from .fleet_auto_updates import FleetAutoUpdates
-from .auth import is_loopback, load_token, make_middleware
+from .auth import is_loopback, is_tailscale, load_token, make_middleware
 from .control import control_studio
 from .monitor import StudioMonitor
 from .registry import DATA_DIR, LAUNCHER_ROOT, base_url
@@ -172,6 +172,7 @@ def auth_status(request: Request):
     """Public, non-sensitive browser-login capability check."""
     return {"password_configured": auth.password_configured(),
             "can_configure_here": is_loopback(request),
+            "password_login_allowed": is_loopback(request) or is_tailscale(request),
             "session_active": auth.valid_browser_session(
                 request.cookies.get(auth.SESSION_COOKIE_NAME)),
             "remember_days": auth.SESSION_TTL_DAYS}
@@ -193,6 +194,8 @@ def auth_setup_owner_password(request: Request, body: OwnerPasswordBody):
 @app.post("/api/auth/login")
 def auth_login(request: Request, body: OwnerPasswordBody):
     """Issue a 90-day opaque, HttpOnly remembered-device session."""
+    if not is_loopback(request) and not is_tailscale(request):
+        raise HTTPException(403, "Password sign-in is available through the Tailscale address only.")
     if not auth.password_configured():
         raise HTTPException(409, "Set an owner password locally on the Hub Mac first.")
     if not auth.login_allowed(request):

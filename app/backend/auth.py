@@ -17,6 +17,7 @@ recovered from the Hub's state files.
 
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import secrets
@@ -188,6 +189,15 @@ def clear_login_failures(request: Request) -> None:
 def is_loopback(request: Request) -> bool:
     host = request.client.host if request.client else ""
     return host in ("127.0.0.1", "::1", "localhost")
+
+
+def is_tailscale(request: Request) -> bool:
+    """Whether a request arrived through the IPv4 Tailnet address space."""
+    host = request.client.host if request.client else ""
+    try:
+        return ipaddress.ip_address(host) in ipaddress.ip_network("100.64.0.0/10")
+    except ValueError:
+        return False
 
 
 def presented_token(request: Request) -> str | None:

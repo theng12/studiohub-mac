@@ -30,6 +30,11 @@ def test_is_loopback():
     assert not auth.is_loopback(_req(host="192.168.0.5"))
 
 
+def test_is_tailscale():
+    assert auth.is_tailscale(_req(host="100.66.3.3"))
+    assert not auth.is_tailscale(_req(host="192.168.0.5"))
+
+
 def test_remote_requires_token(client):
     # public paths are open
     assert client.get("/api/health").status_code == 200
@@ -83,7 +88,9 @@ def test_owner_password_is_hashed_and_revokes_existing_sessions(reset):
     assert not auth.valid_browser_session(session)
 
 
-def test_remote_password_login_creates_remembered_session(client):
+def test_tailscale_password_login_creates_remembered_session(app):
+    from starlette.testclient import TestClient
+    client = TestClient(app, client=("100.66.3.3", 50000))
     auth.set_owner_password("correct horse battery staple")
     bad = client.post("/api/auth/login", json={"password": "wrong password"})
     assert bad.status_code == 401
@@ -94,6 +101,12 @@ def test_remote_password_login_creates_remembered_session(client):
     logged_out = client.post("/api/auth/logout")
     assert logged_out.status_code == 200
     assert client.get("/api/hub/health").status_code == 401
+
+
+def test_lan_password_login_is_rejected(client):
+    auth.set_owner_password("correct horse battery staple")
+    denied = client.post("/api/auth/login", json={"password": "correct horse battery staple"})
+    assert denied.status_code == 403
 
 
 def test_owner_password_setup_is_loopback_only(client):

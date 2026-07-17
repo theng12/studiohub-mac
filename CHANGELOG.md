@@ -10,6 +10,14 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.44.1] — 2026-07-17
+
+### Hardened — Tailscale-only password sign-in
+
+- Remembered-device password sessions are accepted only through the Hub's
+  Tailscale address. The LAN address continues to support the recovery/API
+  token, avoiding persistent browser credentials over ordinary HTTP LAN traffic.
+
 ## [1.44.0] — 2026-07-17
 
 ### Added — password sign-in for remote browsers

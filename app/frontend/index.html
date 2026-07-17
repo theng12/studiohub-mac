@@ -1145,6 +1145,8 @@ function renderOwnerPassword() {
     copy.textContent = authInfo.password_configured
       ? "Replace the owner password. This signs out every remembered browser immediately."
       : "Set one owner password for remote browser access. The password is stored only as a secure verifier.";
+  } else if (!authInfo.password_login_allowed) {
+    copy.textContent = "Password sign-in is available only through this Hub's Tailscale address. Use that URL instead of the LAN address.";
   } else if (authInfo.session_active) {
     copy.textContent = `This browser is remembered for up to ${authInfo.remember_days} days. You can sign out here at any time.`;
   } else if (authInfo.password_configured) {
@@ -1171,10 +1173,12 @@ async function saveOwnerPassword() {
 }
 function showLogin() {
   const modal = $("#auth-login");
-  const configured = Boolean(authInfo?.password_configured);
+  const configured = Boolean(authInfo?.password_configured && authInfo?.password_login_allowed);
   $("#auth-login-copy").textContent = configured
     ? `Use your owner password. This browser will stay signed in for ${authInfo.remember_days} days.`
-    : "No owner password is set yet. Open the Remote tab on the Hub Mac to create one, or use the recovery token below.";
+    : authInfo?.password_configured
+      ? "Password sign-in is available through the Hub's Tailscale address. Use that address instead, or use the recovery token below."
+      : "No owner password is set yet. Open the Remote tab on the Hub Mac to create one, or use the recovery token below.";
   $("#auth-login-password").classList.toggle("hide", !configured);
   $("#auth-login-submit").classList.toggle("hide", !configured);
   $("#auth-login-result").textContent = "";
