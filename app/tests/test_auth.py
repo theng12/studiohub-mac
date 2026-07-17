@@ -68,3 +68,34 @@ def test_hub_token_permissions_are_private(reset):
     auth.TOKEN_FILE.unlink(missing_ok=True)
     assert auth.load_token()
     assert stat.S_IMODE(auth.TOKEN_FILE.stat().st_mode) == 0o600
+
+
+def test_owner_password_is_hashed_and_revokes_existing_sessions(reset):
+    auth.set_owner_password("correct horse battery staple")
+    assert auth.password_configured()
+    assert auth.verify_owner_password("correct horse battery staple")
+    assert not auth.verify_owner_password("not the owner password")
+    assert "correct horse battery staple" not in auth.PASSWORD_FILE.read_text()
+    assert stat.S_IMODE(auth.PASSWORD_FILE.stat().st_mode) == 0o600
+    session = auth.create_browser_session()
+    assert auth.valid_browser_session(session)
+    auth.set_owner_password("an entirely new owner password")
+    assert not auth.valid_browser_session(session)
+
+
+def test_remote_password_login_creates_remembered_session(client):
+    auth.set_owner_password("correct horse battery staple")
+    bad = client.post("/api/auth/login", json={"password": "wrong password"})
+    assert bad.status_code == 401
+    signed_in = client.post("/api/auth/login", json={"password": "correct horse battery staple"})
+    assert signed_in.status_code == 200
+    assert auth.SESSION_COOKIE_NAME in signed_in.cookies
+    assert client.get("/api/hub/health").status_code == 200
+    logged_out = client.post("/api/auth/logout")
+    assert logged_out.status_code == 200
+    assert client.get("/api/hub/health").status_code == 401
+
+
+def test_owner_password_setup_is_loopback_only(client):
+    denied = client.post("/api/auth/setup", json={"password": "correct horse battery staple"})
+    assert denied.status_code == 401

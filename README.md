@@ -140,6 +140,8 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/transcription/settings` · `POST /api/hub/transcription/settings` | Read/set SRT and upload retention (`1`, `3`, `7`, `15`, or `30` days) |
 | `POST /api/hub/transcription/cleanup` | Clean expired terminal transcription files; active batches are never removed |
 | `GET` / `POST /api/hub/job-storage` · `POST /api/hub/job-storage/cleanup` | Read/save the optional Hub-local job-file cap (`{enabled, max_gb}`) or enforce it now; default is off |
+| `GET /api/auth/status` · `POST /api/auth/login` · `POST /api/auth/logout` | Browser password-sign-in capability, 90-day remembered-device session, and sign-out |
+| `POST /api/auth/setup` | Set or replace the owner password; accepted only through loopback on the Hub Mac |
 | `DELETE /api/hub/registry/machines/{machine}` | Unregister a machine and purge its live inventory/update state (history is retained) |
 | `GET /api/hub/fleet` · `POST /api/hub/fleet` | Fleet token status / set (`{token}`) — enables remote specs + control |
 | `GET /api/hub/resources?local_only=true` | This machine only (peers call with this to prevent recursion) |
@@ -362,6 +364,18 @@ service (same as the sibling studios): sidebar → **Install as Startup Service*
   turn FileVault off (a LaunchAgent needs a logged-in session to start).
 - Remove it any time with **Uninstall Startup Service** (the app itself is
   untouched; Start still works).
+
+## Remote browser sign-in
+
+For normal dashboard use, open **Remote → Owner sign-in** on the Hub Mac and
+set one password (12+ characters). Remote browsers on your Tailscale network
+then see a normal sign-in screen; Chrome can save the password and a successful
+sign-in is remembered for 90 days. The password is salted and scrypt-hashed,
+and the Hub keeps only hashes of remembered-device sessions.
+
+The existing Hub token is still required for scripts, API clients, peer Hubs,
+and recovery. It is shown only locally in **Remote**. Replacing the owner
+password signs every remembered browser out immediately.
 
 ## The fleet: remote specs + remote control
 

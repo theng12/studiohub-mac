@@ -21,10 +21,10 @@ import httpx
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import (alerts, broadcast, broker, chat_jobs, fleet_ops, gateway, job_storage,
+from . import (alerts, auth, broadcast, broker, chat_jobs, fleet_ops, gateway, job_storage,
                ledger, metrics, peers, recipes, shared_voices, transcription_jobs)
 from .auto_update import UpdateError
 from .auto_update_config import create_updater
@@ -70,6 +70,10 @@ class SharedVoiceUpdateBody(BaseModel):
     notes: str | None = None
     source_url: str | None = None
     transcript: str | None = None
+
+
+class OwnerPasswordBody(BaseModel):
+    password: str = Field(min_length=12, max_length=256)
 
 # Give our loggers a handler regardless of how uvicorn configures logging, so
 # structured warnings/alerts actually reach the service log.
@@ -160,6 +164,55 @@ app.middleware("http")(make_middleware(HUB_TOKEN))
 
 # Unified gateway: {HUB}/studio/{id}/{path} -> the right studio.
 app.include_router(gateway.router)
+
+
+# ── browser owner sign-in ──────────────────────────────────────────────────
+@app.get("/api/auth/status")
+def auth_status(request: Request):
+    """Public, non-sensitive browser-login capability check."""
+    return {"password_configured": auth.password_configured(),
+            "can_configure_here": is_loopback(request),
+            "session_active": auth.valid_browser_session(
+                request.cookies.get(auth.SESSION_COOKIE_NAME)),
+            "remember_days": auth.SESSION_TTL_DAYS}
+
+
+@app.post("/api/auth/setup")
+def auth_setup_owner_password(request: Request, body: OwnerPasswordBody):
+    """Set/replace the owner password only from the Hub Mac itself."""
+    if not is_loopback(request):
+        raise HTTPException(403, "Set the owner password on the Hub Mac itself.")
+    try:
+        auth.set_owner_password(body.password)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "remember_days": auth.SESSION_TTL_DAYS,
+            "message": "Owner password saved. Existing remembered devices were signed out."}
+
+
+@app.post("/api/auth/login")
+def auth_login(request: Request, body: OwnerPasswordBody):
+    """Issue a 90-day opaque, HttpOnly remembered-device session."""
+    if not auth.password_configured():
+        raise HTTPException(409, "Set an owner password locally on the Hub Mac first.")
+    if not auth.login_allowed(request):
+        raise HTTPException(429, "Too many attempts. Try again in 15 minutes.")
+    if not auth.verify_owner_password(body.password):
+        auth.record_login_failure(request)
+        raise HTTPException(401, "Incorrect password.")
+    auth.clear_login_failures(request)
+    response = JSONResponse({"ok": True, "remember_days": auth.SESSION_TTL_DAYS})
+    auth.set_browser_session_cookie(response, auth.create_browser_session())
+    return response
+
+
+@app.post("/api/auth/logout")
+def auth_logout(request: Request):
+    """Forget the current browser, whether or not it is still valid."""
+    auth.forget_browser_session(request.cookies.get(auth.SESSION_COOKIE_NAME))
+    response = JSONResponse({"ok": True})
+    auth.clear_browser_session_cookie(response)
+    return response
 
 
 # ── sibling-convention endpoints (Hub is monitorable like a studio) ────────

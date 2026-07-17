@@ -35,13 +35,15 @@ def _reset_state():
     # leaks into the next)
     for f in (ledger.DB_FILE, reg.REGISTRY_FILE, reg.LABELS_FILE, reg.FLAGS_FILE,
               peers.FLEET_TOKEN_FILE, peers.SHARED_STUDIO_TOKEN_FILE,
-              auth.TOKEN_FILE, metrics.STATE_FILE, job_storage.SETTINGS_FILE,
+              auth.TOKEN_FILE, auth.PASSWORD_FILE, auth.SESSIONS_FILE,
+              metrics.STATE_FILE, job_storage.SETTINGS_FILE,
               fleet_ops._STATE_FILE):
         try:
             f.unlink()
         except FileNotFoundError:
             pass
     peers._inflight["v"] = False
+    auth._login_failures.clear()
     # in-memory state
     broker.batches.clear()
     broker._busy.clear()

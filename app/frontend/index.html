@@ -675,14 +675,30 @@
     <div class="card section">
       <div class="top"><span class="emoji">🌐</span><h3>Reach this Hub from other devices</h3></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        Any device on your Tailscale network can use these URLs. Remote clients must send the token
-        (<code>Authorization: Bearer …</code> or <code>X-Hub-Token</code>). Credentials are never placed in URLs.
+        Any device on your Tailscale network can use these URLs. Sign in once with your owner password and this
+        browser stays remembered for 90 days. The Hub token remains for scripts, peer Hubs, and recovery only.
       </p>
       <table><thead><tr><th>Network</th><th>URL</th><th></th></tr></thead><tbody id="acc-body"></tbody></table>
       <div id="acc-token-wrap" style="margin-top:14px;display:none">
-        <div class="muted" style="font-size:12px;margin-bottom:4px">Hub token (shown only on the Hub machine — keep private):</div>
+        <div class="muted" style="font-size:12px;margin-bottom:4px">Hub token — API, peer-Hub, and recovery credential (shown only on the Hub machine):</div>
         <code id="acc-token" style="background:var(--panel2);padding:6px 10px;border-radius:6px;user-select:all"></code>
         <button class="btn" id="acc-copy" style="margin-left:8px">Copy</button>
+      </div>
+    </div>
+
+    <div class="card jform section" id="owner-password-card">
+      <div class="top"><span class="emoji">🔐</span><h3>Owner sign-in</h3></div>
+      <p class="muted" id="owner-password-copy" style="font-size:13px;margin-bottom:10px">Loading sign-in settings…</p>
+      <div id="owner-password-local" class="hide">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <input id="owner-password" type="password" autocomplete="new-password" minlength="12" placeholder="Choose an owner password (12+ characters)" style="flex:1;min-width:240px">
+          <input id="owner-password-confirm" type="password" autocomplete="new-password" minlength="12" placeholder="Confirm password" style="flex:1;min-width:220px">
+          <button class="go" onclick="saveOwnerPassword()">Save password</button>
+        </div>
+        <div class="sub" id="owner-password-result" role="status" aria-live="polite" style="margin-top:8px"></div>
+      </div>
+      <div id="owner-password-remote" class="hide">
+        <div class="actions"><button class="btn" onclick="logoutHubBrowser()">Sign out this browser</button></div>
       </div>
     </div>
 
@@ -809,6 +825,27 @@
     <div id="wn-body"></div>
     <p style="color:var(--dim);font-size:11px;margin-top:14px">Full history in <code>CHANGELOG.md</code>.</p>
   </div>
+</div>
+
+<div id="auth-login" class="modal-backdrop hide" role="dialog" aria-modal="true" aria-labelledby="auth-login-title">
+  <form class="modal jform" onsubmit="submitOwnerLogin(event)">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+      <span style="font-size:22px">🔐</span>
+      <div style="flex:1"><h2 id="auth-login-title">Sign in to Studio Hub</h2><span class="sub" id="auth-login-subtitle">Your browser will stay remembered.</span></div>
+    </div>
+    <p class="muted" id="auth-login-copy" style="font-size:13px;margin-bottom:14px"></p>
+    <input id="auth-login-password" type="password" name="password" autocomplete="current-password" placeholder="Owner password" style="width:100%;margin-bottom:8px" required>
+    <div class="sub" id="auth-login-result" role="status" aria-live="polite" style="min-height:18px;margin-bottom:10px"></div>
+    <div class="actions">
+      <button class="go" id="auth-login-submit" type="submit">Sign in</button>
+      <button class="btn" type="button" onclick="toggleRecoveryToken()">Use recovery token</button>
+      <button class="btn" type="button" onclick="finishLogin(false)">Not now</button>
+    </div>
+    <div id="auth-recovery-token" class="hide" style="margin-top:14px">
+      <input id="auth-token-input" type="password" autocomplete="off" placeholder="Hub token" style="width:100%;margin-bottom:8px">
+      <button class="btn" type="button" onclick="submitRecoveryToken()">Continue with token</button>
+    </div>
+  </form>
 </div>
 
 <script>
@@ -1089,12 +1126,114 @@ async function renameMachine(m) {
 
 // ── auth ──────────────────────────────────────────────────────────────────
 let hubToken = localStorage.getItem("hub_token") || "";
+let authInfo = null;
+let loginWaiter = null;
+async function loadAuthInfo() {
+  const response = await fetch("/api/auth/status").catch(() => null);
+  const value = response?.ok ? await response.json().catch(() => null) : null;
+  if (value) authInfo = value;
+  renderOwnerPassword();
+  return authInfo;
+}
+function renderOwnerPassword() {
+  const local = $("#owner-password-local"), remote = $("#owner-password-remote");
+  const copy = $("#owner-password-copy");
+  if (!local || !remote || !copy || !authInfo) return;
+  local.classList.toggle("hide", !authInfo.can_configure_here);
+  remote.classList.toggle("hide", authInfo.can_configure_here);
+  if (authInfo.can_configure_here) {
+    copy.textContent = authInfo.password_configured
+      ? "Replace the owner password. This signs out every remembered browser immediately."
+      : "Set one owner password for remote browser access. The password is stored only as a secure verifier.";
+  } else if (authInfo.session_active) {
+    copy.textContent = `This browser is remembered for up to ${authInfo.remember_days} days. You can sign out here at any time.`;
+  } else if (authInfo.password_configured) {
+    copy.textContent = `Sign in with the owner password. A successful sign-in remembers this browser for ${authInfo.remember_days} days.`;
+  } else {
+    copy.textContent = "An owner password has not been set yet. Open this Hub on its own Mac to create one.";
+  }
+}
+async function saveOwnerPassword() {
+  const password = $("#owner-password").value;
+  const confirmPassword = $("#owner-password-confirm").value;
+  const result = $("#owner-password-result");
+  if (password.length < 12) { result.textContent = "Use at least 12 characters."; return; }
+  if (password !== confirmPassword) { result.textContent = "The two passwords do not match."; return; }
+  result.textContent = "Saving…";
+  const response = await fetch("/api/auth/setup", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password })
+  }).catch(() => null);
+  const body = response ? await response.json().catch(() => ({})) : {};
+  if (!response?.ok) { result.textContent = body.detail || "Could not save the password."; return; }
+  $("#owner-password").value = ""; $("#owner-password-confirm").value = "";
+  result.textContent = body.message || "Password saved.";
+  await loadAuthInfo();
+}
+function showLogin() {
+  const modal = $("#auth-login");
+  const configured = Boolean(authInfo?.password_configured);
+  $("#auth-login-copy").textContent = configured
+    ? `Use your owner password. This browser will stay signed in for ${authInfo.remember_days} days.`
+    : "No owner password is set yet. Open the Remote tab on the Hub Mac to create one, or use the recovery token below.";
+  $("#auth-login-password").classList.toggle("hide", !configured);
+  $("#auth-login-submit").classList.toggle("hide", !configured);
+  $("#auth-login-result").textContent = "";
+  modal.classList.remove("hide");
+  if (configured) setTimeout(() => $("#auth-login-password").focus(), 0);
+}
+function finishLogin(ok) {
+  $("#auth-login").classList.add("hide");
+  $("#auth-login-password").value = "";
+  if (loginWaiter) { const resolve = loginWaiter; loginWaiter = null; resolve(ok); }
+}
+async function requestLogin() {
+  if (!loginWaiter) {
+    const status = await loadAuthInfo();
+    return new Promise(resolve => { loginWaiter = resolve; showLogin(status); });
+  }
+  return new Promise(resolve => {
+    const first = loginWaiter;
+    loginWaiter = ok => { first(ok); resolve(ok); };
+  });
+}
+async function submitOwnerLogin(event) {
+  event.preventDefault();
+  const password = $("#auth-login-password").value;
+  const result = $("#auth-login-result"), button = $("#auth-login-submit");
+  result.textContent = "Signing in…"; button.disabled = true;
+  const response = await fetch("/api/auth/login", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password })
+  }).catch(() => null);
+  const body = response ? await response.json().catch(() => ({})) : {};
+  button.disabled = false;
+  if (!response?.ok) { result.textContent = body.detail || "Could not sign in."; return; }
+  // Stop keeping the raw recovery token in the browser once password sign-in works.
+  hubToken = ""; localStorage.removeItem("hub_token");
+  authInfo = { ...(authInfo || {}), password_configured: true, session_active: true,
+               remember_days: body.remember_days || authInfo?.remember_days || 90 };
+  renderOwnerPassword(); finishLogin(true);
+}
+function toggleRecoveryToken() { $("#auth-recovery-token").classList.toggle("hide"); }
+function submitRecoveryToken() {
+  const value = $("#auth-token-input").value.trim();
+  if (!value) { $("#auth-login-result").textContent = "Enter the recovery token."; return; }
+  hubToken = value; localStorage.setItem("hub_token", value); finishLogin(true);
+}
+async function logoutHubBrowser() {
+  await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
+  authInfo = { ...(authInfo || {}), session_active: false };
+  renderOwnerPassword();
+}
 async function api(path, opts = {}) {
   opts.headers = Object.assign({}, opts.headers, hubToken ? { "X-Hub-Token": hubToken } : {});
   let r = await fetch(path, opts);
   if (r.status === 401) {
-    const entered = prompt("This Hub needs a token for remote access.\nOpen the dashboard on the Hub machine (Remote tab) to see it.");
-    if (entered) { hubToken = entered.trim(); localStorage.setItem("hub_token", hubToken); opts.headers["X-Hub-Token"] = hubToken; r = await fetch(path, opts); }
+    const signedIn = await requestLogin();
+    if (signedIn) {
+      delete opts.headers["X-Hub-Token"];
+      if (hubToken) opts.headers["X-Hub-Token"] = hubToken;
+      r = await fetch(path, opts);
+    }
   }
   return r;
 }
@@ -2951,6 +3090,7 @@ function updateReadyHubs() {
 }
 async function loadAccess() {
   loadFleet();
+  loadAuthInfo();
   const r = await api("/api/hub/access").then(x => x.json()).catch(() => null);
   if (!r) return;
   $("#acc-body").innerHTML = r.addresses.map(a => `<tr>
@@ -3200,7 +3340,7 @@ setInterval(() => {
       bar.appendChild(span); bar.appendChild(btn);
       document.body.insertBefore(bar, document.body.firstChild);
     }
-    fetch("/api/update-status").then(function (r) { return r.ok ? r.json() : null; })
+    api("/api/update-status").then(function (r) { return r.ok ? r.json() : null; })
       .then(function (s) { if (s) build(s); }).catch(function () {});
   })();
   </script>

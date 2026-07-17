@@ -10,6 +10,20 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.44.0] — 2026-07-17
+
+### Added — password sign-in for remote browsers
+
+- Set one owner password locally in **Remote → Owner sign-in**, then sign in
+  normally from any Tailscale device. A successful sign-in remembers that
+  browser for 90 days, so everyday dashboard access no longer needs the raw
+  Hub token.
+- Passwords are salted and scrypt-hashed; the Hub stores only hashes of the
+  opaque remembered-device sessions. Replacing the password signs out every
+  remembered browser immediately. Login attempts are rate-limited.
+- Hub and fleet tokens remain available for API clients, peer Hubs, and
+  recovery, but are no longer the normal browser login flow.
+
 ## [1.43.2] — 2026-07-17
 
 ### Fixed — cache-proof release discovery
