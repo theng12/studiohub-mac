@@ -22,8 +22,11 @@ class FakeMonitor:
              "host": "127.0.0.1", "port": 47001, "machine": "a"},
             {"id": "chat@b", "title": "Chat B", "modality": "chat",
              "host": "127.0.0.1", "port": 47002, "machine": "b"},
+            {"id": "render", "title": "Render Studio KH", "modality": "render",
+             "host": "127.0.0.1", "port": 47874, "machine": "local"},
         ]
-        self.status = {"voice@a": {"status": "up"}, "chat@b": {"status": "up"}}
+        self.status = {"voice@a": {"status": "up"}, "chat@b": {"status": "up"},
+                       "render": {"status": "up"}}
 
 
 def _job(*target_ids: str) -> dict:
@@ -257,7 +260,9 @@ def test_inventory_shows_one_canonical_row_per_repository():
          "host": "127.0.0.1", "port": 47870, "machine": "local"},
     ])
     rows = FleetAutoUpdates(monitor, FakeHubUpdater()).targets()
-    assert [row["id"] for row in rows] == ["hub@local", "voice", "chat@b"]
+    assert [row["id"] for row in rows] == ["hub@local", "voice", "chat@b", "render"]
+    render = next(row for row in rows if row["id"] == "render")
+    assert render["settings_url"].endswith("/#automatic-updates")
 
 
 def test_update_idle_api_starts_from_the_async_server_loop(authed, monkeypatch):

@@ -10,6 +10,17 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.46.1] — 2026-07-19
+
+### Fixed — Render Studio automatic-update parity
+
+- Added the canonical local Render Studio row to the Hub's automatic-update
+  inventory. Render now participates in per-app Off/Notify/Auto controls,
+  **Check all**, individual updates, and staggered **Update idle apps** runs.
+- The Render settings shortcut opens its own automatic-update controller, while
+  rolling operations continue to authenticate, reconnect after restart, and
+  require published-version health before advancing.
+
 ## [1.46.0] — 2026-07-19
 
 ### Added — fleet-wide shared voice rename and removal

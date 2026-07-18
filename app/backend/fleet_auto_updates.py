@@ -15,7 +15,8 @@ from .registry import base_url
 
 
 TERMINAL_ITEM_STATES = {"complete", "current", "scheduled", "failed"}
-APP_ORDER = {"hub": 0, "voice": 1, "chat": 2, "image": 3, "music": 4, "video": 5}
+APP_ORDER = {"hub": 0, "voice": 1, "chat": 2, "image": 3, "music": 4,
+             "video": 5, "render": 6}
 
 
 def _version_key(value: object) -> tuple[int, int, int] | None:
@@ -102,7 +103,7 @@ class FleetAutoUpdates:
             "settings_url": "/#updates",
         }]
         registry = list(self.monitor.registry)
-        for modality in ("voice", "chat", "image", "music", "video"):
+        for modality in ("voice", "chat", "image", "music", "video", "render"):
             candidates = [studio for studio in registry
                           if str(studio.get("modality") or "") == modality]
             if not candidates:
@@ -117,7 +118,9 @@ class FleetAutoUpdates:
                 str(row.get("id") or ""),
             ))
             root = base_url(studio)
-            suffix = "" if modality == "video" else "/#/settings"
+            suffix = "" if modality == "video" else (
+                "/#automatic-updates" if modality == "render" else "/#/settings"
+            )
             targets.append({
                 "id": studio["id"], "kind": "studio", "modality": modality,
                 "title": studio.get("title", studio["id"]),

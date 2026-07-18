@@ -87,6 +87,8 @@ as the fleet target. You can change every app independently, **Check all**,
 update one app, or **Update idle apps**. Fleet updates run one at a time,
 reconnect through the expected restart connection drop, and require the updated
 app to reach the published version and answer healthy before the next one starts.
+Render Studio participates in the same inventory and controls, including a
+shortcut to its local automatic-update card.
 Busy apps receive a durable update-after-current-work request on their own Mac;
 rolling progress survives a Hub restart, transient connections retry with visible
 attempt counts, and a failed subset can be retried centrally without selecting it
