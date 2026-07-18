@@ -10,6 +10,14 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.47.2] — 2026-07-19
+
+### Fixed — runtime preferences cannot block future updates
+
+- Alert delivery preferences and job-storage cleanup settings are now ignored
+  as per-machine runtime data. Saving either setting no longer makes the Hub
+  repository appear dirty or blocks its safe updater.
+
 ## [1.47.1] — 2026-07-19
 
 ### Fixed — updates no longer look busy for 20 minutes when nothing restarted

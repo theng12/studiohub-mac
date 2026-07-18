@@ -868,6 +868,9 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.47.2", date: "2026-07-19", items: [
+    "Alert-delivery and job-storage preferences are now treated as per-machine runtime data, so saving them cannot block future Hub updates.",
+  ] },
   { v: "1.47.1", date: "2026-07-19", items: [
     "Studio and agent-Hub updates now stop with a clear updater status/log message when no restart begins within three minutes, while retaining the full recovery window after a real restart.",
     "Remote update conflicts now show the peer Hub's exact explanation instead of a generic HTTP error.",

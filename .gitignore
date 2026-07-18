@@ -22,6 +22,7 @@ ENVIRONMENT
 .hub_token
 .hub_password.json
 .hub_sessions.json
+.alerts.json
 hub.db
 hub_state.json
 .fleet_token
@@ -31,6 +32,7 @@ uploads/
 render_uploads/
 transcription_jobs/
 transcription_settings.json
+job_storage_settings.json
 shared_voices/
 service/
 logs/service/
