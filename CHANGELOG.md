@@ -10,6 +10,32 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.45.0] — 2026-07-18
+
+### Added — durable, self-healing fleet updates
+
+- Automatic rolling-update jobs and their progress now survive a Studio Hub
+  restart. On startup, the Hub safely reconnects to or resumes unfinished app
+  updates instead of losing the operation from the dashboard.
+- Busy sibling Studios now receive a durable update-after-current-work request
+  on their own scheduler. The dashboard distinguishes that safe queued state
+  from a failure and can retry only failed apps with one click.
+- Transient Studio connection failures use bounded retries and keep a visible
+  reconnect count. Slow agent Hubs receive four connection attempts before the
+  remote update reports them unreachable.
+- Remote Studio and agent-Hub update history is persisted. If the primary Hub
+  itself restarts mid-operation, the interrupted row remains visible and
+  actionable instead of disappearing or staying falsely active.
+
+### Fixed — Hub runtime data blocked its own updater
+
+- `.hub_password.json`, `.hub_sessions.json`, and `render_uploads/` are now
+  correctly classified as private runtime data. They no longer make every
+  automatic update fail the clean-worktree safety check, while real source
+  edits remain protected.
+- A genuine dirty-worktree refusal now lists the exact blocking paths in the
+  update result so it can be resolved remotely without guessing.
+
 ## [1.44.6] — 2026-07-18
 
 ### Fixed — legacy WAV metadata backfill

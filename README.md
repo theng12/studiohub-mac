@@ -79,9 +79,15 @@ as the fleet target. You can change every app independently, **Check all**,
 update one app, or **Update idle apps**. Fleet updates run one at a time,
 reconnect through the expected restart connection drop, and require the updated
 app to reach the published version and answer healthy before the next one starts.
+Busy apps receive a durable update-after-current-work request on their own Mac;
+rolling progress survives a Hub restart, transient connections retry with visible
+attempt counts, and a failed subset can be retried centrally without selecting it
+again.
 Remote uses the same simple version controls for Studios and agent Hubs: rescan,
 compare running with latest, update everything ready, or update one row. Studio
-app tabs focus the action on one family; **All apps** targets the fleet.
+app tabs focus the action on one family; **All apps** targets the fleet. Slow
+agent Hubs get four bounded connection attempts before they are reported offline,
+and remote operation history remains visible across a primary-Hub restart.
 
 Every app independently enforces its expected GitHub origin and `main`, a clean
 fast-forward, free disk, dependency/import checks, healthy restart, and exact
@@ -117,6 +123,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/auto-updates` · `POST /api/hub/auto-updates/check-all` | Fleet automatic-update inventory / ask every app to check |
 | `POST /api/hub/auto-updates/{target}/mode` | Change one app's Off, Notify, or Auto mode while preserving its schedule |
 | `POST /api/hub/auto-updates/update-idle` | Start a staggered, health-gated update for selected idle sibling Studios |
+| `POST /api/hub/auto-updates/jobs/{id}/retry` | Retry only the failed apps from a saved automatic fleet update |
 | `GET /api/hub/studios` | Registry + live status per studio |
 | `GET /api/hub/health` | Aggregate: totals + per-studio statuses |
 | `GET /api/hub/catalog` | Raw per-studio catalog rows (annotated `hub_cached`, `hub_machine`). Query: `q`, `modality`, `downloaded`, `cloud`, `force` |

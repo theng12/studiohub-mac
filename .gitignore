@@ -20,12 +20,15 @@ GEMINI.md
 QWEN.md
 ENVIRONMENT
 .hub_token
+.hub_password.json
+.hub_sessions.json
 hub.db
 hub_state.json
 .fleet_token
 machine_labels.json
 machine_flags.json
 uploads/
+render_uploads/
 transcription_jobs/
 transcription_settings.json
 shared_voices/

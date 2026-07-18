@@ -59,13 +59,15 @@ def _save_state() -> None:
     try:
         _STATE_FILE.write_text(json.dumps(
             {"studio_versions": _studio_versions,
-             "hub_versions": _hub_versions}, indent=2) + "\n")
+             "hub_versions": _hub_versions,
+             "updates": _updates,
+             "hub_updates": _hub_updates}, indent=2) + "\n")
     except OSError:
         pass
 
 
 def _load_state() -> None:
-    global _preflight, _studio_versions, _hub_versions
+    global _preflight, _studio_versions, _hub_versions, _updates, _hub_updates
     try:
         d = json.loads(_STATE_FILE.read_text())
         if isinstance(d.get("studio_versions"), dict):
@@ -86,6 +88,23 @@ def _load_state() -> None:
                 }
         if isinstance(d.get("hub_versions"), dict):
             _hub_versions = d["hub_versions"]
+        if isinstance(d.get("updates"), dict):
+            _updates = d["updates"]
+        if isinstance(d.get("hub_updates"), dict):
+            _hub_updates = d["hub_updates"]
+        # Preserve interrupted operations for diagnosis instead of letting them
+        # vanish or remain falsely "running" forever after a Hub restart.
+        for job in [*_updates.values(), *_hub_updates.values()]:
+            if job.get("status") not in {"queued", "running"}:
+                continue
+            job.update(status="failed", finished_at=time.time(),
+                       restart_interrupted=True)
+            for item in job.get("items", []):
+                if item.get("status") not in {"complete", "current", "failed"}:
+                    item.update(
+                        status="failed", finished_at=time.time(),
+                        detail="Primary Hub restarted during this operation; retry remotely from this Hub",
+                    )
     except (OSError, ValueError):
         pass
 
@@ -610,18 +629,21 @@ def start_updates(monitor, studio_ids: list[str]) -> dict:
     job = {"id": job_id, "status": "queued", "created_at": time.time(),
            "finished_at": None, "items": [{"studio": sid, "status": "queued", "detail": "waiting"} for sid in ids]}
     _updates[job_id] = job
+    _save_state()
     asyncio.create_task(_run_updates(monitor, job))
     return job
 
 
 async def _run_updates(monitor, job: dict):
     job["status"] = "running"
+    _save_state()
     for item in job["items"]:
         studio = next(s for s in monitor.registry if s["id"] == item["studio"])
         try:
             await _update_one(monitor, studio, item)
         except Exception as e:
             item.update(status="failed", detail=str(e)[:240], finished_at=time.time())
+        _save_state()
     final_status = "failed" if any(i["status"] == "failed" for i in job["items"]) else "complete"
     # Refresh the source-of-truth rows before exposing a terminal job. This
     # guarantees the next UI poll replaces action history ("Updated") with the
@@ -632,6 +654,7 @@ async def _run_updates(monitor, job: dict):
         job["refresh_warning"] = f"post-update version scan failed: {str(exc)[:160]}"
     job["status"] = final_status
     job["finished_at"] = time.time()
+    _save_state()
 
 
 def _active_studio_leases() -> set[str]:
@@ -709,11 +732,13 @@ async def _update_remote(studio: dict, item: dict):
     url = f"http://{studio['host']}:{studio.get('hub_port', peers.DEFAULT_HUB_PORT)}"
     headers = {"X-Hub-Token": peers.fleet_token() or ""}
     local_id = studio["modality"]
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=30.0) as client:
         r = await client.post(f"{url}/api/hub/maintenance/updates", headers=headers,
                               json={"studio_ids": [local_id]})
         r.raise_for_status()
         remote_id = r.json()["id"]
+        item["remote_job_id"] = remote_id
+        _save_state()
         deadline = time.monotonic() + UPDATE_TIMEOUT
         while time.monotonic() < deadline:
             await asyncio.sleep(4)
@@ -733,6 +758,7 @@ async def _update_remote(studio: dict, item: dict):
             for key in ("from_version", "expected_version", "to_version"):
                 if key in remote_item:
                     item[key] = remote_item[key]
+            _save_state()
             if data["status"] in {"complete", "failed"}:
                 if data["status"] == "failed":
                     raise RuntimeError(remote_item["detail"])
@@ -792,16 +818,19 @@ def start_hub_updates(monitor, latest: str | None, machines: list[str] | None = 
                       "detail": "waiting", "from_version": None, "to_version": None}
                      for m, h in targets]}
     _hub_updates[job["id"]] = job
+    _save_state()
     asyncio.create_task(_run_hub_updates(job))
     return job
 
 
 async def _run_hub_updates(job: dict):
     job["status"] = "running"
+    _save_state()
     # peers are independent Macs → update them concurrently; each self-restarts
     await asyncio.gather(*(_update_hub_one(item, job.get("latest")) for item in job["items"]))
     job["status"] = "failed" if any(i["status"] == "failed" for i in job["items"]) else "complete"
     job["finished_at"] = time.time()
+    _save_state()
 
 
 async def _update_hub_one(item: dict, latest: str | None):
@@ -809,20 +838,33 @@ async def _update_hub_one(item: dict, latest: str | None):
     url = f"http://{host}:{peers.DEFAULT_HUB_PORT}"
     headers = {"X-Hub-Token": peers.fleet_token() or ""}
     item.update(status="checking", detail="checking the Hub", started_at=time.time())
+    _save_state()
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            try:
-                v = await client.get(f"{url}/api/version")
-                cur = str(v.json().get("app_version") or "")
-            except (httpx.HTTPError, ValueError):
-                raise RuntimeError("Hub unreachable on :47873 — run the Hub there, "
-                                   "open the firewall, and set the same fleet token")
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=8.0)) as client:
+            cur = ""
+            for attempt, delay in enumerate((0, 3, 10, 20), start=1):
+                if delay:
+                    item.update(status="checking",
+                                detail=f"Hub is slow or unreachable; retrying ({attempt}/4)")
+                    _save_state()
+                    await asyncio.sleep(delay)
+                try:
+                    v = await client.get(f"{url}/api/version")
+                    v.raise_for_status()
+                    cur = str(v.json().get("app_version") or "")
+                    break
+                except (httpx.HTTPError, ValueError):
+                    continue
+            if not cur:
+                raise RuntimeError("Hub unreachable after 4 attempts on :47873 — it may be asleep, "
+                                   "offline, blocked by the firewall, or not running")
             item["from_version"] = cur
             if latest and cur == latest:
                 item.update(status="current", to_version=cur,
                             detail=f"already on v{cur}", finished_at=time.time())
                 return
             item.update(status="updating", detail="pulling latest + restarting")
+            _save_state()
             r = await client.post(f"{url}/api/hub/maintenance/self-update", headers=headers)
             if r.status_code == 401:
                 raise RuntimeError("remote Hub rejected the fleet token")
@@ -836,9 +878,11 @@ async def _update_hub_one(item: dict, latest: str | None):
             r.raise_for_status()
     except Exception as e:
         item.update(status="failed", detail=str(e)[:240], finished_at=time.time())
+        _save_state()
         return
     # the peer now runs update.js and restarts — wait for it to come back
     item.update(status="restarting", detail="waiting for the Hub to come back online")
+    _save_state()
     deadline = time.monotonic() + UPDATE_TIMEOUT
     saw_down = False
     frm = item.get("from_version")
@@ -873,6 +917,7 @@ async def _update_hub_one(item: dict, latest: str | None):
                 detail=f"still on v{frm or '?'} — the Hub didn't come back on a new "
                        "version before the timeout (the update may have failed on that Mac)",
                 finished_at=time.time())
+    _save_state()
 
 
 def hub_update_snapshot(job_id: str | None = None):

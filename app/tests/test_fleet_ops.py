@@ -1,3 +1,6 @@
+import time
+
+import httpx
 import pytest
 
 from backend import broker, fleet_ops
@@ -395,6 +398,60 @@ async def test_start_hub_updates_builds_job(monkeypatch, monitor):
     with pytest.raises(ValueError, match="unknown"):
         fleet_ops.start_hub_updates(monitor, "9.9.9", ["does-not-exist"])
     fleet_ops._hub_updates.clear()
+
+
+@pytest.mark.asyncio
+async def test_slow_hub_version_check_retries_before_failing(monkeypatch, reset):
+    item = {"machine": "mac-slow", "host": "10.0.0.9", "status": "queued",
+            "detail": "waiting", "from_version": None, "to_version": None}
+
+    class Response:
+        status_code = 200
+        def json(self): return {"app_version": "2.0.0"}
+        def raise_for_status(self): return None
+
+    class Client:
+        get_calls = 0
+        post_calls = 0
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, *args, **kwargs):
+            self.get_calls += 1
+            if self.get_calls < 3:
+                raise httpx.ReadTimeout("slow Mac")
+            return Response()
+        async def post(self, *args, **kwargs):
+            self.post_calls += 1
+            return Response()
+
+    client = Client()
+    monkeypatch.setattr(fleet_ops.httpx, "AsyncClient", lambda **kwargs: client)
+
+    async def no_sleep(seconds): return None
+    monkeypatch.setattr(fleet_ops.asyncio, "sleep", no_sleep)
+
+    await fleet_ops._update_hub_one(item, "2.0.0")
+    assert client.get_calls == 3
+    assert client.post_calls == 0
+    assert item["status"] == "current"
+
+
+def test_interrupted_remote_jobs_survive_restart_as_retryable_history(monkeypatch, tmp_path, reset):
+    state_file = tmp_path / "fleet_versions.json"
+    monkeypatch.setattr(fleet_ops, "_STATE_FILE", state_file)
+    fleet_ops._hub_updates["job-1"] = {
+        "id": "job-1", "status": "running", "created_at": time.time(),
+        "items": [{"machine": "mac-a", "status": "restarting", "detail": "waiting"}],
+    }
+    fleet_ops._save_state()
+    fleet_ops._hub_updates.clear()
+
+    fleet_ops._load_state()
+
+    restored = fleet_ops._hub_updates["job-1"]
+    assert restored["status"] == "failed"
+    assert restored["restart_interrupted"] is True
+    assert "retry remotely" in restored["items"][0]["detail"]
 
 
 def test_self_update_endpoint_requires_auth(client):

@@ -119,13 +119,19 @@ def _automatic_update_blockers() -> list[str]:
 
 
 auto_updater = create_updater(readiness=_automatic_update_blockers)
-fleet_auto_updates = FleetAutoUpdates(monitor, auto_updater)
+fleet_auto_updates = FleetAutoUpdates(
+    monitor, auto_updater,
+    state_path=DATA_DIR / "auto_update" / "fleet_jobs.json",
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     monitor.start()
     fleet_ops.start_published_version_monitor()
+    resumed_updates = fleet_auto_updates.resume_pending()
+    if resumed_updates:
+        print(f"[hub] resumed {resumed_updates} interrupted fleet update job(s)")
     restored = broker.restore_batches()
     if restored:
         print(f"[hub] resumed {restored} unfinished batch(es) from hub.db")
@@ -364,6 +370,14 @@ def fleet_automatic_update_job(job_id: str):
     if job is None:
         raise HTTPException(status_code=404, detail="automatic fleet update not found")
     return job
+
+
+@app.post("/api/hub/auto-updates/jobs/{job_id}/retry")
+def retry_fleet_automatic_update_job(job_id: str):
+    try:
+        return fleet_auto_updates.retry_failed(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 # ── canonical hub API ──────────────────────────────────────────────────────

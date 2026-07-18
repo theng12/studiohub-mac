@@ -2625,7 +2625,7 @@ function autoState(value) {
   const states = {
     idle: ["", "Idle"], checking: ["warn", "Checking"], available: ["warn", "Update available"], update_available: ["warn", "Update available"],
     up_to_date: ["ok", "Up to date"], updating: ["gen", "Updating"], restarting: ["gen", "Restarting"],
-    deferred: ["warn", "Deferred"], failed: ["err", "Needs attention"], succeeded: ["ok", "Updated"],
+    deferred: ["warn", "Deferred"], scheduled: ["warn", "Queued until idle"], failed: ["err", "Needs attention"], succeeded: ["ok", "Updated"],
     unavailable: ["no", "Unavailable"]
   };
   return states[value] || ["", String(value || "Idle")];
@@ -2685,20 +2685,20 @@ function renderFleetAutoProgress(job, apps) {
     el.classList.add("hide");
     return;
   }
-  const terminal = new Set(["complete", "current", "deferred", "failed"]);
+  const terminal = new Set(["complete", "current", "scheduled", "failed"]);
   const done = job.items.filter(item => terminal.has(item.status)).length;
   const failed = job.items.filter(item => item.status === "failed").length;
-  const deferred = job.items.filter(item => item.status === "deferred").length;
+  const scheduled = job.items.filter(item => item.status === "scheduled").length;
   const busy = ["queued", "running"].includes(job.status);
   const active = job.items.find(item => !terminal.has(item.status)) || job.items[job.items.length - 1];
   const row = (apps || []).find(app => app.id === active.target);
   const name = row ? `${row.title} on ${row.machine}` : active.target;
   let title = busy ? "Updating idle apps one at a time" : failed ? "Fleet update needs attention" : "Fleet update finished";
-  let detail = busy ? `${name} · ${active.detail || active.status}` : `${done - failed - deferred} updated or current`;
-  if (deferred) detail += ` · ${deferred} deferred until idle`;
+  let detail = busy ? `${name} · ${active.detail || active.status}` : `${done - failed - scheduled} updated or current`;
+  if (scheduled) detail += ` · ${scheduled} safely queued on the app until idle`;
   if (failed) detail += ` · ${failed} failed`;
   el.className = `update-progress${busy ? "" : failed ? " error" : " success"}`;
-  el.innerHTML = `<div class="update-progress-head"><span class="update-progress-title">${busy ? '<span class="auto-update-spinner">↻</span>' : failed ? "! " : "✓ "}${esc(title)}</span><span class="update-progress-count">${done}/${job.items.length} finished</span></div>
+  el.innerHTML = `<div class="update-progress-head"><span class="update-progress-title">${busy ? '<span class="auto-update-spinner">↻</span>' : failed ? "! " : "✓ "}${esc(title)}</span><span class="update-progress-count">${done}/${job.items.length} finished${failed && !busy ? ` · <button class="btn compact" onclick="retryFleetAutoJob('${jsq(job.id)}')">Retry failed</button>` : ""}</span></div>
     <div class="bar"><i style="width:${Math.round(done / job.items.length * 100)}%"></i></div><div class="update-progress-detail">${esc(detail)}</div>`;
 }
 
@@ -2846,6 +2846,19 @@ async function startFleetAutoUpdates(targetIds) {
   } catch (error) {
     $("#fau-summary").textContent = `Could not start updates: ${error.message}`;
     $("#fau-update").disabled = false;
+  }
+}
+
+async function retryFleetAutoJob(jobId) {
+  $("#fau-summary").textContent = "Retrying the failed apps from this Hub…";
+  try {
+    const job = await autoJson(`/api/hub/auto-updates/jobs/${encodeURIComponent(jobId)}/retry`, {
+      method: "POST"
+    });
+    renderFleetAutoProgress(job, fleetAutoData && fleetAutoData.apps);
+    scheduleAutoUpdatePoll(700);
+  } catch (error) {
+    $("#fau-summary").textContent = `Could not retry: ${error.message}`;
   }
 }
 

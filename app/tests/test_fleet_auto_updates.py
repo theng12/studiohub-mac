@@ -117,7 +117,7 @@ def test_connection_drop_reconnects_before_marking_success(monkeypatch):
     assert "healthy on v2.0.0" in item["detail"]
 
 
-def test_active_target_is_deferred_without_starting_update(monkeypatch):
+def test_active_target_is_durably_scheduled_until_idle(monkeypatch):
     coordinator = FleetAutoUpdates(FakeMonitor(), FakeHubUpdater(), poll_seconds=0)
     updates = []
 
@@ -129,16 +129,59 @@ def test_active_target_is_deferred_without_starting_update(monkeypatch):
         if path.endswith("/readiness"):
             return {"idle": False, "reasons": ["generation is running"]}
         if path.endswith("/update"):
-            updates.append(target["id"])
+            updates.append((target["id"], payload))
+            return {"state": "deferred", "pending_manual": True}
         raise AssertionError((method, path))
 
     monkeypatch.setattr(coordinator, "_request", request)
     item = _job("voice@a")["items"][0]
     asyncio.run(coordinator._update_one(coordinator._target("voice@a"), item))
 
-    assert item["status"] == "deferred"
+    assert item["status"] == "scheduled"
     assert "generation" in item["detail"]
-    assert updates == []
+    assert updates == [("voice@a", {"after_current": True})]
+
+
+@pytest.mark.asyncio
+async def test_interrupted_job_is_persisted_and_resumed(monkeypatch, tmp_path):
+    state_path = tmp_path / "fleet-jobs.json"
+    first = FleetAutoUpdates(FakeMonitor(), FakeHubUpdater(), state_path=state_path)
+    job = _job("voice@a")
+    job["status"] = "running"
+    job["items"][0].update(status="updating", detail="restarting")
+    first._jobs[job["id"]] = job
+    first._persist()
+
+    restored = FleetAutoUpdates(FakeMonitor(), FakeHubUpdater(), state_path=state_path)
+    completed = asyncio.Event()
+
+    async def finish(resumed_job, known):
+        assert resumed_job["items"][0]["status"] == "queued"
+        assert "resuming" in resumed_job["items"][0]["detail"]
+        resumed_job["status"] = "complete"
+        completed.set()
+
+    monkeypatch.setattr(restored, "_run_updates", finish)
+    assert restored.resume_pending() == 1
+    await asyncio.wait_for(completed.wait(), timeout=1)
+
+
+def test_failed_apps_can_be_retried_as_a_new_job(monkeypatch):
+    coordinator = FleetAutoUpdates(FakeMonitor(), FakeHubUpdater())
+    old = _job("voice@a", "chat@b")
+    old["status"] = "failed"
+    old["items"][0]["status"] = "failed"
+    old["items"][1]["status"] = "complete"
+    coordinator._jobs[old["id"]] = old
+    started = {}
+
+    def start(targets):
+        started["targets"] = targets
+        return {"id": "retry"}
+
+    monkeypatch.setattr(coordinator, "start_idle_updates", start)
+    assert coordinator.retry_failed(old["id"]) == {"id": "retry"}
+    assert started["targets"] == ["voice@a"]
 
 
 def test_per_app_mode_preserves_its_schedule(monkeypatch):
