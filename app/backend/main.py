@@ -800,7 +800,12 @@ async def hub_proxy_job_artifact(batch_id: str, item_index: int):
         b["modality"], item.get("media_type"), response.headers.get("content-type"))
     # Legacy completed voice jobs predate terminal metadata. Read and validate
     # their audio exactly once, persist it, then serve the same verified bytes.
-    if b["modality"] == "voice" and media_type == "application/octet-stream":
+    needs_voice_metadata = (
+        b["modality"] == "voice"
+        and not item.get("audio_duration_ms")
+        and media_type in {"audio/wav", "application/octet-stream"}
+    )
+    if needs_voice_metadata:
         try:
             content = await response.aread()
             metadata = artifact_metadata.wav_metadata(content)

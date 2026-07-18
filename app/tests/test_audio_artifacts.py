@@ -168,6 +168,26 @@ def test_proxy_uses_cached_wav_type_and_public_result_hides_worker_path(authed, 
     assert "artifact_path" not in result and "worker_artifact_url" not in result
 
 
+def test_proxy_backfills_legacy_wav_metadata_with_valid_upstream_type(authed, monkeypatch):
+    payload = wav_fixture(duration_s=1)
+    submitted = broker.submit_batch({"modality": "voice", "model": "mlx/kokoro",
+                                     "items": [{"text": "legacy"}]})
+    batch = broker.batches[submitted["batch_id"]]
+    batch["items"][0].update(state="done", studio="voice", artifact_url="/worker/audio",
+                              runtime_s=0.4)
+
+    async def open_fixture(_studio, _url):
+        return _StreamClient(), _StreamResponse(payload, "audio/wav")
+
+    monkeypatch.setattr(main, "_open_worker_artifact", open_fixture)
+    artifact = authed.get(f"/api/hub/jobs/{batch['id']}/items/0/artifact")
+    result = authed.get(f"/api/hub/jobs/{batch['id']}").json()["items"][0]["terminal_result"]
+    assert artifact.headers["content-type"] == "audio/wav"
+    assert result["bytes"] == len(payload)
+    assert result["audio_duration_ms"] == 1_000
+    assert result["sha256"] == hashlib.sha256(payload).hexdigest()
+
+
 def test_proxy_rejects_missing_or_nonterminal_artifacts(authed):
     submitted = broker.submit_batch({"modality": "voice", "model": "mlx/kokoro",
                                      "items": [{"text": "waiting"}]})

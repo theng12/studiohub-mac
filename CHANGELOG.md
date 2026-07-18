@@ -10,6 +10,15 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.44.6] — 2026-07-18
+
+### Fixed — legacy WAV metadata backfill
+
+- Older completed voice jobs now backfill and persist their validated WAV
+  checksum, byte size, duration, sample rate, and channel metadata on the first
+  artifact read even when the worker already returned a valid `audio/wav`
+  header. Repeated reads reuse the cached facts.
+
 ## [1.44.5] — 2026-07-18
 
 ### Fixed — validated voice artifact results
