@@ -23,6 +23,8 @@ CATALOG_TIMEOUT_S = 10.0
 CATALOG_TTL_S = 60.0
 PROVIDER_TIMEOUT_S = 3.0
 PROVIDER_TTL_S = 30.0
+HEALTH_FAILURES_TO_DOWN = 3
+HEALTH_SUCCESSES_TO_RECOVER = 2
 
 
 def is_cached(model: dict) -> bool:
@@ -143,6 +145,8 @@ class StudioMonitor:
         # metrics sample + watchdog revival pass (late import: no cycle)
         from . import metrics, peers
         metrics.on_poll(self.registry, self.status)
+        from .resources import check_proxy_health
+        check_proxy_health()
         # refresh peer-Hub resources in the background (TTL-guarded + in-flight
         # guarded inside) so a slow/offline fleet never stalls the health poll.
         asyncio.create_task(peers.refresh(self.registry, self._client))
@@ -182,32 +186,55 @@ class StudioMonitor:
             latency_ms = round((time.monotonic() - started) * 1000)
             health = r.json()
             new_status = "up" if health.get("ok") else "degraded"
+            previous = self.status.get(sid, {})
+            successes = int(previous.get("consecutive_successes") or 0) + 1
+            # A worker that was declared down must answer twice before it
+            # rejoins the scheduler. This prevents one lucky probe during a
+            # restart/update from immediately receiving customer work.
+            recovering = (prev_status == "down" and new_status == "up"
+                          and successes < HEALTH_SUCCESSES_TO_RECOVER)
+            effective_status = "down" if recovering else new_status
             self.status[sid] = {
-                "status": new_status,
+                "status": effective_status,
                 "latency_ms": latency_ms,
                 "app_version": health.get("app_version"),
                 "health": health,  # verbatim — includes chat's loaded_model etc.
                 "last_seen": now,
                 "last_checked": now,
+                "consecutive_failures": 0,
+                "consecutive_successes": successes,
+                "health_recovering": recovering,
+                "health_probe_degraded": False,
             }
-            self._note_transition(studio, prev_status, new_status)
-        except Exception:
+            self._note_transition(studio, prev_status, effective_status)
+        except Exception as exc:
             prev = self.status.get(sid, {})
             if prev_status == "up" and self._has_active_lease(sid):
                 self.status[sid] = {
                     **prev, "latency_ms": None, "last_checked": now,
-                    "health_busy": True,
+                    "health_busy": True, "health_probe_degraded": False,
                 }
                 return
+            failures = int(prev.get("consecutive_failures") or 0) + 1
+            down = failures >= HEALTH_FAILURES_TO_DOWN
+            effective_status = "down" if down else prev_status
             self.status[sid] = {
-                "status": "down",
+                **prev,
+                "status": effective_status,
                 "latency_ms": None,
                 "app_version": prev.get("app_version"),
-                "health": None,
                 "last_seen": prev.get("last_seen"),
                 "last_checked": now,
+                "consecutive_failures": failures,
+                "consecutive_successes": 0,
+                "health_busy": False,
+                "health_recovering": False,
+                "health_probe_degraded": not down,
+                "probe_error": (str(exc).strip() or type(exc).__name__)[:180],
             }
-            self._note_transition(studio, prev_status, "down")
+            if down:
+                self.status[sid]["health"] = None
+            self._note_transition(studio, prev_status, effective_status)
 
     # ── catalog ──────────────────────────────────────────────────────────
     async def get_catalog(self, studio: dict, force: bool = False) -> dict | None:

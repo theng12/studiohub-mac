@@ -15,6 +15,10 @@ import subprocess
 import psutil
 
 _proc_cache: dict[int, psutil.Process] = {}
+_proxy_alert_state = {"degraded": False}
+
+CADDY_RSS_WARN_GB = 1.0
+CADDY_FD_WARN = 1000
 
 
 def host_stats() -> dict:
@@ -97,3 +101,60 @@ def studio_process_stats(port: int) -> dict | None:
         "cpu_percent": round(cpu, 1),
         "processes": counted,
     }
+
+
+def proxy_stats() -> dict:
+    """Inspect Pinokio's Caddy reverse proxy without requiring root.
+
+    Normal Caddy usage is small. A very large descriptor count or RSS is a
+    strong signal of a failed configuration reload loop (for example another
+    service owning HTTPS port 443), which should be visible before it starves
+    generation workers of memory.
+    """
+    rows = []
+    for candidate in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            name = (candidate.info.get("name") or "").lower()
+            cmd = candidate.info.get("cmdline") or []
+            executable = (cmd[0].rsplit("/", 1)[-1].lower() if cmd else "")
+            if name != "caddy" and executable != "caddy":
+                continue
+            process = _proc(candidate.pid) or candidate
+            rows.append({
+                "pid": candidate.pid,
+                "rss": process.memory_info().rss,
+                "cpu": process.cpu_percent(interval=None),
+                "fds": process.num_fds() if hasattr(process, "num_fds") else None,
+            })
+        except (psutil.Error, OSError):
+            continue
+    rss = sum(row["rss"] for row in rows)
+    fds = sum(row["fds"] or 0 for row in rows)
+    degraded = bool(rows) and (rss / 1e9 >= CADDY_RSS_WARN_GB or fds >= CADDY_FD_WARN)
+    return {
+        "status": "degraded" if degraded else ("healthy" if rows else "not_running"),
+        "processes": len(rows),
+        "pids": [row["pid"] for row in rows],
+        "rss_gb": round(rss / 1e9, 2),
+        "cpu_percent": round(sum(row["cpu"] for row in rows), 1),
+        "file_descriptors": fds if rows else None,
+    }
+
+
+def check_proxy_health() -> dict:
+    """Emit one alert per Caddy degradation/recovery edge."""
+    stats = proxy_stats()
+    degraded = stats["status"] == "degraded"
+    if degraded and not _proxy_alert_state["degraded"]:
+        from . import alerts
+        alerts.emit(
+            "proxy_degraded",
+            "Pinokio Caddy is consuming abnormal resources; check for a port 443 conflict",
+            stats,
+        )
+        _proxy_alert_state["degraded"] = True
+    elif stats["status"] == "healthy" and _proxy_alert_state["degraded"]:
+        from . import alerts
+        alerts.emit("proxy_recovered", "Pinokio Caddy resource use returned to normal", stats)
+        _proxy_alert_state["degraded"] = False
+    return stats

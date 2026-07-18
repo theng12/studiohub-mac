@@ -49,6 +49,7 @@ def _reset_state():
     broker._busy.clear()
     broker._maintenance.clear()
     broker._external_machine_leases.clear()
+    broker._machine_protection.clear()
     broker._reserved["gb"] = 0.0
     transcription_jobs.reset_for_tests()
     chat_jobs.reset_for_tests()

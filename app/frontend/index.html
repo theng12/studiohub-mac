@@ -868,6 +868,11 @@ let HUB_VERSION = null;
 
 // ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.47.0", date: "2026-07-19", items: [
+    "The fleet memory governor now checks connected remote Macs before dispatch. MemoryGuard refusals wait and rebalance without consuming a generation attempt.",
+    "Connection failures get a bounded self-healing window with progressive backoff; repeatedly failing Macs pause briefly and successful work automatically returns them to the pool.",
+    "Health status now resists one-off network flaps, and Resources shows Caddy memory/file-descriptor diagnostics with abnormal-growth alerts.",
+  ] },
   { v: "1.44.3", date: "2026-07-17", items: [
     "Jobs now show a live <b>Processing for</b> timer (or queue wait), the time since the last real activity, and a clear advisory warning when a running worker appears stalled.",
     "The timing view is consistent across image, voice, render, transcription, and chat jobs; it never cancels a job automatically.",
@@ -1839,11 +1844,13 @@ $("#res-sort").onchange = e => { resSort = e.target.value; localStorage.setItem(
 function renderResources(sum) {
   if (!sum) return;
   const h = sum.resources.host;
+  const proxy = sum.resources.proxy;
   $("#host-stats").innerHTML = `
     <div class="stat"><b>${h.used_gb} / ${h.total_gb} GB</b><span>memory used</span></div>
     <div class="stat"><b>${h.available_gb} GB</b><span>available</span></div>
     <div class="stat"><b>${h.cpu_percent}%</b><span>CPU (${h.cpu_count} cores)</span></div>
-    <div class="stat"><b>${h.load_avg ? h.load_avg.join(" · ") : "—"}</b><span>load 1/5/15m</span></div>`;
+    <div class="stat"><b>${h.load_avg ? h.load_avg.join(" · ") : "—"}</b><span>load 1/5/15m</span></div>
+    <div class="stat"><b>${proxy ? `${proxy.rss_gb} GB · ${proxy.file_descriptors ?? "—"} FDs` : "—"}</b><span>Caddy proxy · ${esc(proxy?.status || "unknown")}</span></div>`;
   const bar = $("#host-mem-bar");
   bar.style.width = h.percent + "%"; bar.className = h.percent > 90 ? "crit" : (h.percent > 75 ? "hot" : "");
   $("#host-mem-label").textContent = h.percent + "% of unified memory in use";
@@ -1863,8 +1870,14 @@ function renderResources(sum) {
   $("#res-machine-count").textContent = `${onlineMachines}/${order.length} remote machines online`;
   $("#machines-res").innerHTML = order.map(m => {
     const mi = machines[m];
+    const protection = mi.protection?.quarantined
+      ? ` · <b>paused ${fmtDur(mi.protection.retry_in_s)}</b> (${esc(mi.protection.reason || "connection failures")})`
+      : "";
+    const proxyNote = mi.proxy
+      ? ` · Caddy ${esc(mi.proxy.status)} ${mi.proxy.rss_gb} GB/${mi.proxy.file_descriptors ?? "—"} FDs`
+      : "";
     if (mi.host) return `<div class="card section mcard"><div class="top" style="margin:0"><span class="emoji">🖥️</span><h3>${esc(mlabel(m))}</h3>
-      <span class="dot up" title="online"></span><span class="sub">${mi.host.used_gb}/${mi.host.total_gb} GB · CPU ${mi.host.cpu_percent}% · ${mi.host.cpu_count} cores</span></div>
+      <span class="dot ${mi.protection?.quarantined ? "unknown" : "up"}" title="${mi.protection?.quarantined ? "temporarily paused" : "online"}"></span><span class="sub">${mi.host.used_gb}/${mi.host.total_gb} GB · CPU ${mi.host.cpu_percent}% · ${mi.host.cpu_count} cores${proxyNote}${protection}</span></div>
       <div class="bar" style="grid-column:1/-1"><i style="width:${mi.host.percent}%" class="${mi.host.percent > 90 ? "crit" : mi.host.percent > 75 ? "hot" : ""}"></i></div></div>`;
     return `<div class="card section"><div class="top" style="margin:0"><span class="emoji">🖥️</span><h3>${esc(mlabel(m))}</h3>
       <span class="dot ${mi.reachable ? "unknown" : "down"}"></span><span class="sub">${mi.reachable ? "reachable · no Studio Hub" : "offline / unreachable"}</span></div></div>`;

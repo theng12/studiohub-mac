@@ -10,6 +10,29 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.47.0] — 2026-07-19
+
+### Added — unattended fleet reliability protection
+
+- The memory governor now uses each connected peer Hub's live host-memory
+  telemetry before remote dispatch. A worker MemoryGuard refusal is treated as
+  capacity pressure: the item waits, tries another Mac, and does not consume a
+  generation attempt.
+- Connection drops, timeouts, and gateway 502/503/504 responses now receive a
+  bounded 30-minute self-healing window with up to eight attempts and
+  progressive backoff. The original worker job is reconciled before retrying,
+  preserving duplicate-generation protection.
+- Repeated connection failures temporarily quarantine the physical Mac, and an
+  item avoids its recently failed machine so another compatible worker can
+  steal it. Successful work automatically closes the circuit.
+- Health probes require three consecutive failures before declaring a Studio
+  down and two successful probes before returning it to the scheduler. Active
+  leases continue to suppress expected inference-time health timeouts.
+- Resources now reports Pinokio Caddy memory and file-descriptor use for local
+  and connected peer Macs. Abnormal Caddy growth raises a one-time alert with a
+  recovery notification, making HTTPS port conflicts visible before they
+  consume generation memory.
+
 ## [1.46.1] — 2026-07-19
 
 ### Fixed — Render Studio automatic-update parity

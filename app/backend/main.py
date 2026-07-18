@@ -35,7 +35,7 @@ from .auth import is_loopback, is_tailscale, load_token, make_middleware
 from .control import control_studio
 from .monitor import StudioMonitor
 from .registry import DATA_DIR, LAUNCHER_ROOT, base_url
-from .resources import host_stats, studio_process_stats
+from .resources import host_stats, proxy_stats, studio_process_stats
 
 TITLE = "Studio Hub KH"
 FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
@@ -474,8 +474,12 @@ def hub_resources(local_only: bool = Query(False)):
     Remote studios are keyed by their local id (= modality) so a peer's reply
     maps straight onto our federated ids."""
     from .registry import machine_enabled
+    protections = broker.machine_protection_snapshot()
+    local_proxy = proxy_stats()
     machines = {"local": {"host": host_stats(), "reachable": True,
-                          "enabled": machine_enabled("local")}}
+                          "enabled": machine_enabled("local"),
+                          "proxy": local_proxy,
+                          "protection": protections.get("local")}}
     per_studio = {}
     for s in monitor.registry:
         machine = s.get("machine", "local")
@@ -503,10 +507,13 @@ def hub_resources(local_only: bool = Query(False)):
                 "status": (peer.get("status") if peer else "pending"),
                 # operator toggle — a disabled machine takes no jobs
                 "enabled": machine_enabled(machine),
+                "proxy": peer.get("proxy") if peer else None,
+                "protection": protections.get(machine),
             }
             per_studio[s["id"]] = (
                 (peer.get("studios", {}) or {}).get(s["modality"]) if peer else None)
-    return {"host": machines["local"]["host"], "machines": machines,
+    return {"host": machines["local"]["host"], "proxy": local_proxy,
+            "machines": machines,
             "studios": per_studio, "fleet_token_set": peers.fleet_token() is not None,
             "ts": time.time()}
 

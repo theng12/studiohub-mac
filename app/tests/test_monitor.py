@@ -104,8 +104,37 @@ async def test_active_chat_lease_suppresses_false_health_flap(reset, monitor, mo
 
     chat_jobs.busy_studios.discard("chat")
     await monitor._poll_one(studio)
+    assert monitor.status["chat"]["status"] == "up"
+    assert monitor.status["chat"]["health_probe_degraded"] is True
+    await monitor._poll_one(studio)
+    assert monitor.status["chat"]["status"] == "up"
+    await monitor._poll_one(studio)
     assert monitor.status["chat"]["status"] == "down"
     assert any(event["kind"] == "studio_down" for event in alerts.recent(20))
+
+
+@pytest.mark.asyncio
+async def test_down_studio_needs_two_good_probes_to_rejoin(monitor, monkeypatch):
+    studio = next(row for row in monitor.registry if row["id"] == "image")
+    monitor.status["image"] = {
+        "status": "down", "last_seen": 10, "last_checked": 20,
+        "consecutive_failures": 3, "consecutive_successes": 0,
+    }
+
+    class Response:
+        def json(self):
+            return {"ok": True, "app_version": "1.2.3"}
+
+    async def healthy(*args, **kwargs):
+        return Response()
+
+    monkeypatch.setattr(monitor._client, "get", healthy)
+    await monitor._poll_one(studio)
+    assert monitor.status["image"]["status"] == "down"
+    assert monitor.status["image"]["health_recovering"] is True
+    await monitor._poll_one(studio)
+    assert monitor.status["image"]["status"] == "up"
+    assert monitor.status["image"]["health_recovering"] is False
 
 
 @pytest.mark.asyncio

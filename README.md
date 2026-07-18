@@ -13,7 +13,8 @@ The Hub runs on fixed port **47873** and provides:
   Per-model parameters are passed through verbatim — the Hub never flattens
   model-specific capabilities.
 - **Resource monitor** — host unified-memory pressure + per-studio process memory
-  (RSS) and CPU, resolved port → PID → process tree.
+  (RSS) and CPU, resolved port → PID → process tree. It also watches Pinokio's
+  Caddy proxy for abnormal memory/file-descriptor growth caused by port conflicts.
 - **Cloud audio readiness** — Voice Studio cards show which provider gateways are
   configured and live on each machine without exposing provider credentials.
 - **Central ElevenLabs gateway** — cloud ElevenLabs batches always use Voice
@@ -482,9 +483,10 @@ Heterogeneity is handled per-dispatch:
 
 Submit N independent prompts; the Hub queues them and free studios of that
 modality pull the next item (work-stealing — a second machine in `studios.json`
-automatically joins the pool). Transient transport, timeout, throttling, and
-server failures are retried up to 3 times with a short delay; authentication
-and validation failures stop immediately with their original reason. Every
+automatically joins the pool). Transient connection and gateway failures get a
+bounded 30-minute self-healing window with progressive backoff; genuine
+generation failures retain three attempts, while authentication and validation
+failures stop immediately with their original reason. Every
 result lands in the asset ledger with full provenance (prompt, model, resolved
 seed, params, batch id) — reproducible by construction.
 
@@ -498,10 +500,14 @@ curl -X POST http://localhost:47873/api/hub/jobs \
 }'
 ```
 
-The **memory governor** guards local dispatch: a model whose
-`min_unified_memory_gb` exceeds the machine fails fast; one whose size doesn't
-fit in currently-free memory waits (visible as `governor_note` on the batch).
-Cloud-backed models bypass the governor entirely.
+The **fleet memory governor** uses live host telemetry from each connected peer
+Hub before local or remote dispatch. A model whose `min_unified_memory_gb`
+exceeds a machine is skipped for a compatible larger Mac; one whose size does
+not fit in currently-free memory waits (visible as `governor_note`). A worker's
+own MemoryGuard remains the final authority, and its refusal waits/rebalances
+without consuming an attempt. Repeated connection failures temporarily pause
+that physical Mac and let another worker steal the item. Cloud-backed models
+bypass the memory governor entirely.
 
 ## Chat prompt packs
 

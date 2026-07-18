@@ -178,6 +178,17 @@ class _PollRejectedClient:
         return response
 
 
+class _MemoryGuardClient:
+    async def post(self, *_args, **_kwargs):
+        return _PeerRouteResponse({"job": {"id": "worker-memory"}})
+
+    async def get(self, *_args, **_kwargs):
+        return _PeerRouteResponse({"job": {
+            "id": "worker-memory", "state": "error",
+            "error": "MemoryGuardError: needs ~5.6GB, ~2.7GB free",
+        }})
+
+
 @pytest.mark.asyncio
 async def test_connection_drop_recovers_completed_worker_without_duplicate(reset):
     r = broker.submit_batch({"modality": "image", "model": "a/b",
@@ -277,7 +288,33 @@ async def test_transient_worker_failure_requeues_with_delay(reset):
     await broker._run_item(_RejectedClient(503), batch, item, studio)
 
     assert item["state"] == "queued" and item["retry_at"]
-    assert item["error"] == "try 1 failed: HTTP 503: rejected"
+    assert item["infra_failures"] == 1
+    assert item["error"].startswith("connection failure 1/8; recovering automatically")
+    assert item["avoid_machines"]["mac-b"] > 0
+
+
+@pytest.mark.asyncio
+async def test_memory_guard_wait_does_not_consume_attempt(reset, monkeypatch):
+    submitted = broker.submit_batch({
+        "modality": "voice", "model": "a/b", "items": [{"text": "hello"}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="running", tries=1, studio="voice@mac-b")
+    studio = {"id": "voice@mac-b", "modality": "voice", "machine": "mac-b",
+              "host": "100.1.1.1", "port": 47869}
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(broker.asyncio, "sleep", no_sleep)
+    await broker._run_item(_MemoryGuardClient(), batch, item, studio)
+
+    assert item["state"] == "queued"
+    assert item["tries"] == 0
+    assert item["error"].startswith("waiting for capacity: MemoryGuardError")
+    assert item["retry_at"] is not None
+    assert broker.machine_protection_snapshot() == {}
 
 
 @pytest.mark.asyncio
@@ -347,6 +384,31 @@ def test_disabled_machine_takes_no_jobs(reset):
     finally:
         registry.set_machine_enabled(machine, True)
     assert img["id"] in [s["id"] for s in broker._eligible_studios("image", "swarm")]
+
+
+def test_repeated_connection_failures_temporarily_quarantine_machine(reset, monkeypatch):
+    studio = {"id": "image@mac-b", "machine": "mac-b"}
+    now = 1000.0
+    monkeypatch.setattr(broker.time, "time", lambda: now)
+
+    broker._mark_machine_failure(studio, "connection dropped")
+    assert broker._machine_blocked("mac-b") is False
+    broker._mark_machine_failure(studio, "connection dropped again")
+
+    protection = broker.machine_protection_snapshot()["mac-b"]
+    assert protection["quarantined"] is True
+    assert protection["retry_in_s"] == broker.MACHINE_COOLDOWN_S
+
+    broker._mark_machine_success(studio)
+    assert broker.machine_protection_snapshot()["mac-b"]["quarantined"] is False
+    assert broker.machine_protection_snapshot()["mac-b"]["failures"] == 0
+
+
+def test_item_avoids_recently_failed_machine(reset):
+    now = 100.0
+    item = {"avoid_machines": {"mac-a": 150.0}}
+    assert broker._item_allows_studio(item, {"machine": "mac-a"}, now) is False
+    assert broker._item_allows_studio(item, {"machine": "mac-b"}, now) is True
 
 
 def test_machine_lease_blocks_other_heavy_studios_on_same_mac(reset):
@@ -607,6 +669,18 @@ def test_local_gate_reservation_prevents_double_load(reset):
     broker._reserved["gb"] = 6.0
     # now only ~4GB effectively free -> the second must WAIT, not double-load
     assert broker._local_gate(mem, host)[0] == "wait"
+
+
+def test_remote_memory_gate_uses_peer_host_snapshot(reset, monkeypatch):
+    monkeypatch.setattr(
+        broker.peers, "cached",
+        lambda machine: {"host": {"total_gb": 8, "available_gb": 2.0}},
+    )
+    studio = {"machine": "mac-b"}
+    host = broker._host_for_studio(studio)
+    decision, note = broker._memory_gate({"min_total": 8, "size": 4.0}, host)
+    assert decision == "wait"
+    assert "5.0GB" in note and "2.0GB free" in note
 
 
 def test_restore_batches_requeues_running(reset):

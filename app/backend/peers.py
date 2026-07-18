@@ -154,6 +154,7 @@ async def _refresh_stale(machines, stale, client, now):
             _cache[machine] = (now, {
                 "host": data.get("host"),
                 "studios": data.get("studios", {}),
+                "proxy": data.get("proxy"),
                 "reachable": True, "auth": True, "status": "connected",
             })
         except httpx.ConnectError:

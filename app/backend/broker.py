@@ -8,9 +8,10 @@ MAX_TRIES). With one machine today the pool has one worker per modality —
 the moment a second machine joins the registry, the same code fans out.
 
 Memory governor (local models only, SPEC §7 two-lane decision): before
-dispatching to a LOCAL studio, the model's min_unified_memory_gb (from that
-studio's own catalog) is checked against the host's available memory; the item
-waits rather than OOMing the box. Cloud models bypass the check.
+dispatching to a local or connected remote studio, the model's
+min_unified_memory_gb (from that studio's own catalog) is checked against its
+host's available memory; the item waits rather than OOMing the box. Cloud
+models bypass the check.
 
 Params stay opaque: item params + sharedParams merge over {repo, prompt-field}
 and are forwarded verbatim to the studio's own generate endpoint.
@@ -26,7 +27,7 @@ from pathlib import Path
 
 import httpx
 
-from . import artifact_metadata, ledger, shared_voices
+from . import artifact_metadata, ledger, peers, shared_voices
 from .peers import studio_request
 from .monitor import is_cached, is_cloud_lane
 from .registry import base_url, machine_enabled
@@ -132,9 +133,16 @@ MODALITY = {
 MODALITY_PRIORITY = {"render": 0}
 
 MAX_TRIES = 3
+MAX_INFRA_TRIES = 8
+INFRA_RETRY_WINDOW_S = 30 * 60
 POLL_S = 2.0
 RECOVERY_WINDOW_S = 120.0  # cover a full slow M1 generation after a dropped connection
 RETRY_DELAYS_S = (3.0, 10.0)
+INFRA_RETRY_DELAYS_S = (5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 300.0)
+CAPACITY_RETRY_S = 30.0
+FAILED_WORKER_AVOID_S = 90.0
+MACHINE_FAILURE_THRESHOLD = 2
+MACHINE_COOLDOWN_S = 120.0
 MAX_BATCH_ITEMS = 1000
 MAX_BATCH_JSON_BYTES = 25 * 1024 * 1024
 MEMORY_HEADROOM_GB = 1.0  # keep at least this much free beyond the model's need
@@ -143,6 +151,10 @@ batches: dict[str, dict] = {}
 _busy: set[str] = set()  # studio ids currently running an item for us
 _maintenance: set[str] = set()  # drained by fleet maintenance/update operations
 _external_machine_leases: dict[str, str] = {}
+# machine -> recent transport failures and an optional circuit-breaker cooldown.
+# This is intentionally process-local: after a Hub restart every worker must
+# answer health again before it becomes eligible, which is a clean circuit reset.
+_machine_protection: dict[str, dict] = {}
 _wakeup = asyncio.Event()
 # Sum of size_gb reserved by in-flight LOCAL dispatches. The memory governor
 # subtracts this from free RAM so two concurrent local dispatches (e.g. image +
@@ -150,23 +162,126 @@ _wakeup = asyncio.Event()
 _reserved = {"gb": 0.0}
 
 
-def _local_gate(mem: dict, host: dict) -> tuple[str, str | None]:
-    """Memory-governor decision for a LOCAL studio. Returns one of:
+def _memory_gate(mem: dict, host: dict, reserved_gb: float = 0.0) -> tuple[str, str | None]:
+    """Memory-governor decision for one physical Mac. Returns one of:
       ("skip", note) — this machine can't run the model at all → try another
                        studio (a bigger remote may qualify); never errors the batch
       ("wait", note) — could run, but not enough free RAM right now → defer
       ("run",  None) — clear to dispatch
-    Remote studios bypass this entirely (paced by their own backend)."""
+    Peer Hubs provide the same host-memory snapshot for remote Macs, allowing
+    the primary Hub to avoid a request that their own engine would reject."""
     min_total = mem.get("min_total")
     if min_total and host["total_gb"] < min_total:
         return ("skip", f"needs a ~{min_total}GB machine; this one has "
                         f"{host['total_gb']}GB — trying other machines")
     need_free = (mem.get("size") or 0) + MEMORY_HEADROOM_GB
-    effective_free = host["available_gb"] - _reserved["gb"]
+    effective_free = host["available_gb"] - reserved_gb
     if effective_free < need_free:
         return ("wait", f"waiting for memory: needs ~{need_free:.1f}GB, "
                         f"~{max(0.0, effective_free):.1f}GB free")
     return ("run", None)
+
+
+def _local_gate(mem: dict, host: dict) -> tuple[str, str | None]:
+    """Compatibility wrapper for the local unified-memory reservation."""
+    return _memory_gate(mem, host, _reserved["gb"])
+
+
+def _host_for_studio(studio: dict) -> dict | None:
+    machine = studio.get("machine", "local")
+    if machine == "local":
+        return host_stats()
+    peer = peers.cached(machine) or {}
+    host = peer.get("host")
+    return host if isinstance(host, dict) else None
+
+
+def _protection(machine: str) -> dict:
+    return _machine_protection.setdefault(machine, {
+        "failures": 0, "cooldown_until": None, "reason": None,
+        "last_failure_at": None, "last_success_at": None,
+    })
+
+
+def _machine_blocked(machine: str, now: float | None = None) -> bool:
+    until = (_machine_protection.get(machine) or {}).get("cooldown_until") or 0
+    return until > (time.time() if now is None else now)
+
+
+def machine_protection_snapshot() -> dict[str, dict]:
+    """Public, secret-free circuit state for Resources and operator diagnostics."""
+    now = time.time()
+    out = {}
+    for machine, state in _machine_protection.items():
+        until = state.get("cooldown_until") or 0
+        out[machine] = {
+            **state,
+            "quarantined": until > now,
+            "retry_in_s": round(max(0.0, until - now), 1),
+        }
+    return out
+
+
+def _mark_machine_failure(studio: dict, message: str) -> None:
+    machine = studio.get("machine", "local")
+    state = _protection(machine)
+    was_blocked = _machine_blocked(machine)
+    state["failures"] = int(state.get("failures") or 0) + 1
+    state["last_failure_at"] = time.time()
+    state["reason"] = message[:240]
+    if state["failures"] < MACHINE_FAILURE_THRESHOLD:
+        return
+    state["cooldown_until"] = time.time() + MACHINE_COOLDOWN_S
+    if not was_blocked:
+        from . import alerts
+        alerts.emit(
+            "machine_quarantined",
+            f"{machine} paused for {round(MACHINE_COOLDOWN_S)}s after repeated connection failures",
+            {"machine": machine, "failures": state["failures"], "reason": state["reason"]},
+        )
+
+
+def _mark_machine_success(studio: dict) -> None:
+    machine = studio.get("machine", "local")
+    state = _machine_protection.get(machine)
+    if not state:
+        return
+    had_cooldown = state.get("cooldown_until") is not None
+    had_failures = bool(state.get("failures"))
+    state.update(failures=0, cooldown_until=None, reason=None,
+                 last_success_at=time.time())
+    if had_cooldown:
+        from . import alerts
+        alerts.emit("machine_recovered", f"{machine} passed a worker request and rejoined the pool",
+                    {"machine": machine})
+    elif not had_failures:
+        _machine_protection.pop(machine, None)
+
+
+def _is_capacity_failure(message: str) -> bool:
+    value = message.lower()
+    return any(token in value for token in (
+        "memoryguarderror", "memory guard paused", "waiting for memory",
+        "not enough memory", "insufficient memory",
+    ))
+
+
+def _is_transport_failure(exc: BaseException, message: str) -> bool:
+    if isinstance(exc, (httpx.TransportError, httpx.TimeoutException)):
+        return True
+    if getattr(exc, "status_code", None) in {502, 503, 504}:
+        return True
+    value = message.lower().strip()
+    return any(token in value for token in (
+        "readerror", "read error", "connection dropped", "connection reset",
+        "connection refused", "server disconnected", "remote protocol error",
+        "timed out", "timeout", "network is unreachable", "broken pipe",
+    ))
+
+
+def _item_allows_studio(item: dict, studio: dict, now: float) -> bool:
+    avoided = item.get("avoid_machines") or {}
+    return float(avoided.get(studio.get("machine", "local"), 0) or 0) <= now
 
 
 def _monitor():
@@ -699,6 +814,7 @@ async def _recover_worker_job(client, b: dict, item: dict, studio: dict,
                 continue
             if state == "done" and not job.get("error"):
                 await _record_worker_success(client, b, item, studio, job, body, t_start)
+                _mark_machine_success(studio)
                 return True
             return False  # the original job genuinely failed or was cancelled
         except Exception:
@@ -771,6 +887,8 @@ def _eligible_studios(modality: str, routing: str, model: str = "") -> list[dict
             continue
         # a machine the operator has disabled stays monitored but takes no jobs
         if not machine_enabled(s.get("machine", "local")):
+            continue
+        if _machine_blocked(machine):
             continue
         if mon.status.get(s["id"], {}).get("status") == "up":
             out.append(s)
@@ -847,7 +965,8 @@ async def _dispatch_loop():
                         break
                     compatible_index = next(
                         (index for index, candidate in enumerate(queued)
-                         if _shared_voice_allows_studio(b, candidate, studio)),
+                         if _shared_voice_allows_studio(b, candidate, studio)
+                         and _item_allows_studio(candidate, studio, now)),
                         None,
                     )
                     if compatible_index is None:
@@ -869,14 +988,20 @@ async def _dispatch_loop():
                             f"'{b['model']}' not downloaded on {studio['id']} "
                             f"— broadcast the download or try another machine")
                         continue
-                    # ── memory governor (LOCAL studios only; remotes bypass) ──
+                    # ── fleet memory governor ──
+                    # Peer Hubs report their own host snapshots, so we can
+                    # avoid submitting work that their MemoryGuard would
+                    # reject. Missing/stale telemetry does not strand work:
+                    # the worker's own guard remains the final authority.
                     is_local = studio.get("machine", "local") == "local"
                     mem = None if entry.get("is_cloud") else {
                         "min_total": entry.get("min_unified_memory_gb"),
                         "size": entry.get("size_gb")}
                     reserve = 0.0
-                    if mem is not None and is_local:
-                        decision, note = _local_gate(mem, host_stats())
+                    host = _host_for_studio(studio) if mem is not None else None
+                    if mem is not None and host:
+                        decision, note = _memory_gate(
+                            mem, host, _reserved["gb"] if is_local else 0.0)
                         if decision != "run":
                             # skip → another (maybe bigger/remote) studio may take
                             # it; wait → defer. NEVER errors the whole batch.
@@ -923,6 +1048,7 @@ def _worker_http_error(response) -> RuntimeError:
     except (AttributeError, ValueError):
         detail = response.text or "worker request failed"
     error = RuntimeError(f"HTTP {response.status_code}: {detail}")
+    error.status_code = response.status_code
     error.retryable = (response.status_code in {408, 425, 429}
                        or response.status_code >= 500)
     return error
@@ -1041,6 +1167,7 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
                 )
             # terminal + no error = success
             await _record_worker_success(client, b, item, studio, j, body, t_start)
+            _mark_machine_success(studio)
             return
     except Exception as e:
         # The worker may have completed even though this status request lost
@@ -1056,7 +1183,45 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
         message = str(e) or type(e).__name__
         retryable = getattr(e, "retryable", True)
         item["last_progress_at"] = time.time()
-        if retryable and item["tries"] < MAX_TRIES and not b["cancelled"]:
+        now = time.time()
+        if retryable and _is_capacity_failure(message) and not b["cancelled"]:
+            # Memory pressure is a capacity wait, not a consumed generation
+            # attempt. Avoid this Mac briefly so another healthy worker can
+            # steal the item; if none can, keep it queued until memory clears.
+            item["tries"] = max(0, int(item.get("tries") or 0) - 1)
+            item["state"] = "queued"
+            item["error"] = f"waiting for capacity: {message}"
+            item["retry_at"] = now + CAPACITY_RETRY_S
+            item.setdefault("capacity_wait_started_at", now)
+            item.setdefault("avoid_machines", {})[
+                studio.get("machine", "local")
+            ] = now + FAILED_WORKER_AVOID_S
+        elif retryable and _is_transport_failure(e, message) and not b["cancelled"]:
+            # Infrastructure failures get a longer bounded healing window than
+            # genuine generation errors. The stable worker job id was already
+            # reconciled above, so retrying cannot duplicate a known result.
+            _mark_machine_failure(studio, message)
+            failures = int(item.get("infra_failures") or 0) + 1
+            started = float(item.get("infra_failure_started_at") or now)
+            item["infra_failures"] = failures
+            item["infra_failure_started_at"] = started
+            item.setdefault("avoid_machines", {})[
+                studio.get("machine", "local")
+            ] = now + FAILED_WORKER_AVOID_S
+            within_window = now - started < INFRA_RETRY_WINDOW_S
+            if failures < MAX_INFRA_TRIES and within_window:
+                item["state"] = "queued"
+                item["error"] = (
+                    f"connection failure {failures}/{MAX_INFRA_TRIES}; "
+                    f"recovering automatically: {message}"
+                )
+                delay_index = min(failures - 1, len(INFRA_RETRY_DELAYS_S) - 1)
+                item["retry_at"] = now + INFRA_RETRY_DELAYS_S[delay_index]
+            else:
+                item["state"] = "error"
+                item["error"] = f"connection recovery exhausted: {message}"
+                item["retry_at"] = None
+        elif retryable and item["tries"] < MAX_TRIES and not b["cancelled"]:
             item["state"] = "queued"  # work-stealing retry, possibly elsewhere
             item["error"] = f"try {item['tries']} failed: {message}"
             delay_index = min(item["tries"] - 1, len(RETRY_DELAYS_S) - 1)
