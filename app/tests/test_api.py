@@ -113,16 +113,25 @@ def test_cloud_provider_health_is_aggregated_without_keys(authed):
 
 def test_render_asset_stream_round_trip(authed):
     payload = b"render-input" * 100
+    checksum = __import__("hashlib").sha256(payload).hexdigest()
     uploaded = authed.post(
         "/api/hub/render-assets", content=payload,
-        headers={"X-File-Name": "scene.mp4"})
+        headers={"X-File-Name": "scene.mp4", "X-Content-SHA256": checksum})
     assert uploaded.status_code == 200
     result = uploaded.json()
-    assert result["bytes"] == len(payload) and len(result["sha256"]) == 64
+    assert result["bytes"] == len(payload) and result["sha256"] == checksum
     downloaded = authed.get(result["path"])
     assert downloaded.content == payload
-    assert authed.delete(result["path"]).status_code == 200
-    assert authed.get(result["path"]).status_code == 404
+    retained = authed.get(f"/api/hub/render-assets/by-sha/{checksum}?extension=.mp4")
+    assert retained.status_code == 200
+    assert retained.json()["asset_id"] == result["asset_id"]
+    # Uploading the same immutable bytes is a no-op instead of a second file.
+    duplicate = authed.post(
+        "/api/hub/render-assets", content=payload,
+        headers={"X-File-Name": "scene.mp4", "X-Content-SHA256": checksum})
+    assert duplicate.status_code == 200
+    assert duplicate.json()["asset_id"] == result["asset_id"]
+    assert authed.delete(result["path"]).status_code == 409
 
 
 def test_render_asset_rejects_unsafe_type(authed):

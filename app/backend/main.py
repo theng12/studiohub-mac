@@ -12,6 +12,7 @@ studios, so the Hub itself is monitorable by the same convention.
 
 import asyncio
 import hashlib
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -1231,11 +1232,63 @@ _RENDER_EXTENSIONS = {
     ".mp3", ".wav", ".m4a", ".aac", ".srt", ".ass", ".txt",
 }
 _MAX_RENDER_UPLOAD_BYTES = 20 * 1024 * 1024 * 1024
+_RENDER_ASSET_RETENTION_DAYS = 7
+_RENDER_ASSET_CLEANUP_INTERVAL_SECONDS = 60 * 60
+_last_render_asset_cleanup = 0.0
+
+
+def _is_render_sha256(value: str) -> bool:
+    return bool(re.fullmatch(r"[0-9a-f]{64}", value.lower()))
+
+
+def _render_asset_path(asset_id: str) -> Path | None:
+    if not asset_id.isalnum():
+        return None
+    return next((p for p in _RENDER_UPLOADS.glob(f"{asset_id}.*")
+                 if p.is_file() and not p.name.endswith(".partial")), None)
+
+
+def _render_asset_payload(path: Path, sha256: str | None = None) -> dict:
+    digest = (sha256 or path.stem).lower()
+    return {
+        "asset_id": digest if _is_render_sha256(digest) else path.stem,
+        "bytes": path.stat().st_size,
+        "sha256": digest,
+        "path": f"/api/hub/render-assets/{digest if _is_render_sha256(digest) else path.stem}",
+    }
+
+
+def _cleanup_expired_render_assets() -> int:
+    """Remove only immutable, content-addressed inputs after their lease ages out."""
+    cutoff = time.time() - (_RENDER_ASSET_RETENTION_DAYS * 24 * 60 * 60)
+    removed = 0
+    for candidate in _RENDER_UPLOADS.iterdir():
+        if not candidate.is_file() or candidate.name.endswith(".partial"):
+            continue
+        if not _is_render_sha256(candidate.stem) or candidate.stat().st_mtime > cutoff:
+            continue
+        candidate.unlink(missing_ok=True)
+        removed += 1
+    return removed
+
+
+def _maybe_cleanup_expired_render_assets() -> None:
+    global _last_render_asset_cleanup
+    now = time.time()
+    if now - _last_render_asset_cleanup < _RENDER_ASSET_CLEANUP_INTERVAL_SECONDS:
+        return
+    _last_render_asset_cleanup = now
+    _cleanup_expired_render_assets()
 
 
 @app.post("/api/hub/render-assets")
 async def hub_render_asset_upload(request: Request):
-    """Stream one immutable render input to the Hub and return its digest."""
+    """Stream one immutable render input to the Hub and return its digest.
+
+    Assets are named by SHA-256, so a Story Studio retry (or a second episode
+    sharing the same media) can retain and reuse the first transfer safely.
+    """
+    _maybe_cleanup_expired_render_assets()
     original = request.headers.get("x-file-name", "asset.bin")
     ext = Path(original).suffix.lower()
     if ext not in _RENDER_EXTENSIONS:
@@ -1243,6 +1296,14 @@ async def hub_render_asset_upload(request: Request):
     declared = request.headers.get("content-length")
     if declared and int(declared) > _MAX_RENDER_UPLOAD_BYTES:
         raise HTTPException(413, "render asset exceeds 20 GB")
+    declared_digest = request.headers.get("x-content-sha256", "").lower().strip()
+    if declared_digest and not _is_render_sha256(declared_digest):
+        raise HTTPException(400, "invalid X-Content-SHA256 header")
+    if declared_digest:
+        retained = _render_asset_path(declared_digest)
+        if retained and retained.suffix == ext:
+            retained.touch(exist_ok=True)
+            return _render_asset_payload(retained, declared_digest)
     asset_id = uuid.uuid4().hex[:16]
     partial = _RENDER_UPLOADS / f".{asset_id}{ext}.partial"
     digest = hashlib.sha256()
@@ -1258,20 +1319,34 @@ async def hub_render_asset_upload(request: Request):
         if not total:
             raise HTTPException(400, "empty render asset")
         sha256 = digest.hexdigest()
-        final = _RENDER_UPLOADS / f"{asset_id}{ext}"
-        partial.replace(final)
+        if declared_digest and sha256 != declared_digest:
+            raise HTTPException(400, "render asset checksum does not match X-Content-SHA256")
+        final = _RENDER_UPLOADS / f"{sha256}{ext}"
+        # A concurrent retry may have completed while this stream was running.
+        # Keep the already-verified immutable file and discard our duplicate.
+        if final.exists():
+            partial.unlink(missing_ok=True)
+        else:
+            partial.replace(final)
     except Exception:
         partial.unlink(missing_ok=True)
         raise
-    return {"asset_id": asset_id, "bytes": total, "sha256": sha256,
-            "path": f"/api/hub/render-assets/{asset_id}"}
+    return _render_asset_payload(final, sha256)
 
 
-def _render_asset_path(asset_id: str) -> Path | None:
-    if not asset_id.isalnum():
-        return None
-    return next((p for p in _RENDER_UPLOADS.glob(f"{asset_id}.*")
-                 if p.is_file() and not p.name.endswith(".partial")), None)
+@app.get("/api/hub/render-assets/by-sha/{sha256}")
+def hub_render_asset_by_sha(sha256: str, extension: str = Query(...)):
+    """Return a retained asset by content identity and refresh its seven-day lease."""
+    normalized = sha256.lower()
+    if not _is_render_sha256(normalized):
+        raise HTTPException(400, "invalid SHA-256")
+    if extension.lower() not in _RENDER_EXTENSIONS:
+        raise HTTPException(415, "unsupported render asset extension")
+    retained = _render_asset_path(normalized)
+    if not retained or retained.suffix.lower() != extension.lower():
+        raise HTTPException(404, "render asset not retained")
+    retained.touch(exist_ok=True)
+    return _render_asset_payload(retained, normalized)
 
 
 @app.get("/api/hub/render-assets/{asset_id}")
@@ -1279,6 +1354,7 @@ def hub_render_asset_download(asset_id: str):
     path = _render_asset_path(asset_id)
     if not path:
         raise HTTPException(404, "render asset not found")
+    path.touch(exist_ok=True)
     return FileResponse(path, filename=path.name)
 
 
@@ -1287,6 +1363,8 @@ def hub_render_asset_delete(asset_id: str):
     path = _render_asset_path(asset_id)
     if not path:
         raise HTTPException(404, "render asset not found")
+    if _is_render_sha256(asset_id):
+        raise HTTPException(409, "content-addressed render assets are retained for seven days")
     path.unlink()
     return {"ok": True}
 

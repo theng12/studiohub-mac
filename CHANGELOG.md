@@ -10,6 +10,18 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.44.4] — 2026-07-18
+
+### Fixed — durable remote-render asset transfer
+
+- Render inputs are now content-addressed by SHA-256 and retained for seven
+  days. Story Studio can reconnect or retry a failed remote render without
+  sending narration, scene media, overlays, titles, music, or subtitles again.
+- Added checksum lookup before upload, immutable lease refresh on worker
+  download, and protection against deleting active content-addressed assets.
+- Concurrent uploads of the same media now safely converge on one verified
+  retained object instead of consuming duplicate Hub storage.
+
 ## [1.44.3] — 2026-07-17
 
 ### Added — live job elapsed time and stall warning

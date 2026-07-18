@@ -164,7 +164,8 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/jobs/clear` · `POST /api/hub/jobs/{batch}/clear` | Clear terminal generation history and Hub-owned ledger/files only; remote worker output is never removed |
 | `GET /api/hub/assets` · `POST /api/hub/assets/scan` | Asset ledger (query: `q`, `modality`, `studio`, `batch_id`) |
 | `POST /api/hub/assets/upload` | Upload a reference image once → `{asset_id}` (for img2img continuity) |
-| `POST /api/hub/render-assets` | Stream an immutable render input; returns path, bytes, and SHA-256 |
+| `POST /api/hub/render-assets` | Stream or reuse an immutable content-addressed render input; returns path, bytes, and SHA-256 |
+| `GET /api/hub/render-assets/by-sha/{sha256}` | Look up and refresh a retained render input by checksum before uploading it again |
 | `GET /api/hub/jobs/{batch}/items/{index}/artifact` | Stream a completed worker video through Hub authentication |
 | `POST /api/hub/jobs/{batch}/items/{index}/ack` | Confirm the main copy was verified and start worker retention |
 | `GET /api/hub/stats[?hours=N]` | Generation analytics: by machine/modality/model + timeline |
