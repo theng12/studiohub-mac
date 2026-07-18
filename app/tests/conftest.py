@@ -56,6 +56,8 @@ def _reset_state():
     shutil.rmtree(transcription_jobs.ROOT, ignore_errors=True)
     shutil.rmtree(shared_voices.ROOT, ignore_errors=True)
     shared_voices._tasks.clear()
+    shared_voices._delete_tasks.clear()
+    shared_voices._resync_requested.clear()
     try:
         transcription_jobs.SETTINGS_FILE.unlink()
     except FileNotFoundError:

@@ -23,6 +23,7 @@ METADATA = "metadata.json"
 TRANSCRIPT = "transcript.txt"
 SYNC_STATE = "sync.json"
 REFERENCE = "reference"
+TOMBSTONES = ".deleted"
 MAX_BYTES = 25_000_000
 MAX_TRANSCRIPT_CHARS = 200_000
 ALLOWED_EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".opus", ".aac"}
@@ -31,6 +32,8 @@ ALLOWED_GENDERS = {"m", "f", "n"}
 TRANSIENT_STATUS = {408, 425, 429, 500, 502, 503, 504}
 
 _tasks: dict[str, asyncio.Task] = {}
+_delete_tasks: dict[str, asyncio.Task] = {}
+_resync_requested: set[str] = set()
 _reconciler_task: asyncio.Task | None = None
 _sync_lock = asyncio.Lock()
 
@@ -212,6 +215,126 @@ def _save_state(voice_id: str, state: dict) -> None:
     _atomic_json(_voice_dir(voice_id) / SYNC_STATE, state)
 
 
+def _tombstone_path(voice_id: str) -> Path:
+    return ROOT / TOMBSTONES / f"{_voice_id(voice_id)}.json"
+
+
+def _load_tombstone(voice_id: str) -> dict | None:
+    path = _tombstone_path(voice_id)
+    if path.is_symlink() or not path.is_file():
+        return None
+    value = _read_json(path)
+    return value if value.get("id") == voice_id else None
+
+
+def _save_tombstone(tombstone: dict) -> None:
+    ROOT.mkdir(parents=True, exist_ok=True)
+    if ROOT.is_symlink():
+        raise SharedVoiceConflict("shared voice root is unsafe")
+    directory = ROOT / TOMBSTONES
+    directory.mkdir(parents=True, exist_ok=True)
+    if directory.is_symlink():
+        raise SharedVoiceConflict("shared voice deletion state is unsafe")
+    tombstone["updated_at"] = time.time()
+    _atomic_json(_tombstone_path(tombstone["id"]), tombstone)
+
+
+def prepare_delete(voice_id: str) -> dict:
+    """Remove canonical media and retain a tiny durable fleet tombstone."""
+    existing = _load_tombstone(voice_id)
+    if existing:
+        directory = _voice_dir(voice_id)
+        if directory.is_symlink():
+            raise SharedVoiceConflict("shared voice path is unsafe")
+        if directory.exists():
+            shutil.rmtree(directory)
+        return existing
+    voice = _load(voice_id)
+    if not voice:
+        raise KeyError(voice_id)
+    task = _tasks.get(voice_id)
+    if task and not task.done():
+        task.cancel()
+    _resync_requested.discard(voice_id)
+    previous = _state(voice_id).get("targets") or {}
+    tombstone = {
+        "id": voice_id,
+        "name": voice.get("name") or voice_id,
+        "audio_sha256": voice["audio_sha256"],
+        "deleted_at": time.time(),
+        "targets": {
+            studio_id: {
+                **row, "status": "pending",
+                "message": "Removal is queued",
+            }
+            for studio_id, row in previous.items()
+        },
+    }
+    _save_tombstone(tombstone)
+    directory = _voice_dir(voice_id)
+    if directory.is_symlink():
+        raise SharedVoiceConflict("shared voice path is unsafe")
+    if directory.exists():
+        shutil.rmtree(directory)
+    return tombstone
+
+
+def serialize_deletion(tombstone: dict, monitor=None) -> dict:
+    result = dict(tombstone)
+    saved = tombstone.get("targets") or {}
+    targets = []
+    if monitor is not None:
+        for studio in _targets(monitor):
+            row = dict(saved.get(studio["id"]) or {})
+            row.update({
+                "studio_id": studio["id"],
+                "machine": studio.get("machine", "local"),
+                "reachable": monitor.status.get(studio["id"], {}).get("status") == "up",
+            })
+            row.setdefault("status", "pending")
+            row.setdefault("message", "Removal is queued")
+            targets.append(row)
+    else:
+        targets = list(saved.values())
+    deleted = sum(1 for row in targets if row.get("status") == "deleted")
+    result["targets"] = targets
+    result["sync"] = {
+        "total": len(targets), "deleted": deleted,
+        "pending": sum(1 for row in targets if row.get("status") in {"pending", "deleting"}),
+        "failed": sum(1 for row in targets if row.get("status") in {"failed", "conflict", "unsupported"}),
+        "syncing": tombstone["id"] in _delete_tasks
+        and not _delete_tasks[tombstone["id"]].done(),
+        "updated_at": tombstone.get("updated_at"),
+    }
+    return result
+
+
+def list_deletions(monitor=None, *, include_complete: bool = False) -> list[dict]:
+    directory = ROOT / TOMBSTONES
+    if not directory.is_dir() or directory.is_symlink():
+        return []
+    rows = []
+    for path in directory.glob("*.json"):
+        if path.is_symlink():
+            continue
+        try:
+            tombstone = _load_tombstone(path.stem)
+        except ValueError:
+            tombstone = None
+        if not tombstone:
+            continue
+        row = serialize_deletion(tombstone, monitor)
+        if include_complete or row["sync"]["deleted"] < row["sync"]["total"]:
+            rows.append(row)
+    rows.sort(key=lambda row: row.get("deleted_at", 0), reverse=True)
+    return rows
+
+
+def get_deletion(voice_id: str, monitor=None) -> dict | None:
+    tombstone = _load_tombstone(voice_id)
+    return serialize_deletion(tombstone, monitor) if tombstone else None
+
+
 def serialize(voice: dict, monitor=None) -> dict:
     result = dict(voice)
     result["audio_url"] = f"/api/hub/shared-voices/{voice['id']}/audio"
@@ -369,12 +492,112 @@ async def sync_voice(monitor, voice_id: str, target_ids: set[str] | None = None)
 
 
 def start_sync(monitor, voice_id: str) -> bool:
+    if voice_id in _delete_tasks or _load_tombstone(voice_id):
+        return False
     existing = _tasks.get(voice_id)
     if existing and not existing.done():
+        _resync_requested.add(voice_id)
         return False
     task = asyncio.create_task(sync_voice(monitor, voice_id))
     _tasks[voice_id] = task
-    task.add_done_callback(lambda finished, key=voice_id: _tasks.pop(key, None))
+
+    def finished(done: asyncio.Task, key: str = voice_id) -> None:
+        if _tasks.get(key) is done:
+            _tasks.pop(key, None)
+        if key in _resync_requested:
+            _resync_requested.discard(key)
+            if _load(key) and not _load_tombstone(key):
+                start_sync(monitor, key)
+
+    task.add_done_callback(finished)
+    return True
+
+
+async def _delete_target(monitor, tombstone: dict, studio: dict) -> dict:
+    now = time.time()
+    base = {
+        "studio_id": studio["id"], "machine": studio.get("machine", "local"),
+        "attempted_at": now,
+    }
+    if monitor.status.get(studio["id"], {}).get("status") != "up":
+        return {**base, "status": "pending",
+                "message": "Voice Studio is offline; automatic removal is scheduled"}
+    url, headers = studio_request(studio, f"/api/voices/{tombstone['id']}/fleet-sync")
+    try:
+        response = await monitor._client.delete(
+            url, headers=headers, params={"audio_sha256": tombstone["audio_sha256"]},
+            timeout=30.0,
+        )
+        detail = ""
+        try:
+            detail = str(response.json().get("detail") or "")
+        except Exception:
+            detail = str(response.text or "")
+        if response.status_code == 404:
+            if "managed voice" in detail.lower() and "not found" in detail.lower():
+                return {**base, "status": "deleted", "message": "Already absent",
+                        "completed_at": time.time()}
+            return {**base, "status": "unsupported",
+                    "message": "Update Voice Studio to a version that supports fleet removal"}
+        if response.status_code == 409:
+            return {**base, "status": "conflict", "message": detail or "voice ownership conflict"}
+        if response.status_code >= 400:
+            status = "pending" if response.status_code in TRANSIENT_STATUS else "failed"
+            return {**base, "status": status,
+                    "message": f"HTTP {response.status_code}: {detail or 'removal failed'}"}
+        payload = response.json()
+        if (payload.get("deleted") != tombstone["id"]
+                or payload.get("sha256") != tombstone["audio_sha256"]):
+            return {**base, "status": "failed",
+                    "message": "Voice Studio returned an unverifiable removal result"}
+        return {**base, "status": "deleted", "message": "Removed",
+                "completed_at": time.time()}
+    except (httpx.HTTPError, OSError) as exc:
+        return {**base, "status": "pending",
+                "message": f"Connection dropped; automatic removal is scheduled ({type(exc).__name__})"}
+    except Exception as exc:
+        return {**base, "status": "failed", "message": f"{type(exc).__name__}: {exc}"}
+
+
+async def delete_voice(monitor, voice_id: str, target_ids: set[str] | None = None) -> dict:
+    async with _sync_lock:
+        tombstone = _load_tombstone(voice_id) or prepare_delete(voice_id)
+        tombstone.setdefault("targets", {})
+        targets = [s for s in _targets(monitor) if target_ids is None or s["id"] in target_ids]
+        for studio in targets:
+            tombstone["targets"][studio["id"]] = {
+                "studio_id": studio["id"], "machine": studio.get("machine", "local"),
+                "status": "deleting", "message": "Removing", "attempted_at": time.time(),
+            }
+        _save_tombstone(tombstone)
+
+        async def run_target(studio: dict) -> tuple[str, dict]:
+            return studio["id"], await _delete_target(monitor, tombstone, studio)
+
+        pending = [asyncio.create_task(run_target(studio)) for studio in targets]
+        try:
+            for completed in asyncio.as_completed(pending):
+                studio_id, result = await completed
+                tombstone["targets"][studio_id] = result
+                _save_tombstone(tombstone)
+        finally:
+            unfinished = [task for task in pending if not task.done()]
+            for task in unfinished:
+                task.cancel()
+            if unfinished:
+                await asyncio.gather(*unfinished, return_exceptions=True)
+        return serialize_deletion(tombstone, monitor)
+
+
+def start_delete(monitor, voice_id: str) -> bool:
+    existing = _delete_tasks.get(voice_id)
+    if existing and not existing.done():
+        return False
+    if not _load_tombstone(voice_id) and not _load(voice_id):
+        raise KeyError(voice_id)
+    task = asyncio.create_task(delete_voice(monitor, voice_id))
+    _delete_tasks[voice_id] = task
+    task.add_done_callback(lambda finished, key=voice_id: _delete_tasks.pop(key, None))
     return True
 
 
@@ -395,6 +618,21 @@ async def reconcile_once(monitor) -> None:
         }
         if retry:
             await sync_voice(monitor, voice["id"], retry)
+    for deletion in list_deletions(monitor):
+        if deletion["id"] in _delete_tasks:
+            continue
+        retry = {
+            target["studio_id"] for target in deletion.get("targets", [])
+            if (
+                target.get("status") in {"pending", "deleting"}
+                or (
+                    target.get("status") in {"unsupported", "failed"}
+                    and now - float(target.get("attempted_at") or 0) >= 300
+                )
+            )
+        }
+        if retry:
+            await delete_voice(monitor, deletion["id"], retry)
 
 
 async def _reconcile_loop(monitor) -> None:
@@ -416,12 +654,15 @@ def start_reconciler(monitor) -> None:
 
 async def stop() -> None:
     global _reconciler_task
-    tasks = [task for task in [*_tasks.values(), _reconciler_task] if task and not task.done()]
+    _resync_requested.clear()
+    tasks = [task for task in [*_tasks.values(), *_delete_tasks.values(), _reconciler_task]
+             if task and not task.done()]
     for task in tasks:
         task.cancel()
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
     _tasks.clear()
+    _delete_tasks.clear()
     _reconciler_task = None
 
 

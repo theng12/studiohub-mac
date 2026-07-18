@@ -54,6 +54,14 @@ Swarm Batch, recipes).
    machine separately. Offline or restarting Macs remain pending and retry every
    30 seconds; **Sync again** is also available.
 
+Use **Rename** on a card to change the display name without changing its stable
+voice ID, reference audio, provider mappings, or existing project references.
+The metadata update synchronizes to every Mac, including a fresh pass when a
+rename happens during an active sync. **Delete** removes the Hub master audio
+and only hash-matching Hub-managed copies on Voice Studio workers. A tiny
+deletion tombstone is retained so offline and later-returning Macs remove the
+voice automatically; unrelated machine-local voices are never deleted.
+
 Studio Hub stores the canonical files under its ignored `shared_voices/` state
 folder. Existing Voice Studio library entries are left untouched. New workers
 need Voice Studio v1.19.0 or later to accept the authenticated stable-ID sync.
@@ -129,10 +137,11 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/catalog` | Raw per-studio catalog rows (annotated `hub_cached`, `hub_machine`). Query: `q`, `modality`, `downloaded`, `cloud`, `force` |
 | `GET /api/hub/models` | **Deduped by repo** with per-machine availability (`cached_on`, `machines[]`). Query: `q`, `modality`, `downloaded` |
 | `GET /api/hub/transcription` | Fleet-wide Whisper inventory with `cached_on`, `available_on`, ready counts, and recommended default |
-| `GET /api/hub/shared-voices` | List Hub-owned cloning references with transcript and per-machine synchronization state |
+| `GET /api/hub/shared-voices` | List Hub-owned cloning references plus pending per-machine deletions |
 | `POST /api/hub/shared-voices/transcribe` | Transcribe one multipart reference clip through the existing fleet queue and return editable plain text |
 | `POST /api/hub/shared-voices` | Save one multipart reference + reviewed transcript and begin synchronization to all Voice Studio Macs |
 | `PATCH /api/hub/shared-voices/{id}` · `POST /api/hub/shared-voices/{id}/sync` | Correct shared metadata/transcript and resynchronize / manually retry all targets |
+| `DELETE /api/hub/shared-voices/{id}` · `POST /api/hub/shared-voices/{id}/delete-sync` | Remove the Hub master and exact managed fleet copies / retry pending removals |
 | `GET /api/hub/shared-voices/{id}/audio` | Stream the canonical authenticated reference clip |
 | `GET /api/hub/providers` | Fleet-wide cloud audio provider readiness, configuration counts, and reporting Voice Studio endpoints |
 | `POST /api/hub/transcribe` | Multipart audio transcription routed to a free Voice Studio that has the selected Whisper model cached |

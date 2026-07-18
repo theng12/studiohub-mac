@@ -1290,19 +1290,19 @@ updatePageHeading("overview");
 // ── shared voice library ────────────────────────────────────────────────
 let sharedVoiceModelsLoaded = false;
 function sharedVoiceStatusPill(status) {
-  const cls = status === "synced" ? "ok" : (status === "failed" || status === "conflict" ? "err" : "warn");
+  const cls = status === "synced" || status === "deleted" ? "ok" : (status === "failed" || status === "conflict" || status === "unsupported" ? "err" : "warn");
   return `<span class="pill ${cls}">${esc(status || "pending")}</span>`;
 }
-function renderSharedVoices(voices) {
+function renderSharedVoices(voices, deletions = []) {
   const total = voices.length;
   const synced = voices.reduce((n, v) => n + (v.sync?.synced || 0), 0);
   const targets = voices.reduce((n, v) => n + (v.sync?.total || 0), 0);
-  $("#sv-summary").textContent = `${total} voice${total === 1 ? "" : "s"} · ${synced}/${targets} machine copies ready`;
-  if (!voices.length) {
+  $("#sv-summary").textContent = `${total} voice${total === 1 ? "" : "s"} · ${synced}/${targets} machine copies ready${deletions.length ? ` · ${deletions.length} removal${deletions.length === 1 ? "" : "s"} pending` : ""}`;
+  if (!voices.length && !deletions.length) {
     $("#sv-list").innerHTML = '<div class="card empty">No shared voices yet. Add your first reference above.</div>';
     return;
   }
-  $("#sv-list").innerHTML = voices.map(v => {
+  const voiceCards = voices.map(v => {
     const s = v.sync || {};
     const complete = s.total > 0 && s.synced === s.total;
     const headline = s.syncing ? "Synchronizing…" : complete ? "Ready everywhere" : `${s.synced || 0}/${s.total || 0} Macs ready`;
@@ -1318,9 +1318,21 @@ function renderSharedVoices(voices) {
       ${v.notes ? `<p class="sub" style="margin-bottom:8px">${esc(v.notes)}</p>` : ""}
       <code title="${esc(v.audio_sha256)}">SHA-256 ${esc((v.audio_sha256 || "").slice(0, 16))}…</code>
       <details class="voice-targets"><summary>Per-machine status (${s.synced || 0}/${s.total || 0})</summary>${targetsHtml || '<div class="sub" style="padding-top:8px">No Voice Studio machines are registered.</div>'}</details>
-      <div class="voice-sync-line"><span class="sub">${esc(headline)}</span><button class="btn compact" onclick="playSharedVoice('${jsq(v.id)}',this)">Play</button><button class="btn compact" ${s.syncing ? "disabled" : ""} onclick="retrySharedVoice('${jsq(v.id)}',this)">${s.syncing ? "Syncing…" : "Sync again"}</button></div>
+      <div class="voice-sync-line"><span class="sub">${esc(headline)}</span><button class="btn compact" onclick="playSharedVoice('${jsq(v.id)}',this)">Play</button><button class="btn compact" onclick="renameSharedVoice('${jsq(v.id)}','${jsq(v.name)}',this)">Rename</button><button class="btn compact" ${s.syncing ? "disabled" : ""} onclick="retrySharedVoice('${jsq(v.id)}',this)">${s.syncing ? "Syncing…" : "Sync again"}</button><button class="btn compact stop" onclick="deleteSharedVoice('${jsq(v.id)}','${jsq(v.name)}',this)">Delete</button></div>
     </article>`;
   }).join("");
+  const deletionCards = deletions.map(v => {
+    const s = v.sync || {};
+    const targetsHtml = (v.targets || []).map(t => `
+      <div class="voice-target"><span><b>${esc(mlabel(t.machine || "local"))}</b> <span class="sub">${esc(t.studio_id || "")}</span></span>${sharedVoiceStatusPill(t.status)}<span class="message">${esc(t.message || "")}</span></div>`).join("");
+    return `<article class="card voice-card">
+      <div class="top"><span class="emoji">🗑️</span><div style="min-width:0;flex:1"><div class="voice-name">${esc(v.name)}</div><div class="sub">Deleted from Hub · removal tombstone retained</div></div>${sharedVoiceStatusPill(s.failed ? "failed" : "pending")}</div>
+      <div class="voice-meta"><span class="pill">ID ${esc(v.id)}</span><span class="pill">${s.deleted || 0}/${s.total || 0} Macs removed</span></div>
+      <details class="voice-targets"><summary>Per-machine removal (${s.deleted || 0}/${s.total || 0})</summary>${targetsHtml || '<div class="sub" style="padding-top:8px">No Voice Studio machines are registered.</div>'}</details>
+      <div class="voice-sync-line"><span class="sub">${s.syncing ? "Removing from reachable Macs…" : "Offline Macs will catch up automatically"}</span><button class="btn compact" ${s.syncing ? "disabled" : ""} onclick="retrySharedVoiceDelete('${jsq(v.id)}',this)">${s.syncing ? "Removing…" : "Retry removal"}</button></div>
+    </article>`;
+  }).join("");
+  $("#sv-list").innerHTML = voiceCards + deletionCards;
 }
 async function loadSharedVoiceModels(force = false) {
   if (sharedVoiceModelsLoaded && !force) return;
@@ -1345,7 +1357,8 @@ async function loadSharedVoices(force = false) {
   try {
     const response = await api("/api/hub/shared-voices");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    renderSharedVoices((await response.json()).voices || []);
+    const data = await response.json();
+    renderSharedVoices(data.voices || [], data.deletions || []);
   } catch (error) {
     $("#sv-summary").textContent = "Could not load shared voices";
     $("#sv-list").innerHTML = `<div class="card empty">${esc(error.message)}</div>`;
@@ -1402,6 +1415,42 @@ async function retrySharedVoice(id, button) {
     await loadSharedVoices();
   } catch (error) { $("#sv-status").textContent = `Sync could not start: ${error.message}`; }
   finally { button.disabled = false; button.textContent = "Sync again"; }
+}
+async function renameSharedVoice(id, currentName, button) {
+  const next = window.prompt("Rename this shared voice on every Mac:", currentName);
+  if (next === null || next.trim() === currentName) return;
+  if (!next.trim()) { $("#sv-status").textContent = "Voice name cannot be empty."; return; }
+  button.disabled = true; button.textContent = "Saving…";
+  try {
+    const response = await api(`/api/hub/shared-voices/${encodeURIComponent(id)}`, {
+      method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify({name:next.trim()})
+    });
+    const data = await response.json(); if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    $("#sv-status").textContent = `${data.voice.name} saved. The new name is synchronizing to every Mac.`;
+    await loadSharedVoices();
+  } catch (error) { $("#sv-status").textContent = `Could not rename voice: ${error.message}`; }
+  finally { button.disabled = false; button.textContent = "Rename"; }
+}
+async function deleteSharedVoice(id, name, button) {
+  if (!window.confirm(`Delete “${name}” from Studio Hub and every connected Voice Studio? Offline Macs will remove it automatically when they return.`)) return;
+  button.disabled = true; button.textContent = "Deleting…";
+  try {
+    const response = await api(`/api/hub/shared-voices/${encodeURIComponent(id)}`, {method:"DELETE"});
+    const data = await response.json(); if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    $("#sv-status").textContent = `${name} was removed from the Hub. Fleet removal is continuing automatically.`;
+    await loadSharedVoices();
+    setTimeout(() => loadSharedVoices(), 1500);
+  } catch (error) { $("#sv-status").textContent = `Could not delete voice: ${error.message}`; }
+  finally { button.disabled = false; button.textContent = "Delete"; }
+}
+async function retrySharedVoiceDelete(id, button) {
+  button.disabled = true; button.textContent = "Starting…";
+  try {
+    const response = await api(`/api/hub/shared-voices/${encodeURIComponent(id)}/delete-sync`, {method:"POST"});
+    const data = await response.json(); if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    await loadSharedVoices(); setTimeout(() => loadSharedVoices(), 1500);
+  } catch (error) { $("#sv-status").textContent = `Removal could not restart: ${error.message}`; }
+  finally { button.disabled = false; button.textContent = "Retry removal"; }
 }
 async function playSharedVoice(id, button) {
   const original = button.textContent; button.disabled = true; button.textContent = "Loading…";

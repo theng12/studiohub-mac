@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from pathlib import Path
 
@@ -102,6 +103,108 @@ async def test_connection_drop_stays_pending_then_self_heals_on_retry(reset, mon
 
 
 @pytest.mark.asyncio
+async def test_rename_keeps_stable_id_and_updates_worker_metadata(reset, monitor, monkeypatch):
+    voice = _create()
+    studio = next(s for s in monitor.registry if s["id"] == "voice")
+    monitor.status[studio["id"]] = {"status": "up"}
+    captured = {}
+
+    async def put(url, **kwargs):
+        captured.update(kwargs["data"])
+        return _Response(200, {
+            "voice": {"id": voice["id"]},
+            "sync": {"status": "updated", "sha256": voice["audio_sha256"]},
+        })
+
+    monkeypatch.setattr(monitor._client, "put", put)
+    renamed = shared_voices.update(voice["id"], {"name": "Aiden — Calm"})
+    result = await shared_voices.sync_voice(monitor, voice["id"])
+
+    assert renamed["id"] == voice["id"]
+    assert renamed["audio_sha256"] == voice["audio_sha256"]
+    assert captured["name"] == "Aiden — Calm"
+    assert result["sync"]["synced"] == 1
+
+
+@pytest.mark.asyncio
+async def test_rename_during_active_sync_queues_a_fresh_metadata_pass(reset, monitor, monkeypatch):
+    voice = _create()
+    studio = next(s for s in monitor.registry if s["id"] == "voice")
+    monitor.status[studio["id"]] = {"status": "up"}
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    names = []
+
+    async def put(url, **kwargs):
+        names.append(kwargs["data"]["name"])
+        if len(names) == 1:
+            first_started.set()
+            await release_first.wait()
+        return _Response(200, {
+            "voice": {"id": voice["id"]},
+            "sync": {"status": "updated", "sha256": voice["audio_sha256"]},
+        })
+
+    monkeypatch.setattr(monitor._client, "put", put)
+    assert shared_voices.start_sync(monitor, voice["id"]) is True
+    await first_started.wait()
+    shared_voices.update(voice["id"], {"name": "Aiden Latest"})
+    assert shared_voices.start_sync(monitor, voice["id"]) is False
+    release_first.set()
+    for _ in range(20):
+        if len(names) == 2 and voice["id"] not in shared_voices._tasks:
+            break
+        await asyncio.sleep(0)
+
+    assert names == ["Aiden", "Aiden Latest"]
+
+
+@pytest.mark.asyncio
+async def test_delete_removes_master_and_exact_managed_worker_copy(reset, monitor, monkeypatch):
+    voice = _create()
+    studio = next(s for s in monitor.registry if s["id"] == "voice")
+    monitor.status[studio["id"]] = {"status": "up"}
+    captured = {}
+
+    async def delete(url, **kwargs):
+        captured["url"] = url
+        captured["params"] = kwargs["params"]
+        return _Response(200, {"deleted": voice["id"], "sha256": voice["audio_sha256"]})
+
+    monkeypatch.setattr(monitor._client, "delete", delete)
+    result = await shared_voices.delete_voice(monitor, voice["id"])
+
+    assert shared_voices.audio_path(voice["id"]) is None
+    assert shared_voices.list_voices(monitor) == []
+    assert captured["url"].endswith(f"/api/voices/{voice['id']}/fleet-sync")
+    assert captured["params"] == {"audio_sha256": voice["audio_sha256"]}
+    assert result["sync"]["deleted"] == 1
+    assert shared_voices.list_deletions(monitor) == []
+    assert shared_voices.get_deletion(voice["id"], monitor)["targets"][0]["status"] == "deleted"
+
+
+@pytest.mark.asyncio
+async def test_offline_delete_tombstone_self_heals_when_mac_returns(reset, monitor, monkeypatch):
+    voice = _create()
+    studio = next(s for s in monitor.registry if s["id"] == "voice")
+    monitor.status[studio["id"]] = {"status": "down"}
+
+    first = await shared_voices.delete_voice(monitor, voice["id"])
+    assert first["sync"]["pending"] == 1
+    assert shared_voices.list_deletions(monitor)[0]["id"] == voice["id"]
+
+    async def delete(url, **kwargs):
+        return _Response(200, {"deleted": voice["id"], "sha256": voice["audio_sha256"]})
+
+    monkeypatch.setattr(monitor._client, "delete", delete)
+    monitor.status[studio["id"]] = {"status": "up"}
+    await shared_voices.reconcile_once(monitor)
+
+    assert shared_voices.list_deletions(monitor) == []
+    assert shared_voices.get_deletion(voice["id"], monitor)["sync"]["deleted"] == 1
+
+
+@pytest.mark.asyncio
 async def test_remote_voice_routes_through_peer_hub_and_reports_old_worker(reset, monitor, monkeypatch):
     voice = _create()
     local = next(s for s in monitor.registry if s["id"] == "voice")
@@ -140,6 +243,22 @@ def test_authenticated_create_route_starts_sync(authed, client, monkeypatch):
     assert response.json()["voice"]["transcript"] == "Reviewed words."
 
 
+def test_authenticated_rename_and_delete_routes(authed, client, monkeypatch):
+    voice = _create()
+    monkeypatch.setattr(shared_voices, "start_sync", lambda monitor, voice_id: True)
+    renamed = authed.patch(f"/api/hub/shared-voices/{voice['id']}", json={"name": "Aiden New"})
+    assert renamed.status_code == 200
+    assert renamed.json()["voice"]["name"] == "Aiden New"
+    assert renamed.json()["voice"]["id"] == voice["id"]
+
+    monkeypatch.setattr(shared_voices, "start_delete", lambda monitor, voice_id: True)
+    assert client.delete(f"/api/hub/shared-voices/{voice['id']}").status_code == 401
+    deleted = authed.delete(f"/api/hub/shared-voices/{voice['id']}")
+    assert deleted.status_code == 200
+    assert deleted.json()["deletion"]["id"] == voice["id"]
+    assert shared_voices.audio_path(voice["id"]) is None
+
+
 def test_in_hub_transcription_returns_editable_plain_text(authed, monkeypatch):
     async def transcribe(*args, **kwargs):
         return {
@@ -166,3 +285,6 @@ def test_dashboard_exposes_transcribe_review_and_sync_workflow():
     assert "Save &amp; sync to all Macs" in source
     assert "loadSharedVoices" in source
     assert "Connection drops retry automatically" in source
+    assert "renameSharedVoice" in source
+    assert "deleteSharedVoice" in source
+    assert "Offline Macs will catch up automatically" in source

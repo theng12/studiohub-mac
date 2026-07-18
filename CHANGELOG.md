@@ -10,6 +10,31 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.46.0] — 2026-07-19
+
+### Added — fleet-wide shared voice rename and removal
+
+- Every shared voice card now has **Rename** and **Delete** controls. Renaming
+  preserves the stable voice ID, canonical audio hash, local provider mappings,
+  embedding caches, and existing project references while synchronizing the new
+  metadata to every Voice Studio Mac.
+- A rename requested during an active sync automatically queues a fresh metadata
+  pass, preventing the earlier in-flight snapshot from winning.
+- Deleting removes the Hub's canonical audio immediately and sends a
+  hash-verified managed-delete request to each reachable Voice Studio. Workers
+  refuse to remove unrelated local voices or a stable-ID collision with a
+  different audio hash.
+- The Hub retains only a tiny deletion tombstone after removing the media.
+  Offline, restarting, newly registered, and later-returning Macs are reconciled
+  automatically until every managed copy is gone. Pending removal cards show
+  per-machine progress and expose **Retry removal**.
+
+### API
+
+- `GET /api/hub/shared-voices` now includes active deletion operations.
+- Added `DELETE /api/hub/shared-voices/{id}` and
+  `POST /api/hub/shared-voices/{id}/delete-sync`.
+
 ## [1.45.0] — 2026-07-18
 
 ### Added — durable, self-healing fleet updates

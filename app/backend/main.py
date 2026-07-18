@@ -953,7 +953,10 @@ async def hub_transcription(force: bool = False):
 # ── Hub-owned shared voice library ────────────────────────────────────────
 @app.get("/api/hub/shared-voices")
 def hub_shared_voices():
-    return {"voices": shared_voices.list_voices(monitor)}
+    return {
+        "voices": shared_voices.list_voices(monitor),
+        "deletions": shared_voices.list_deletions(monitor),
+    }
 
 
 @app.post("/api/hub/shared-voices/transcribe")
@@ -1031,8 +1034,42 @@ async def hub_update_shared_voice(voice_id: str, body: SharedVoiceUpdateBody):
         raise HTTPException(404, "shared voice not found")
     except (ValueError, shared_voices.SharedVoiceConflict) as exc:
         raise HTTPException(400, str(exc))
-    shared_voices.start_sync(monitor, voice_id)
-    return {"voice": shared_voices.serialize(voice, monitor), "sync_started": True}
+    started = shared_voices.start_sync(monitor, voice_id)
+    return {
+        "voice": shared_voices.serialize(voice, monitor),
+        "sync_started": started,
+        "sync_queued": not started,
+    }
+
+
+@app.delete("/api/hub/shared-voices/{voice_id}")
+async def hub_delete_shared_voice(voice_id: str):
+    try:
+        tombstone = shared_voices.prepare_delete(voice_id)
+        started = shared_voices.start_delete(monitor, voice_id)
+    except KeyError:
+        raise HTTPException(404, "shared voice not found")
+    except (ValueError, shared_voices.SharedVoiceConflict) as exc:
+        raise HTTPException(409, str(exc))
+    return {
+        "deletion": shared_voices.serialize_deletion(tombstone, monitor),
+        "sync_started": started,
+        "already_running": not started,
+    }
+
+
+@app.post("/api/hub/shared-voices/{voice_id}/delete-sync")
+async def hub_retry_shared_voice_delete(voice_id: str):
+    try:
+        started = shared_voices.start_delete(monitor, voice_id)
+        deletion = shared_voices.get_deletion(voice_id, monitor)
+    except (KeyError, ValueError):
+        raise HTTPException(404, "shared voice deletion not found")
+    return {
+        "deletion": deletion,
+        "sync_started": started,
+        "already_running": not started,
+    }
 
 
 @app.post("/api/hub/shared-voices/{voice_id}/sync")
