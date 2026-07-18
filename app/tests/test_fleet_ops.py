@@ -305,6 +305,30 @@ async def test_update_health_waits_for_new_disk_version(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_update_fails_fast_when_studio_never_restarts(monkeypatch):
+    studio = {"id": "voice", "host": "127.0.0.1", "port": 1}
+    item = {"expected_version": "1.0.0", "from_version": "1.0.0"}
+
+    class Response:
+        status_code = 200
+        def json(self): return {"ok": True, "app_version": "1.0.0"}
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, *args, **kwargs): return Response()
+
+    monkeypatch.setattr(fleet_ops.httpx, "AsyncClient", lambda **kwargs: Client())
+    monkeypatch.setattr(fleet_ops, "UPDATE_START_TIMEOUT", 0)
+
+    async def no_sleep(seconds): return None
+    monkeypatch.setattr(fleet_ops.asyncio, "sleep", no_sleep)
+
+    with pytest.raises(RuntimeError, match="did not restart the Studio"):
+        await fleet_ops._wait_for_healthy(studio, item)
+
+
+@pytest.mark.asyncio
 async def test_updates_are_sequential_and_failure_is_contained(monkeypatch, monitor):
     calls = []
     refreshed = []
@@ -371,6 +395,26 @@ async def test_remote_update_reconnects_after_status_connection_drop(monkeypatch
     assert client.get_calls == 2
     assert item["status"] == "complete" and item["detail"] == "healthy on v2.0.0"
     assert item["from_version"] == "1.0.0" and item["expected_version"] == "2.0.0"
+
+
+@pytest.mark.asyncio
+async def test_remote_update_surfaces_peer_conflict_detail(monkeypatch):
+    studio = {"id": "render@mac-a", "modality": "render", "machine": "mac-a",
+              "host": "10.0.0.8", "hub_port": 47873}
+
+    class Response:
+        status_code = 409
+        text = ""
+        def json(self): return {"detail": "an update job is already running"}
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def post(self, *args, **kwargs): return Response()
+
+    monkeypatch.setattr(fleet_ops.httpx, "AsyncClient", lambda **kwargs: Client())
+    with pytest.raises(RuntimeError, match="already running"):
+        await fleet_ops._update_remote(studio, {"studio": studio["id"]})
 
 
 def test_start_hub_updates_requires_remote_machines(monitor):

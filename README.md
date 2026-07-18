@@ -90,6 +90,9 @@ reconnect through the expected restart connection drop, and require the updated
 app to reach the published version and answer healthy before the next one starts.
 Render Studio participates in the same inventory and controls, including a
 shortcut to its local automatic-update card.
+If an update command never starts a restart, the operation fails visibly after
+three minutes instead of looking busy for the entire 20-minute recovery window;
+once a restart really begins, the longer window remains available for slow Macs.
 Busy apps receive a durable update-after-current-work request on their own Mac;
 rolling progress survives a Hub restart, transient connections retry with visible
 attempt counts, and a failed subset can be retried centrally without selecting it

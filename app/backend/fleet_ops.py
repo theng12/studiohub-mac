@@ -24,6 +24,7 @@ _STATE_FILE = DATA_DIR / "fleet_versions.json"
 
 PREFLIGHT_TIMEOUT = 12.0
 UPDATE_TIMEOUT = 20 * 60
+UPDATE_START_TIMEOUT = 3 * 60
 DRAIN_TIMEOUT = 30 * 60
 
 # Studio Hub watches the repositories itself instead of waiting for each
@@ -701,6 +702,7 @@ async def _update_one(monitor, studio: dict, item: dict):
 
 async def _wait_for_healthy(studio: dict, item: dict):
     deadline = time.monotonic() + UPDATE_TIMEOUT
+    restart_deadline = time.monotonic() + UPDATE_START_TIMEOUT
     headers = peers.studio_headers(studio)
     saw_unavailable = False
     async with httpx.AsyncClient(timeout=5.0) as client:
@@ -723,6 +725,11 @@ async def _wait_for_healthy(studio: dict, item: dict):
                     item.update(status="complete", detail=f"healthy on v{version}",
                                 finished_at=time.time())
                     return
+                if not saw_unavailable and time.monotonic() >= restart_deadline:
+                    raise RuntimeError(
+                        "update command did not restart the Studio within 3 minutes; "
+                        "check its update status/log instead of waiting indefinitely"
+                    )
             except (httpx.HTTPError, ValueError):
                 saw_unavailable = True
         raise RuntimeError("Studio did not return healthy before the update timeout")
@@ -735,7 +742,12 @@ async def _update_remote(studio: dict, item: dict):
     async with httpx.AsyncClient(timeout=30.0) as client:
         r = await client.post(f"{url}/api/hub/maintenance/updates", headers=headers,
                               json={"studio_ids": [local_id]})
-        r.raise_for_status()
+        if r.status_code >= 400:
+            try:
+                detail = r.json().get("detail") or r.text
+            except (ValueError, AttributeError):
+                detail = r.text or f"HTTP {r.status_code}"
+            raise RuntimeError(str(detail)[:240])
         remote_id = r.json()["id"]
         item["remote_job_id"] = remote_id
         _save_state()
@@ -759,6 +771,13 @@ async def _update_remote(studio: dict, item: dict):
                 if key in remote_item:
                     item[key] = remote_item[key]
             _save_state()
+            remote_started = float(remote_item.get("started_at") or 0)
+            if (remote_item.get("status") == "updating" and remote_started
+                    and time.time() - remote_started >= UPDATE_START_TIMEOUT):
+                raise RuntimeError(
+                    "remote update command did not restart the Studio within 3 minutes; "
+                    "check that Mac's updater status/log"
+                )
             if data["status"] in {"complete", "failed"}:
                 if data["status"] == "failed":
                     raise RuntimeError(remote_item["detail"])
@@ -884,6 +903,7 @@ async def _update_hub_one(item: dict, latest: str | None):
     item.update(status="restarting", detail="waiting for the Hub to come back online")
     _save_state()
     deadline = time.monotonic() + UPDATE_TIMEOUT
+    restart_deadline = time.monotonic() + UPDATE_START_TIMEOUT
     saw_down = False
     frm = item.get("from_version")
 
@@ -910,6 +930,15 @@ async def _update_hub_one(item: dict, latest: str | None):
                             f"restarted but still on v{ver} — update didn't apply "
                             "(git pull or deps failed on that Mac; update it from "
                             "its Pinokio sidebar and check its logs)")
+                    return
+                if time.monotonic() >= restart_deadline:
+                    item.update(
+                        status="failed",
+                        detail=(f"still on v{ver or frm or '?'} — update command did not "
+                                "restart the Hub within 3 minutes; check its updater status/log"),
+                        finished_at=time.time(),
+                    )
+                    _save_state()
                     return
             except (httpx.HTTPError, ValueError):
                 saw_down = True  # it went down to restart — expected

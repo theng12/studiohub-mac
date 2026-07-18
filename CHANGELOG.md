@@ -10,6 +10,18 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.47.1] — 2026-07-19
+
+### Fixed — updates no longer look busy for 20 minutes when nothing restarted
+
+- Studio and agent-Hub update verification now fails with an actionable updater
+  status/log message when the target never begins restarting within three
+  minutes. The full 20-minute recovery window remains available after an
+  actual restart begins.
+- A peer Hub's HTTP 409 explanation is preserved in the primary dashboard, so
+  an already-running remote operation is shown directly instead of a generic
+  HTTP/MDN error.
+
 ## [1.47.0] — 2026-07-19
 
 ### Added — unattended fleet reliability protection
