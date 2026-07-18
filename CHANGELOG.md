@@ -10,6 +10,28 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.44.5] — 2026-07-18
+
+### Fixed — validated voice artifact results
+
+- Root cause: the artifact proxy always labelled every generated file
+  `video/mp4`, while the worker's `duration_seconds` was generation runtime,
+  not decoded audio duration. Voice jobs also did not reliably include bytes
+  or a checksum in their terminal worker payload.
+- Successful WAV voice jobs now validate the actual RIFF/WAVE bytes once at
+  completion and persist `media_type`, `format`, bytes, SHA-256, decoded audio
+  duration, sample rate, channels, and explicit `runtime_s`. `duration_s` is
+  retained as a documented compatibility alias for runtime only.
+- Artifact proxy responses preserve an allowed upstream image/video/audio MIME
+  type, prefer cached byte-validated metadata, and no longer hard-code MP4.
+  Public job results expose a stable Hub artifact URL and omit worker-local
+  paths.
+- Added fixtures covering the production-shaped WAV, runtime-versus-media
+  duration, proxy MIME behavior, repeated reads, peer authentication, and
+  missing/non-terminal artifacts. Non-WAV Voice Studio outputs are unchanged;
+  they need worker-provided validated metadata before contract consumers should
+  bill them.
+
 ## [1.44.4] — 2026-07-18
 
 ### Fixed — durable remote-render asset transfer

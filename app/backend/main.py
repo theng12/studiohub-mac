@@ -20,12 +20,13 @@ from pathlib import Path
 
 import httpx
 
+from starlette.background import BackgroundTask
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import (alerts, auth, broadcast, broker, chat_jobs, fleet_ops, gateway, job_storage,
+from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, fleet_ops, gateway, job_storage,
                ledger, metrics, peers, recipes, shared_voices, transcription_jobs)
 from .auto_update import UpdateError
 from .auto_update_config import create_updater
@@ -754,41 +755,74 @@ def hub_get_batch(batch_id: str):
     b = broker.batches.get(batch_id) or ledger.load_batch(batch_id)
     if b is None:
         raise HTTPException(404, "unknown batch")
-    return {**broker.batch_summary(b), "items": b["items"]}
+    return {**broker.batch_summary(b),
+            "items": [broker.public_item(b, item) for item in b["items"]]}
+
+
+async def _open_worker_artifact(studio: dict, worker_artifact_url: str):
+    """Open a worker stream early enough to preserve a verified MIME header."""
+    from .peers import studio_request
+    url, headers = studio_request(studio, worker_artifact_url)
+    client = httpx.AsyncClient(follow_redirects=True)
+    try:
+        response = await client.send(client.build_request("GET", url, headers=headers), stream=True)
+        response.raise_for_status()
+    except Exception:
+        await client.aclose()
+        raise
+    return client, response
 
 
 @app.get("/api/hub/jobs/{batch_id}/items/{item_index}/artifact")
-def hub_proxy_job_artifact(batch_id: str, item_index: int):
+async def hub_proxy_job_artifact(batch_id: str, item_index: int):
     """Stream a worker artifact through Hub so clients need only Hub auth."""
     b = broker.batches.get(batch_id) or ledger.load_batch(batch_id)
     if not b:
         raise HTTPException(404, "unknown batch")
     item = next((i for i in b["items"] if i.get("index") == item_index), None)
-    if not item or item.get("state") != "done" or not item.get("artifact_url"):
+    worker_artifact_url = (item or {}).get("worker_artifact_url") or (item or {}).get("artifact_url")
+    if not item or item.get("state") != "done" or not worker_artifact_url:
         raise HTTPException(404, "artifact is not available")
     studio = next((s for s in monitor.registry if s["id"] == item.get("studio")), None)
     if not studio:
         raise HTTPException(503, "render worker is no longer registered")
 
-    async def stream():
-        import httpx
-        from .peers import studio_request
-        artifact_url, artifact_headers = studio_request(studio, item["artifact_url"])
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            async with client.stream(
-                "GET", artifact_url, headers=artifact_headers,
-                timeout=None,
-            ) as response:
-                response.raise_for_status()
-                async for chunk in response.aiter_bytes(1024 * 1024):
-                    yield chunk
+    try:
+        client, response = await _open_worker_artifact(studio, worker_artifact_url)
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "worker artifact could not be read") from exc
+
+    async def close_worker_stream():
+        await response.aclose()
+        await client.aclose()
+
+    media_type = artifact_metadata.media_type_for_proxy(
+        b["modality"], item.get("media_type"), response.headers.get("content-type"))
+    # Legacy completed voice jobs predate terminal metadata. Read and validate
+    # their audio exactly once, persist it, then serve the same verified bytes.
+    if b["modality"] == "voice" and media_type == "application/octet-stream":
+        try:
+            content = await response.aread()
+            metadata = artifact_metadata.wav_metadata(content)
+            item.update(metadata)
+            item.pop("artifact_metadata_error", None)
+            ledger.save_batch(b)
+            return Response(content=content, media_type=metadata["media_type"], headers={
+                "Content-Length": str(metadata["bytes"]),
+                "X-Content-SHA256": metadata["sha256"],
+            })
+        except ValueError as exc:
+            raise HTTPException(422, "voice artifact is not a validated WAV") from exc
+        finally:
+            await close_worker_stream()
 
     headers = {}
     if item.get("bytes"):
         headers["Content-Length"] = str(item["bytes"])
     if item.get("sha256"):
         headers["X-Content-SHA256"] = item["sha256"]
-    return StreamingResponse(stream(), media_type="video/mp4", headers=headers)
+    return StreamingResponse(response.aiter_bytes(1024 * 1024), media_type=media_type,
+                             headers=headers, background=BackgroundTask(close_worker_stream))
 
 
 @app.post("/api/hub/jobs/{batch_id}/items/{item_index}/ack")

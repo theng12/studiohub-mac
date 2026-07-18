@@ -26,7 +26,7 @@ from pathlib import Path
 
 import httpx
 
-from . import ledger, shared_voices
+from . import artifact_metadata, ledger, shared_voices
 from .peers import studio_request
 from .monitor import is_cached, is_cloud_lane
 from .registry import base_url, machine_enabled
@@ -332,8 +332,9 @@ def _recent_avg(modality: str, model: str, limit: int = 50) -> float | None:
         if b["modality"] != modality or b["model"] != model:
             continue
         for i in b["items"]:
-            if i.get("state") == "done" and isinstance(i.get("duration_s"), (int, float)):
-                durs.append(i["duration_s"])
+            runtime = i.get("runtime_s", i.get("duration_s"))
+            if i.get("state") == "done" and isinstance(runtime, (int, float)):
+                durs.append(runtime)
     durs = durs[-limit:]
     return round(sum(durs) / len(durs), 1) if durs else None
 
@@ -344,8 +345,9 @@ def batch_summary(b: dict) -> dict:
     now = time.time()
     # ETA basis: this batch's own completed items if any, else the model's recent
     # average across every batch (so single-item jobs still get an estimate).
-    done_durs = [i["duration_s"] for i in items
-                 if i.get("state") == "done" and isinstance(i.get("duration_s"), (int, float))]
+    done_durs = [i.get("runtime_s", i.get("duration_s")) for i in items
+                 if i.get("state") == "done"
+                 and isinstance(i.get("runtime_s", i.get("duration_s")), (int, float))]
     avg_s = (round(sum(done_durs) / len(done_durs), 1) if done_durs
              else _recent_avg(b["modality"], b["model"]))
     # Per-item live detail for whatever is running right now (machine tag + progress).
@@ -365,9 +367,10 @@ def batch_summary(b: dict) -> dict:
                 activity_at.append(value)
         # Batches saved before explicit terminal timestamps still have enough
         # information to estimate their most recent completed item.
+        runtime = i.get("runtime_s", i.get("duration_s"))
         if (i.get("state") == "done" and isinstance(run_started, (int, float))
-                and isinstance(i.get("duration_s"), (int, float))):
-            activity_at.append(run_started + i["duration_s"])
+                and isinstance(runtime, (int, float))):
+            activity_at.append(run_started + runtime)
         if i.get("state") != "running":
             continue
         sid = i.get("studio") or ""
@@ -542,10 +545,11 @@ async def _post_item_webhook(client: httpx.AsyncClient, b: dict, item: dict):
             "batch_id": b["id"], "label": b.get("label"),
             "index": item["index"], "state": item["state"],
             "studio": sid, "machine": sid.split("@", 1)[1] if "@" in sid else "local",
-            "artifact_url": item.get("artifact_url"),
-            "artifact_path": item.get("artifact_path"),
+            "artifact_url": hub_artifact_url(b, item),
             "asset_id": item.get("asset_id"),
-            "duration_s": item.get("duration_s"),
+            "runtime_s": item.get("runtime_s", item.get("duration_s")),
+            "duration_s": item.get("runtime_s", item.get("duration_s")),  # legacy alias
+            "terminal_result": terminal_result(b, item),
             "error": item.get("error"),
             # running batch tally so the client can show n/N without a poll
             "done": sum(1 for i in b["items"] if i["state"] == "done"),
@@ -555,25 +559,105 @@ async def _post_item_webhook(client: httpx.AsyncClient, b: dict, item: dict):
         pass  # client unreachable — the item is still in the batch/poll + ledger
 
 
-def _record_worker_success(b: dict, item: dict, studio: dict, job: dict,
-                           body: dict, t_start: float):
+def hub_artifact_url(b: dict, item: dict) -> str | None:
+    """Stable Hub-relative identity; never expose a worker-local path."""
+    if item.get("state") != "done":
+        return None
+    return f"/api/hub/jobs/{b['id']}/items/{item['index']}/artifact"
+
+
+def terminal_result(b: dict, item: dict) -> dict | None:
+    """Safe result envelope for customer-facing consumers such as GenStudio."""
+    if item.get("state") != "done":
+        return None
+    return {
+        "status": "succeeded",
+        "asset_id": item.get("asset_id"),
+        "artifact_url": hub_artifact_url(b, item),
+        "media_type": item.get("media_type"),
+        "format": item.get("format"),
+        "bytes": item.get("bytes"),
+        "sha256": item.get("sha256"),
+        "audio_duration_s": item.get("audio_duration_s"),
+        "audio_duration_ms": item.get("audio_duration_ms"),
+        "sample_rate_hz": item.get("sample_rate_hz"),
+        "channels": item.get("channels"),
+        "runtime_s": item.get("runtime_s", item.get("duration_s")),
+        # Kept only for callers that predate runtime_s. It is runtime, never
+        # decoded media duration.
+        "duration_s": item.get("runtime_s", item.get("duration_s")),
+    }
+
+
+def public_item(b: dict, item: dict) -> dict:
+    """Return a public job item without worker-local paths or worker URLs."""
+    result = {k: v for k, v in item.items()
+              if k not in {"artifact_path", "worker_artifact_url"}}
+    if item.get("state") == "done":
+        result["artifact_url"] = hub_artifact_url(b, item)
+        result["terminal_result"] = terminal_result(b, item)
+    return result
+
+
+async def _cache_voice_artifact_metadata(client: httpx.AsyncClient, item: dict,
+                                         studio: dict, worker_url: str,
+                                         expected_bytes, expected_sha256) -> None:
+    """Fetch and decode a terminal voice artifact once, then persist its facts.
+
+    A metadata failure never retries an already-completed generation: the
+    result remains available but is marked unverified and therefore unbillable.
+    """
+    try:
+        url, headers = studio_request(studio, worker_url)
+        response = await client.get(url, headers=headers, timeout=60.0)
+        response.raise_for_status()
+        metadata = artifact_metadata.wav_metadata(response.content)
+        if expected_bytes is not None and int(expected_bytes) != metadata["bytes"]:
+            raise ValueError("worker byte count does not match downloaded artifact")
+        if expected_sha256 and str(expected_sha256).lower() != metadata["sha256"]:
+            raise ValueError("worker checksum does not match downloaded artifact")
+    except (ValueError, httpx.HTTPError) as exc:
+        item["artifact_metadata_error"] = str(exc)
+        return
+    item.update(metadata)
+    item.pop("artifact_metadata_error", None)
+
+
+async def _record_worker_success(client: httpx.AsyncClient, b: dict, item: dict,
+                                 studio: dict, job: dict, body: dict,
+                                 t_start: float):
     """Adopt a completed worker job into the Hub ledger.
 
     This is deliberately separate from the normal poll loop: if the network
     drops after the worker finishes, recovery can record the already-produced
     artifact instead of submitting a duplicate generation.
     """
+    if item.get("state") == "done" and item.get("asset_id"):
+        return  # terminal polling/recovery is idempotent
     item["artifact_path"] = job.get("output_path")
-    item["artifact_url"] = (
+    worker_url = (
         f"{base_url(studio)}{job['output_url']}" if job.get("output_url") else None)
+    item["worker_artifact_url"] = worker_url
+    # Kept internally for old ledger/reference behavior; API readers are
+    # normalized by public_item(), which returns the stable Hub proxy URL.
+    item["artifact_url"] = worker_url
     item["state"] = "done"
-    item["sha256"] = job.get("sha256")
-    item["bytes"] = job.get("bytes")
     item["encoder"] = job.get("encoder")
-    duration = job.get("duration_seconds")
-    if duration is None:
-        duration = round(time.time() - t_start, 2)
-    item["duration_s"] = duration
+    runtime = job.get("runtime_s", job.get("generation_seconds", job.get("duration_seconds")))
+    try:
+        runtime = float(runtime) if runtime is not None else round(time.time() - t_start, 2)
+    except (TypeError, ValueError):
+        runtime = round(time.time() - t_start, 2)
+    item["runtime_s"] = runtime
+    item["duration_s"] = runtime  # compatibility: historic duration_s meant runtime
+    if b["modality"] == "voice" and worker_url:
+        await _cache_voice_artifact_metadata(
+            client, item, studio, worker_url, job.get("bytes"), job.get("sha256"))
+    else:
+        item["sha256"] = job.get("sha256")
+        item["bytes"] = job.get("bytes")
+        item["media_type"] = artifact_metadata.trusted_media_type(
+            job.get("media_type") or job.get("content_type"), b["modality"])
     item["finished_at"] = time.time()
     item["last_progress_at"] = item["finished_at"]
     item["asset_id"] = ledger.record_asset(
@@ -581,8 +665,8 @@ def _record_worker_success(b: dict, item: dict, studio: dict, job: dict,
         machine=studio.get("machine", "local"), model=b["model"],
         seed=job.get("resolved_seed") or item["seed"], prompt=item["prompt"],
         params=body, artifact_path=item["artifact_path"],
-        artifact_url=item["artifact_url"], batch_id=b["id"],
-        item_index=item["index"], duration_s=duration,
+        artifact_url=worker_url, batch_id=b["id"],
+        item_index=item["index"], duration_s=runtime, runtime_s=runtime,
         is_cloud=item.get("is_cloud", False),
     )
 
@@ -614,7 +698,7 @@ async def _recover_worker_job(client, b: dict, item: dict, studio: dict,
                 await asyncio.sleep(POLL_S)
                 continue
             if state == "done" and not job.get("error"):
-                _record_worker_success(b, item, studio, job, body, t_start)
+                await _record_worker_success(client, b, item, studio, job, body, t_start)
                 return True
             return False  # the original job genuinely failed or was cancelled
         except Exception:
@@ -651,10 +735,7 @@ async def _maybe_finish(client: httpx.AsyncClient, b: dict):
         try:
             await client.post(b["webhook"], json={
                 **summary,
-                "items": [{k: it[k] for k in
-                           ("index", "state", "artifact_url",
-                            "artifact_path", "asset_id", "error")}
-                          for it in b["items"]],
+                "items": [public_item(b, it) for it in b["items"]],
             }, timeout=10.0)
         except httpx.HTTPError:
             pass  # client unreachable — batch state is still queryable
@@ -959,7 +1040,7 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
                     j.get("error") or f"studio job {state}"
                 )
             # terminal + no error = success
-            _record_worker_success(b, item, studio, j, body, t_start)
+            await _record_worker_success(client, b, item, studio, j, body, t_start)
             return
     except Exception as e:
         # The worker may have completed even though this status request lost

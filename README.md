@@ -224,6 +224,28 @@ External apps never talk to studios directly — they talk to the Hub:
 3. Or poll `GET /api/hub/jobs/{batch_id}` — this survives Hub restarts
    (batches are persisted in `hub.db`; in-flight items are safely re-queued).
 
+### Terminal voice result (billable audio)
+
+Completed job items include a path-free `terminal_result` envelope. For a
+validated WAV voice result it contains `asset_id`, Hub-relative `artifact_url`,
+`media_type` (`audio/wav`), `format`, `bytes`, `sha256`,
+`audio_duration_ms`/`audio_duration_s`, `sample_rate_hz`, `channels`, and
+`runtime_s`. `runtime_s` is the worker processing time; it is deliberately
+separate from decoded audio duration. `duration_s` remains temporarily as a
+backward-compatible alias for `runtime_s` only.
+
+The result maps to the Audio Job Result v1 contract as follows: `asset_id`,
+`artifact_url`, and the media facts map to `audio`; `runtime_s * 1000` maps to
+`execution.runtime_ms`; the Hub batch ID and worker job ID map to `job_id` and
+`attempt_id`. The consumer owns its final object-store `object_key`. The Hub
+never includes a worker-local `artifact_path` in this public result.
+
+For current WAV-producing Voice Studio workers, Hub downloads and validates the
+artifact once at terminal completion, then stores the facts with the batch so
+later polling and artifact reads do not recompute its checksum or duration.
+Non-WAV workers should provide the equivalent validated audio metadata before
+their output is treated as billable by a contract consumer.
+
 ### Episode transcription contract
 
 Submit one multipart request with repeated `files` and matching repeated `item_ids`.

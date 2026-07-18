@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS assets (
   batch_id TEXT,
   item_index INTEGER,
   recipe_id TEXT,
-  duration_s REAL,                -- generation time in seconds (analytics)
+  duration_s REAL,                -- legacy alias for runtime_s
+  runtime_s REAL,                 -- generation/processing time in seconds
   is_cloud INTEGER DEFAULT 0      -- 1 = cloud-provider generation, 0/NULL = local
 );
 CREATE INDEX IF NOT EXISTS idx_assets_created ON assets(created_at DESC);
@@ -65,6 +66,7 @@ def _conn() -> sqlite3.Connection:
     conn.executescript(_SCHEMA)
     # Migrations for DBs created before newer columns existed.
     for ddl in ("ALTER TABLE assets ADD COLUMN duration_s REAL",
+                "ALTER TABLE assets ADD COLUMN runtime_s REAL",
                 "ALTER TABLE assets ADD COLUMN is_cloud INTEGER DEFAULT 0"):
         try:
             conn.execute(ddl)
@@ -188,6 +190,7 @@ def record_asset(**fields) -> str:
         "item_index": fields.pop("item_index", None),
         "recipe_id": fields.pop("recipe_id", None),
         "duration_s": fields.pop("duration_s", None),
+        "runtime_s": fields.pop("runtime_s", None),
         "is_cloud": int(bool(fields.pop("is_cloud", False))),
     }
     with _conn() as conn:
@@ -288,17 +291,20 @@ def stats(since_s: float | None = None, source: str = "all",
     with _conn() as conn:
         cells = conn.execute(
             f"SELECT machine, ({_OP_SQL}) op, COUNT(*) c, "
-            f"AVG(duration_s) avg_s, MIN(duration_s) min_s, MAX(duration_s) max_s, "
-            f"SUM(COALESCE(duration_s,0)) sum_s, "
+            f"AVG(COALESCE(runtime_s,duration_s)) avg_s, "
+            f"MIN(COALESCE(runtime_s,duration_s)) min_s, "
+            f"MAX(COALESCE(runtime_s,duration_s)) max_s, "
+            f"SUM(COALESCE(runtime_s,duration_s,0)) sum_s, "
             # timed_c: how many rows in this group actually carry a duration.
             # A group can now mix timed jobs + untimed scans, so the aggregate
             # avg must divide sum_s by this, NOT by the full count.
-            f"SUM(CASE WHEN duration_s IS NOT NULL THEN 1 ELSE 0 END) timed_c "
+            f"SUM(CASE WHEN COALESCE(runtime_s,duration_s) IS NOT NULL THEN 1 ELSE 0 END) timed_c "
             f"FROM assets WHERE {where} GROUP BY machine, op", args).fetchall()
         total = conn.execute(
             f"SELECT COUNT(*) FROM assets WHERE {where}", args).fetchone()[0]
         model_rows = conn.execute(
-            f"SELECT model, ({_OP_SQL}) op, COUNT(*) c, AVG(duration_s) avg_s "
+            f"SELECT model, ({_OP_SQL}) op, COUNT(*) c, "
+            f"AVG(COALESCE(runtime_s,duration_s)) avg_s "
             f"FROM assets WHERE {where} GROUP BY model", args).fetchall()
         src_rows = conn.execute(
             f"SELECT source, COUNT(*) c FROM assets WHERE {where} GROUP BY source",
