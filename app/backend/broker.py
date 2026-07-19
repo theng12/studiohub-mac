@@ -33,7 +33,7 @@ import httpx
 from . import artifact_metadata, ledger, peers, shared_voices
 from .peers import studio_request
 from .monitor import is_cached, is_cloud_lane
-from .registry import base_url, machine_enabled
+from .registry import base_url, machine_enabled, studio_enabled
 from .resources import host_stats
 from .workload_policy import required_free_memory_gb, required_total_memory_gb
 
@@ -498,6 +498,7 @@ def _pending_render_for_machine(machine: str) -> bool:
         studio.get("modality") == "render"
         and studio.get("machine", "local") == machine
         and machine_enabled(machine)
+        and studio_enabled(machine, studio["id"])
         and mon.status.get(studio["id"], {}).get("status") == "up"
         for studio in mon.registry
     )
@@ -982,6 +983,10 @@ def _eligible_studios(modality: str, routing: str, model: str = "") -> list[dict
             continue
         # a machine the operator has disabled stays monitored but takes no jobs
         if not machine_enabled(s.get("machine", "local")):
+            continue
+        # App-specific pauses are scheduler-only: current work finishes and the
+        # Studio remains online for monitoring, lifecycle control, and updates.
+        if not studio_enabled(machine, s["id"]):
             continue
         if _machine_blocked(machine):
             continue

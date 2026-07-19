@@ -69,6 +69,30 @@ def test_labels_roundtrip(reset):
     assert reg.label_for("local") == "local"
 
 
+def test_per_studio_scheduler_flags_are_independent_and_persistent(reset):
+    assert reg.studio_enabled("local", "image") is True
+    assert reg.studio_enabled("local", "voice") is True
+
+    reg.set_studio_enabled("local", "image", False)
+    assert reg.studio_enabled("local", "image") is False
+    assert reg.studio_enabled("local", "voice") is True
+
+    reg._flags_cache = None  # prove the value survives a Hub process reload
+    assert reg.studio_enabled("local", "image") is False
+    reg.set_studio_enabled("local", "image", True)
+    assert reg.studio_enabled("local", "image") is True
+
+
+def test_remove_studio_clears_its_scheduler_flag(reset):
+    reg.add_user_entries(reg.build_machine_entries(
+        "100.1.1.1", "mac-b", ["image", "voice"]))
+    reg.set_studio_enabled("mac-b", "image@mac-b", False)
+
+    assert reg.remove_studio("image@mac-b") == 1
+    assert "image@mac-b" not in reg.load_flags()["mac-b"]["studios"]
+    assert reg.studio_enabled("mac-b", "voice@mac-b") is True
+
+
 def test_user_entry_overrides_default(reset):
     reg.add_user_entries([{"id": "image", "host": "9.9.9.9", "machine": "remote"}])
     img = next(s for s in reg.load_registry() if s["id"] == "image")

@@ -13,7 +13,7 @@ from fastapi import HTTPException
 
 from . import broker, ledger
 from .peers import studio_request
-from .registry import machine_enabled
+from .registry import machine_enabled, studio_enabled
 
 MAX_PACKS = 500
 MAX_SCENES_PER_PACK = 10
@@ -386,7 +386,9 @@ async def _eligible_studios(monitor, model: str) -> list[dict]:
             continue
         machine = studio.get("machine", "local")
         if (monitor.status.get(studio["id"], {}).get("status") != "up"
-                or not machine_enabled(machine) or machine in broker.busy_machines()):
+                or not machine_enabled(machine)
+                or not studio_enabled(machine, studio["id"])
+                or machine in broker.busy_machines()):
             continue
         catalog = await monitor.get_catalog(studio)
         entry = next((item for item in (catalog or {}).get("models", [])

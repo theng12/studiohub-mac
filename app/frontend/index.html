@@ -239,6 +239,7 @@
   .btn.primary{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:9px 15px;border-color:var(--accent);background:linear-gradient(135deg,#1b8b62,#126d4c);color:#fff;box-shadow:0 7px 16px #167a5528;font-weight:750}.btn.primary:hover:not(:disabled){border-color:#0e6546;background:linear-gradient(135deg,#197f5b,#0e6546);color:#fff;box-shadow:0 9px 20px #167a5534}.btn.compact{padding:6px 10px;font-size:11px}.btn[aria-busy="true"]{cursor:progress}.btn.primary:disabled{transform:none;box-shadow:none}
   .update-progress{margin:2px 0 12px;padding:12px 14px;border:1px solid #cbd9cc;border-radius:13px;background:linear-gradient(135deg,#f2f7ef,#fbfaf4);box-shadow:inset 3px 0 var(--accent)}.update-progress.error{border-color:#e2c2b9;background:#fbf1ed;box-shadow:inset 3px 0 var(--down)}.update-progress.success{border-color:#b9d7c4;background:#edf7ef;box-shadow:inset 3px 0 var(--up)}.update-progress-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.update-progress-title{font-weight:750;color:var(--accent2)}.update-progress-count{font:700 10.5px/1 var(--mono);color:var(--dim);white-space:nowrap}.update-progress .bar{margin:9px 0 6px;height:7px;background:#dce5dc}.update-progress-detail{font-size:11.5px;color:var(--dim)}
   .machine-sortbar{display:flex;align-items:end;justify-content:flex-end;gap:9px;margin:0 0 12px}.machine-sortbar label{display:flex;flex-direction:column;gap:6px;color:var(--dim);font:700 9px/1 var(--mono);letter-spacing:.09em;text-transform:uppercase}.machine-sortbar .selctl{min-width:155px;padding:7px 10px;text-transform:none;letter-spacing:0;font-family:var(--sans)}.machine-sortbar .btn{min-width:112px}
+  .studio-schedules{display:flex;gap:6px;flex-wrap:wrap;min-width:270px}.studio-schedule-wrap{display:inline-flex;align-items:stretch;border:1px solid #cbd1c8;border-radius:10px;background:#f5f6f1;overflow:hidden}.studio-schedule{display:flex;align-items:center;gap:7px;border:0;background:transparent;color:var(--text);padding:6px 8px;font:700 10.5px/1.1 var(--sans);cursor:pointer}.studio-schedule:hover{background:#fff}.studio-schedule small{padding:2px 5px;border-radius:999px;background:#dfeae2;color:#176f50;font:700 8.5px/1 var(--mono);letter-spacing:.03em;text-transform:uppercase}.studio-schedule.off{background:#fbf1dc;color:#7a611d}.studio-schedule.off small{background:#f1dcae;color:#7a5a0d}.studio-schedule.master-off small{background:#e6e8e2;color:#6d746d}.studio-schedule-remove{display:grid;place-items:center;width:24px;border:0;border-left:1px solid #d8ddd5;background:transparent;color:var(--dim);cursor:pointer}.studio-schedule-remove:hover{background:#f9e8e4;color:var(--down)}
   .rows,.table-wrap{border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:var(--shadow)}.lrow{grid-template-columns:22px minmax(0,1.7fr) minmax(0,1fr) 100px minmax(0,1.15fr) 80px 205px;background:#fffef9;border-color:#e2e3da;padding:12px 15px}.lrow .actions{width:100%;justify-content:flex-end}.lrow:hover:not(.lhead){background:#f8f8f2}.lrow.lhead{background:#edf0e9;color:#6f776f;font:700 9px/1 var(--mono);letter-spacing:.09em}
   table{background:#fffef9;border-radius:14px;overflow:hidden;box-shadow:0 8px 28px #2945350a}th,td{padding:11px 12px;border-color:#e2e3da}th{top:0;background:#edf0e9;color:#68736b;font:700 9px/1.2 var(--mono);letter-spacing:.08em;text-transform:uppercase}tbody tr{transition:background .12s}tbody tr:hover{background:#f5f6ef}td{font-size:12.5px}
   .pill{padding:3px 8px;border-color:#cbd1c8;background:#f5f6f1;font:650 10px/1.2 var(--mono)}.pill.dl,.pill.ok,.pill.new{color:#167a55;border-color:#b6d5c3;background:#eaf5ed}.pill.cloud,.pill.prov{color:#287491;border-color:#b9d5dd;background:#eaf3f5}.pill.warn,.pill.gen,.pill.deprecated{background:#fbf1dc;color:#8a6d1f;border-color:#e4d3a4}.pill.err{background:#f9e8e4}.numbadge{background:#e8eee8;border-color:#c8d5ca;color:#285944}
@@ -857,7 +858,7 @@
           <select class="selctl" id="mach-sort"><option value="status">Status</option><option value="name">Name</option><option value="studios">Studios up</option></select>
         </div>
       </div>
-      <p class="muted" style="font-size:12px;margin:-4px 0 12px">Adding a machine only registers the studios that were online at that moment. <b>Refetch</b> re-probes a machine and picks up any studios that have since started.</p>
+      <p class="muted" style="font-size:12px;margin:-4px 0 12px">Click a Studio to pause or resume <b>new jobs for only that app</b>. Running work finishes safely. The machine switch remains the master control. <b>Refetch</b> adds Studios that came online later.</p>
       <div class="sub" id="mach-refetch-status" style="margin-bottom:8px"></div>
       <table><thead><tr><th class="num">#</th><th>Machine</th><th>Address</th><th>Studios</th><th></th></tr></thead><tbody id="mach-body"></tbody></table>
     </div>
@@ -924,6 +925,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.52.0", date: "2026-07-20", items: [
+    "Pause or resume Image, Voice, Chat, Music, Video, or Render scheduling independently on each Mac from Remote → Registered machines.",
+    "Running work finishes safely, monitoring and updates stay online, and the machine-wide switch remains the master control.",
+  ] },
   { v: "1.51.0", date: "2026-07-20", items: [
     "Control model memory across every registered Image, Chat, Video, Music, and Voice Studio, with Performance preserved as the default.",
     "Apply Balanced, Memory Saver, or Immediate release policies in bulk, or release idle models manually without interrupting active work.",
@@ -3576,7 +3581,14 @@ function renderMachines() {
     <td class="num"><span class="numbadge">${i + 1}</span></td>
     <td><b>${esc(label)}</b>${named ? ` <span class="sub">(${esc(e.m)})</span>` : ""}${e.m === "local" ? ' <span class="sub">· this Mac</span>' : ""}${disBadge}<br><span class="sub">${e.up}/${e.total} up</span></td>
     <td class="sub">${esc(e.host)}${peerBadge(e.m)}</td>
-    <td>${e.list.map(s => `<span class="pill ${s.busy ? "gen" : (s.status === "up" ? "dl" : "no")}">${esc(s.emoji || "")} ${esc(s.modality)}${s.busy ? " ⚡" : " · " + esc(s.status)}${e.m !== "local" ? `<a class="pill-x" title="Remove ${esc(s.modality)} from ${esc(label)} — use for a studio you don't run here" onclick="removeStudio('${jsq(s.id)}')">✕</a>` : ""}</span>`).join(" ")}</td>
+    <td><div class="studio-schedules">${e.list.map(s => {
+      const accepting = s.enabled !== false;
+      const state = !accepting ? "paused" : (!enabled ? "master off" : (s.busy ? "working" : (s.status === "up" ? "ready" : s.status)));
+      const title = accepting
+        ? `Pause new ${s.modality} jobs on ${label}. Current work will finish.`
+        : `Resume new ${s.modality} jobs on ${label}.`;
+      return `<span class="studio-schedule-wrap"><button class="studio-schedule ${accepting ? "on" : "off"}${enabled ? "" : " master-off"}" aria-pressed="${accepting}" onclick="toggleStudio('${jsq(s.id)}', ${accepting ? "false" : "true"})" title="${esc(title)}"><span>${esc(s.emoji || "")} ${esc(s.modality)}</span><small>${esc(state)}</small></button>${e.m !== "local" ? `<button class="studio-schedule-remove" title="Remove ${esc(s.modality)} from ${esc(label)} — use only when this app is not installed" onclick="removeStudio('${jsq(s.id)}')" aria-label="Remove ${esc(s.modality)} Studio">✕</button>` : ""}</span>`;
+    }).join("")}</div></td>
     <td style="white-space:nowrap">${toggle} ${e.m !== "local" ? `<button class="btn" onclick="refetchMachine('${jsq(e.m)}','${jsq(e.host)}')" title="Re-probe ${esc(e.host)} and add any studios now online">Refetch</button> ` : ""}<button class="btn" onclick="renameMachine('${jsq(e.m)}')">Rename</button>${e.m !== "local" ? ` <button class="btn stop" onclick="removeMachine('${jsq(e.m)}')">Remove</button>` : ""}</td></tr>`;
   }).join("");
 }
@@ -3588,6 +3600,23 @@ async function toggleMachine(m, enabled) {
     body: JSON.stringify({ enabled })
   }).catch(e => alert(`${verb} failed: ${e}`));
   refresh();
+}
+async function toggleStudio(id, enabled) {
+  const studio = (lastSummary?.studios || []).find(s => s.id === id);
+  const app = studio?.modality || id.split("@")[0];
+  const machine = studio?.machine || "local";
+  if (!enabled && !confirm(`Pause new ${app} jobs on ${mlabel(machine)}?\nAny job already running will finish. The Studio stays online for monitoring and updates.`)) return;
+  const response = await api(`/api/hub/registry/studios/${encodeURIComponent(id)}/enabled`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled })
+  }).catch(e => null);
+  if (!response || !response.ok) {
+    const detail = response ? await response.json().catch(() => ({})) : {};
+    alert(`${enabled ? "Resume" : "Pause"} failed: ${detail.detail || "Hub is unreachable"}`);
+    return;
+  }
+  await refresh();
+  renderMachines();
 }
 async function loadMachines() {
   if (!lastSummary) { await pollOnce(); }

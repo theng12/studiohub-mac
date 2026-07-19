@@ -264,6 +264,35 @@ async def test_maintenance_drains_chat_and_transcription(reset, monitor, monkeyp
     broker.set_maintenance("voice", False)
 
 
+@pytest.mark.asyncio
+async def test_app_pause_drains_chat_and_transcription_independently(
+        reset, monitor, monkeypatch):
+    from backend import chat_jobs, registry, transcription_jobs
+
+    chat = next(s for s in monitor.registry if s["id"] == "chat")
+    voice = next(s for s in monitor.registry if s["id"] == "voice")
+    monitor.status["chat"] = {"status": "up"}
+    monitor.status["voice"] = {"status": "up"}
+
+    async def chat_catalog(studio):
+        return {"models": [{"repo": "chat/model", "cache": {"state": "cached"}}]}
+
+    async def transcription_catalog(studio):
+        return {"available": True, "models": [{"repo": "voice/model", "cached": True}]}
+
+    monkeypatch.setattr(monitor, "get_catalog", chat_catalog)
+    monkeypatch.setattr(monitor, "get_transcription", transcription_catalog)
+    registry.set_studio_enabled("local", "chat", False)
+
+    assert await chat_jobs._eligible_studios(monitor, "chat/model") == []
+    assert voice in await transcription_jobs._eligible_studios(monitor, "voice/model")
+
+    registry.set_studio_enabled("local", "chat", True)
+    registry.set_studio_enabled("local", "voice", False)
+    assert chat in await chat_jobs._eligible_studios(monitor, "chat/model")
+    assert await transcription_jobs._eligible_studios(monitor, "voice/model") == []
+
+
 def test_rolling_update_waits_for_every_queue_type(reset):
     from backend import chat_jobs, transcription_jobs
 

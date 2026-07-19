@@ -445,7 +445,7 @@ def retry_fleet_automatic_update_job(job_id: str):
 @app.get("/api/hub/studios")
 def studios():
     """Registry + live status per studio."""
-    from .registry import load_labels
+    from .registry import load_labels, machine_enabled, studio_enabled
 
     labels = load_labels()
     out = []
@@ -453,7 +453,9 @@ def studios():
         st = monitor.status.get(s["id"], {})
         machine = s.get("machine", "local")
         out.append({**s, "url": base_url(s),
-                    "machine_label": labels.get(machine, machine), **st})
+                    "machine_label": labels.get(machine, machine), **st,
+                    "enabled": studio_enabled(machine, s["id"]),
+                    "machine_enabled": machine_enabled(machine)})
     return {"studios": out}
 
 
@@ -476,6 +478,26 @@ def set_machine_enabled_ep(machine: str, body: dict):
     enabled = bool(body.get("enabled", True))
     set_machine_enabled(machine, enabled)
     return {"ok": True, "machine": machine, "enabled": enabled}
+
+
+@app.post("/api/hub/registry/studios/{studio_id:path}/enabled")
+def set_studio_enabled_ep(studio_id: str, body: dict):
+    """Pause/resume new work for one Studio while leaving it online.
+
+    Running work is deliberately not cancelled. The machine-wide toggle remains
+    the master switch and can suppress every Studio regardless of these values.
+    """
+    from .registry import set_studio_enabled
+
+    studio = next((row for row in monitor.registry if row["id"] == studio_id), None)
+    if studio is None:
+        raise HTTPException(404, f"no registered studio {studio_id!r}")
+    if not isinstance(body.get("enabled"), bool):
+        raise HTTPException(400, "enabled must be true or false")
+    enabled = body["enabled"]
+    machine = studio.get("machine", "local")
+    set_studio_enabled(machine, studio_id, enabled)
+    return {"ok": True, "studio": studio_id, "machine": machine, "enabled": enabled}
 
 
 @app.get("/api/hub/health")

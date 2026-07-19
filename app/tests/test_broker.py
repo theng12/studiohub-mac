@@ -459,6 +459,22 @@ def test_disabled_machine_takes_no_jobs(reset):
     assert img["id"] in [s["id"] for s in broker._eligible_studios("image", "swarm")]
 
 
+def test_disabled_studio_takes_no_jobs_without_disabling_its_machine(reset):
+    from backend import registry
+    mon = broker._monitor()
+    image = next(s for s in mon.registry if s["id"] == "image")
+    voice = next(s for s in mon.registry if s["id"] == "voice")
+    mon.status["image"] = {"status": "up"}
+    mon.status["voice"] = {"status": "up"}
+
+    registry.set_studio_enabled("local", "image", False)
+
+    assert broker._eligible_studios("image", "swarm") == []
+    assert broker._eligible_studios("image", "studio:image") == []
+    assert voice in broker._eligible_studios("voice", "swarm")
+    assert registry.machine_enabled("local") is True
+
+
 def test_repeated_connection_failures_temporarily_quarantine_machine(reset, monkeypatch):
     studio = {"id": "image@mac-b", "machine": "mac-b"}
     now = 1000.0

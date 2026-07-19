@@ -38,10 +38,10 @@ FLAGS_FILE = DATA_DIR / "machine_flags.json"
 # purely cosmetic, so renaming never breaks anything.
 _labels_cache: dict | None = None
 
-# machine-key -> {"enabled": bool}. A DISABLED machine stays registered and
-# monitored, but the broker won't dispatch any jobs to its studios — useful to
-# quiesce a machine before updating/restarting it without removing it. Default
-# (no entry) is enabled.
+# machine-key -> {"enabled": bool, "studios": {studio-id: {"enabled": bool}}}.
+# Disabled machines and Studios stay registered and monitored; only new job
+# dispatch is paused. Missing entries default to enabled, which keeps existing
+# machine_flags.json files backward compatible.
 _flags_cache: dict | None = None
 
 
@@ -63,6 +63,31 @@ def set_machine_enabled(machine: str, enabled: bool):
     global _flags_cache
     flags = dict(load_flags())
     flags.setdefault(machine, {})["enabled"] = bool(enabled)
+    FLAGS_FILE.write_text(json.dumps(flags, indent=2) + "\n")
+    _flags_cache = flags
+
+
+def studio_enabled(machine: str, studio_id: str) -> bool:
+    """Whether one registered Studio may receive new scheduled work."""
+    machine_flags = load_flags().get(machine, {})
+    studio_flags = (
+        machine_flags.get("studios", {})
+        if isinstance(machine_flags, dict) else {}
+    )
+    row = studio_flags.get(studio_id, {}) if isinstance(studio_flags, dict) else {}
+    return bool(row.get("enabled", True)) if isinstance(row, dict) else bool(row)
+
+
+def set_studio_enabled(machine: str, studio_id: str, enabled: bool):
+    """Persist an app-specific scheduler toggle without changing its process."""
+    global _flags_cache
+    flags = dict(load_flags())
+    saved_machine = flags.get(machine, {})
+    machine_flags = dict(saved_machine) if isinstance(saved_machine, dict) else {}
+    studios = dict(machine_flags.get("studios", {}))
+    studios[studio_id] = {"enabled": bool(enabled)}
+    machine_flags["studios"] = studios
+    flags[machine] = machine_flags
     FLAGS_FILE.write_text(json.dumps(flags, indent=2) + "\n")
     _flags_cache = flags
 
@@ -216,6 +241,7 @@ def remove_studio(studio_id: str) -> int:
     """Drop a single studios.json entry by id (e.g. 'music@macmini-m1-01') — for
     pruning a studio type that isn't installed on that machine, without removing
     the rest. Local defaults live in code, not the file, so they're untouched."""
+    global _flags_cache
     if not REGISTRY_FILE.exists():
         return 0
     try:
@@ -226,6 +252,20 @@ def remove_studio(studio_id: str) -> int:
     removed = len(existing) - len(kept)
     if removed:
         REGISTRY_FILE.write_text(json.dumps(kept, indent=2) + "\n")
+        entry = next((e for e in existing if e.get("id") == studio_id), None)
+        if entry:
+            machine = entry.get("machine", "local")
+            flags = dict(load_flags())
+            saved_machine = flags.get(machine, {})
+            machine_flags = (
+                dict(saved_machine) if isinstance(saved_machine, dict) else {}
+            )
+            studios = dict(machine_flags.get("studios", {}))
+            if studios.pop(studio_id, None) is not None:
+                machine_flags["studios"] = studios
+                flags[machine] = machine_flags
+                FLAGS_FILE.write_text(json.dumps(flags, indent=2) + "\n")
+                _flags_cache = flags
     return removed
 
 

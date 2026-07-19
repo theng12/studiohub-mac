@@ -15,7 +15,7 @@ from fastapi import HTTPException, UploadFile
 
 from . import broker, ledger
 from .peers import studio_request
-from .registry import DATA_DIR, machine_enabled
+from .registry import DATA_DIR, machine_enabled, studio_enabled
 
 ROOT = DATA_DIR / "transcription_jobs"
 SETTINGS_FILE = DATA_DIR / "transcription_settings.json"
@@ -292,7 +292,9 @@ async def _eligible_studios(monitor, model: str, item: dict | None = None) -> li
             continue
         machine = studio.get("machine", "local")
         if (monitor.status.get(studio["id"], {}).get("status") != "up"
-                or not machine_enabled(machine) or machine in broker.busy_machines()
+                or not machine_enabled(machine)
+                or not studio_enabled(machine, studio["id"])
+                or machine in broker.busy_machines()
                 or broker.machine_is_quarantined(machine)
                 or float(avoided.get(machine, 0) or 0) > now):
             continue

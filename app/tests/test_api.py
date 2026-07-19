@@ -47,6 +47,8 @@ def test_dashboard_includes_render_studio():
     assert 'data-job-kind="chat"' in dashboard
     assert 'per: 10' in dashboard
     assert 'generationDetailToggle(this' in dashboard
+    assert 'function toggleStudio(id, enabled)' in dashboard
+    assert 'new jobs for only that app' in dashboard
 
 
 def test_job_storage_cap_defaults_to_safe_fleet_policy_and_is_configurable(authed):
@@ -260,8 +262,43 @@ def test_registry_add_rename_remove(authed):
     studios = authed.get("/api/hub/studios").json()["studios"]
     z = next(s for s in studios if s["machine"] == "mac-z")
     assert z["machine_label"] == "Zeta" and z["id"] == "image@mac-z"
+    # the same encoded id used by the dashboard controls a remote app only
+    paused = authed.post(
+        "/api/hub/registry/studios/image%40mac-z/enabled", json={"enabled": False})
+    assert paused.status_code == 200 and paused.json()["studio"] == "image@mac-z"
+    studios = authed.get("/api/hub/studios").json()["studios"]
+    assert next(s for s in studios if s["id"] == "image@mac-z")["enabled"] is False
+    assert next(s for s in studios if s["id"] == "voice@mac-z")["enabled"] is True
     # remove
     assert authed.request("DELETE", "/api/hub/registry/machines/mac-z").json()["removed"] == 2
+
+
+def test_studio_scheduler_toggle_is_reported_without_interrupting_work(authed):
+    from backend import broker, registry as reg
+
+    broker._busy.add("image")
+    response = authed.post(
+        "/api/hub/registry/studios/image/enabled", json={"enabled": False})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True, "studio": "image", "machine": "local", "enabled": False,
+    }
+    image = next(row for row in authed.get("/api/hub/studios").json()["studios"]
+                 if row["id"] == "image")
+    assert image["enabled"] is False
+    assert image["machine_enabled"] is True
+    assert "image" in broker._busy  # scheduler pause never cancels active work
+    assert reg.studio_enabled("local", "image") is False
+
+
+def test_studio_scheduler_toggle_validates_target_and_boolean(authed):
+    assert authed.post(
+        "/api/hub/registry/studios/missing/enabled", json={"enabled": False}
+    ).status_code == 404
+    assert authed.post(
+        "/api/hub/registry/studios/image/enabled", json={"enabled": "false"}
+    ).status_code == 400
 
 
 def test_remove_machine_purges_live_inventory_and_update_state(authed):
@@ -275,6 +312,7 @@ def test_remove_machine_purges_live_inventory_and_update_state(authed):
     studio_ids = {"image@mac-clean", "voice@mac-clean"}
     reg.set_label("mac-clean", "Cleanup Mac")
     reg.set_machine_enabled("mac-clean", False)
+    reg.set_studio_enabled("mac-clean", "image@mac-clean", False)
     for studio_id in studio_ids:
         monitor._catalog_cache[studio_id] = (time.time(), {"models": []})
         monitor._provider_cache[studio_id] = (time.time(), {"providers": []})

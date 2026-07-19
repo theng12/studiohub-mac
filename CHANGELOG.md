@@ -10,6 +10,20 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.52.0] — 2026-07-20
+
+### Added — per-Studio fleet scheduling controls
+
+- Added an independent pause/resume control for every registered Image, Voice,
+  Chat, Music, Video, and Render Studio in the Remote machine table. Operators
+  can dedicate one Mac to selected job types without disabling the whole node.
+- App-specific choices persist across Hub restarts. The existing machine toggle
+  remains the master switch without erasing each app's saved choice.
+- Pausing is drain-safe: running work finishes normally, while the Studio stays
+  online for health monitoring, lifecycle control, and remote updates.
+- Enforced the control across the main generation/render broker and the separate
+  Chat and Transcription queues, including explicitly routed jobs.
+
 ## [1.51.0] — 2026-07-20
 
 ### Added — fleet model-memory controls

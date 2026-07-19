@@ -193,6 +193,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/auto-updates/update-idle` | Start a staggered, health-gated update for selected idle sibling Studios |
 | `POST /api/hub/auto-updates/jobs/{id}/retry` | Retry only the failed apps from a saved automatic fleet update |
 | `GET /api/hub/studios` | Registry + live status per studio |
+| `POST /api/hub/registry/studios/{id}/enabled` | Pause/resume new jobs for one Studio with `{"enabled": false/true}`; running work and the process are untouched |
 | `GET /api/hub/health` | Aggregate: totals + per-studio statuses |
 | `GET /api/hub/catalog` | Raw per-studio catalog rows (annotated `hub_cached`, `hub_machine`). Query: `q`, `modality`, `downloaded`, `cloud`, `force` |
 | `GET /api/hub/models` | **Deduped by repo** with per-machine availability (`cached_on`, `machines[]`). Query: `q`, `modality`, `downloaded` |
@@ -452,7 +453,8 @@ await fetch(`${HUB}/api/hub/jobs`, {
 - **Resources** — this Mac's unified-memory bar + hour sparkline, per-studio process memory.
 - **Jobs / Assets** — Swarm Batch submit + progress; searchable asset ledger.
 - **Remote** — reachable URLs + token, **Discover & Add** a machine, and a permanent
-  **Registered machines** list (with Remove).
+  **Registered machines** list. Each Studio has its own new-job pause/resume
+  switch, while the machine switch remains the master control.
 
 ## Run as an always-on service (auto-start)
 
@@ -532,6 +534,12 @@ Every Mac keeps running its own studios; ONE Hub coordinates them all:
      `POST /api/hub/registry/add {host, machine, modalities}`.
 3. Remote studios join the health grid, catalog, gateway and **worker pools**
    automatically.
+
+Use each Studio switch in **Remote → Registered machines** to dedicate a Mac to
+only the job types you want. For example, pause Voice, Chat, and Render while
+leaving Image ready. A pause affects only future dispatch: an active job finishes,
+health monitoring and updates continue, and the saved choice survives Hub restarts.
+The machine-wide switch overrides every Studio switch without erasing them.
 
 Heterogeneity is handled per-dispatch:
 - **Different models per Mac** — a job is only sent to a studio whose own
