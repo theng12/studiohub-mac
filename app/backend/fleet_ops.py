@@ -53,7 +53,8 @@ _preflight = {"ran_at": None, "status": "never", "studios": []}
 _studio_versions = {"checked_at": None, "studios": []}
 _updates: dict[str, dict] = {}
 _hub_updates: dict[str, dict] = {}
-# machine -> {version, checked_at, host, reachable}: last-known peer Hub versions
+# machine -> {version, checked_at, host, reachable, chip, total_memory_gb}:
+# last-known peer Hub versions and hardware identity.
 _hub_versions: dict[str, dict] = {}
 
 
@@ -482,15 +483,27 @@ async def scan_hub_versions(monitor) -> dict:
     async def one(machine: str, host: str):
         url = f"http://{host}:{peers.DEFAULT_HUB_PORT}/api/version"
         prev = _hub_versions.get(machine, {})
+        peer = peers.cached(machine) or {}
+        hardware = peer.get("host") or {}
+        identity = {
+            "chip": hardware.get("chip") or prev.get("chip"),
+            "total_memory_gb": (
+                hardware.get("total_gb")
+                if hardware.get("total_gb") is not None
+                else prev.get("total_memory_gb")
+            ),
+        }
         try:
             async with httpx.AsyncClient(timeout=6.0) as client:
                 r = await client.get(url)
                 version = r.json().get("app_version")
             _hub_versions[machine] = {"version": version, "host": host,
-                                      "checked_at": time.time(), "reachable": True}
+                                      "checked_at": time.time(), "reachable": True,
+                                      **identity}
         except (httpx.HTTPError, ValueError):
             _hub_versions[machine] = {"version": prev.get("version"), "host": host,
-                                      "checked_at": time.time(), "reachable": False}
+                                      "checked_at": time.time(), "reachable": False,
+                                      **identity}
 
     await asyncio.gather(*(one(m, h) for m, h in hosts.items()))
     for machine in set(_hub_versions) - set(hosts):
@@ -500,11 +513,30 @@ async def scan_hub_versions(monitor) -> dict:
 
 
 def hub_versions_snapshot(monitor=None) -> dict:
-    if monitor is None:
-        return _hub_versions
-    known = set(_remote_hosts(monitor))
-    return {machine: row for machine, row in _hub_versions.items()
-            if machine in known}
+    known = set(_hub_versions) if monitor is None else set(_remote_hosts(monitor))
+    result = {}
+    changed = False
+    for machine, row in _hub_versions.items():
+        if machine not in known:
+            continue
+        value = dict(row)
+        row_changed = False
+        peer = peers.cached(machine) or {}
+        hardware = peer.get("host") or {}
+        if hardware.get("chip") and value.get("chip") != hardware["chip"]:
+            value["chip"] = hardware["chip"]
+            row_changed = True
+        if (hardware.get("total_gb") is not None
+                and value.get("total_memory_gb") != hardware["total_gb"]):
+            value["total_memory_gb"] = hardware["total_gb"]
+            row_changed = True
+        if row_changed:
+            _hub_versions[machine] = dict(value)
+            changed = True
+        result[machine] = value
+    if changed:
+        _save_state()
+    return result
 
 
 async def _preflight_one(monitor, studio: dict) -> dict:
@@ -918,8 +950,11 @@ async def _update_hub_one(item: dict, latest: str | None):
 
     def _record(ver: str, status: str, detail: str):
         item.update(status=status, to_version=ver, detail=detail, finished_at=time.time())
+        previous = _hub_versions.get(item["machine"], {})
         _hub_versions[item["machine"]] = {"version": ver, "host": host,
-                                          "checked_at": time.time(), "reachable": True}
+                                          "checked_at": time.time(), "reachable": True,
+                                          "chip": previous.get("chip"),
+                                          "total_memory_gb": previous.get("total_memory_gb")}
         _save_state()
 
     async with httpx.AsyncClient(timeout=5.0) as client:

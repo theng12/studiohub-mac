@@ -124,6 +124,9 @@ compare running with latest, update everything ready, or update one row. Studio
 app tabs focus the action on one family; **All apps** targets the fleet. Slow
 agent Hubs get four bounded connection attempts before they are reported offline,
 and remote operation history remains visible across a primary-Hub restart.
+The agent-Hub table also reports each Mac's Apple chip and unified RAM and can
+be sorted by availability, machine name, chip generation, or RAM in either
+direction. The selected order is remembered in that browser.
 
 Every app independently enforces its expected GitHub origin and `main`, a clean
 fast-forward, free disk, dependency/import checks, healthy restart, and exact

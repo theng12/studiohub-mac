@@ -10,6 +10,23 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.50.0] — 2026-07-19
+
+### Added — hardware-aware agent machine sorting
+
+- The Remote agent-Hub table now shows each Mac's Apple chip and unified RAM
+  and can be sorted by availability, name, chip generation, or RAM.
+- Added a one-click direction toggle with natural defaults: A–Z for names and
+  highest/newest first for RAM and chips. The browser remembers both choices.
+- Hardware details come from each Mac's own Hub and remain last-known when a
+  Mac goes offline. Older agents temporarily fall back to structured machine
+  names until they receive this update.
+
+### Verification
+
+- Added backend hardware-snapshot and WebUI contract coverage. Launcher,
+  update, scheduling, and generation behavior remain unchanged.
+
 ## [1.49.4] — 2026-07-19
 
 ### Fixed — storage status distinguishes optional apps from offline Macs

@@ -3,7 +3,7 @@ import time
 import httpx
 import pytest
 
-from backend import broker, fleet_ops
+from backend import broker, fleet_ops, peers
 
 
 def test_catalog_and_diagnostic_summaries():
@@ -472,6 +472,22 @@ def test_start_hub_updates_requires_remote_machines(monitor):
     fleet_ops._hub_updates.clear()
     with pytest.raises(ValueError, match="no remote"):
         fleet_ops.start_hub_updates(monitor, "1.0.0", None)
+
+
+def test_hub_version_snapshot_includes_peer_hardware(monitor):
+    monitor.registry.append({"id": "image@mac-b", "modality": "image",
+                             "host": "10.0.0.9", "port": 47868, "machine": "mac-b"})
+    fleet_ops._hub_versions["mac-b"] = {"version": "1.0.0", "reachable": True}
+    peers._cache["mac-b"] = (time.time(), {
+        "reachable": True,
+        "host": {"chip": "Apple M4", "total_gb": 24.0},
+        "studios": {},
+    })
+
+    row = fleet_ops.hub_versions_snapshot(monitor)["mac-b"]
+
+    assert row["chip"] == "Apple M4"
+    assert row["total_memory_gb"] == 24.0
 
 
 @pytest.mark.asyncio

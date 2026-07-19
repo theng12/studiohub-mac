@@ -30,6 +30,11 @@ def test_dashboard_includes_render_studio():
     assert 'id="su-rescan"' in dashboard
     assert 'id="su-progress" class="update-progress hide" role="status"' in dashboard
     assert 'id="hubupd-status" class="update-progress hide" role="status"' in dashboard
+    assert 'id="hubupd-sort"' in dashboard
+    assert 'id="hubupd-sort-dir"' in dashboard
+    assert 'localStorage.getItem("hub_machine_sort") || "status"' in dashboard
+    assert 'function _hubHardware(machine, row = {})' in dashboard
+    assert '<th>Machine</th><th>Chip</th><th>RAM</th>' in dashboard
     assert 'onclick="updateReadyHubs()"' in dashboard
     assert 'function startHubUpdate(machines = null)' in dashboard
     assert 'class="btn primary compact"' in dashboard

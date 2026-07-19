@@ -10,6 +10,7 @@ Apple Silicon note: unified memory means there is no separate VRAM figure —
 process RSS + host memory pressure IS the honest picture (SPEC §9).
 """
 
+from functools import lru_cache
 import subprocess
 
 import psutil
@@ -21,9 +22,24 @@ CADDY_RSS_WARN_GB = 1.0
 CADDY_FD_WARN = 1000
 
 
+@lru_cache(maxsize=1)
+def apple_chip_name() -> str | None:
+    """Return the Mac's marketing chip name without polling sysctl every tick."""
+    try:
+        result = subprocess.run(
+            ["sysctl", "-n", "machdep.cpu.brand_string"],
+            capture_output=True, text=True, timeout=2,
+        )
+        value = result.stdout.strip()
+        return value or None
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
 def host_stats() -> dict:
     vm = psutil.virtual_memory()
     stats = {
+        "chip": apple_chip_name(),
         "total_gb": round(vm.total / 1e9, 2),
         "used_gb": round(vm.used / 1e9, 2),
         "available_gb": round(vm.available / 1e9, 2),
