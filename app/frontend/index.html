@@ -133,12 +133,23 @@
   .job-tabs button.active { color:var(--text); background:var(--panel); box-shadow:0 1px 3px #00000012; }
   .job-tabs .numbadge { background:transparent; }
   .job-tabs button.active .numbadge { background:var(--accent); color:#102418; border-color:var(--accent); }
-  .job-storage { display:grid; grid-template-columns:minmax(250px,1fr) auto; gap:10px 18px; align-items:center; padding:14px 16px; }
-  .job-storage p { margin:4px 0 0; max-width:690px; }
-  .job-storage-controls { display:flex; align-items:center; justify-content:flex-end; gap:9px; flex-wrap:wrap; }
-  .job-storage #job-storage-status { grid-column:1/-1; }
+  .storage-guard { padding:0; overflow:hidden; }
+  .storage-guard-head { display:flex; gap:14px; align-items:flex-start; padding:17px 18px 14px; }
+  .storage-guard-icon { display:grid; place-items:center; width:38px; height:38px; flex:0 0 38px; border-radius:12px; background:#1b8b6216; border:1px solid #1b8b6230; font-size:19px; }
+  .storage-guard-copy { flex:1; min-width:220px; }
+  .storage-guard-copy b { font-size:14px; }
+  .storage-guard-copy p { margin:4px 0 0; max-width:790px; }
+  .storage-guard-controls { display:flex; align-items:end; gap:9px; flex-wrap:wrap; padding:13px 18px; border-top:1px solid var(--border); background:var(--panel2); }
+  .storage-field { display:grid; gap:5px; color:var(--dim); font:650 10px/1 var(--sans); text-transform:uppercase; letter-spacing:.05em; }
+  .storage-field input { width:92px; background:var(--panel); border:1px solid var(--border); color:var(--text); border-radius:9px; padding:7px 9px; font:inherit; font-size:12px; }
+  .storage-guard-status { padding:10px 18px; border-top:1px solid var(--border); }
+  .storage-machines { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:8px; margin-top:8px; }
+  .storage-machine { padding:10px 11px; border:1px solid var(--border); border-radius:10px; background:var(--panel2); }
+  .storage-machine-top { display:flex; justify-content:space-between; gap:8px; font-size:11.5px; }
+  .storage-machine .bar { margin:7px 0 5px; }
+  .storage-apps { color:var(--dim); font-size:10.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .check { display:inline-flex; align-items:center; gap:6px; color:var(--dim); font-size:12px; white-space:nowrap; }
-  @media (max-width:760px) { .job-storage { grid-template-columns:1fr; } .job-storage-controls { justify-content:flex-start; } }
+  @media (max-width:760px) { .storage-guard-head { flex-wrap:wrap; } .storage-guard-controls { align-items:stretch; } }
   .pager { display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-bottom: 1px solid var(--border); background: var(--panel2, transparent); }
   #j-image .pager, #j-voice .pager, #j-render .pager { border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; }
   .pager .btn[disabled] { opacity: .45; cursor: default; }
@@ -458,14 +469,24 @@
       <span class="sub" id="j-status" style="margin-left:10px"></span>
     </div>
 
-    <div class="card job-storage section">
-      <div><b>Automatic job-file cleanup</b><p class="sub">Optional. When enabled, the Hub clears oldest completed transcription jobs only after its local files exceed the limit. Worker output and shared voices are never touched.</p></div>
-      <div class="job-storage-controls">
-        <label class="check"><input type="checkbox" id="job-storage-enabled" onchange="saveJobStorage()"> Enable</label>
-        <label class="grp">Limit <select class="selctl" id="job-storage-limit" onchange="saveJobStorage()"><option value="1">1 GB</option><option value="2">2 GB</option><option value="5" selected>5 GB</option><option value="10">10 GB</option><option value="20">20 GB</option><option value="50">50 GB</option></select></label>
-        <button class="btn" onclick="runJobStorageCleanup()">Check now</button>
+    <div class="card storage-guard section">
+      <div class="storage-guard-head">
+        <span class="storage-guard-icon">🛡️</span>
+        <div class="storage-guard-copy"><b>Fleet local-backup protection</b><p class="sub">Keeps disposable generated output across all Studios on each Mac within one combined limit. Oldest completed files are cleared after 3 days or sooner when the Mac reaches 80 GB. Active jobs, shared voices, source uploads, models, chat history, and credentials stay protected.</p></div>
+        <span class="pill ok">Self-healing hourly</span>
       </div>
-      <span class="sub" id="job-storage-status" role="status" aria-live="polite"></span>
+      <div class="storage-guard-controls">
+        <label class="check"><input type="checkbox" id="fleet-storage-enabled" checked> Automatic protection</label>
+        <label class="storage-field">Keep completed files
+          <select class="selctl" id="fleet-storage-retention"><option value="1">1 day</option><option value="3" selected>3 days</option><option value="7">7 days</option><option value="15">15 days</option><option value="30">30 days</option><option value="90">90 days</option></select>
+        </label>
+        <label class="storage-field">Combined per Mac
+          <input type="number" id="fleet-storage-limit" min="1" max="1000" step="1" value="80" aria-label="Combined storage limit in GB">
+        </label>
+        <button class="btn primary" id="fleet-storage-save" onclick="saveFleetStorage()">Save to fleet</button>
+        <button class="btn" id="fleet-storage-clean" onclick="runFleetStorageCleanup()">Check &amp; clean now</button>
+      </div>
+      <div class="storage-guard-status"><span class="sub" id="fleet-storage-status" role="status" aria-live="polite">Loading fleet storage…</span><div class="storage-machines" id="fleet-storage-machines"></div></div>
     </div>
 
     <div class="job-tabs" role="tablist" aria-label="Production job types">
@@ -544,7 +565,7 @@
       <div class="grp"><label for="tx-retention">Retention</label>
         <select class="selctl" id="tx-retention" onchange="saveTranscriptionRetention()">
           <option value="1">1 day</option><option value="3">3 days</option><option value="7">7 days</option>
-          <option value="15">15 days</option><option value="30">30 days</option>
+          <option value="15">15 days</option><option value="30">30 days</option><option value="90">90 days</option>
         </select>
       </div>
       <button class="btn" onclick="cleanupTranscriptions()">Clean expired files</button>
@@ -1291,7 +1312,7 @@ document.querySelectorAll("nav button").forEach(btn => {
     if (btn.dataset.tab === "voices") loadSharedVoices();
     if (btn.dataset.tab === "updates") loadAutoUpdates();
     if (btn.dataset.tab === "remote") { loadAccess(); loadMachines(); loadAlerts(); loadMaintenance(); }
-    if (btn.dataset.tab === "jobs") { loadJobModels(); loadBatches(); loadTranscriptionSettings(); loadJobStorage(); selectJobKind(activeJobKind); }
+    if (btn.dataset.tab === "jobs") { loadJobModels(); loadBatches(); loadTranscriptionSettings(); loadFleetStorage(); selectJobKind(activeJobKind); }
     if (btn.dataset.tab === "assets") loadAssets();
     if (btn.dataset.tab === "stats") loadStats();
     if (btn.dataset.tab === "resources") { loadSpark(); renderResources(lastSummary); }
@@ -2309,30 +2330,50 @@ async function loadTranscriptionSettings() {
   const value = await api("/api/hub/transcription/settings").then(r => r.json()).catch(() => null);
   if (value) $("#tx-retention").value = String(value.retention_days);
 }
-function renderJobStorage(value, prefix = "") {
+function renderFleetStorage(value, prefix = "") {
   if (!value) return;
-  $("#job-storage-enabled").checked = Boolean(value.enabled);
-  const gb = Math.round((value.max_bytes || 0) / 1024 ** 3);
-  $("#job-storage-limit").value = String(gb);
-  $("#job-storage-status").textContent = `${prefix}${fmtBytes(value.used_bytes)} stored locally${value.enabled ? ` · automatic cap ${gb} GB` : " · automatic cap off"}`;
+  const policy = value.policy || {};
+  $("#fleet-storage-enabled").checked = Boolean(policy.enabled);
+  $("#fleet-storage-retention").value = String(policy.retention_days || 3);
+  $("#fleet-storage-limit").value = String(policy.max_gb || 80);
+  const machines = value.machines || [];
+  const over = machines.filter(machine => machine.over_limit).length;
+  const errors = machines.reduce((n, machine) => n + (machine.errors || 0), 0);
+  $("#fleet-storage-status").textContent = `${prefix}${machines.length} Mac${machines.length === 1 ? "" : "s"} checked · ${over ? over + " still over limit" : "all reported storage is safe"}${errors ? ` · ${errors} Studio${errors === 1 ? "" : "s"} unavailable` : ""}`;
+  $("#fleet-storage-machines").innerHTML = machines.map(machine => {
+    const cap = machine.max_bytes || (policy.max_gb || 80) * 1024 ** 3;
+    const pct = Math.min(100, cap ? Math.round(100 * (machine.used_bytes || 0) / cap) : 0);
+    const stores = (machine.stores || []).filter(store => store.supported && store.reachable);
+    const apps = stores.map(store => `${store.app} ${fmtBytes(store.used_bytes || 0)}`).join(" · ") || (machine.error ? "Hub unavailable — update or reconnect this Mac" : "No disposable output reported");
+    return `<div class="storage-machine"><div class="storage-machine-top"><b>${esc(mlabel(machine.machine_label || machine.machine))}</b><span class="${machine.over_limit ? "pending" : "sub"}">${fmtBytes(machine.used_bytes || 0)} / ${fmtBytes(cap)}</span></div><div class="bar"><i class="${machine.over_limit ? "crit" : pct > 80 ? "hot" : ""}" style="width:${pct}%"></i></div><div class="storage-apps" title="${esc(apps)}">${esc(apps)}</div></div>`;
+  }).join("") || `<div class="sub">No machines have reported yet.</div>`;
 }
-async function loadJobStorage() {
-  const value = await api("/api/hub/job-storage").then(r => r.json()).catch(() => null);
-  renderJobStorage(value);
+async function loadFleetStorage() {
+  $("#fleet-storage-status").textContent = "Checking each reachable Hub…";
+  const value = await api("/api/hub/storage-policy").then(r => r.ok ? r.json() : null).catch(() => null);
+  if (value) renderFleetStorage(value);
+  else $("#fleet-storage-status").textContent = "Could not read fleet storage. Check peer Hub connectivity.";
 }
-async function saveJobStorage() {
-  const enabled = $("#job-storage-enabled").checked;
-  const max_gb = Number($("#job-storage-limit").value);
-  const response = await api("/api/hub/job-storage", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled, max_gb }) });
+async function saveFleetStorage() {
+  const button = $("#fleet-storage-save");
+  const body = { enabled: $("#fleet-storage-enabled").checked, retention_days: Number($("#fleet-storage-retention").value), max_gb: Number($("#fleet-storage-limit").value) };
+  button.disabled = true; button.setAttribute("aria-busy", "true"); button.textContent = "Saving…";
+  $("#fleet-storage-status").textContent = "Saving policy to every reachable Hub and Studio…";
+  const response = await api("/api/hub/storage-policy", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const value = await response.json().catch(() => null);
-  if (response.ok) renderJobStorage(value, "saved · ");
-  else $("#job-storage-status").textContent = (value && value.detail) || "could not save automatic cleanup";
+  button.disabled = false; button.removeAttribute("aria-busy"); button.textContent = "Save to fleet";
+  if (response.ok && value) { renderFleetStorage(value, "Saved to fleet · "); loadTranscriptionSettings(); }
+  else $("#fleet-storage-status").textContent = (value && value.detail) || "Could not save the fleet policy.";
 }
-async function runJobStorageCleanup() {
-  const response = await api("/api/hub/job-storage/cleanup", { method: "POST" });
+async function runFleetStorageCleanup() {
+  const button = $("#fleet-storage-clean");
+  button.disabled = true; button.setAttribute("aria-busy", "true"); button.textContent = "Cleaning…";
+  $("#fleet-storage-status").textContent = `Cleaning expired files and enforcing ${Number($("#fleet-storage-limit").value) || 80} GB on each reachable Mac…`;
+  const response = await api("/api/hub/storage-policy/cleanup", { method: "POST" });
   const value = await response.json().catch(() => null);
-  if (response.ok) renderJobStorage(value, `checked · cleared ${value.cleared || 0} job(s) · `);
-  else $("#job-storage-status").textContent = "could not run cleanup";
+  button.disabled = false; button.removeAttribute("aria-busy"); button.textContent = "Check & clean now";
+  if (response.ok && value) renderFleetStorage(value, "Cleanup finished · ");
+  else $("#fleet-storage-status").textContent = "Could not finish fleet cleanup. Unavailable Macs will retry themselves hourly.";
   loadBatches();
 }
 async function saveTranscriptionRetention() {

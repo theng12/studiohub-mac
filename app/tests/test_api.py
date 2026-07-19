@@ -44,10 +44,12 @@ def test_dashboard_includes_render_studio():
     assert 'generationDetailToggle(this' in dashboard
 
 
-def test_job_storage_cap_is_optional_and_configurable(authed):
+def test_job_storage_cap_defaults_to_safe_fleet_policy_and_is_configurable(authed):
     initial = authed.get("/api/hub/job-storage")
     assert initial.status_code == 200
-    assert initial.json()["enabled"] is False
+    assert initial.json()["enabled"] is True
+    assert initial.json()["max_bytes"] == 80 * 1024 ** 3
+    assert initial.json()["retention_days"] == 3
     saved = authed.post("/api/hub/job-storage", json={"enabled": True, "max_gb": 5})
     assert saved.status_code == 200
     assert saved.json()["enabled"] is True

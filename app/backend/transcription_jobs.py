@@ -24,7 +24,7 @@ MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_BATCH_BYTES = 20 * 1024 * 1024 * 1024
 MAX_FILES = 500
 MAX_TRIES = 3
-RETENTION_CHOICES = {1, 3, 7, 15, 30}
+RETENTION_CHOICES = {1, 3, 7, 15, 30, 90}
 ALLOWED_EXTENSIONS = {
     ".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus",
     ".webm", ".mp4", ".mov",
@@ -518,10 +518,10 @@ def retry_batch(batch_id: str) -> tuple[dict | None, int]:
 
 def settings() -> dict:
     try:
-        value = json.loads(SETTINGS_FILE.read_text()).get("retention_days", 7)
+        value = json.loads(SETTINGS_FILE.read_text()).get("retention_days", 3)
     except (OSError, ValueError, TypeError):
-        value = 7
-    return {"retention_days": value if value in RETENTION_CHOICES else 7}
+        value = 3
+    return {"retention_days": value if value in RETENTION_CHOICES else 3}
 
 
 def set_retention(days: int) -> dict:
@@ -602,11 +602,11 @@ def clear_terminal() -> dict:
 
 async def _cleanup_loop() -> None:
     while True:
-        cleanup()
-        # Optional storage-cap enforcement lives beside the normal retention
-        # sweep.  Importing here avoids a module cycle during app startup.
+        # Fleet policy controls both age and capacity cleanup. Importing here
+        # avoids a module cycle during app startup.
         from . import job_storage
-        job_storage.enforce_budget()
+        if job_storage.status()["enabled"]:
+            job_storage.enforce_budget()
         await asyncio.sleep(3600)
 
 

@@ -29,6 +29,11 @@ The Hub runs on fixed port **47873** and provides:
 - **Machine-level work leases** — image generation and final rendering take turns
   on each Mac without pausing active work. Waiting render jobs are assigned first,
   with faster M4 16 GB workers preferred when available.
+- **Fleet local-backup protection** — each Mac automatically keeps disposable
+  generated output within one combined 80 GB budget and clears completed files
+  after three days. The main Hub can save or run the policy across all reachable
+  peer Hubs without touching active jobs, source/reference uploads, shared voices,
+  models, chat history, credentials, or results still awaiting delivery.
 
 See `SPEC.md` for the full architecture and phased roadmap (gateway, job broker,
 Swarm Batch, recipes).
@@ -43,6 +48,23 @@ Swarm Batch, recipes).
    (host memory bar + per-studio table).
 4. The dashboard updates continuously over SSE, falls back to 5-second polling
    if the stream drops, and reconnects automatically with bounded backoff.
+
+### Manage local generated backups
+
+Open **Jobs → Fleet local-backup protection**. The default is enabled, keeps
+completed disposable files for three days, and applies one combined 80 GB limit
+to each physical Mac rather than giving every Studio a separate 80 GB allowance.
+Use **Save to fleet** after changing either value. **Check & clean now** performs
+the retention sweep immediately, then removes the oldest eligible files until
+each reachable Mac is under its combined limit.
+
+Each peer Hub repeats the same local check hourly, so enforcement does not depend
+on the main dashboard staying open. Offline Macs retain their last saved policy
+and self-heal locally; the main Hub shows nodes that could not be contacted. Each
+Studio also exposes the same policy in its own interface for per-app inspection
+and manual cleanup. Protected or active data is never forced out merely to make
+the usage bar green, so a Mac can remain visibly over limit when its excess data
+is not safe to delete.
 
 ### Add a shared cloning voice
 
@@ -159,9 +181,12 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/chat/jobs` | Submit visual or motion prompts as adaptive worker packs (10 local/free-cloud; up to 30 paid-cloud) |
 | `GET /api/hub/chat/jobs` · `GET /api/hub/chat/jobs/{batch}` | Read compact fleet history or full pack/scene results |
 | `DELETE /api/hub/chat/jobs/{batch}` · `POST /api/hub/chat/jobs/{batch}/retry` | Cancel unfinished packs or retry only missing scene IDs |
-| `GET /api/hub/transcription/settings` · `POST /api/hub/transcription/settings` | Read/set SRT and upload retention (`1`, `3`, `7`, `15`, or `30` days) |
+| `GET /api/hub/transcription/settings` · `POST /api/hub/transcription/settings` | Read/set SRT and upload retention (`1`, `3`, `7`, `15`, `30`, or `90` days; default `3`) |
 | `POST /api/hub/transcription/cleanup` | Clean expired terminal transcription files; active batches are never removed |
-| `GET` / `POST /api/hub/job-storage` · `POST /api/hub/job-storage/cleanup` | Read/save the optional Hub-local job-file cap (`{enabled, max_gb}`) or enforce it now; default is off |
+| `GET /api/hub/storage-policy` | Read the common policy plus per-Mac/per-app disposable output usage across reachable peer Hubs |
+| `PUT /api/hub/storage-policy` | Save and propagate `{enabled, retention_days, max_gb}` to every reachable Hub and Studio |
+| `POST /api/hub/storage-policy/cleanup` | Run the three-day sweep and combined per-Mac capacity enforcement immediately |
+| `GET` / `POST /api/hub/job-storage` · `POST /api/hub/job-storage/cleanup` | Compatibility API for the Hub transcription store; defaults to enabled, three days, and 80 GB |
 | `GET /api/auth/status` · `POST /api/auth/login` · `POST /api/auth/logout` | Browser password-sign-in capability, 90-day remembered-device session, and sign-out |
 | `POST /api/auth/setup` | Set or replace the owner password; accepted only through loopback on the Hub Mac |
 | `DELETE /api/hub/registry/machines/{machine}` | Unregister a machine and purge its live inventory/update state (history is retained) |
@@ -629,6 +654,11 @@ curl "http://localhost:47873/api/hub/catalog?modality=image&downloaded=true&clou
 # Memory picture
 curl http://localhost:47873/api/hub/resources
 
+# Save the default local-backup policy to every reachable Mac
+curl -X PUT http://localhost:47873/api/hub/storage-policy \
+  -H 'Content-Type: application/json' \
+  -d '{"enabled":true,"retention_days":3,"max_gb":80}'
+
 # Start / stop a studio
 curl -X POST http://localhost:47873/api/hub/studios/music/start
 curl -X POST http://localhost:47873/api/hub/studios/music/stop
@@ -647,6 +677,12 @@ const up = studios.filter(s => s.status === "up");
 const { models } = await fetch(`${HUB}/api/hub/catalog?q=flux`).then(r => r.json());
 // Each model carries hub_studio / hub_modality / hub_machine annotations;
 // everything else is the studio's own catalog entry, verbatim.
+
+// Enforce retention and the combined per-Mac cap immediately
+const storage = await fetch(`${HUB}/api/hub/storage-policy/cleanup`, {
+  method: "POST",
+}).then(r => r.json());
+console.log(storage.machines.map(m => [m.machine, m.used_bytes, m.over_limit]));
 ```
 
 ### Python
@@ -666,6 +702,10 @@ with httpx.Client() as client:
     models = client.get(f"{HUB}/api/hub/catalog", params={"downloaded": True}).json()
     for m in models["models"]:
         print(m["hub_studio"], m.get("label"), m.get("size_gb"), "GB")
+
+    storage = client.get(f"{HUB}/api/hub/storage-policy").json()
+    for machine in storage["machines"]:
+        print(machine["machine"], machine["used_bytes"], machine["over_limit"])
 ```
 
 ## Files

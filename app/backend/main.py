@@ -26,7 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, fleet_ops, gateway, job_storage,
+from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, fleet_ops, fleet_storage, gateway, job_storage,
                ledger, metrics, peers, recipes, shared_voices, transcription_jobs)
 from .auto_update import UpdateError
 from .auto_update_config import create_updater
@@ -76,6 +76,12 @@ class SharedVoiceUpdateBody(BaseModel):
 
 class OwnerPasswordBody(BaseModel):
     password: str = Field(min_length=1, max_length=1024)
+
+
+class FleetStoragePolicyBody(BaseModel):
+    enabled: bool = True
+    retention_days: int = 3
+    max_gb: float = Field(default=80, ge=1, le=1000)
 
 # Give our loggers a handler regardless of how uvicorn configures logging, so
 # structured warnings/alerts actually reach the service log.
@@ -145,10 +151,12 @@ async def lifespan(app: FastAPI):
         print(f"[hub] resumed {chat_restored} Chat batch(es) from hub.db")
     chat_jobs.start_dispatcher(monitor)
     shared_voices.start_reconciler(monitor)
+    fleet_storage.start(monitor)
     try:
         yield
     finally:
         await fleet_ops.stop_published_version_monitor()
+        await fleet_storage.stop()
         await shared_voices.stop()
         await chat_jobs.stop()
         await transcription_jobs.stop()
@@ -1168,6 +1176,26 @@ def hub_save_job_storage(body: dict):
 @app.post("/api/hub/job-storage/cleanup")
 def hub_enforce_job_storage():
     return job_storage.enforce_budget()
+
+
+# ── fleet local-backup storage protection ────────────────────────────────
+@app.get("/api/hub/storage-policy")
+async def hub_fleet_storage_status(local_only: bool = Query(False)):
+    return (await fleet_storage.local_status(monitor) if local_only
+            else await fleet_storage.fleet_status(monitor))
+
+
+@app.put("/api/hub/storage-policy")
+async def hub_save_fleet_storage(body: FleetStoragePolicyBody,
+                                 local_only: bool = Query(False)):
+    return await fleet_storage.save_fleet(
+        monitor, body.enabled, body.retention_days, body.max_gb,
+        local_only=local_only)
+
+
+@app.post("/api/hub/storage-policy/cleanup")
+async def hub_cleanup_fleet_storage(local_only: bool = Query(False)):
+    return await fleet_storage.cleanup_fleet(monitor, local_only=local_only)
 
 
 @app.get("/api/hub/transcription/jobs/{batch_id}")

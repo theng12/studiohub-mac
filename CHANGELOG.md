@@ -10,6 +10,29 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.49.0] — 2026-07-19
+
+### Added — self-healing fleet storage protection
+
+- Jobs now includes a modern fleet storage controller with a default three-day
+  retention window and one combined 80 GB limit per physical Mac. Policy saves,
+  immediate cleanup progress, per-Mac usage, app contributions, and unreachable
+  nodes are visible from the main Hub.
+- Every Hub enforces its own Mac hourly and the primary Hub propagates policy and
+  manual cleanup to reachable peer Hubs. Image, voice, music, video, render, and
+  Hub transcription stores participate through their protected cleanup APIs;
+  Chat reports that it has no disposable media.
+- When a Mac crosses its combined limit, the largest eligible store is reduced
+  first and cleanup continues oldest-first. Active work, shared voice masters,
+  source uploads, models, chat history, credentials, pinned renders, and
+  unreturned results remain protected even if the Mac stays over the limit.
+
+### Changed — Hub transcription backup defaults
+
+- Completed transcription files now default to three-day retention with
+  automatic cleanup enabled. Capacity cleanup removes only local input/SRT
+  files while preserving terminal job metadata in the dashboard.
+
 ## [1.48.1] — 2026-07-19
 
 ### Fixed — GenStudio jobs avoid stale Voice Studio workers

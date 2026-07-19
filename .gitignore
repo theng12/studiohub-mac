@@ -33,6 +33,7 @@ render_uploads/
 transcription_jobs/
 transcription_settings.json
 job_storage_settings.json
+fleet_storage_policy.json
 shared_voices/
 service/
 logs/service/

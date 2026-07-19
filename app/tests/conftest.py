@@ -21,7 +21,7 @@ from starlette.testclient import TestClient
 
 
 def _reset_state():
-    from backend import (alerts, auth, broker, chat_jobs, fleet_ops, job_storage,
+    from backend import (alerts, auth, broker, chat_jobs, fleet_ops, fleet_storage, job_storage,
                          ledger, metrics, peers, shared_voices, transcription_jobs)
     from backend import main
     from backend import registry as reg
@@ -37,6 +37,7 @@ def _reset_state():
               peers.FLEET_TOKEN_FILE, peers.SHARED_STUDIO_TOKEN_FILE,
               auth.TOKEN_FILE, auth.PASSWORD_FILE, auth.SESSIONS_FILE,
               metrics.STATE_FILE, job_storage.SETTINGS_FILE,
+              fleet_storage.SETTINGS_FILE,
               fleet_ops._STATE_FILE):
         try:
             f.unlink()
@@ -74,6 +75,9 @@ def _reset_state():
     fleet_ops._published_errors.clear()
     fleet_ops._published_checked_at = time.time()
     fleet_ops._published_lock = None
+    fleet_storage._last_local = None
+    fleet_storage._lock = None
+    fleet_storage._lock_loop = None
     metrics.samples.clear()
     metrics.watchdog.clear()
     metrics._last_sample = 0.0
