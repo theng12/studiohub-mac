@@ -15,6 +15,10 @@ The Hub runs on fixed port **47873** and provides:
 - **Resource monitor** — host unified-memory pressure + per-studio process memory
   (RSS) and CPU, resolved port → PID → process tree. It also watches Pinokio's
   Caddy proxy for abnormal memory/file-descriptor growth caused by port conflicts.
+- **Fleet model-memory control** — keep models loaded for speed by default, or
+  opt individual local/remote Studios into 10-minute, 2-minute, or immediate
+  idle release. A manual release button unloads idle models without stopping an
+  app or interrupting active work.
 - **Cloud audio readiness** — Voice Studio cards show which provider gateways are
   configured and live on each machine without exposing provider credentials.
 - **Central ElevenLabs gateway** — cloud ElevenLabs batches always use Voice
@@ -48,6 +52,31 @@ Swarm Batch, recipes).
    (host memory bar + per-studio table).
 4. The dashboard updates continuously over SSE, falls back to 5-second polling
    if the stream drops, and reconnects automatically with bounded backoff.
+
+### Control model memory
+
+Open **Memory** in Studio Hub. Every registered Image, Chat, Video, Music, and
+Voice Studio appears separately, including Studios reached through a peer Hub.
+Select the workers you want and choose:
+
+- **Performance (default)** — preserve loaded models for the fastest repeat
+  generation. Nothing unloads automatically.
+- **Balanced** — release model and accelerator caches after 10 idle minutes.
+- **Memory Saver** — release after 2 idle minutes.
+- **Immediate** — release as soon as current work is finished.
+
+**Release selected now** is the manual equivalent. A Studio with queued or
+running work refuses safely; other selected Studios still complete. Offline
+workers and older versions are shown explicitly, so you can update or reconnect
+only those workers and retry. Policies are persisted by each Studio, not the
+Hub, and therefore survive Hub restarts and continue working when a remote Hub
+is temporarily unavailable.
+
+After dependency installation and the next Studio restart, macOS Activity
+Monitor shows `Image Studio Mac`, `Chat Studio Mac`, `Video Studio Mac`,
+`Music Studio Mac`, `Voice Studio Mac`, and `Studio Hub Mac` instead of a generic
+Python title. The Python process remains the app's backend; the friendly name
+only changes how that same process is presented.
 
 ### Manage local generated backups
 
@@ -196,6 +225,10 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/fleet` · `POST /api/hub/fleet` | Fleet token status / set (`{token}`) — enables remote specs + control |
 | `GET /api/hub/resources?local_only=true` | This machine only (peers call with this to prevent recursion) |
 | `GET /api/hub/resources` | Host memory/CPU + per-studio process stats, including key-free Voice provider health |
+| `GET /api/hub/memory` | Read model-memory policy, loaded-model state, friendly process title, and reachability for every model-hosting Studio |
+| `PUT /api/hub/memory-policy` | Apply `{mode, studio_ids?}` using `performance`, `balanced`, `memory_saver`, or `immediate` |
+| `POST /api/hub/memory/release` | Release idle model/accelerator memory on selected Studios; returns one result per worker |
+| `GET /api/releases` | Current Hub version and complete release details read from the shipped changelog |
 | `GET /api/hub/summary` | One-shot dashboard payload (studios + resources + cloud provider inventory) |
 | `POST /api/hub/studios/{id}/start` | Start a local studio (via Pinokio's `pterm` CLI) |
 | `GET` / `POST /api/hub/maintenance/studio-versions` | Read saved or rescan running/latest Studio versions and reachability |

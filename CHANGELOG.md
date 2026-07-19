@@ -10,6 +10,36 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.51.0] — 2026-07-20
+
+### Added — fleet model-memory controls
+
+- Added a dedicated Memory workspace for every registered Image, Chat, Video,
+  Music, and Voice Studio on local or remote Macs. Select any combination of
+  workers, apply one shared policy, and see each result independently.
+- Performance remains the explicit default and preserves loaded models for the
+  fastest next generation. Balanced releases after 10 idle minutes, Memory
+  Saver after 2 minutes, and Immediate releases when current work finishes.
+- Release selected now asks each Studio to unload its model and clear available
+  MLX, Metal, or PyTorch allocator caches. Busy Studios refuse safely without
+  interrupting generation, while successful Studios stay successful if another
+  worker is offline, old, or busy.
+- Studio Hub uses the friendly Activity Monitor title `Studio Hub Mac`; each row
+  also reports the sibling Studio's friendly process title.
+
+### Fixed — What's New stays current
+
+- The version badge now loads release details directly from `CHANGELOG.md`
+  through `GET /api/releases`, with the embedded highlights retained only as an
+  offline fallback. Newly shipped Hub versions can no longer be omitted from
+  What's New because a second handwritten list was not updated.
+
+### Verification
+
+- Added direct/peer routing, authentication, partial-success, busy/offline,
+  validation, Activity Monitor title, release-detail, and dashboard contract
+  regression coverage. Existing launcher and fixed-port behavior are unchanged.
+
 ## [1.50.0] — 2026-07-19
 
 ### Added — hardware-aware agent machine sorting

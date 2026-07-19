@@ -34,11 +34,14 @@ from .fleet_auto_updates import FleetAutoUpdates
 from .auth import is_loopback, is_tailscale, load_token, make_middleware
 from .control import control_studio
 from .monitor import StudioMonitor
+from .memory_control import FleetMemoryControl
+from .process_title import PROCESS_TITLE, apply_process_title
 from .registry import DATA_DIR, LAUNCHER_ROOT, base_url
 from .resources import host_stats, proxy_stats, studio_process_stats
 
 TITLE = "Studio Hub KH"
 FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
+PROCESS_TITLE_APPLIED = apply_process_title()
 
 
 class UpdateRequest(BaseModel):
@@ -62,6 +65,15 @@ class FleetAutoModeBody(BaseModel):
 
 class FleetAutoRunBody(BaseModel):
     target_ids: list[str] | None = Field(default=None, max_length=100)
+
+
+class FleetMemoryPolicyBody(BaseModel):
+    mode: str
+    studio_ids: list[str] | None = Field(default=None, max_length=100)
+
+
+class FleetMemoryReleaseBody(BaseModel):
+    studio_ids: list[str] | None = Field(default=None, max_length=100)
 
 
 class SharedVoiceUpdateBody(BaseModel):
@@ -111,6 +123,7 @@ def _app_version() -> str:
 
 
 monitor = StudioMonitor()
+memory_control = FleetMemoryControl(monitor)
 
 
 def _automatic_update_blockers() -> list[str]:
@@ -237,7 +250,8 @@ def auth_logout(request: Request):
 # ── sibling-convention endpoints (Hub is monitorable like a studio) ────────
 @app.get("/api/health")
 def health():
-    return {"ok": True, "version": "0.1.0", "app_version": _app_version()}
+    return {"ok": True, "version": "0.1.0", "app_version": _app_version(),
+            "process_title": PROCESS_TITLE, "process_title_applied": PROCESS_TITLE_APPLIED}
 
 
 # ── Update auto-check (surfaced by the web-UI banner; mirrors the studios) ──
@@ -296,7 +310,46 @@ def update_status():
 
 @app.get("/api/version")
 def version():
-    return {"app_version": _app_version(), "title": TITLE}
+    return {"app_version": _app_version(), "title": TITLE,
+            "process_title": PROCESS_TITLE, "process_title_applied": PROCESS_TITLE_APPLIED}
+
+
+def _release_notes() -> list[dict]:
+    """Read published details from CHANGELOG so What's New cannot go stale."""
+    try:
+        text = (LAUNCHER_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    except OSError:
+        return []
+    headings = list(re.finditer(
+        r"^## \[([^]]+)\]\s+[—-]\s+(.+?)\s*$", text, flags=re.MULTILINE,
+    ))
+    releases = []
+    for index, match in enumerate(headings):
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
+        details: list[str] = []
+        section = ""
+        for raw in text[match.end():end].splitlines():
+            line = raw.strip()
+            if line.startswith("### "):
+                section = line[4:].strip()
+                continue
+            if line.startswith("- "):
+                detail = line[2:].strip()
+                if section:
+                    detail = f"{section}: {detail}"
+                details.append(detail)
+            elif line and details and not line.startswith(("#", "```")):
+                details[-1] += " " + line
+        details = [re.sub(r"\[([^]]+)\]\([^)]+\)", r"\1", item)
+                   .replace("**", "").replace("`", "") for item in details]
+        releases.append({"version": match.group(1), "date": match.group(2),
+                         "details": details})
+    return releases
+
+
+@app.get("/api/releases")
+def releases():
+    return {"current_version": _app_version(), "releases": _release_notes()}
 
 
 @app.get("/api/auto-update/status")
@@ -1701,6 +1754,27 @@ async def set_fleet(body: dict):
         peers.set_fleet_token(token)
         peers._cache.clear()
     return {"ok": True, "fleet_token_set": True, "sync": sync}
+
+
+@app.get("/api/hub/memory")
+async def get_fleet_memory():
+    return await memory_control.inventory()
+
+
+@app.put("/api/hub/memory-policy")
+async def put_fleet_memory_policy(body: FleetMemoryPolicyBody):
+    try:
+        return await memory_control.set_mode(body.mode, body.studio_ids)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/hub/memory/release")
+async def release_fleet_memory(body: FleetMemoryReleaseBody):
+    try:
+        return await memory_control.release(body.studio_ids)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/api/hub/maintenance/preflight")

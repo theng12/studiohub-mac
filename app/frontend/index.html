@@ -215,7 +215,7 @@
   nav:after{content:"FLEET CONTROL  /  LIVE";position:absolute;left:24px;bottom:26px;color:#a8c8b8;font:700 9px/1 var(--mono);letter-spacing:.14em}
   nav button{position:relative;display:flex;align-items:center;gap:12px;width:100%;padding:12px 14px;border:1px solid transparent;border-radius:12px;color:#afc6ba;text-align:left;font:600 13px/1 var(--sans);transition:.18s background,.18s color,.18s transform,.18s border-color}
   nav button:before{display:grid;place-items:center;width:25px;height:25px;border-radius:8px;background:#ffffff0d;font-size:13px}
-  nav button[data-tab="overview"]:before{content:"⌂"}nav button[data-tab="models"]:before{content:"◇"}nav button[data-tab="voices"]:before{content:"♬"}nav button[data-tab="resources"]:before{content:"◫"}nav button[data-tab="jobs"]:before{content:"↯"}nav button[data-tab="assets"]:before{content:"▧"}nav button[data-tab="stats"]:before{content:"↗"}nav button[data-tab="updates"]:before{content:"↻"}nav button[data-tab="remote"]:before{content:"◎"}
+  nav button[data-tab="overview"]:before{content:"⌂"}nav button[data-tab="models"]:before{content:"◇"}nav button[data-tab="voices"]:before{content:"♬"}nav button[data-tab="resources"]:before{content:"◫"}nav button[data-tab="memory"]:before{content:"♨"}nav button[data-tab="jobs"]:before{content:"↯"}nav button[data-tab="assets"]:before{content:"▧"}nav button[data-tab="stats"]:before{content:"↗"}nav button[data-tab="updates"]:before{content:"↻"}nav button[data-tab="remote"]:before{content:"◎"}
   nav button:hover{color:#fff;background:#ffffff0b;transform:translateX(2px)}
   nav button.active{color:#fff;background:#ffffff14;border-color:#ffffff17;box-shadow:inset 3px 0 #f0c469;border-bottom-color:#ffffff17}
   nav button.active:before{background:#f0c469;color:#173a2c}
@@ -250,6 +250,7 @@
   .auto-update-controls .field-label{display:flex;flex-direction:column;gap:7px}.auto-update-controls .selctl{width:100%;text-transform:none;letter-spacing:0;font-family:var(--sans)}.auto-update-idle{height:39px;margin:0;padding:0 8px;border:1px solid transparent;border-radius:10px;text-transform:none;letter-spacing:0;font:600 11.5px/1.2 var(--sans)}
   .auto-update-actions{min-height:39px}.auto-update-actions .sub{flex:1;min-width:220px}.auto-update-facts{display:grid;grid-template-columns:repeat(6,minmax(110px,1fr));gap:8px;margin:14px 0 5px}.auto-update-fact{min-width:0;padding:10px 11px;border:1px solid #dfe3da;border-radius:12px;background:#fbfbf6}.auto-update-fact span{display:block;margin-bottom:5px;color:var(--dim);font:700 8.5px/1 var(--mono);letter-spacing:.09em;text-transform:uppercase}.auto-update-fact b{display:block;overflow:hidden;text-overflow:ellipsis;color:var(--accent2);font:700 11.5px/1.35 var(--mono);white-space:nowrap}
   .auto-update-table{min-width:1040px}.auto-update-table td{vertical-align:middle}.auto-update-table .selctl{min-width:112px;padding:7px 9px}.auto-update-table .actions{margin:0;flex-wrap:nowrap}.auto-update-status{max-width:210px;overflow-wrap:anywhere}.auto-update-app b{display:block}.auto-update-app .sub{display:block;margin-top:2px}.auto-update-unavailable{opacity:.62}.auto-update-spinner{display:inline-block;margin-right:5px;animation:autoSpin 1s linear infinite}@keyframes autoSpin{to{transform:rotate(360deg)}}
+  .memory-modes{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin:15px 0}.memory-mode{position:relative;display:block;padding:15px;border:1px solid #d5dbd2;border-radius:14px;background:#f8f9f3;cursor:pointer;transition:.15s}.memory-mode:hover{border-color:#8bb49b;transform:translateY(-1px)}.memory-mode.on{border-color:var(--accent);background:#edf7ef;box-shadow:inset 0 0 0 1px var(--accent)}.memory-mode input{position:absolute;opacity:0;pointer-events:none}.memory-mode b{display:block;color:var(--accent2);font:750 14px/1.2 var(--display)}.memory-mode span{display:block;margin-top:6px;color:var(--dim);font-size:11.5px;line-height:1.4}.memory-default{display:inline-block;margin-left:5px;padding:2px 5px;border-radius:5px;background:#dce9dd;color:var(--accent);font:700 8px/1 var(--mono);text-transform:uppercase}.memory-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}.memory-actions .sub{flex:1;min-width:240px}.memory-table{min-width:1040px}.memory-table td{vertical-align:middle}.memory-studio b{display:block}.memory-studio .sub{display:block}.memory-model{max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.memory-row-muted{opacity:.68}
   .voice-create{background:linear-gradient(145deg,#fffef9,#edf5ec)}
   .voice-form-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1.2fr;gap:11px;margin-top:12px}
   .voice-field{display:flex;flex-direction:column;gap:6px;min-width:0}.voice-field>span{font:700 9px/1 var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}
@@ -261,9 +262,9 @@
   #bell-dropdown{top:37px;right:0;width:370px;padding:8px;border-color:var(--border);border-radius:16px;background:#fffef9;box-shadow:0 22px 55px #18362935}#bell-dropdown .bd-row:hover{background:#eff2ea}
   .modal-backdrop{background:rgba(12,35,26,.66);backdrop-filter:blur(7px)}.modal{max-width:650px;padding:26px;border:1px solid #d9ded5;border-radius:22px;background:#fffef9;box-shadow:0 30px 80px #0a241950}.modal h2{font:700 29px/1 var(--display)}.wn-rel{padding:16px 0;border-color:#dfe2d8}.wn-rel h3{font:700 14px/1.2 var(--mono);color:var(--accent2)}.wn-rel li{font-size:13px}
   .empty{padding:44px;color:#7b847d}.muted,.sub{color:var(--dim)}
-  @media(max-width:1050px){header{margin-left:210px;padding:0 24px}nav{width:210px}main{margin-left:210px;padding:26px 24px 60px}.lrow{grid-template-columns:22px minmax(0,1.7fr) minmax(0,1fr) 90px minmax(0,1.15fr) 170px}.lrow>div:nth-child(6),.lrow.lhead>span:nth-child(6){display:none}.auto-update-controls{grid-template-columns:repeat(2,minmax(180px,1fr))}.auto-update-facts{grid-template-columns:repeat(3,minmax(110px,1fr))}.voice-form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  @media(max-width:1050px){header{margin-left:210px;padding:0 24px}nav{width:210px}main{margin-left:210px;padding:26px 24px 60px}.lrow{grid-template-columns:22px minmax(0,1.7fr) minmax(0,1fr) 90px minmax(0,1.15fr) 170px}.lrow>div:nth-child(6),.lrow.lhead>span:nth-child(6){display:none}.auto-update-controls{grid-template-columns:repeat(2,minmax(180px,1fr))}.auto-update-facts{grid-template-columns:repeat(3,minmax(110px,1fr))}.memory-modes{grid-template-columns:repeat(2,minmax(150px,1fr))}.voice-form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
   @media(max-width:820px){header{margin-left:0;height:68px;padding:0 18px}header .summary{display:none}nav{position:sticky;top:68px;width:auto;height:58px;padding:7px 12px;flex-direction:row;overflow-x:auto;background:#123126;box-shadow:0 8px 20px #1736281c}nav:before,nav:after{display:none}nav button{width:auto;flex:0 0 auto;padding:8px 11px}nav button:hover{transform:none}main{margin-left:0;padding:22px 18px 54px}.workspace-head{padding:25px 26px}.live-chip{display:none}.grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}}
-  @media(max-width:600px){header>span:first-child{display:none}header{gap:9px;padding:0 14px}header h1{font-size:18px}header #last-refresh{display:none}nav button{font-size:0;gap:0;padding:7px 12px}nav button:before{font-size:14px}nav button.active{font-size:11px;gap:7px}main{padding:16px 12px 45px}main>section,.card{min-width:0}.workspace-head{margin-bottom:16px;padding:22px 20px;border-radius:18px}.workspace-head h2{font-size:32px}.workspace-head p{font-size:12.5px}.controls,.toolbar{padding:10px}.controls .grp{width:100%;justify-content:space-between}.seg{max-width:100%;overflow-x:auto}.grid{grid-template-columns:1fr}.card{overflow:hidden;border-radius:15px;padding:16px}table{display:block;max-width:100%;overflow-x:auto}table thead,table tbody{display:table;width:max-content;min-width:100%;table-layout:auto}.lrow{grid-template-columns:20px 1.5fr .8fr auto;gap:8px}.lrow>div:nth-child(3),.lrow>div:nth-child(5),.lrow>div:nth-child(6),.lrow.lhead>span:nth-child(3),.lrow.lhead>span:nth-child(5),.lrow.lhead>span:nth-child(6){display:none}.modal{padding:20px;border-radius:18px}#bell-dropdown{position:fixed;left:12px;right:12px;top:72px;width:auto}.auto-update-controls{grid-template-columns:1fr;padding:11px}.auto-update-idle{height:auto;padding:7px 2px}.auto-update-actions .btn{flex:1 1 145px}.auto-update-actions .sub{flex-basis:100%}.auto-update-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.voice-form-grid{grid-template-columns:1fr}.voice-field.wide{grid-column:auto}.voice-list{grid-template-columns:1fr}.voice-audio-row .voice-field,.voice-audio-row .voice-field.model{min-width:100%}}
+  @media(max-width:600px){header>span:first-child{display:none}header{gap:9px;padding:0 14px}header h1{font-size:18px}header #last-refresh{display:none}nav button{font-size:0;gap:0;padding:7px 12px}nav button:before{font-size:14px}nav button.active{font-size:11px;gap:7px}main{padding:16px 12px 45px}main>section,.card{min-width:0}.workspace-head{margin-bottom:16px;padding:22px 20px;border-radius:18px}.workspace-head h2{font-size:32px}.workspace-head p{font-size:12.5px}.controls,.toolbar{padding:10px}.controls .grp{width:100%;justify-content:space-between}.seg{max-width:100%;overflow-x:auto}.grid{grid-template-columns:1fr}.card{overflow:hidden;border-radius:15px;padding:16px}table{display:block;max-width:100%;overflow-x:auto}table thead,table tbody{display:table;width:max-content;min-width:100%;table-layout:auto}.lrow{grid-template-columns:20px 1.5fr .8fr auto;gap:8px}.lrow>div:nth-child(3),.lrow>div:nth-child(5),.lrow>div:nth-child(6),.lrow.lhead>span:nth-child(3),.lrow.lhead>span:nth-child(5),.lrow.lhead>span:nth-child(6){display:none}.modal{padding:20px;border-radius:18px}#bell-dropdown{position:fixed;left:12px;right:12px;top:72px;width:auto}.auto-update-controls{grid-template-columns:1fr;padding:11px}.auto-update-idle{height:auto;padding:7px 2px}.auto-update-actions .btn{flex:1 1 145px}.auto-update-actions .sub{flex-basis:100%}.auto-update-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.memory-modes{grid-template-columns:1fr}.memory-actions .btn{flex:1 1 135px}.voice-form-grid{grid-template-columns:1fr}.voice-field.wide{grid-column:auto}.voice-list{grid-template-columns:1fr}.voice-audio-row .voice-field,.voice-audio-row .voice-field.model{min-width:100%}}
   @media(max-width:600px){.resource-studio-table thead,.resource-studio-table tbody{min-width:720px}}
 </style>
 </head>
@@ -285,6 +286,7 @@
   <button data-tab="models">Models</button>
   <button data-tab="voices">Voices</button>
   <button data-tab="resources">Resources</button>
+  <button data-tab="memory">Memory</button>
   <button data-tab="jobs">Jobs</button>
   <button data-tab="assets">Assets</button>
   <button data-tab="stats">Stats</button>
@@ -452,6 +454,28 @@
     </div>
     <div id="res-studios"></div>
     <p class="muted" style="font-size:11.5px;margin-top:8px">Remote machines report host RAM + per-studio memory via their own Hub. Studios on a machine without a Studio Hub show "—" (set up the fleet in the Remote tab).</p>
+  </section>
+
+  <!-- MODEL MEMORY -->
+  <section id="tab-memory" class="hide">
+    <div class="card section">
+      <div class="top"><span class="emoji">♨️</span><h3>Model memory across the fleet</h3><span class="pill ok" id="memory-count">Loading</span></div>
+      <p class="muted" style="font-size:13px">Performance is the default and keeps loaded models ready for the fastest next generation. The other modes are opt-in and release model plus MLX, Metal, or PyTorch allocator memory only after work is idle.</p>
+      <div class="memory-modes" id="memory-modes">
+        <label class="memory-mode" data-mode="performance"><input type="radio" name="memory-mode" value="performance"><b>Performance <span class="memory-default">Default</span></b><span>Keep models loaded. Fastest repeat generation; highest retained memory.</span></label>
+        <label class="memory-mode" data-mode="balanced"><input type="radio" name="memory-mode" value="balanced"><b>Balanced</b><span>Release models after 10 minutes idle. A practical everyday compromise.</span></label>
+        <label class="memory-mode" data-mode="memory_saver"><input type="radio" name="memory-mode" value="memory_saver"><b>Memory Saver</b><span>Release models after 2 minutes idle. Lower memory, slower next generation.</span></label>
+        <label class="memory-mode" data-mode="immediate"><input type="radio" name="memory-mode" value="immediate"><b>Immediate</b><span>Release as soon as current work finishes. Minimum retained model memory.</span></label>
+      </div>
+      <div class="memory-actions">
+        <button class="btn primary" id="memory-apply" onclick="applyFleetMemoryMode()">Apply to selected</button>
+        <button class="btn" id="memory-release" onclick="releaseFleetMemory()">Release selected now</button>
+        <button class="btn" id="memory-refresh" onclick="loadFleetMemory(true)">Refresh</button>
+        <span class="sub" id="memory-message" role="status" aria-live="polite">Loading Studio policies…</span>
+      </div>
+      <div style="overflow-x:auto"><table class="memory-table"><thead><tr><th><input type="checkbox" id="memory-select-all" checked aria-label="Select all Studios"></th><th>Studio</th><th>Machine</th><th>Current policy</th><th>Loaded model</th><th>Next release</th><th>Activity Monitor</th><th>Status</th></tr></thead><tbody id="memory-body"></tbody></table></div>
+      <p class="sub" style="margin-top:10px">Busy Studios safely refuse manual release instead of interrupting generation. Offline or older Studios remain listed; update them and retry without affecting successful machines.</p>
+    </div>
   </section>
 
   <!-- JOBS -->
@@ -896,9 +920,15 @@ function safeHttpUrl(value) {
 }
 let lastSummary = null;
 let HUB_VERSION = null;
+let LIVE_RELEASE_NOTES = null;
 
-// ── What's New (release highlights — keep in sync with CHANGELOG.md) ──
+// ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.51.0", date: "2026-07-20", items: [
+    "Control model memory across every registered Image, Chat, Video, Music, and Voice Studio, with Performance preserved as the default.",
+    "Apply Balanced, Memory Saver, or Immediate release policies in bulk, or release idle models manually without interrupting active work.",
+    "Studio Hub now appears as <b>Studio Hub Mac</b> in Activity Monitor, and this panel loads release details from the changelog so it stays current.",
+  ] },
   { v: "1.47.2", date: "2026-07-19", items: [
     "Alert-delivery and job-storage preferences are now treated as per-machine runtime data, so saving them cannot block future Hub updates.",
   ] },
@@ -1149,11 +1179,23 @@ const RELEASE_NOTES = [
 ];
 function renderWhatsNew() {
   $("#wn-ver").textContent = HUB_VERSION ? "Currently running v" + HUB_VERSION : "";
-  $("#wn-body").innerHTML = RELEASE_NOTES.map(r =>
+  const notes = LIVE_RELEASE_NOTES || RELEASE_NOTES;
+  $("#wn-body").innerHTML = notes.map(r =>
     `<div class="wn-rel"><h3>v${r.v} <span style="color:var(--dim);font-weight:400">· ${r.date}</span></h3>
-     <ul>${r.items.map(i => `<li>${i}</li>`).join("")}</ul></div>`).join("");
+     <ul>${r.items.map(i => `<li>${r.live ? esc(i) : i}</li>`).join("")}</ul></div>`).join("");
 }
-function openWhatsNew() { renderWhatsNew(); $("#whatsnew").classList.remove("hide"); markWhatsNewSeen(); }
+async function refreshWhatsNew() {
+  try {
+    const response = await api("/api/releases");
+    const data = await response.json();
+    if (!response.ok || !Array.isArray(data.releases)) return;
+    LIVE_RELEASE_NOTES = data.releases.map(release => ({
+      v: release.version, date: release.date, items: release.details || [], live: true,
+    }));
+    renderWhatsNew();
+  } catch (_) {}
+}
+function openWhatsNew() { renderWhatsNew(); $("#whatsnew").classList.remove("hide"); markWhatsNewSeen(); refreshWhatsNew(); }
 function closeWhatsNew() { $("#whatsnew").classList.add("hide"); }
 function markWhatsNewSeen() {
   if (HUB_VERSION) localStorage.setItem("hub_seen_ver", HUB_VERSION);
@@ -1292,12 +1334,13 @@ async function api(path, opts = {}) {
 }
 
 // ── tabs ──────────────────────────────────────────────────────────────────
-const TABS = ["overview", "models", "voices", "resources", "jobs", "assets", "stats", "updates", "remote"];
+const TABS = ["overview", "models", "voices", "resources", "memory", "jobs", "assets", "stats", "updates", "remote"];
 const TAB_META = {
   overview: ["Studio overview", "The live state of every creative worker across your connected Macs."],
   models: ["Model library", "Find what is downloaded, where it lives, and which machine can run it."],
   voices: ["Shared voices", "Create, transcribe, and synchronize cloning references across every Voice Studio Mac."],
   resources: ["Fleet resources", "Unified memory, CPU pressure, and studio footprint across the fleet."],
+  memory: ["Model memory", "Choose the speed-versus-memory tradeoff per Studio and release loaded models on demand."],
   jobs: ["Production queue", "Submit generation batches and follow every item from dispatch to completion."],
   assets: ["Asset ledger", "Browse generated media and trace each result back to its studio and model."],
   stats: ["Fleet intelligence", "Compare throughput, speed, machine contribution, and model performance."],
@@ -1320,6 +1363,7 @@ document.querySelectorAll("nav button").forEach(btn => {
     updatePageHeading(btn.dataset.tab);
     if (btn.dataset.tab === "models") loadModels();
     if (btn.dataset.tab === "voices") loadSharedVoices();
+    if (btn.dataset.tab === "memory") loadFleetMemory();
     if (btn.dataset.tab === "updates") loadAutoUpdates();
     if (btn.dataset.tab === "remote") { loadAccess(); loadMachines(); loadAlerts(); loadMaintenance(); }
     if (btn.dataset.tab === "jobs") { loadJobModels(); loadBatches(); loadTranscriptionSettings(); loadFleetStorage(); selectJobKind(activeJobKind); }
@@ -2714,6 +2758,144 @@ async function saveFleet() {
   }
 }
 
+// ── fleet model-memory controller ────────────────────────────────────────
+let fleetMemoryData = null;
+let memoryModeDraft = "performance";
+let memorySelected = new Set();
+let memorySelectionInitialized = false;
+let memoryBusy = false;
+
+function setMemoryModeDraft(mode) {
+  memoryModeDraft = mode;
+  document.querySelectorAll(".memory-mode").forEach(card => {
+    const on = card.dataset.mode === mode;
+    card.classList.toggle("on", on);
+    card.querySelector("input").checked = on;
+  });
+}
+document.querySelectorAll(".memory-mode").forEach(card => {
+  card.onclick = () => setMemoryModeDraft(card.dataset.mode);
+});
+setMemoryModeDraft(memoryModeDraft);
+
+function memoryLoadedLabel(policy = {}) {
+  const value = policy.loaded_model ?? policy.loaded_models ?? policy.loaded_pipeline;
+  if (!value || (Array.isArray(value) && !value.length)) return "None reported";
+  return Array.isArray(value)
+    ? value.map(item => Array.isArray(item) ? item.join(" · ") : String(item)).join("; ")
+    : String(value);
+}
+function memoryNextLabel(policy = {}) {
+  if (policy.mode === "performance") return "Never automatically";
+  if (!policy.next_release_at) return policy.busy ? "After work is idle" : "After next model use";
+  const seconds = Math.max(0, Math.round(policy.next_release_at - Date.now() / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.ceil(seconds / 60)} min`;
+}
+function memoryStatus(row) {
+  if (row.state === "ready") return row.policy?.busy
+    ? ['<span class="pill warn">Busy</span>', "Release waits safely"]
+    : ['<span class="pill ok">Ready</span>', row.policy?.last_error || "Policy active"];
+  if (row.state === "update_required") return ['<span class="pill warn">Update needed</span>', row.detail];
+  if (row.state === "offline") return ['<span class="pill err">Offline</span>', row.detail];
+  return ['<span class="pill err">Unavailable</span>', row.detail || "Could not read policy"];
+}
+function renderFleetMemory(data) {
+  fleetMemoryData = data || { studios: [], summary: {} };
+  const rows = fleetMemoryData.studios || [];
+  if (!memorySelectionInitialized) {
+    rows.forEach(row => memorySelected.add(row.id));
+    memorySelectionInitialized = true;
+  }
+  const ready = rows.filter(row => row.state === "ready").length;
+  $("#memory-count").textContent = `${ready}/${rows.length} ready`;
+  if (!memoryBusy) {
+    const summary = fleetMemoryData.summary || {};
+    $("#memory-message").textContent = `${ready} ready · ${summary.update_required || 0} need update · ${summary.offline || 0} offline`;
+  }
+  $("#memory-body").innerHTML = rows.map(row => {
+    const policy = row.policy || {};
+    const [status, detail] = memoryStatus(row);
+    const checked = memorySelected.has(row.id) ? "checked" : "";
+    const muted = row.state === "ready" ? "" : " memory-row-muted";
+    const mode = policy.mode ? (fleetMemoryData.options || []).find(opt => opt.mode === policy.mode)?.label || policy.mode : "—";
+    const title = policy.process_title || ({image:"Image Studio Mac",chat:"Chat Studio Mac",voice:"Voice Studio Mac",music:"Music Studio Mac",video:"Video Studio Mac"}[row.modality]) || "—";
+    const processDetail = row.state !== "ready" ? "available after Studio update + restart"
+      : policy.process_title_applied === false ? "available after dependency install + restart" : "friendly process title";
+    return `<tr class="${muted}"><td><input type="checkbox" aria-label="Select ${esc(row.title)}" ${checked} onchange="toggleMemoryStudio('${jsq(row.id)}',this.checked)"></td>
+      <td class="memory-studio"><b>${esc(row.title)}</b><span class="sub">${esc(row.modality)}</span></td><td>${esc(row.machine_label || row.machine)}</td>
+      <td><span class="pill ${policy.mode === "performance" ? "ok" : "warn"}">${esc(mode)}</span></td>
+      <td class="memory-model" title="${esc(memoryLoadedLabel(policy))}">${esc(memoryLoadedLabel(policy))}</td><td>${esc(memoryNextLabel(policy))}</td>
+      <td><b>${esc(title)}</b><div class="sub">${processDetail}</div></td>
+      <td>${status}<div class="sub">${esc(detail || "")}</div></td></tr>`;
+  }).join("") || '<tr><td colspan="8" class="empty">No model-hosting Studios are registered.</td></tr>';
+  updateMemorySelectionUI();
+}
+function toggleMemoryStudio(id, selected) {
+  if (selected) memorySelected.add(id); else memorySelected.delete(id);
+  updateMemorySelectionUI();
+}
+function updateMemorySelectionUI() {
+  const rows = fleetMemoryData?.studios || [];
+  const selected = rows.filter(row => memorySelected.has(row.id)).length;
+  const all = $("#memory-select-all");
+  all.checked = rows.length > 0 && selected === rows.length;
+  all.indeterminate = selected > 0 && selected < rows.length;
+  $("#memory-apply").disabled = memoryBusy || selected === 0;
+  $("#memory-release").disabled = memoryBusy || selected === 0;
+}
+$("#memory-select-all").onchange = event => {
+  (fleetMemoryData?.studios || []).forEach(row => {
+    if (event.target.checked) memorySelected.add(row.id); else memorySelected.delete(row.id);
+  });
+  renderFleetMemory(fleetMemoryData);
+};
+async function loadFleetMemory(force = false) {
+  if (memoryBusy && !force) return;
+  $("#memory-refresh").disabled = true;
+  try {
+    const response = await api("/api/hub/memory");
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    renderFleetMemory(data);
+  } catch (error) {
+    $("#memory-message").textContent = `Could not load memory controls: ${error.message}`;
+  } finally {
+    $("#memory-refresh").disabled = false;
+  }
+}
+function selectedMemoryStudios() {
+  return (fleetMemoryData?.studios || []).filter(row => memorySelected.has(row.id)).map(row => row.id);
+}
+async function runFleetMemoryAction(path, method, body, progress) {
+  memoryBusy = true; updateMemorySelectionUI();
+  $("#memory-message").textContent = progress;
+  try {
+    const response = await api(path, { method, headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    const failures = (data.results || []).filter(row => !row.ok);
+    $("#memory-message").textContent = failures.length
+      ? `${data.succeeded}/${data.selected} succeeded. ${failures.map(row => `${row.title}: ${row.detail}`).join(" · ")}`
+      : `${data.succeeded}/${data.selected} Studios completed successfully.`;
+    await loadFleetMemory(true);
+  } catch (error) {
+    $("#memory-message").textContent = `Memory action failed: ${error.message}`;
+  } finally {
+    memoryBusy = false; updateMemorySelectionUI();
+  }
+}
+function applyFleetMemoryMode() {
+  runFleetMemoryAction("/api/hub/memory-policy", "PUT", {
+    mode: memoryModeDraft, studio_ids: selectedMemoryStudios(),
+  }, "Saving the selected Studios’ memory policy…");
+}
+function releaseFleetMemory() {
+  runFleetMemoryAction("/api/hub/memory/release", "POST", {
+    studio_ids: selectedMemoryStudios(),
+  }, "Releasing idle model memory on the selected Studios…");
+}
+
 // ── optional automatic updates ───────────────────────────────────────────
 let hubAutoStatus = null;
 let fleetAutoData = null;
@@ -3564,6 +3746,9 @@ setInterval(() => {
   if (vis("updates")) loadAutoUpdates();
   else if (vis("remote")) loadMaintenance();
 }, 30000);
+setInterval(() => {
+  if (!document.hidden && vis("memory") && !memoryBusy) loadFleetMemory();
+}, 15000);
 </script>
   <!-- ── KH auto-update banner (self-contained; mirrors the studios) ── -->
   <script>
