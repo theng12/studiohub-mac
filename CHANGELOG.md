@@ -10,6 +10,26 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.48.1] — 2026-07-19
+
+### Fixed — GenStudio jobs avoid stale Voice Studio workers
+
+- GenStudio-labelled voice batches now wait for Voice Studio 1.20.13 or newer,
+  which reports the immutable model and voice revisions required before
+  GenStudio can publish an asset or capture credits.
+- Older workers remain available to existing direct Story Studio jobs while a
+  safe rolling fleet update drains and upgrades them one at a time.
+
+## [1.48.0] — 2026-07-19
+
+### Added — exactly-once client batch submission
+
+- `POST /api/hub/jobs` now accepts a stable `clientRequestId`. Replaying the
+  same request returns its existing batch, including after a Hub restart,
+  while reusing the ID for different work is rejected.
+- GenStudio can safely recover when a local network interruption hides the
+  original submit response without generating the customer's audio twice.
+
 ## [1.47.8] — 2026-07-19
 
 ### Fixed — terminal voice results publish atomically

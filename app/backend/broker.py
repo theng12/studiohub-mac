@@ -19,8 +19,11 @@ and are forwarded verbatim to the studio's own generate endpoint.
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
+import re
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -166,6 +169,9 @@ _wakeup = asyncio.Event()
 # protects the short interval between an asynchronous telemetry check and the
 # lease becoming visible to another local scheduler lane.
 _reserved = {"gb": 0.0}
+_submit_lock = threading.Lock()
+_CLIENT_REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9._:-]{8,160}")
+_GENSTUDIO_VOICE_EVIDENCE_VERSION = (1, 20, 13)
 
 
 def _required_free_memory(mem: dict) -> float:
@@ -355,6 +361,11 @@ def restore_batches():
 
 
 def submit_batch(envelope: dict) -> dict:
+    with _submit_lock:
+        return _submit_batch_locked(envelope)
+
+
+def _submit_batch_locked(envelope: dict) -> dict:
     modality = envelope.get("modality")
     if modality not in MODALITY:
         return {"error": f"modality must be one of {sorted(MODALITY)}"}
@@ -370,6 +381,41 @@ def submit_batch(envelope: dict) -> dict:
         return {"error": "batch payload must be valid JSON"}
     if not envelope.get("model"):
         return {"error": "model (repo) is required"}
+    client_request_id = envelope.get("clientRequestId")
+    if client_request_id is not None:
+        if (
+            not isinstance(client_request_id, str)
+            or not _CLIENT_REQUEST_ID_PATTERN.fullmatch(client_request_id)
+        ):
+            return {
+                "error": "clientRequestId must be 8-160 safe letters, digits, or ._:-"
+            }
+        fingerprint_payload = {
+            key: value for key, value in envelope.items() if key != "clientRequestId"
+        }
+        request_fingerprint = hashlib.sha256(
+            json.dumps(
+                fingerprint_payload, sort_keys=True, separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+        existing = next(
+            (
+                batch
+                for batch in batches.values()
+                if batch.get("client_request_id") == client_request_id
+            ),
+            None,
+        ) or ledger.load_batch_by_client_request_id(client_request_id)
+        if existing is not None:
+            if existing.get("request_fingerprint") != request_fingerprint:
+                return {"error": "clientRequestId was already used for a different batch"}
+            return {
+                "batch_id": existing["id"],
+                "items": len(existing.get("items") or []),
+                "replayed": True,
+            }
+    else:
+        request_fingerprint = None
     routing = str(envelope.get("routing") or "pool")
     if routing not in {"pool", "remote"} and not (
         routing.startswith("studio:") and routing.split(":", 1)[1]
@@ -378,6 +424,8 @@ def submit_batch(envelope: dict) -> dict:
     batch_id = uuid.uuid4().hex[:10]
     batches[batch_id] = {
         "id": batch_id,
+        "client_request_id": client_request_id,
+        "request_fingerprint": request_fingerprint,
         "modality": modality,
         "model": envelope["model"],
         "shared_params": envelope.get("sharedParams") or {},
@@ -406,7 +454,7 @@ def submit_batch(envelope: dict) -> dict:
     }
     ledger.save_batch(batches[batch_id])
     _wakeup.set()
-    return {"batch_id": batch_id, "items": len(items_in)}
+    return {"batch_id": batch_id, "items": len(items_in), "replayed": False}
 
 
 def busy_studios() -> set:
@@ -969,6 +1017,26 @@ def _shared_voice_allows_studio(batch: dict, item: dict, studio: dict) -> bool:
     return synced is None or studio.get("id") in synced
 
 
+def _version_tuple(value: object) -> tuple[int, int, int] | None:
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)", str(value or ""))
+    return tuple(map(int, match.groups())) if match else None
+
+
+def _supports_genstudio_voice_evidence(batch: dict, studio: dict) -> bool:
+    """Keep customer jobs off workers that cannot report immutable revisions."""
+    if (
+        batch.get("modality") != "voice"
+        or not str(batch.get("label") or "").startswith("genstudio-kh:")
+    ):
+        return True
+    status = _monitor().status.get(studio.get("id"), {})
+    version = status.get("app_version") or (status.get("health") or {}).get(
+        "app_version"
+    )
+    parsed = _version_tuple(version)
+    return parsed is not None and parsed >= _GENSTUDIO_VOICE_EVIDENCE_VERSION
+
+
 def _queued_batches() -> list[dict]:
     """Queued work in priority/fair-turn order; running work is never preempted."""
     return sorted(
@@ -996,6 +1064,17 @@ async def _dispatch_loop():
                 eligible = _eligible_studios(
                     b["modality"], b["routing"], b.get("model", ""),
                 )
+                evidence_eligible = [
+                    studio
+                    for studio in eligible
+                    if _supports_genstudio_voice_evidence(b, studio)
+                ]
+                if eligible and not evidence_eligible:
+                    b["governor_note"] = (
+                        "Waiting for Voice Studio 1.20.13 or newer so GenStudio "
+                        "receives immutable model and voice revision evidence"
+                    )
+                eligible = evidence_eligible
                 if not eligible and b.get("routing") == "remote":
                     b["governor_note"] = (
                         "Waiting for an online remote worker; this Hub Mac is intentionally excluded"

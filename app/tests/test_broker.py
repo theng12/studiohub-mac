@@ -35,6 +35,61 @@ def test_submit_ok_and_summary(reset):
     assert s["routing"] == "pool"
 
 
+def test_client_request_id_replays_exact_batch_without_duplicate_work(reset):
+    envelope = {
+        "clientRequestId": "genstudio:job-1:attempt-1",
+        "modality": "voice",
+        "model": "qwen/model",
+        "label": "genstudio-kh:story-studio",
+        "items": [{"text": "Hello from the exact same request."}],
+    }
+
+    first = broker.submit_batch(envelope)
+    second = broker.submit_batch(envelope)
+
+    assert first["replayed"] is False
+    assert second == {"batch_id": first["batch_id"], "items": 1, "replayed": True}
+    assert len(broker.batches) == 1
+
+
+def test_client_request_id_rejects_different_payload(reset):
+    first = broker.submit_batch({
+        "clientRequestId": "genstudio:job-1:attempt-1",
+        "modality": "voice",
+        "model": "qwen/model",
+        "items": [{"text": "First text"}],
+    })
+    conflict = broker.submit_batch({
+        "clientRequestId": "genstudio:job-1:attempt-1",
+        "modality": "voice",
+        "model": "qwen/model",
+        "items": [{"text": "Different text"}],
+    })
+
+    assert "batch_id" in first
+    assert "different batch" in conflict["error"]
+    assert len(broker.batches) == 1
+
+
+def test_client_request_id_tombstone_prevents_duplicate_after_history_clear(reset):
+    envelope = {
+        "clientRequestId": "genstudio:job-2:attempt-1",
+        "modality": "voice",
+        "model": "qwen/model",
+        "items": [{"text": "Keep exactly-once evidence."}],
+    }
+    first = broker.submit_batch(envelope)
+    batch = broker.batches[first["batch_id"]]
+    batch["items"][0]["state"] = "error"
+    ledger.save_batch(batch)
+    assert broker.clear_finished_batches(batch_id=batch["id"])["cleared"] == 1
+
+    replay = broker.submit_batch(envelope)
+
+    assert replay == {"batch_id": first["batch_id"], "items": 1, "replayed": True}
+    assert broker.batches == {}
+
+
 def test_shared_clone_only_allows_synchronized_voice_workers(reset, monkeypatch):
     monkeypatch.setattr(
         shared_voices, "synced_studio_ids", lambda voice_id: {"voice@mac-a"}
@@ -53,6 +108,24 @@ def test_shared_clone_only_allows_synchronized_voice_workers(reset, monkeypatch)
         batch, {"params": {"voice_library_id": "direct-only-id"}},
         {"id": "voice@mac-b"},
     ) is True
+
+
+def test_genstudio_voice_jobs_require_worker_revision_evidence(reset, monkeypatch):
+    batch = {"modality": "voice", "label": "genstudio-kh:story-studio-kh"}
+    studio = {"id": "voice@worker-one"}
+    monkeypatch.setitem(
+        broker._monitor().status,
+        studio["id"],
+        {"status": "up", "app_version": "1.20.12"},
+    )
+    assert broker._supports_genstudio_voice_evidence(batch, studio) is False
+
+    broker._monitor().status[studio["id"]]["app_version"] = "1.20.13"
+    assert broker._supports_genstudio_voice_evidence(batch, studio) is True
+
+    batch["label"] = "storystudio"
+    broker._monitor().status[studio["id"]]["app_version"] = "1.20.12"
+    assert broker._supports_genstudio_voice_evidence(batch, studio) is True
 
 
 def test_summary_running_items_and_avg(reset):

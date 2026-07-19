@@ -35,6 +35,13 @@ CREATE TABLE IF NOT EXISTS batches (
   finished INTEGER NOT NULL DEFAULT 0,
   payload TEXT NOT NULL              -- full batch dict as JSON (write-through)
 );
+CREATE TABLE IF NOT EXISTS batch_requests (
+  client_request_id TEXT PRIMARY KEY,
+  request_fingerprint TEXT NOT NULL,
+  batch_id TEXT NOT NULL,
+  item_count INTEGER NOT NULL,
+  created_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS assets (
   id TEXT PRIMARY KEY,
   created_at REAL NOT NULL,
@@ -85,6 +92,19 @@ def save_batch(batch: dict):
             "INSERT OR REPLACE INTO batches (id, created_at, finished, payload) "
             "VALUES (?,?,?,?)",
             (batch["id"], batch["created_at"], finished, json.dumps(batch)))
+        if batch.get("client_request_id") and batch.get("request_fingerprint"):
+            conn.execute(
+                "INSERT OR IGNORE INTO batch_requests "
+                "(client_request_id, request_fingerprint, batch_id, item_count, created_at) "
+                "VALUES (?,?,?,?,?)",
+                (
+                    batch["client_request_id"],
+                    batch["request_fingerprint"],
+                    batch["id"],
+                    len(batch.get("items") or []),
+                    batch["created_at"],
+                ),
+            )
 
 
 def load_unfinished_batches() -> list[dict]:
@@ -170,6 +190,33 @@ def load_batch(batch_id: str) -> dict | None:
         row = conn.execute(
             "SELECT payload FROM batches WHERE id = ?", (batch_id,)).fetchone()
     return json.loads(row[0]) if row else None
+
+
+def load_batch_by_client_request_id(client_request_id: str) -> dict | None:
+    """Find an idempotent submission across unfinished and finished history."""
+    with _conn() as conn:
+        request = conn.execute(
+            "SELECT request_fingerprint, batch_id, item_count, created_at "
+            "FROM batch_requests WHERE client_request_id = ?",
+            (client_request_id,),
+        ).fetchone()
+        if request is None:
+            return None
+        row = conn.execute(
+            "SELECT payload FROM batches WHERE id = ?", (request["batch_id"],)
+        ).fetchone()
+    if row is not None:
+        try:
+            return json.loads(row[0])
+        except (TypeError, json.JSONDecodeError):
+            pass
+    return {
+        "id": request["batch_id"],
+        "client_request_id": client_request_id,
+        "request_fingerprint": request["request_fingerprint"],
+        "items": [None] * int(request["item_count"]),
+        "created_at": request["created_at"],
+    }
 
 
 def record_asset(**fields) -> str:
