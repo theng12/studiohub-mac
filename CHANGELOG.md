@@ -10,6 +10,16 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.49.4] — 2026-07-19
+
+### Fixed — storage status distinguishes optional apps from offline Macs
+
+- Fleet storage cards no longer display an unreachable Mac as safely using
+  zero bytes. Offline Hubs are visibly marked and explain that local hourly
+  enforcement resumes automatically after reconnection.
+- Optional Studio stores that are not installed on a worker are reported as
+  inactive instead of being presented as alarming Studio failures.
+
 ## [1.49.3] — 2026-07-19
 
 ### Fixed — rolling updates remain bounded when a Mac disappears

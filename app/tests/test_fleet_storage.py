@@ -160,3 +160,6 @@ def test_dashboard_has_modern_fleet_storage_controls():
     assert '>Save to fleet</button>' in text
     assert '>Check &amp; clean now</button>' in text
     assert "loadFleetStorage()" in text
+    assert "optional Studio store" in text
+    assert "this Mac will self-enforce when it reconnects" in text
+    assert 'class="storage-machine${offline ? " offline" : ""}' in text
