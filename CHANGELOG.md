@@ -10,6 +10,13 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+### Changed — Qwen standard voice routes only to reliable workers
+
+- The Hub now applies a 16 GB production-memory floor to Qwen3-TTS 0.6B
+  CustomVoice standard-voice jobs. An 8 GB Mac is skipped for that workload
+  even when temporary free-memory telemetry looks sufficient, while remaining
+  available to the image pool and any other model it can safely run.
+
 ## [1.47.2] — 2026-07-19
 
 ### Fixed — runtime preferences cannot block future updates

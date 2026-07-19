@@ -8,8 +8,8 @@ MAX_TRIES). With one machine today the pool has one worker per modality —
 the moment a second machine joins the registry, the same code fans out.
 
 Memory governor (local models only, SPEC §7 two-lane decision): before
-dispatching to a local or connected remote studio, the model's
-min_unified_memory_gb (from that studio's own catalog) is checked against its
+dispatching to a local or connected remote studio, the stricter of the
+studio's catalog requirement and Hub production policy is checked against the
 host's available memory; the item waits rather than OOMing the box. Cloud
 models bypass the check.
 
@@ -32,6 +32,7 @@ from .peers import studio_request
 from .monitor import is_cached, is_cloud_lane
 from .registry import base_url, machine_enabled
 from .resources import host_stats
+from .workload_policy import required_total_memory_gb
 
 _MIME_EXT = {"image/png": ".png", "image/jpeg": ".jpg", "image/jpg": ".jpg",
              "image/webp": ".webp"}
@@ -995,7 +996,11 @@ async def _dispatch_loop():
                     # the worker's own guard remains the final authority.
                     is_local = studio.get("machine", "local") == "local"
                     mem = None if entry.get("is_cloud") else {
-                        "min_total": entry.get("min_unified_memory_gb"),
+                        # A worker catalog is a technical capability, while
+                        # this is the customer-service admission policy.  For
+                        # example, Qwen3 standard voice is intentionally kept
+                        # on 16 GB Macs; 8 GB Macs remain free for image work.
+                        "min_total": required_total_memory_gb(b["model"], entry),
                         "size": entry.get("size_gb")}
                     reserve = 0.0
                     host = _host_for_studio(studio) if mem is not None else None

@@ -506,11 +506,15 @@ curl -X POST http://localhost:47873/api/hub/jobs \
 The **fleet memory governor** uses live host telemetry from each connected peer
 Hub before local or remote dispatch. A model whose `min_unified_memory_gb`
 exceeds a machine is skipped for a compatible larger Mac; one whose size does
-not fit in currently-free memory waits (visible as `governor_note`). A worker's
-own MemoryGuard remains the final authority, and its refusal waits/rebalances
-without consuming an attempt. Repeated connection failures temporarily pause
-that physical Mac and let another worker steal the item. Cloud-backed models
-bypass the memory governor entirely.
+not fit in currently-free memory waits (visible as `governor_note`). The Hub
+can apply a stricter production floor for a workload when its technical minimum
+would not leave reliable operating headroom. Today, GenStudio's Qwen3 0.6B
+standard-voice model is deliberately routed only to 16 GB-or-larger Macs; 8 GB
+workers remain eligible for image work and other models that fit their own
+catalog requirements. A worker's own MemoryGuard remains the final authority,
+and its refusal waits/rebalances without consuming an attempt. Repeated
+connection failures temporarily pause that physical Mac and let another worker
+steal the item. Cloud-backed models bypass the memory governor entirely.
 
 ## Chat prompt packs
 

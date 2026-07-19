@@ -3,7 +3,7 @@ import base64
 import httpx
 import pytest
 
-from backend import broker, ledger, shared_voices
+from backend import broker, ledger, shared_voices, workload_policy
 
 
 def test_submit_validation(reset):
@@ -647,6 +647,31 @@ def test_local_gate_skip_when_machine_too_small(reset):
     host = {"total_gb": 16, "available_gb": 12}
     decision, note = broker._local_gate(mem, host)
     assert decision == "skip" and "32GB" in note
+
+
+def test_qwen_standard_voice_has_a_16gb_production_floor(reset):
+    """An 8 GB Mac may run image jobs, but never GenStudio standard voice."""
+    entry = {
+        "repo": "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit",
+        "min_unified_memory_gb": 8,
+        "size_gb": 2,
+    }
+    required = workload_policy.required_total_memory_gb(entry["repo"], entry)
+    assert required == 16
+    assert workload_policy.required_total_memory_gb(
+        "standard-voice", {**entry, "aliases": ["standard-voice"]},
+    ) == 16
+
+    decision, note = broker._memory_gate(
+        {"min_total": required, "size": entry["size_gb"]},
+        {"total_gb": 8, "available_gb": 6},
+    )
+    assert decision == "skip" and "16.0GB" in note
+
+
+def test_non_voice_models_keep_their_catalog_memory_requirement(reset):
+    entry = {"repo": "acme/image-model", "min_unified_memory_gb": 8}
+    assert workload_policy.required_total_memory_gb(entry["repo"], entry) == 8
 
 
 def test_local_gate_run_when_fits(reset):
