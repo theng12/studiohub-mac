@@ -56,11 +56,25 @@ def required_total_memory_gb(requested_model: str, catalog_entry: dict) -> float
 
 
 def required_free_memory_gb(requested_model: str, catalog_entry: dict) -> float | None:
-    """Return an extra, conservative live-free-memory floor when one exists."""
-    values = [
+    """Return a conservative live-free-memory floor when one exists.
+
+    ``size_gb`` is deliberately not considered here. Studio catalogs define it
+    as download/disk size, which can be much larger than the memory mapped by a
+    quantized or offloaded runtime. Workers may publish an explicit admission
+    floor as ``min_free_memory_gb``; Hub production overrides can raise it.
+    """
+    values: list[float] = []
+    catalog_minimum = catalog_entry.get("min_free_memory_gb")
+    try:
+        if catalog_minimum is not None:
+            values.append(float(catalog_minimum))
+    except (TypeError, ValueError):
+        pass
+
+    values.extend(
         minimum
         for normalized in _identifiers(requested_model, catalog_entry)
         for prefix, minimum in _MIN_FREE_MEMORY_GB_BY_REPO_PREFIX.items()
         if normalized.startswith(prefix)
-    ]
+    )
     return max(values) if values else None

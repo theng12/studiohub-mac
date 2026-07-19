@@ -146,7 +146,11 @@ MACHINE_FAILURE_THRESHOLD = 2
 MACHINE_COOLDOWN_S = 120.0
 MAX_BATCH_ITEMS = 1000
 MAX_BATCH_JSON_BYTES = 25 * 1024 * 1024
-MEMORY_HEADROOM_GB = 1.0  # keep at least this much free beyond the model's need
+# Never begin a new local inference workload while macOS is already critically
+# short of usable memory. Model-specific cold-load floors can raise this value
+# through workload_policy.required_free_memory_gb(). Catalog ``size_gb`` is
+# download/disk size and must never be used as a RAM estimate.
+DEFAULT_MIN_FREE_MEMORY_GB = 2.0
 
 batches: dict[str, dict] = {}
 _busy: set[str] = set()  # studio ids currently running an item for us
@@ -157,10 +161,25 @@ _external_machine_leases: dict[str, str] = {}
 # answer health again before it becomes eligible, which is a clean circuit reset.
 _machine_protection: dict[str, dict] = {}
 _wakeup = asyncio.Event()
-# Sum of size_gb reserved by in-flight LOCAL dispatches. The memory governor
-# subtracts this from free RAM so two concurrent local dispatches (e.g. image +
-# voice at once) don't both read the same free-RAM snapshot and OOM together.
+# Sum of live-free-memory admission floors reserved by in-flight LOCAL
+# dispatches. The physical-machine lease normally prevents overlap; this also
+# protects the short interval between an asynchronous telemetry check and the
+# lease becoming visible to another local scheduler lane.
 _reserved = {"gb": 0.0}
+
+
+def _required_free_memory(mem: dict) -> float:
+    """Return the live available-memory floor for a workload.
+
+    ``min_free`` is an explicit runtime admission requirement. ``size`` is
+    intentionally ignored because Studio catalogs use it for download/disk
+    planning, not runtime unified-memory planning.
+    """
+    try:
+        explicit = float(mem.get("min_free") or 0)
+    except (TypeError, ValueError):
+        explicit = 0.0
+    return max(DEFAULT_MIN_FREE_MEMORY_GB, explicit)
 
 
 def _memory_gate(mem: dict, host: dict, reserved_gb: float = 0.0) -> tuple[str, str | None]:
@@ -175,10 +194,7 @@ def _memory_gate(mem: dict, host: dict, reserved_gb: float = 0.0) -> tuple[str, 
     if min_total and host["total_gb"] < min_total:
         return ("skip", f"needs a ~{min_total}GB machine; this one has "
                         f"{host['total_gb']}GB — trying other machines")
-    need_free = max(
-        (mem.get("size") or 0) + MEMORY_HEADROOM_GB,
-        mem.get("min_free") or 0,
-    )
+    need_free = _required_free_memory(mem)
     effective_free = host["available_gb"] - reserved_gb
     if effective_free < need_free:
         return ("wait", f"waiting for memory: needs ~{need_free:.1f}GB, "
@@ -310,9 +326,9 @@ def _monitor():
 
 async def _catalog_entry(studio: dict, model: str) -> dict | None:
     """The studio's own catalog entry for a model (verbatim, per SPEC §6.2).
-    Carries cache state for model-aware dispatch and memory facts for the
-    governor: min_unified_memory_gb = 'needs ≥N GB TOTAL machine' (capability),
-    size_gb ≈ incremental footprint (what must fit in FREE memory)."""
+    Carries cache state for model-aware dispatch and capability facts for the
+    governor: min_unified_memory_gb = 'needs ≥N GB TOTAL machine'. size_gb
+    is download/disk metadata and is never treated as runtime RAM."""
     catalog = await _monitor().get_catalog(studio)
     for m in (catalog or {}).get("models", []):
         if m.get("repo") == model or model in (m.get("aliases") or []):
@@ -1020,7 +1036,7 @@ async def _dispatch_loop():
                         # cold-load free-memory floor is available.
                         "min_total": required_total_memory_gb(b["model"], entry),
                         "min_free": required_free_memory_gb(b["model"], entry),
-                        "size": entry.get("size_gb")}
+                    }
                     reserve = 0.0
                     host = _host_for_studio(studio) if mem is not None else None
                     if mem is not None and host:
@@ -1031,7 +1047,7 @@ async def _dispatch_loop():
                             # it; wait → defer. NEVER errors the whole batch.
                             b["governor_note"] = f"{studio['id']}: {note}"
                             continue
-                        reserve = mem.get("size") or 0.0
+                        reserve = _required_free_memory(mem)
                     # Eligibility was calculated before the catalog/memory awaits.
                     # Recheck the physical lease so a transcription that claimed
                     # this Mac in the meantime never overlaps generation/render.

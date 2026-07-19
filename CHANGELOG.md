@@ -10,6 +10,19 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+### Fixed — image download size no longer strands generation queues
+
+- The memory governor no longer mistakes a Studio catalog's `size_gb`
+  download/disk figure for runtime unified-memory usage. This latent mismatch
+  became visible when Image Studio corrected FLUX.2 Klein 4-bit from a 2.3 GB
+  estimate to its real 4.6 GB repository size, which made the Hub incorrectly
+  demand 5.6 GB free before dispatch.
+- Local workloads retain a 2 GB live-memory pressure floor, total-machine RAM
+  compatibility checks, physical-machine leases, worker MemoryGuard handling,
+  capacity rerouting, and automatic retries. Studios can now publish an
+  explicit `min_free_memory_gb` runtime floor, and Hub production policy can
+  raise it for workloads such as Qwen3-TTS.
+
 ### Fixed — Whisper recovery routes around unstable workers
 
 - A failed transcription request now marks its Voice Studio as temporarily

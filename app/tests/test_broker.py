@@ -680,25 +680,46 @@ def test_non_voice_models_keep_their_catalog_memory_requirement(reset):
     assert workload_policy.required_total_memory_gb(entry["repo"], entry) == 8
 
 
+def test_catalog_can_publish_an_explicit_runtime_free_memory_floor(reset):
+    entry = {
+        "repo": "acme/image-model",
+        "min_free_memory_gb": "2.75",
+        "size_gb": 100,
+    }
+    assert workload_policy.required_free_memory_gb(entry["repo"], entry) == 2.75
+
+
 def test_local_gate_run_when_fits(reset):
     decision, _ = broker._local_gate({"min_total": 8, "size": 2},
                                      {"total_gb": 16, "available_gb": 10})
     assert decision == "run"
 
 
-def test_local_gate_wait_when_not_enough_free(reset):
-    decision, _ = broker._local_gate({"min_total": 8, "size": 10},
-                                     {"total_gb": 16, "available_gb": 5})
+def test_download_size_is_not_treated_as_runtime_memory(reset):
+    # Regression: Image Studio corrected this repo's *download* size from 2.3
+    # to 4.6 GB. The Hub used to add 1 GB and falsely demand 5.6 GB free.
+    mem = {"min_total": 8, "min_free": None, "size": 4.6}
+    decision, note = broker._local_gate(
+        mem, {"total_gb": 8, "available_gb": 2.4})
+    assert decision == "run" and note is None
+
+
+def test_local_gate_waits_at_real_low_memory_floor(reset):
+    decision, note = broker._local_gate(
+        {"min_total": 8, "size": 0.1},
+        {"total_gb": 16, "available_gb": 1.9},
+    )
     assert decision == "wait"
+    assert "2.0GB" in note and "1.9GB free" in note
 
 
 def test_local_gate_reservation_prevents_double_load(reset):
-    mem = {"min_total": 8, "size": 6}
-    host = {"total_gb": 16, "available_gb": 10}  # 10 free, model needs 6+1=7
+    mem = {"min_total": 8, "min_free": 3.0, "size": 60}
+    host = {"total_gb": 16, "available_gb": 5.5}
     assert broker._local_gate(mem, host)[0] == "run"
-    # simulate one in-flight local dispatch reserving 6GB
-    broker._reserved["gb"] = 6.0
-    # now only ~4GB effectively free -> the second must WAIT, not double-load
+    # Simulate one in-flight local dispatch reserving its admission floor.
+    broker._reserved["gb"] = 3.0
+    # Only ~2.5GB is effectively free, so a second 3GB workload must wait.
     assert broker._local_gate(mem, host)[0] == "wait"
 
 
@@ -710,8 +731,7 @@ def test_remote_memory_gate_uses_peer_host_snapshot(reset, monkeypatch):
     studio = {"machine": "mac-b"}
     host = broker._host_for_studio(studio)
     decision, note = broker._memory_gate({"min_total": 8, "size": 4.0}, host)
-    assert decision == "wait"
-    assert "5.0GB" in note and "2.0GB free" in note
+    assert decision == "run" and note is None
 
 
 def test_restore_batches_requeues_running(reset):
