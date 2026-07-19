@@ -10,6 +10,15 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.49.1] — 2026-07-19
+
+### Fixed — remote Hub updates recover a missing service marker
+
+- One-click and fleet updates now detect the loaded launchd Hub service as the
+  source of truth and restore `service/.installed` before choosing the restart
+  path. A Mac can no longer pull the new code yet keep serving an old process
+  merely because that local marker was missing.
+
 ## [1.49.0] — 2026-07-19
 
 ### Added — self-healing fleet storage protection

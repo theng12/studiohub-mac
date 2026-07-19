@@ -1,7 +1,8 @@
 // One-click Update — mode-aware (launchd service, start.js, or stopped). Pulls
 // latest code, refreshes deps from source (installs new deps like python-multipart
 // that the Hub needs to boot), and restarts the REAL server:
-//   • service mode -> install_service.sh, which REWRITES the launchd plist to the
+//   • service mode -> detect the loaded launchd label even if an older updater
+//     lost its marker, then install_service.sh REWRITES the launchd plist to the
 //     current on-disk scripts before relaunching (robust to the serve.sh ->
 //     studiohub-serve.sh rename; a plain kickstart would relaunch a stale plist).
 //   • otherwise -> start.js.
@@ -17,6 +18,16 @@ module.exports = {
       when: "{{exists('.git')}}",
       method: "shell.run",
       params: { message: "git pull" }
+    },
+    {
+      // launchd is authoritative. Recover the small local marker when an older
+      // checkout lost it, otherwise Update would start a second Pinokio server
+      // that cannot replace the already-running service on port 47873.
+      when: "{{platform === 'darwin'}}",
+      method: "shell.run",
+      params: {
+        message: "if launchctl print \"gui/$(id -u)/com.kh.studiohub.server\" >/dev/null 2>&1; then mkdir -p service && touch service/.installed; fi"
+      }
     },
     {
       when: "{{exists('conda_env')}}",
