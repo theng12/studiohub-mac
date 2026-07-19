@@ -82,7 +82,9 @@ async def test_voice_terminal_wav_metadata_separates_runtime_from_audio(reset):
         "id": "worker-1", "output_path": "/worker/private/output.wav",
         "output_url": "/api/generate/jobs/worker-1/audio",
         "duration_seconds": 7.6208,
-    }, {}, 0.0)
+        "model_revision": "1" * 40,
+        "voice_revision": "a" * 64,
+    }, {"voice_library_id": "074743daa991"}, 0.0)
 
     assert item["media_type"] == "audio/wav"
     assert item["format"] == "wav"
@@ -93,6 +95,12 @@ async def test_voice_terminal_wav_metadata_separates_runtime_from_audio(reset):
     assert item["audio_duration_s"] == 11.525
     assert item["runtime_s"] == item["duration_s"] == 7.6208
     assert item["runtime_s"] != item["audio_duration_s"]
+    assert item["model_revision"] == "1" * 40
+    assert item["voice_revision"] == "a" * 64
+    assert item["voice_library_id"] == "074743daa991"
+    terminal = broker.terminal_result(batch, item)
+    assert terminal["model_revision"] == "1" * 40
+    assert terminal["voice_revision"] == "a" * 64
     assert ledger.get_asset(item["asset_id"])["runtime_s"] == 7.6208
 
     asset_id = item["asset_id"]

@@ -736,6 +736,10 @@ def terminal_result(b: dict, item: dict) -> dict | None:
         # Kept only for callers that predate runtime_s. It is runtime, never
         # decoded media duration.
         "duration_s": item.get("runtime_s", item.get("duration_s")),
+        "model_revision": item.get("model_revision"),
+        "voice_revision": item.get("voice_revision"),
+        "voice_library_id": item.get("voice_library_id"),
+        "preset_speaker": item.get("preset_speaker"),
     }
 
 
@@ -793,6 +797,11 @@ async def _record_worker_success(client: httpx.AsyncClient, b: dict, item: dict,
     item["artifact_url"] = worker_url
     item["state"] = "done"
     item["encoder"] = job.get("encoder")
+    item["model_revision"] = job.get("model_revision")
+    item["voice_revision"] = job.get("voice_revision")
+    if b["modality"] == "voice":
+        item["voice_library_id"] = body.get("voice_library_id")
+        item["preset_speaker"] = body.get("preset_speaker")
     runtime = job.get("runtime_s", job.get("generation_seconds", job.get("duration_seconds")))
     try:
         runtime = float(runtime) if runtime is not None else round(time.time() - t_start, 2)

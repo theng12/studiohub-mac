@@ -10,6 +10,18 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.47.7] — 2026-07-19
+
+### Added — immutable Qwen generation evidence for GenStudio
+
+- Voice terminal results now carry the exact model snapshot revision and
+  preset or cloned-reference voice revision reported by Voice Studio.
+- Clone results also retain the stable Hub `voice_library_id`; built-in voices
+  retain the exact `preset_speaker`, allowing GenStudio to audit dispatch
+  without exposing worker-local paths or addresses.
+- Missing revision evidence remains non-billable: GenStudio rejects it before
+  credit capture while the Hub preserves the completed artifact for diagnosis.
+
 ### Fixed — image download size no longer strands generation queues
 
 - The memory governor no longer mistakes a Studio catalog's `size_gb`
