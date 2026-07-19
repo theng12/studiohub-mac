@@ -110,6 +110,46 @@ async def test_voice_terminal_wav_metadata_separates_runtime_from_audio(reset):
 
 
 @pytest.mark.asyncio
+async def test_voice_result_is_not_terminal_until_artifact_metadata_is_complete(
+    reset, monkeypatch
+):
+    submitted = broker.submit_batch({
+        "modality": "voice", "model": "mlx/qwen", "items": [{"text": "hello"}]
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="running", studio="voice", studio_job_id="worker-1")
+    observed_states = []
+
+    async def finalize(_client, current, *_args):
+        observed_states.append(current["state"])
+        current.update(artifact_metadata.wav_metadata(wav_fixture(duration_s=1)))
+
+    monkeypatch.setattr(broker, "_cache_voice_artifact_metadata", finalize)
+    await broker._record_worker_success(
+        _VoiceClient(wav_fixture(duration_s=1)),
+        batch,
+        item,
+        {
+            "id": "voice", "modality": "voice", "machine": "local",
+            "host": "127.0.0.1", "port": 47870,
+        },
+        {
+            "id": "worker-1",
+            "output_url": "/api/generate/jobs/worker-1/audio",
+            "model_revision": "1" * 40,
+            "voice_revision": "a" * 64,
+        },
+        {"preset_speaker": "Ryan"},
+        0.0,
+    )
+
+    assert observed_states == ["running"]
+    assert item["state"] == "done"
+    assert broker.terminal_result(batch, item)["media_type"] == "audio/wav"
+
+
+@pytest.mark.asyncio
 async def test_voice_metadata_uses_peer_auth_and_never_records_local_path(reset, monkeypatch):
     payload = wav_fixture(duration_s=1)
     item = {}

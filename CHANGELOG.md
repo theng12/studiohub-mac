@@ -10,6 +10,14 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.47.8] — 2026-07-19
+
+### Fixed — terminal voice results publish atomically
+
+- A voice item now becomes `done` only after WAV metadata, revision evidence,
+  and its stable Hub asset identity are finalized. Fast pollers can no longer
+  observe a partial terminal result and reject an otherwise valid WAV.
+
 ## [1.47.7] — 2026-07-19
 
 ### Added — immutable Qwen generation evidence for GenStudio

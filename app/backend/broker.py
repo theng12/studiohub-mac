@@ -795,7 +795,6 @@ async def _record_worker_success(client: httpx.AsyncClient, b: dict, item: dict,
     # Kept internally for old ledger/reference behavior; API readers are
     # normalized by public_item(), which returns the stable Hub proxy URL.
     item["artifact_url"] = worker_url
-    item["state"] = "done"
     item["encoder"] = job.get("encoder")
     item["model_revision"] = job.get("model_revision")
     item["voice_revision"] = job.get("voice_revision")
@@ -828,6 +827,10 @@ async def _record_worker_success(client: httpx.AsyncClient, b: dict, item: dict,
         item_index=item["index"], duration_s=runtime, runtime_s=runtime,
         is_cloud=item.get("is_cloud", False),
     )
+    # Publish terminal state only after metadata, revision evidence, and the
+    # stable asset identity are complete. Pollers must never observe a partial
+    # "done" result while the Hub is still finalizing the worker artifact.
+    item["state"] = "done"
 
 
 async def _recover_worker_job(client, b: dict, item: dict, studio: dict,
