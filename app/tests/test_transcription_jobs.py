@@ -1,5 +1,6 @@
 import asyncio
 import io
+import time
 from pathlib import Path
 
 import httpx
@@ -225,6 +226,36 @@ async def test_offline_failure_requeues_with_bounded_try(reset, monitor, monkeyp
     item = batch["items"][0]
     assert item["state"] == "queued" and item["tries"] == 1
     assert "offline" in item["error"]
+
+
+@pytest.mark.asyncio
+async def test_transport_failure_avoids_worker_and_uses_another_voice_studio(reset, monitor, monkeypatch):
+    batch = await _create_direct(1)
+    local, remote = _add_remote_voice(monitor)
+    monitor.status[local["id"]] = monitor.status[remote["id"]] = {"status": "up"}
+
+    async def availability(studio):
+        return {"available": True, "models": [{"repo": "mlx/whisper", "cached": True}]}
+
+    attempted = []
+
+    async def post(url, **kwargs):
+        attempted.append(url)
+        if "10.0.0.2" not in url:
+            raise httpx.ConnectError("local worker went offline")
+        return _Response()
+
+    monkeypatch.setattr(monitor, "get_transcription", availability)
+    monkeypatch.setattr(monitor._client, "post", post)
+    assert await jobs.dispatch_once(monitor) == 1
+    await asyncio.gather(*list(jobs._item_tasks.values()))
+    item = batch["items"][0]
+    assert item["state"] == "queued"
+    assert item["avoid_machines"][local["machine"]] > time.time()
+    assert await jobs.dispatch_once(monitor) == 1
+    await asyncio.gather(*list(jobs._item_tasks.values()))
+    assert item["state"] == "done"
+    assert "10.0.0.2" in attempted[-1]
 
 
 @pytest.mark.asyncio

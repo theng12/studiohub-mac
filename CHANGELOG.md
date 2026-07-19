@@ -10,6 +10,16 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+### Fixed — Whisper recovery routes around unstable workers
+
+- A failed transcription request now marks its Voice Studio as temporarily
+  avoided and invalidates its cached readiness before the item is retried.
+  Subsequent retries prefer another eligible model-ready worker instead of
+  repeatedly returning the same connection failure.
+- Terminal transcription failures now include the workers attempted, making a
+  real Voice Studio, peer-Hub, or network outage actionable without discarding
+  successful chapter outputs.
+
 ### Fixed — Qwen 0.6B voice uses 8 GB M1 capacity safely
 
 - Qwen3-TTS 0.6B Base and CustomVoice are supported on 8 GB Apple-silicon

@@ -191,6 +191,10 @@ async def create_batch(files: list[UploadFile], item_ids: list[str], model: str,
                 "tries": 0, "studio": None, "studio_task_id": None,
                 "duration_seconds": None, "media_duration_seconds": None,
                 "artifact_path": None, "error": None, "metadata": None,
+                # A local failure must not immediately reselect the same Mac.
+                # The shared broker circuit and this per-item avoidance window
+                # let another Voice Studio recover the work first.
+                "avoid_machines": {}, "attempt_history": [],
             })
     except Exception:
         shutil.rmtree(batch_dir, ignore_errors=True)
@@ -278,15 +282,19 @@ def active_assignments() -> dict[str, dict]:
     return active
 
 
-async def _eligible_studios(monitor, model: str) -> list[dict]:
+async def _eligible_studios(monitor, model: str, item: dict | None = None) -> list[dict]:
     eligible = []
+    now = time.time()
+    avoided = (item or {}).get("avoid_machines") or {}
     for studio in monitor.registry:
         if (studio.get("modality") != "voice" or studio["id"] in busy_studios
                 or broker.in_maintenance(studio["id"])):
             continue
         machine = studio.get("machine", "local")
         if (monitor.status.get(studio["id"], {}).get("status") != "up"
-                or not machine_enabled(machine) or machine in broker.busy_machines()):
+                or not machine_enabled(machine) or machine in broker.busy_machines()
+                or broker.machine_is_quarantined(machine)
+                or float(avoided.get(machine, 0) or 0) > now):
             continue
         availability = await monitor.get_transcription(studio)
         models = (availability or {}).get("models", [])
@@ -308,7 +316,7 @@ async def dispatch_once(monitor) -> int:
             item = next((i for i in batch["items"] if i["state"] == "queued"), None)
             if not item:
                 continue
-            for studio in await _eligible_studios(monitor, batch["model"]):
+            for studio in await _eligible_studios(monitor, batch["model"], item):
                 machine = studio.get("machine", "local")
                 owner = f"transcription:{batch['id']}:{item['index']}"
                 if not broker.acquire_external_machine(machine, owner):
@@ -372,6 +380,7 @@ async def _run_item(monitor, batch: dict, item: dict, studio: dict, owner: str) 
             media_duration_seconds=payload.get("duration"),
             metadata={k: v for k, v in payload.items() if k != "srt"},
         )
+        broker.mark_external_machine_success(studio)
     except asyncio.CancelledError:
         if _shutting_down and not batch.get("cancelled"):
             item.update(state="queued", studio=None, studio_task_id=None,
@@ -380,11 +389,33 @@ async def _run_item(monitor, batch: dict, item: dict, studio: dict, owner: str) 
             item.update(state="cancelled", error="cancelled")
     except Exception as exc:
         transient = isinstance(exc, (httpx.HTTPError, OSError)) or getattr(exc, "transient", False)
+        message = str(exc) or type(exc).__name__
+        machine = studio.get("machine", "local")
+        history = item.setdefault("attempt_history", [])
+        history.append({
+            "studio": studio.get("id"), "machine": machine,
+            "error": message[:240], "at": round(time.time(), 3),
+        })
+        del history[:-8]
+        if transient:
+            # Availability is a cache of a lightweight endpoint. A real
+            # transcription connection failure is stronger evidence, so force
+            # a fresh check and route the next attempt to a different machine.
+            monitor._transcribe_cache.pop(studio["id"], None)
+            broker.mark_external_machine_failure(studio, message)
+            item.setdefault("avoid_machines", {})[machine] = time.time() + broker.FAILED_WORKER_AVOID_S
         if transient and item["tries"] < MAX_TRIES and not batch.get("cancelled"):
             item.update(state="queued", studio=None, studio_task_id=None,
-                        error=f"try {item['tries']} failed: {exc}")
+                        error=f"try {item['tries']} failed on {machine}: {message}")
         else:
-            item.update(state="error", error=str(exc))
+            attempted = ", ".join(
+                f"{entry.get('machine')} ({entry.get('error')})"
+                for entry in history
+            )
+            item.update(
+                state="error",
+                error=f"{message}. Workers attempted: {attempted}" if attempted else message,
+            )
     finally:
         busy_studios.discard(studio["id"])
         broker.release_external_machine(studio.get("machine", "local"), owner)

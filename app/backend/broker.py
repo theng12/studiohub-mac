@@ -226,6 +226,21 @@ def machine_protection_snapshot() -> dict[str, dict]:
     return out
 
 
+def machine_is_quarantined(machine: str) -> bool:
+    """Whether a machine is temporarily excluded after transport failures."""
+    return _machine_blocked(machine)
+
+
+def mark_external_machine_failure(studio: dict, message: str) -> None:
+    """Record a failed non-broker worker request against the shared circuit."""
+    _mark_machine_failure(studio, message)
+
+
+def mark_external_machine_success(studio: dict) -> None:
+    """Clear the shared circuit after a successful non-broker worker request."""
+    _mark_machine_success(studio)
+
+
 def _mark_machine_failure(studio: dict, message: str) -> None:
     machine = studio.get("machine", "local")
     state = _protection(machine)
