@@ -649,24 +649,30 @@ def test_local_gate_skip_when_machine_too_small(reset):
     assert decision == "skip" and "32GB" in note
 
 
-def test_qwen_standard_voice_has_a_16gb_production_floor(reset):
-    """An 8 GB Mac may run image jobs, but never GenStudio standard voice."""
+def test_qwen_standard_voice_uses_8gb_workers_with_a_safe_free_ram_floor(reset):
+    """The 0.6B MLX model uses 8 GB M1s only when a cold load can fit."""
     entry = {
         "repo": "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit",
         "min_unified_memory_gb": 8,
         "size_gb": 2,
     }
     required = workload_policy.required_total_memory_gb(entry["repo"], entry)
-    assert required == 16
+    required_free = workload_policy.required_free_memory_gb(entry["repo"], entry)
+    assert required == 8
+    assert required_free == 3.2
     assert workload_policy.required_total_memory_gb(
         "standard-voice", {**entry, "aliases": ["standard-voice"]},
-    ) == 16
+    ) == 8
 
     decision, note = broker._memory_gate(
-        {"min_total": required, "size": entry["size_gb"]},
-        {"total_gb": 8, "available_gb": 6},
+        {"min_total": required, "min_free": required_free, "size": entry["size_gb"]},
+        {"total_gb": 8, "available_gb": 3.1},
     )
-    assert decision == "skip" and "16.0GB" in note
+    assert decision == "wait" and "3.2GB" in note
+    assert broker._memory_gate(
+        {"min_total": required, "min_free": required_free, "size": entry["size_gb"]},
+        {"total_gb": 8, "available_gb": 3.3},
+    )[0] == "run"
 
 
 def test_non_voice_models_keep_their_catalog_memory_requirement(reset):

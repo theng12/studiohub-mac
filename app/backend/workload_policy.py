@@ -10,14 +10,26 @@ an 8 GB Mac can still accept other modalities such as image generation.
 from __future__ import annotations
 
 
-# Qwen3-TTS 0.6B CustomVoice can sometimes load on an 8 GB Apple-silicon Mac,
-# but it does not leave dependable operating headroom once the Voice Studio
-# service, the operating system, and a real generation are included.  GenStudio
-# standard voice therefore requires a 16 GB worker as a service policy.
+# The 0.6B 8-bit Qwen3-TTS checkpoints are supported on 8 GB Apple-silicon
+# Macs. Voice Studio's own cold-load guard requires 3.15 GB free (1.9 GB model
+# plus 1.25 GB headroom), so the Hub rounds that up to 3.2 GB before dispatch.
+# This preserves 8 GB capacity without sending a job that the worker will
+# immediately decline under normal memory pressure.
 _MIN_MACHINE_MEMORY_GB_BY_REPO_PREFIX = {
-    "mlx-community/qwen3-tts-12hz-0.6b-customvoice": 16.0,
-    "qwen/qwen3-tts-12hz-0.6b-customvoice": 16.0,
+    "mlx-community/qwen3-tts-12hz-0.6b-": 8.0,
+    "qwen/qwen3-tts-12hz-0.6b-": 8.0,
 }
+_MIN_FREE_MEMORY_GB_BY_REPO_PREFIX = {
+    "mlx-community/qwen3-tts-12hz-0.6b-": 3.2,
+    "qwen/qwen3-tts-12hz-0.6b-": 3.2,
+}
+
+
+def _identifiers(requested_model: str, catalog_entry: dict) -> list[str]:
+    return [str(value or "").strip().lower() for value in (
+        requested_model, catalog_entry.get("repo"),
+        *(catalog_entry.get("aliases") or []),
+    )]
 
 
 def required_total_memory_gb(requested_model: str, catalog_entry: dict) -> float | None:
@@ -35,12 +47,20 @@ def required_total_memory_gb(requested_model: str, catalog_entry: dict) -> float
     except (TypeError, ValueError):
         pass
 
-    identifiers = [requested_model, catalog_entry.get("repo"),
-                   *(catalog_entry.get("aliases") or [])]
-    for identifier in identifiers:
-        normalized = str(identifier or "").strip().lower()
+    for normalized in _identifiers(requested_model, catalog_entry):
         for prefix, minimum in _MIN_MACHINE_MEMORY_GB_BY_REPO_PREFIX.items():
             if normalized.startswith(prefix):
                 values.append(minimum)
 
+    return max(values) if values else None
+
+
+def required_free_memory_gb(requested_model: str, catalog_entry: dict) -> float | None:
+    """Return an extra, conservative live-free-memory floor when one exists."""
+    values = [
+        minimum
+        for normalized in _identifiers(requested_model, catalog_entry)
+        for prefix, minimum in _MIN_FREE_MEMORY_GB_BY_REPO_PREFIX.items()
+        if normalized.startswith(prefix)
+    ]
     return max(values) if values else None

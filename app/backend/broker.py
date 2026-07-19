@@ -32,7 +32,7 @@ from .peers import studio_request
 from .monitor import is_cached, is_cloud_lane
 from .registry import base_url, machine_enabled
 from .resources import host_stats
-from .workload_policy import required_total_memory_gb
+from .workload_policy import required_free_memory_gb, required_total_memory_gb
 
 _MIME_EXT = {"image/png": ".png", "image/jpeg": ".jpg", "image/jpg": ".jpg",
              "image/webp": ".webp"}
@@ -175,7 +175,10 @@ def _memory_gate(mem: dict, host: dict, reserved_gb: float = 0.0) -> tuple[str, 
     if min_total and host["total_gb"] < min_total:
         return ("skip", f"needs a ~{min_total}GB machine; this one has "
                         f"{host['total_gb']}GB — trying other machines")
-    need_free = (mem.get("size") or 0) + MEMORY_HEADROOM_GB
+    need_free = max(
+        (mem.get("size") or 0) + MEMORY_HEADROOM_GB,
+        mem.get("min_free") or 0,
+    )
     effective_free = host["available_gb"] - reserved_gb
     if effective_free < need_free:
         return ("wait", f"waiting for memory: needs ~{need_free:.1f}GB, "
@@ -997,10 +1000,11 @@ async def _dispatch_loop():
                     is_local = studio.get("machine", "local") == "local"
                     mem = None if entry.get("is_cloud") else {
                         # A worker catalog is a technical capability, while
-                        # this is the customer-service admission policy.  For
-                        # example, Qwen3 standard voice is intentionally kept
-                        # on 16 GB Macs; 8 GB Macs remain free for image work.
+                        # this is the customer-service admission policy. Qwen
+                        # 0.6B can run on 8 GB Macs, but only after its safe
+                        # cold-load free-memory floor is available.
                         "min_total": required_total_memory_gb(b["model"], entry),
+                        "min_free": required_free_memory_gb(b["model"], entry),
                         "size": entry.get("size_gb")}
                     reserve = 0.0
                     host = _host_for_studio(studio) if mem is not None else None

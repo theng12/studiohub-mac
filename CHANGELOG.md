@@ -10,12 +10,13 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
-### Changed — Qwen standard voice routes only to reliable workers
+### Fixed — Qwen 0.6B voice uses 8 GB M1 capacity safely
 
-- The Hub now applies a 16 GB production-memory floor to Qwen3-TTS 0.6B
-  CustomVoice standard-voice jobs. An 8 GB Mac is skipped for that workload
-  even when temporary free-memory telemetry looks sufficient, while remaining
-  available to the image pool and any other model it can safely run.
+- Qwen3-TTS 0.6B Base and CustomVoice are supported on 8 GB Apple-silicon
+  workers. The Hub now requires an 8 GB machine with at least 3.2 GB live free
+  memory for a safe cold load, rather than incorrectly excluding 8 GB workers.
+  When that memory is unavailable, the item waits or runs on another eligible
+  worker; 8 GB Macs remain available for image work throughout.
 
 ## [1.47.2] — 2026-07-19
 
