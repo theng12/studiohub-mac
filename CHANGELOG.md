@@ -10,6 +10,18 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.49.3] — 2026-07-19
+
+### Fixed — rolling updates remain bounded when a Mac disappears
+
+- Remote Studio updates still reconnect after ordinary restart-related
+  connection drops, but a Mac that stays completely unreachable for three
+  minutes no longer blocks every Studio queued behind it for up to 20 minutes.
+  The result explicitly asks for a version rescan before retrying because the
+  remote update may have completed independently.
+- Updating an offline local Studio no longer crashes when its last monitor
+  record contains a null health payload.
+
 ## [1.49.2] — 2026-07-19
 
 ### Fixed — stale untracked Hub processes become recoverable services

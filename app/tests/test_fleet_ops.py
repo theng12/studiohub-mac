@@ -398,6 +398,56 @@ async def test_remote_update_reconnects_after_status_connection_drop(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_remote_update_stops_blocking_queue_after_prolonged_silence(monkeypatch):
+    studio = {"id": "chat@mac-a", "modality": "chat", "machine": "mac-a",
+              "host": "10.0.0.8", "hub_port": 47873}
+
+    class Response:
+        status_code = 200
+        def json(self): return {"id": "remote-job"}
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def post(self, *args, **kwargs): return Response()
+        async def get(self, *args, **kwargs):
+            raise fleet_ops.httpx.ConnectTimeout("Mac disappeared")
+
+    monkeypatch.setattr(fleet_ops.httpx, "AsyncClient", lambda **kwargs: Client())
+    monkeypatch.setattr(fleet_ops, "REMOTE_STATUS_SILENCE_TIMEOUT", 0)
+
+    async def no_sleep(seconds): return None
+    monkeypatch.setattr(fleet_ops.asyncio, "sleep", no_sleep)
+
+    with pytest.raises(RuntimeError, match="unreachable for 3 minutes"):
+        await fleet_ops._update_remote(studio, {"studio": studio["id"]})
+
+
+@pytest.mark.asyncio
+async def test_local_update_accepts_null_monitor_health(monkeypatch, monitor, tmp_path):
+    studio = dict(monitor.registry[0])
+    monitor.status[studio["id"]] = {"app_version": None, "health": None}
+    (tmp_path / "VERSION").write_text("1.2.3\n")
+    observed = {}
+
+    monkeypatch.setattr(fleet_ops, "resolve_app_dir", lambda value: tmp_path)
+    monkeypatch.setattr(fleet_ops, "run_studio_script", lambda *args: {"ok": True})
+
+    async def healthy(value, item):
+        observed.update(item)
+        item.update(status="complete", detail="healthy")
+
+    monkeypatch.setattr(fleet_ops, "_wait_for_healthy", healthy)
+
+    item = {"studio": studio["id"], "status": "queued", "detail": "waiting"}
+    await fleet_ops._update_one(monitor, studio, item)
+
+    assert observed["from_version"] is None
+    assert observed["expected_version"] == "1.2.3"
+    assert item["status"] == "complete"
+
+
+@pytest.mark.asyncio
 async def test_remote_update_surfaces_peer_conflict_detail(monkeypatch):
     studio = {"id": "render@mac-a", "modality": "render", "machine": "mac-a",
               "host": "10.0.0.8", "hub_port": 47873}

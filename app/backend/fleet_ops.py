@@ -25,6 +25,7 @@ _STATE_FILE = DATA_DIR / "fleet_versions.json"
 PREFLIGHT_TIMEOUT = 12.0
 UPDATE_TIMEOUT = 20 * 60
 UPDATE_START_TIMEOUT = 3 * 60
+REMOTE_STATUS_SILENCE_TIMEOUT = 3 * 60
 DRAIN_TIMEOUT = 30 * 60
 
 # Studio Hub watches the repositories itself instead of waiting for each
@@ -681,8 +682,9 @@ async def _update_one(monitor, studio: dict, item: dict):
         if app_dir is None:
             raise RuntimeError(f"Pinokio app folder not found for {studio['id']}")
         version_file = app_dir / "VERSION"
-        item["from_version"] = (monitor.status.get(sid, {}).get("app_version")
-                                or monitor.status.get(sid, {}).get("health", {}).get("app_version"))
+        state = monitor.status.get(sid) or {}
+        health = state.get("health") or {}
+        item["from_version"] = state.get("app_version") or health.get("app_version")
         try:
             item["expected_version"] = version_file.read_text().strip()
         except OSError:
@@ -752,6 +754,7 @@ async def _update_remote(studio: dict, item: dict):
         item["remote_job_id"] = remote_id
         _save_state()
         deadline = time.monotonic() + UPDATE_TIMEOUT
+        last_status_at = time.monotonic()
         while time.monotonic() < deadline:
             await asyncio.sleep(4)
             try:
@@ -764,7 +767,13 @@ async def _update_remote(studio: dict, item: dict):
                 # same job instead of turning a transient transport error into a
                 # false failure (or starting the update twice).
                 item.update(status="checking", detail=f"connection dropped; reconnecting ({type(exc).__name__})")
+                if time.monotonic() - last_status_at >= REMOTE_STATUS_SILENCE_TIMEOUT:
+                    raise RuntimeError(
+                        "remote Hub was unreachable for 3 minutes; its update may still finish "
+                        "independently, so rescan before retrying"
+                    )
                 continue
+            last_status_at = time.monotonic()
             remote_item = data["items"][0]
             item.update(status=remote_item["status"], detail=remote_item["detail"])
             for key in ("from_version", "expected_version", "to_version"):
