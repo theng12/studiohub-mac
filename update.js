@@ -20,13 +20,14 @@ module.exports = {
       params: { message: "git pull" }
     },
     {
-      // launchd is authoritative. Recover the small local marker when an older
-      // checkout lost it, otherwise Update would start a second Pinokio server
-      // that cannot replace the already-running service on port 47873.
+      // launchd is authoritative. Also recognize an owned-but-untracked Hub
+      // listener: older Pinokio state could forget start.js while leaving its
+      // server alive. Recovering the marker lets install_service.sh safely take
+      // over that listener instead of starting a second server on port 47873.
       when: "{{platform === 'darwin'}}",
       method: "shell.run",
       params: {
-        message: "if launchctl print \"gui/$(id -u)/com.kh.studiohub.server\" >/dev/null 2>&1; then mkdir -p service && touch service/.installed; fi"
+        message: "if launchctl print \"gui/$(id -u)/com.kh.studiohub.server\" >/dev/null 2>&1; then mkdir -p service && touch service/.installed; else ROOT=\"$PWD\"; for p in $(lsof -ti tcp:47873 -sTCP:LISTEN 2>/dev/null || true); do CMD=$(ps -p \"$p\" -o command= 2>/dev/null || true); CWD=$(lsof -a -p \"$p\" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1); if [[ \"$CMD\" == *\"$ROOT\"* || \"$CWD\" == \"$ROOT\" || \"$CWD\" == \"$ROOT/\"* ]]; then mkdir -p service && touch service/.installed; break; fi; done; fi"
       }
     },
     {

@@ -10,6 +10,16 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.49.2] — 2026-07-19
+
+### Fixed — stale untracked Hub processes become recoverable services
+
+- Update now recognizes an owned Hub listener on port 47873 even when both its
+  launchd service marker and Pinokio's running-script state are missing. The
+  safe service installer can take over that stale process, restart the newly
+  pulled version, and restore future remote-update control without touching an
+  unrelated port owner.
+
 ## [1.49.1] — 2026-07-19
 
 ### Fixed — remote Hub updates recover a missing service marker
