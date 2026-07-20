@@ -589,6 +589,13 @@ idempotency keys, or fencing tokens.
 The complete stable field and availability semantics are documented in
 [`CAPABILITY_CONTRACT.md`](CAPABILITY_CONTRACT.md).
 
+## Release discipline
+
+Every committed Studio Hub change increments `VERSION` and adds matching
+changelog and dashboard **What's New** entries, including documentation-only
+updates. See [`RELEASE_POLICY.md`](RELEASE_POLICY.md); the test suite verifies
+that all three release metadata sources identify the same newest release.
+
 ## Multiple Macs (registry)
 
 Every Mac keeps running its own studios; one location controller coordinates the

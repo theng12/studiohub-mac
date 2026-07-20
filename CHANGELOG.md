@@ -10,11 +10,16 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
-### Documentation
+## [1.56.1] — 2026-07-20
+
+### Added — GenStudio integration handoff
 
 - Added a self-contained GenStudio capability-integration handoff covering
   authentication, freshness, routing semantics, shared physical-Mac capacity,
   failure handling, privacy constraints, and required client tests.
+- Added a mandatory repository release rule: every committed change, including
+  documentation and integration contracts, must increment `VERSION` and add
+  matching changelog and dashboard **What's New** entries.
 
 ## [1.56.0] — 2026-07-20
 

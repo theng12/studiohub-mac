@@ -960,6 +960,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.56.1", date: "2026-07-20", items: [
+    "Added a ready-to-use Studio Hub–GenStudio integration handoff covering authenticated capability polling, freshness, routing, shared Mac capacity, failure handling, and required tests.",
+    "Studio Hub releases must now increment the version and include matching changelog and What's New details for every committed update, including documentation and integration contracts.",
+  ]},
   { v: "1.56.0", date: "2026-07-20", items: [
     "GenStudio now has one private, authenticated, schema-versioned snapshot of site machines, hardware, workers, supported operations, models, controls, limits, revisions, and current capacity.",
     "Capability telemetry is read-only and explicitly excludes customer prompts, generated content, credentials, cache paths, and global job ownership identifiers.",
