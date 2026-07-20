@@ -21,7 +21,7 @@ from starlette.testclient import TestClient
 
 
 def _reset_state():
-    from backend import (alerts, auth, broker, chat_jobs, control_plane, execution_identity, fleet_ops, fleet_storage, hardware_profiles, job_storage, memory_admission,
+    from backend import (alerts, auth, broker, chat_jobs, control_plane, enrollment, execution_identity, fleet_ops, fleet_storage, hardware_profiles, job_storage, memory_admission,
                          ledger, metrics, peers, shared_voices, transcription_jobs)
     from backend import main
     from backend import registry as reg
@@ -43,7 +43,7 @@ def _reset_state():
               memory_admission.SETTINGS_FILE,
               execution_identity.DB_FILE,
               fleet_ops._STATE_FILE, control_plane.SETTINGS_FILE,
-              control_plane.DATABASE_URL_FILE):
+              control_plane.DATABASE_URL_FILE, enrollment.DB_FILE):
         try:
             f.unlink()
         except FileNotFoundError:
@@ -88,6 +88,7 @@ def _reset_state():
     metrics._last_sample = 0.0
     main._transcription_busy.clear()
     control_plane.reset_for_tests()
+    enrollment.reset_for_tests()
     execution_identity.reset_for_tests()
     reg._labels_cache = None
     reg._flags_cache = None

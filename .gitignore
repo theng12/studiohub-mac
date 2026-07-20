@@ -33,6 +33,8 @@ machine_hardware_profiles.json
 controller_settings.json
 .controller_database_url
 execution_identity.db
+setup_enrollment.db
+setup_enrollment.db-*
 uploads/
 render_uploads/
 transcription_jobs/

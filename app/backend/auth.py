@@ -35,7 +35,8 @@ SESSIONS_FILE = DATA_DIR / ".hub_sessions.json"
 # Paths any client may hit without a token.
 PUBLIC_PATHS = {"/", "/api/health", "/api/version", "/health/live",
                 "/health/ready", "/health/capacity", "/api/auth/status",
-                "/api/auth/login", "/api/auth/logout"}
+                "/api/auth/login", "/api/auth/logout",
+                "/api/hub/enrollment/claim"}
 COOKIE_NAME = "kh_hub_token"
 SESSION_COOKIE_NAME = "kh_hub_session"
 SESSION_TTL_DAYS = 90

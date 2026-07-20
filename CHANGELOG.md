@@ -10,6 +10,37 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.58.0] — 2026-07-20
+
+### Added — simple private controller and agent enrollment
+
+- Added a prominent **Remote → Set up this Mac** wizard. A new controller now
+  needs only its location name, stable site ID, and local hardware profile; an
+  agent needs only the private controller URL, one-time code, and its hardware.
+- Controllers can create high-entropy enrollment codes that expire after ten
+  minutes and work once. Only SHA-256 hashes and expiry/use metadata are stored
+  in an owner-only SQLite database.
+- Agent claims are restricted to private LAN/Tailscale links. The local join
+  validates the complete response before saving role, site identity, parent
+  controller, site fleet credential, and local hardware assignment.
+
+### Changed
+
+- The established role, PostgreSQL-shadow, fleet-token, and recovery controls
+  remain available behind **Advanced settings and manual recovery**.
+- Hub, fleet, and enrollment secrets are masked by default in the dashboard;
+  setup codes and tokens are never placed in URLs or localStorage.
+
+### Safety
+
+- New controllers and agents always use `database_mode=off`. Agents clear any
+  local PostgreSQL credential and continue refusing customer submissions.
+  SQLite remains the site-local scheduler, while GenStudio remains the sole
+  global job, routing, retry, fencing, billing, and asset authority.
+- Network and validation failures make no local changes. A local setup commit
+  restores prior identity, credential, and hardware files if a later write
+  fails, as far as the filesystem permits.
+
 ## [1.57.1] — 2026-07-20
 
 ### Fixed — exact model revision is enforced before worker assignment

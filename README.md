@@ -206,6 +206,10 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/capabilities` | Private schema-versioned GenStudio capability snapshot; requires a Hub/fleet token header even on loopback |
 | `GET /api/hub/controller` · `PUT /api/hub/controller` | Read or configure this Hub's `standalone`, `controller`, or `agent` role, site identity, and optional evidence-shadow mode |
 | `POST /api/hub/controller/check` | Verify the optional PostgreSQL evidence schema and publish an immediate heartbeat |
+| `POST /api/hub/setup/controller` | Loopback-only simple setup for a new location controller; assigns identity and local hardware while forcing PostgreSQL off |
+| `POST /api/hub/enrollment-codes` | Authenticated controller-only creation of a single-use, 10-minute agent enrollment code |
+| `POST /api/hub/enrollment/claim` | Private LAN/Tailscale claim of one code; returns the minimum site identity and current site fleet credential once |
+| `POST /api/hub/setup/join` | Loopback-only agent setup using a private controller URL, one-time code, and local hardware profile |
 | `POST /api/hub/registry/studios/{id}/enabled` | Pause/resume new jobs for one Studio with `{"enabled": false/true}`; running work and the process are untouched |
 | `GET /api/hub/health` | Aggregate: totals + per-studio statuses |
 | `GET /api/hub/catalog` | Raw per-studio catalog rows (annotated `hub_cached`, `hub_machine`). Query: `q`, `modality`, `downloaded`, `cloud`, `force` |
@@ -514,6 +518,36 @@ The existing Hub token is still required for scripts, API clients, peer Hubs,
 and recovery. It is shown only locally in **Remote**. Replacing the owner
 password signs every remembered browser out immediately.
 
+## Simple controller and agent setup
+
+Open **Remote → Set up this Mac**. New installations need only one of these
+flows:
+
+- **New location controller** — enter a friendly location name, confirm the
+  suggested stable site ID, and choose this Mac's hardware profile. Studio Hub
+  selects the controller role, creates a stable Hub ID from the hardware and
+  hostname, assigns the local profile, keeps `database_mode=off`, and prepares
+  the site fleet credential.
+- **Join an existing location** — on the controller, click **Create code**. On
+  the new Mac, enter the controller's private/Tailscale HTTP URL, paste the
+  one-time code, and choose that Mac's hardware profile. The new Mac receives
+  only the site name/ID, controller ID, and site fleet credential, then saves
+  itself as an agent with PostgreSQL off.
+
+Enrollment codes contain at least 256 bits of entropy, expire after ten
+minutes, and can be claimed once. The controller persists only a SHA-256 hash
+plus expiry/use metadata in an owner-only SQLite file. Claims are accepted only
+from loopback, private LAN, or Tailscale source addresses. The agent's local
+join endpoint accepts only a credential-free private HTTP base URL and is
+callable only from that Mac's loopback dashboard. Failed network or validation
+steps do not change local settings; a failed local commit is rolled back as far
+as the filesystem permits.
+
+Codes and fleet credentials are sent in request bodies/headers, never URLs.
+The dashboard masks them by default and does not put them in localStorage. The
+existing role, PostgreSQL-shadow, and manual credential controls remain under
+**Advanced settings and manual recovery**.
+
 ## The fleet: remote specs + remote control
 
 Health and models come over HTTP, but a machine's **RAM/specs** and
@@ -521,11 +555,9 @@ Health and models come over HTTP, but a machine's **RAM/specs** and
 every Mac** — each Hub is the authority for its own machine, and your primary
 Hub aggregates them.
 
-Setup (once):
-1. Install + start Studio Hub on each Mac.
-2. On the primary, copy the automatically generated token from **Remote → Fleet security token**.
-3. Paste that **same token** into every other Mac's Hub (Remote → Fleet token).
-   (Tip: it's one value for the whole fleet — keep it somewhere handy.)
+Setup (once): use **Set up this Mac** for normal controller/agent enrollment.
+The manual shared-token process below remains available under Advanced settings
+for recovery and older installations.
 
 Then, for any remote studio, the primary shows the machine's live **host RAM/CPU**
 (Resources tab, per-machine cards) and enables **Start/Stop** on the studio card —
@@ -603,8 +635,9 @@ that all three release metadata sources identify the same newest release.
 Every Mac keeps running its own studios; one location controller coordinates the
 workers registered at that site. GenStudio will choose between locations:
 
-1. On each other Mac, install whichever studios it should serve (2, 3, or 5).
-2. On the Hub Mac, open **Remote → Add another Mac's studios**, choose its
+1. On each other Mac, install whichever Studios it should serve and use **Join
+   an existing location** to enroll its Hub as an agent.
+2. On the controller Hub, open **Remote → Add another Mac's studios**, choose its
    hardware profile, and enter its Tailscale IP. Studio Hub suggests a stable ID
    such as `macmini-m2-8gb-001`; you may edit it before saving. Two ways to add:
    - **Discover & Add** — probes the machine now and registers whatever answers

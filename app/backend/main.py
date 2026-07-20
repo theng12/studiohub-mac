@@ -26,7 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, control_plane, fleet_ops, fleet_storage, gateway, hardware_profiles, job_storage, memory_admission,
+from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, control_plane, enrollment, fleet_ops, fleet_storage, gateway, hardware_profiles, job_storage, memory_admission,
                ledger, metrics, peers, recipes, shared_voices, transcription_jobs)
 from .auto_update import UpdateError
 from .auto_update_config import create_updater
@@ -110,6 +110,22 @@ class ControllerSettingsBody(BaseModel):
     database_mode: str = "off"
     database_url: str | None = Field(default=None, max_length=4096)
     clear_database_url: bool = False
+
+
+class SimpleControllerSetupBody(BaseModel):
+    location_name: str = Field(min_length=1, max_length=120)
+    site_id: str = Field(min_length=1, max_length=100)
+    hardware_profile_id: str = Field(min_length=3, max_length=64)
+
+
+class EnrollmentCodeBody(BaseModel):
+    code: str = Field(min_length=1, max_length=256)
+
+
+class AgentJoinBody(BaseModel):
+    controller_url: str = Field(min_length=8, max_length=500)
+    enrollment_code: str = Field(min_length=1, max_length=256)
+    hardware_profile_id: str = Field(min_length=3, max_length=64)
 
 
 class HardwareProfileBody(BaseModel):
@@ -448,6 +464,50 @@ async def controller_save_settings(body: ControllerSettingsBody):
 @app.post("/api/hub/controller/check")
 async def controller_check_database():
     return await control_plane.runtime.check_now()
+
+
+@app.post("/api/hub/setup/controller")
+def setup_new_location_controller(request: Request, body: SimpleControllerSetupBody):
+    if not is_loopback(request):
+        raise HTTPException(403, "Set up this Mac from its local Studio Hub dashboard.")
+    try:
+        return enrollment.configure_new_controller(
+            body.location_name.strip(), body.site_id.strip().lower(),
+            body.hardware_profile_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/hub/enrollment-codes")
+def create_agent_enrollment_code():
+    try:
+        return enrollment.create_enrollment_code()
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post("/api/hub/enrollment/claim")
+def claim_agent_enrollment(request: Request, body: EnrollmentCodeBody):
+    if not enrollment.private_request_host(request.client.host if request.client else None):
+        raise HTTPException(403, "Agent enrollment is available only over a private LAN or Tailscale link.")
+    try:
+        return enrollment.claim_enrollment_code(body.code)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post("/api/hub/setup/join")
+async def join_existing_location(request: Request, body: AgentJoinBody):
+    if not is_loopback(request):
+        raise HTTPException(403, "Join a location from this Mac's local Studio Hub dashboard.")
+    try:
+        claim = await enrollment.claim_remote(body.controller_url, body.enrollment_code)
+        return enrollment.configure_joined_agent(
+            body.controller_url, body.hardware_profile_id, claim,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.get("/api/auto-update/status")

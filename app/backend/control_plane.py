@@ -49,12 +49,13 @@ def _safe_id(value: str, fallback: str) -> str:
 def defaults() -> dict:
     hostname = _safe_id(socket.gethostname().split(".", 1)[0], "studiohub")
     return {
-        "version": 1,
+        "version": 2,
         "role": "standalone",
         "site_id": "local-site",
         "site_name": "Local site",
         "controller_id": f"{hostname}-hub"[:100],
         "database_mode": "off",
+        "parent_controller_url": None,
     }
 
 
@@ -140,12 +141,14 @@ def save_settings(values: dict, *, new_database_url: str | None = None,
     global _settings_cache
     current = load_settings()
     updated = {
-        "version": 1,
+        "version": 2,
         "role": str(values.get("role", current["role"])).strip().lower(),
         "site_id": str(values.get("site_id", current["site_id"])).strip().lower(),
         "site_name": str(values.get("site_name", current["site_name"])).strip(),
         "controller_id": str(values.get("controller_id", current["controller_id"])).strip().lower(),
         "database_mode": str(values.get("database_mode", current["database_mode"])).strip().lower(),
+        "parent_controller_url": values.get(
+            "parent_controller_url", current.get("parent_controller_url")),
     }
     if updated["role"] not in ROLES:
         raise ValueError(f"role must be one of {sorted(ROLES)}")
@@ -172,6 +175,10 @@ def save_settings(values: dict, *, new_database_url: str | None = None,
         raise ValueError("Agent Hubs must not store PostgreSQL credentials")
     if updated["role"] == "agent":
         clear_database_url = True
+    if updated["role"] != "agent":
+        updated["parent_controller_url"] = None
+    elif updated["parent_controller_url"] is not None:
+        updated["parent_controller_url"] = str(updated["parent_controller_url"]).strip() or None
 
     SETTINGS_FILE.write_text(json.dumps(updated, indent=2) + "\n", encoding="utf-8")
     with _settings_lock:
@@ -556,6 +563,14 @@ class ControlPlaneRuntime:
 
 
 runtime = ControlPlaneRuntime()
+
+
+def reload_settings_from_disk() -> None:
+    """Discard the identity cache after an atomic setup rollback or restore."""
+    global _settings_cache
+    with _settings_lock:
+        _settings_cache = None
+    runtime.wake()
 
 
 def reset_for_tests() -> None:

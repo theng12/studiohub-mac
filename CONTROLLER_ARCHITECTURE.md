@@ -48,6 +48,43 @@ no PostgreSQL-authoritative or cross-controller-claiming stage in Studio Hub.
 Agent Hubs do not use or retain PostgreSQL credentials. A site controller may
 also run Studios locally; it does not require another build or Hub process.
 
+## Simple private enrollment
+
+The primary operator path is **Remote → Set up this Mac**:
+
+1. A new location controller needs a location name, stable site ID, and local
+   hardware profile. Studio Hub fixes the role to `controller`, derives a
+   stable local Hub ID from the hardware profile and hostname, assigns the
+   profile to `local`, and forces `database_mode=off`.
+2. An authenticated controller can create a high-entropy one-time agent code.
+   It expires in ten minutes and only its SHA-256 digest, issue/expiry/use
+   timestamps, site ID, and controller ID are stored in an owner-only SQLite
+   database.
+3. The agent enters the controller's credential-free private HTTP base URL,
+   the code, and its local hardware profile. Its loopback-only join endpoint
+   validates that the URL resolves exclusively to loopback, LAN, or Tailscale
+   addresses before making a non-redirecting claim request.
+4. The controller accepts a claim only while in controller role and only from
+   a private/Tailscale source. An atomic SQLite update consumes the code once.
+   The response contains only site ID/name, controller ID, and the current site
+   fleet token.
+5. After the complete response is validated, the agent saves its agent role,
+   unique local Hub ID, parent controller URL, site fleet credential, and local
+   hardware profile. PostgreSQL is cleared/off. Validation and network failures
+   happen before mutation; local commit failures restore the previous files as
+   far as the filesystem permits.
+
+Codes and credentials never appear in URLs, query strings, localStorage,
+access-log paths, capability snapshots, or completion output. Dashboard secret
+fields are masked by default and cleared after successful enrollment. The
+manual role, shadow-database, and fleet-token forms remain available under an
+Advanced settings disclosure for audited recovery.
+
+This enrollment contract is site-local trust bootstrap only. It does not
+register a GenStudio location, issue a GenStudio Hub token, create a customer
+job, or grant global routing, retry, billing, refund, lease, or fencing
+authority.
+
 ## Optional PostgreSQL shadow
 
 `database_mode=shadow` is available only to a controller and is completely
@@ -118,6 +155,11 @@ requests without the new metadata retain their current behavior.
 - `PUT /api/hub/controller` — save role, site, and optional shadow settings.
 - `POST /api/hub/controller/check` — verify the optional shadow schema and send
   an immediate heartbeat/evidence flush.
+- `POST /api/hub/setup/controller` — loopback-only simple controller setup.
+- `POST /api/hub/enrollment-codes` — authenticated, controller-only one-time
+  code creation.
+- `POST /api/hub/enrollment/claim` — private-link, single-use code claim.
+- `POST /api/hub/setup/join` — loopback-only atomic agent enrollment.
 
 The existing `/api/health` and `/api/hub/summary` include the same boundary
 status for backward-compatible monitoring.
@@ -130,7 +172,9 @@ fencing tokens.
 
 ## Configuration
 
-Use **Remote -> Controller role & site**, or controller environment variables:
+Use **Remote → Set up this Mac** for normal setup. Use **Advanced settings and
+manual recovery → Controller role & site**, or environment variables only when
+an audited manual configuration is needed:
 
 ```text
 STUDIOHUB_ROLE=controller
