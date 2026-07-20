@@ -1,165 +1,151 @@
-# Studio Hub controller architecture
+# Studio Hub site-controller architecture
 
-Studio Hub uses one codebase on every Mac. Runtime configuration selects whether
-an installation accepts customer jobs as a site controller or serves only as the
-local authority for its Studios.
+The permanent application boundary follows GenStudio ADR-0007:
+
+```text
+Customer / first-party client
+  -> GenStudio KH
+  -> Studio Hub location controller
+  -> site-local Studio workers
+```
+
+GenStudio is the only global customer-facing and business authority. Studio
+Hub is a private site execution service. The same Studio Hub build can run as a
+site controller or as the local agent on a worker Mac, but no Hub instance may
+claim or transfer a global customer job.
+
+## Ownership boundary
+
+GenStudio owns:
+
+- Customer accounts, API keys, pricing, promotions, credits, charges, refunds,
+  customer-visible status, and retention.
+- Customer job IDs, global idempotency, execution attempts, cross-location
+  routing, retries, reconciliation, leases, and fencing-token issuance.
+- Final customer assets and signed/downloadable customer grants.
+
+Studio Hub owns only its site-local execution:
+
+- Machine and Studio health, capabilities, model availability, and capacity.
+- Memory admission, worker eligibility and selection, local queues, local safe
+  retries, and physical-machine concurrency protection.
+- Worker progress, artifact retrieval, immutable revision/checksum evidence,
+  and returning verified execution results to GenStudio.
+- Continuing an already accepted local execution through a short GenStudio
+  connection interruption. GenStudio later reconciles the same Hub batch.
+
+Local SQLite is permanently authoritative for Studio Hub scheduling. There is
+no PostgreSQL-authoritative or cross-controller-claiming stage in Studio Hub.
 
 ## Roles
 
-- `standalone` is the backward-compatible default. Local SQLite remains the job
-  authority and all existing behavior continues.
-- `controller` accepts customer jobs, coordinates its registered workers, and
-  can publish control-plane state to PostgreSQL.
-- `agent` manages and proxies its local Studios but refuses new customer job,
-  Chat, transcription, recipe, and director submissions. Existing work is not
-  cancelled when the role changes.
+- `standalone` preserves the established direct/local behavior.
+- `controller` accepts work explicitly routed to this site and coordinates its
+  registered local/remote workers.
+- `agent` manages and proxies only its own local Studios. It refuses new
+  customer-style queue, Chat, transcription, recipe, and director submissions.
 
-A site-controller Mac can also run Studios locally. It does not need a different
-build or a second Hub process.
+Agent Hubs do not use or retain PostgreSQL credentials. A site controller may
+also run Studios locally; it does not require another build or Hub process.
 
-## Migration stages
+## Optional PostgreSQL shadow
 
-### Stage 0 — local
+`database_mode=shadow` is available only to a controller and is completely
+optional. It publishes non-authoritative operational records:
 
-`database_mode=off`. This is today's proven SQLite-backed scheduler. It is safe
-for one controller, but separate Hubs do not share job ownership.
+- Controller/site heartbeats.
+- Machine and Studio inventory.
+- Capacity and operational telemetry.
+- Site-local execution progress and result evidence.
+- Audit/diagnostic information.
 
-### Stage 1 — PostgreSQL shadow
+SQLite writes happen first. A PostgreSQL outage cannot reject, replace, claim,
+retry, refund, transfer, or otherwise alter a local job. `global_job_claiming`
+is permanently `false`.
 
-`role=controller` and `database_mode=shadow`. PostgreSQL receives:
+Migration `001_controller_foundation.sql` shipped ownership-shaped columns and
+tables before the GenStudio boundary was finalized. They remain solely for
+backward schema compatibility. Migration `002_execution_evidence_boundary.sql`
+marks those lease, claim, attempt, and fencing fields as legacy/reserved and
+adds explicit GenStudio execution-evidence columns. Studio Hub contains no code
+that acquires those leases or increments their fencing fields.
 
-- Controller and site heartbeats.
-- Registered machine and Studio status.
-- Capacity snapshots.
-- Current generation, Chat, and transcription job/item state.
-- The schema required for future leases, fencing tokens, attempts, global
-  operation leases, and audit events.
+## GenStudio-assigned execution identity
 
-SQLite remains authoritative. PostgreSQL errors never fail a local job save, and
-the shadow queue is memory-bounded during an outage. Global job claiming is
-hard-disabled and reported as such by the API and dashboard.
+GenStudio may submit a site execution with these top-level fields (or the same
+fields inside `genstudio_execution`):
 
-### Stage 2 — lease and fencing qualification (next)
+```json
+{
+  "genstudio_job_id": "job_01...",
+  "genstudio_attempt_id": "attempt_01...",
+  "idempotency_key": "non-secret-stable-attempt-key",
+  "fencing_token": 42,
+  "site_id": "phnom-penh-1",
+  "operation": "tts",
+  "model_revision": "optional-expected-revision",
+  "voice_revision": "optional-expected-revision"
+}
+```
 
-Before PostgreSQL becomes authoritative, the following must pass integration and
-failure testing:
+The IDs and token are issued by GenStudio. Studio Hub never invents or advances
+a global token. The controller stores only a SHA-256 hash of the idempotency
+key, preserves the supplied evidence with its local batch, and applies two
+local admission rules before worker dispatch:
 
-1. Atomic item claims with expiring leases.
-2. Lease renewal while a controller owns dispatch.
-3. Monotonic fencing tokens on commands.
-4. Agent-side rejection of stale fencing tokens.
-5. Worker reconciliation before a replacement controller retries work.
-6. Idempotent completion and artifact registration.
-7. Controller crash, PostgreSQL outage, and network-partition drills.
+1. After observing token `N` for a GenStudio job, a request with a token below
+   `N` is rejected.
+2. Replaying the same job, attempt, idempotency identity, and payload is safe;
+   the same idempotency identity with a different payload is rejected.
 
-Only then will an explicit authoritative mode be added. There is intentionally no
-configuration switch that can prematurely enable global claiming in Stage 1.
+These checks prevent a stale GenStudio assignment from starting new local work.
+They do not make Studio Hub the owner of the global attempt. GenStudio remains
+responsible for deciding whether and where another attempt is created.
+
+Existing direct Story Studio/Studio Hub requests and existing GenStudio adapter
+requests without the new metadata retain their current behavior.
+
+## Health and control API
+
+- `GET /health/live` — process liveness.
+- `GET /health/ready` — site-execution readiness. An optional telemetry outage
+  is reported as a warning and never removes a healthy local scheduler.
+- `GET /health/capacity` — non-secret site capacity for GenStudio routing.
+- `GET /api/hub/controller` — authenticated role/site/shadow status.
+- `PUT /api/hub/controller` — save role, site, and optional shadow settings.
+- `POST /api/hub/controller/check` — verify the optional shadow schema and send
+  an immediate heartbeat/evidence flush.
+
+The existing `/api/health` and `/api/hub/summary` include the same boundary
+status for backward-compatible monitoring.
 
 ## Configuration
 
-Use **Remote → Controller role & site**, or environment variables:
+Use **Remote -> Controller role & site**, or controller environment variables:
 
 ```text
 STUDIOHUB_ROLE=controller
 STUDIOHUB_SITE_ID=phnom-penh-1
 STUDIOHUB_SITE_NAME=Phnom Penh · Site 1
 STUDIOHUB_CONTROLLER_ID=controller-pp-a
-STUDIOHUB_DATABASE_MODE=shadow
-STUDIOHUB_DATABASE_URL=postgresql://...
+STUDIOHUB_DATABASE_MODE=off
 ```
 
-The database URL is stored separately in an owner-only `0600` file when entered
-through the dashboard. It is never returned by the API, written to the regular
-settings JSON, or shown in logs. Environment configuration takes precedence.
+If an optional observability database is introduced later, a controller may use
+`STUDIOHUB_DATABASE_MODE=shadow` and `STUDIOHUB_DATABASE_URL=postgresql://...`.
+The URL is stored separately in an owner-only file when entered in the UI and
+is never returned by the API or written to logs. Agents must not receive it.
 
-Agent example:
+## Operating rules
 
-```text
-STUDIOHUB_ROLE=agent
-STUDIOHUB_SITE_ID=phnom-penh-1
-STUDIOHUB_CONTROLLER_ID=macmini-m1-001-hub
-```
+1. Keep PostgreSQL off unless non-authoritative fleet observability is needed.
+2. Configure every location with a stable site ID and one GenStudio-routable
+   controller endpoint.
+3. Configure worker Macs as agents under their location's site ID.
+4. GenStudio selects a healthy site using the health/capacity contract and
+   sends one explicitly owned attempt to that controller.
+5. Studio Hub performs only local dispatch/retry and returns execution evidence.
+6. GenStudio alone decides cross-location retry, failover, billing, refunds,
+   final state, and asset retention.
 
-Agents do not need PostgreSQL credentials.
-
-## Health and control API
-
-- `GET /health/live` — process liveness.
-- `GET /health/ready` — controller/database readiness; returns HTTP 503 when a
-  configured shadow database is unavailable.
-- `GET /health/capacity` — non-secret site capacity for GenStudio routing.
-- `GET /api/hub/controller` — authenticated configuration and runtime status.
-- `PUT /api/hub/controller` — save role/site/database-stage configuration.
-- `POST /api/hub/controller/check` — initialize/verify the schema and publish an
-  immediate heartbeat.
-
-The existing `/api/health` and `/api/hub/summary` include control-plane state for
-backward-compatible monitoring and the live dashboard.
-
-### Configure through the API
-
-JavaScript:
-
-```javascript
-await fetch(`${HUB}/api/hub/controller`, {
-  method: "PUT",
-  headers: {"Content-Type": "application/json", "X-Hub-Token": HUB_TOKEN},
-  body: JSON.stringify({
-    role: "controller",
-    site_id: "phnom-penh-1",
-    site_name: "Phnom Penh · Site 1",
-    controller_id: "controller-pp-a",
-    database_mode: "shadow",
-    database_url: POSTGRESQL_URL
-  })
-});
-```
-
-Python:
-
-```python
-import requests
-
-response = requests.put(
-    f"{hub}/api/hub/controller",
-    headers={"X-Hub-Token": hub_token},
-    json={
-        "role": "controller",
-        "site_id": "phnom-penh-1",
-        "site_name": "Phnom Penh · Site 1",
-        "controller_id": "controller-pp-a",
-        "database_mode": "shadow",
-        "database_url": postgresql_url,
-    },
-    timeout=15,
-)
-response.raise_for_status()
-```
-
-curl:
-
-```bash
-curl -X PUT "$HUB/api/hub/controller" \
-  -H "X-Hub-Token: $HUB_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "role":"controller",
-    "site_id":"phnom-penh-1",
-    "site_name":"Phnom Penh · Site 1",
-    "controller_id":"controller-pp-a",
-    "database_mode":"off"
-  }'
-```
-
-## First-site operating procedure
-
-1. Keep the current Hub in `standalone` until an off-site managed PostgreSQL URL
-   is available.
-2. Change this Hub to `controller`, choose a permanent site and controller ID,
-   and leave the database stage at Local SQLite.
-3. Enter the PostgreSQL URL, select Shadow migration, and click **Save &
-   initialize**.
-4. Require a green schema/heartbeat result. Customer jobs still use SQLite.
-5. Configure new node Macs as `agent` under the same site ID when they arrive.
-6. Do not attempt automatic cross-controller takeover until Stage 2 is shipped
-   and qualified.
+Source of truth: [GenStudio ADR-0007](https://github.com/theng12/genstudiokh/blob/main/docs/decisions/ADR-0007-genstudio-api-boundary.md).

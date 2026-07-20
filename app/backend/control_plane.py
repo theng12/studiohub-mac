@@ -1,9 +1,9 @@
-"""Controller/agent identity and optional PostgreSQL migration runtime.
+"""Site-controller identity and optional PostgreSQL observability shadow.
 
-Stage one deliberately keeps the proven local SQLite queues authoritative.
-Controllers publish heartbeats, fleet inventory, capacity, and shadow job
-snapshots to PostgreSQL. No global job claim is permitted until the later
-lease/fencing stage is explicitly implemented and qualified.
+GenStudio KH permanently owns global customer jobs, attempts, routing, retry,
+leases, fencing, billing, and assets. Studio Hub keeps the proven local SQLite
+queues authoritative for site execution and may publish heartbeats, inventory,
+capacity, and execution evidence to PostgreSQL. It never claims global work.
 """
 
 from __future__ import annotations
@@ -25,6 +25,9 @@ from .resources import host_stats
 SETTINGS_FILE = DATA_DIR / "controller_settings.json"
 DATABASE_URL_FILE = DATA_DIR / ".controller_database_url"
 MIGRATION_FILE = Path(__file__).resolve().parent / "migrations" / "001_controller_foundation.sql"
+BOUNDARY_MIGRATION_FILE = (
+    Path(__file__).resolve().parent / "migrations" / "002_execution_evidence_boundary.sql")
+MIGRATION_FILES = (MIGRATION_FILE, BOUNDARY_MIGRATION_FILE)
 ROLES = {"standalone", "controller", "agent"}
 DATABASE_MODES = {"off", "shadow"}
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")
@@ -84,6 +87,11 @@ def load_settings() -> dict:
 
 
 def database_url() -> str | None:
+    # Agent Hubs are local worker authorities and must never receive or use a
+    # PostgreSQL credential. A stale local file is removed when agent mode is
+    # saved; an accidentally inherited environment value is ignored here.
+    if load_settings()["role"] == "agent":
+        return None
     env = os.environ.get("STUDIOHUB_DATABASE_URL", "").strip()
     if env:
         return env
@@ -115,11 +123,14 @@ def public_settings() -> dict:
         "database_configured": bool(url),
         "database_endpoint": _database_endpoint(url),
         "database_source": (
-            "environment" if os.environ.get("STUDIOHUB_DATABASE_URL")
-            else ("local private file" if url else None)
+            None if not url else (
+                "environment" if os.environ.get("STUDIOHUB_DATABASE_URL")
+                else "local private file"
+            )
         ),
         "sqlite_authoritative": True,
         "global_job_claiming": False,
+        "global_authority": "genstudio",
         "migration_stage": "shadow" if settings["database_mode"] == "shadow" else "local",
     }
 
@@ -154,6 +165,13 @@ def save_settings(values: dict, *, new_database_url: str | None = None,
         parsed = urlsplit(candidate_url)
         if parsed.scheme not in {"postgres", "postgresql"} or not parsed.hostname:
             raise ValueError("database_url must be a PostgreSQL connection URL")
+    if updated["role"] == "agent" and os.environ.get("STUDIOHUB_DATABASE_URL"):
+        raise ValueError(
+            "Agent Hubs must not have STUDIOHUB_DATABASE_URL; remove it before enabling agent mode")
+    if updated["role"] == "agent" and candidate_url:
+        raise ValueError("Agent Hubs must not store PostgreSQL credentials")
+    if updated["role"] == "agent":
+        clear_database_url = True
 
     SETTINGS_FILE.write_text(json.dumps(updated, indent=2) + "\n", encoding="utf-8")
     with _settings_lock:
@@ -317,10 +335,12 @@ class ControlPlaneRuntime:
         settings = public_settings()
         status = self.status()
         role = settings["role"]
-        database_required = role == "controller" and settings["database_mode"] == "shadow"
-        database_ready = status["connected"] if database_required else True
+        shadow_enabled = role == "controller" and settings["database_mode"] == "shadow"
+        database_ready = status["connected"] if shadow_enabled else None
         return {
-            "ready": database_ready,
+            # Optional observability must never remove a healthy local
+            # controller from GenStudio's routing pool.
+            "ready": True,
             "role": role,
             "site_id": settings["site_id"],
             "controller_id": settings["controller_id"],
@@ -328,7 +348,12 @@ class ControlPlaneRuntime:
             "database_ready": database_ready,
             "sqlite_authoritative": True,
             "global_job_claiming": False,
-            "reason": None if database_ready else status.get("last_error") or "PostgreSQL is not ready",
+            "global_authority": "genstudio",
+            "reason": None,
+            "telemetry_warning": (
+                status.get("last_error") or "PostgreSQL shadow is unavailable"
+                if shadow_enabled and not database_ready else None
+            ),
         }
 
     async def check_now(self) -> dict:
@@ -343,7 +368,7 @@ class ControlPlaneRuntime:
         try:
             result = await asyncio.to_thread(self._sync_once, settings, url)
             self._status.update(database="postgresql", connected=True,
-                                schema_version=1, last_success_at=time.time(), last_error=None)
+                                schema_version=2, last_success_at=time.time(), last_error=None)
             return {"ok": True, **result, "settings": public_settings(),
                     "runtime": self.status(), "readiness": self.readiness()}
         except Exception as exc:
@@ -372,7 +397,8 @@ class ControlPlaneRuntime:
         with _pending_lock:
             pending = dict(_pending_jobs)
         with _connect(url) as connection:
-            connection.execute(MIGRATION_FILE.read_text(encoding="utf-8"))
+            for migration in MIGRATION_FILES:
+                connection.execute(migration.read_text(encoding="utf-8"))
             self._write_heartbeat(connection, settings, capacity)
             for (kind, local_id), batch_json in pending.items():
                 self._write_job(
@@ -384,7 +410,7 @@ class ControlPlaneRuntime:
                     if _pending_jobs.get(key) == snapshot:
                         _pending_jobs.pop(key, None)
                         _pending_job_bytes -= len(snapshot.encode("utf-8"))
-        return {"schema_version": 1, "shadow_jobs_written": len(pending)}
+        return {"schema_version": 2, "shadow_jobs_written": len(pending)}
 
     def _write_heartbeat(self, connection, settings: dict, capacity: dict) -> None:
         connection.execute(
@@ -446,23 +472,46 @@ class ControlPlaneRuntime:
         state = _job_state(batch)
         created = _timestamp(batch.get("created_at")) or time.time()
         finished = _timestamp(batch.get("finished_at"))
-        idem = batch.get("client_request_id") or batch.get("idempotency_key")
-        global_id = (
-            f"{kind}:{hashlib.sha256(str(idem).encode()).hexdigest()[:32]}"
-            if idem else f"{settings['controller_id']}:{kind}:{local_id}"
-        )
+        execution = batch.get("genstudio_execution") or {}
+        local_idempotency = batch.get("client_request_id") or batch.get("idempotency_key")
+        # This is a site execution-evidence identity, never a global customer
+        # job id. Re-execution at another site intentionally creates another
+        # evidence row under that controller.
+        evidence_id = f"{settings['controller_id']}:{kind}:{local_id}"
+        stored_idempotency = (
+            f"{settings['controller_id']}:"
+            f"{hashlib.sha256(str(local_idempotency).encode()).hexdigest()}"
+            if local_idempotency else None)
         connection.execute(
             """INSERT INTO jobs(job_id, local_job_id, source_controller_id, site_id,
                  job_kind, idempotency_key, request_fingerprint, state, payload,
+                 genstudio_job_id, genstudio_attempt_id, external_idempotency_hash,
+                 external_fencing_token, operation, model_revision, voice_revision,
+                 evidence_site_id,
                  created_at, updated_at, finished_at)
                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,CAST(%s AS jsonb),
+                 %s,%s,%s,%s,%s,%s,%s,%s,
                  TO_TIMESTAMP(%s),NOW(),
                  CASE WHEN CAST(%s AS double precision) IS NULL THEN NULL
                    ELSE TO_TIMESTAMP(CAST(%s AS double precision)) END)
                ON CONFLICT(job_id) DO UPDATE SET state=EXCLUDED.state,
-                 payload=EXCLUDED.payload, updated_at=NOW(), finished_at=EXCLUDED.finished_at""",
-            (global_id, local_id, settings["controller_id"], settings["site_id"],
-             kind, idem, batch.get("request_fingerprint"), state, json.dumps(batch),
+                 payload=EXCLUDED.payload,
+                 genstudio_job_id=EXCLUDED.genstudio_job_id,
+                 genstudio_attempt_id=EXCLUDED.genstudio_attempt_id,
+                 external_idempotency_hash=EXCLUDED.external_idempotency_hash,
+                 external_fencing_token=EXCLUDED.external_fencing_token,
+                 operation=EXCLUDED.operation,
+                 model_revision=EXCLUDED.model_revision,
+                 voice_revision=EXCLUDED.voice_revision,
+                 evidence_site_id=EXCLUDED.evidence_site_id,
+                 updated_at=NOW(), finished_at=EXCLUDED.finished_at""",
+            (evidence_id, local_id, settings["controller_id"], settings["site_id"],
+             kind, stored_idempotency, batch.get("request_fingerprint"), state,
+             json.dumps(batch), execution.get("genstudio_job_id"),
+             execution.get("genstudio_attempt_id"), execution.get("idempotency_hash"),
+             execution.get("fencing_token"), execution.get("operation"),
+             execution.get("model_revision"), execution.get("voice_revision"),
+             execution.get("site_id") or settings["site_id"],
              created, finished, finished),
         )
         for index, item in enumerate(items):
@@ -484,7 +533,7 @@ class ControlPlaneRuntime:
                      artifact_sha256=EXCLUDED.artifact_sha256, error=EXCLUDED.error,
                      payload=EXCLUDED.payload, started_at=EXCLUDED.started_at,
                      finished_at=EXCLUDED.finished_at, updated_at=NOW()""",
-                (global_id, item_id, int(item.get("index", index)), item.get("state", "unknown"),
+                (evidence_id, item_id, int(item.get("index", index)), item.get("state", "unknown"),
                  item.get("machine"), item.get("studio"), int(item.get("tries") or 0),
                  terminal.get("artifact_url") or item.get("artifact_url"),
                  terminal.get("sha256"), item.get("error"), json.dumps(item),

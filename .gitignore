@@ -32,6 +32,7 @@ hardware_profiles.json
 machine_hardware_profiles.json
 controller_settings.json
 .controller_database_url
+execution_identity.db
 uploads/
 render_uploads/
 transcription_jobs/

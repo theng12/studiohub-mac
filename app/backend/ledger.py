@@ -105,8 +105,9 @@ def save_batch(batch: dict):
                     batch["created_at"],
                 ),
             )
-    # PostgreSQL migration stage: fire-and-forget shadow state. SQLite remains
-    # authoritative and a database outage can never fail the local job save.
+    # Optional PostgreSQL observability is fire-and-forget execution evidence.
+    # SQLite remains authoritative and a database outage can never fail the
+    # local job save or influence dispatch.
     from . import control_plane
     control_plane.queue_shadow_job("generation", batch)
 

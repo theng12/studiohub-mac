@@ -10,6 +10,34 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.55.0] — 2026-07-20
+
+### Changed — permanent GenStudio architecture boundary
+
+- Established GenStudio KH as the sole global authority for customer jobs,
+  accounts, billing, idempotency, attempts, fencing, retries, cross-location
+  routing, final customer state, and assets. Studio Hub remains only the
+  site-local execution authority with SQLite as its permanent scheduler.
+- Added validation and durable local evidence for externally supplied GenStudio
+  job IDs, attempt IDs, idempotency identity, fencing token, site, operation,
+  model revision, and voice revision. Exact replay returns the same local batch;
+  conflicting replay and stale job/attempt fences are rejected before dispatch.
+- Added a backward-safe schema clarification that marks migration 001's
+  ownership-shaped leases, attempts, and fencing fields legacy/reserved. The
+  PostgreSQL runtime writes non-authoritative execution evidence only and has no
+  global claim, retry, refund, transfer, or token-generation path.
+- Agent mode now removes saved PostgreSQL credentials and ignores inherited
+  database credentials. PostgreSQL remains optional, off by default, and
+  shadow-only for site heartbeat, inventory, capacity, and execution evidence.
+- Optional telemetry failure no longer makes the healthy SQLite scheduler
+  unready. Existing local Story Studio/GenStudio requests, worker dispatch,
+  hardware registration, and health/capacity contracts remain compatible.
+
+### Safety
+
+- No database was provisioned or activated, and no live worker, queue, or job
+  was restarted, drained, disabled, or changed for this release.
+
 ## [1.54.0] — 2026-07-20
 
 ### Added — reusable machine hardware registration
@@ -42,8 +70,9 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 - Added a safe shadow migration runtime that publishes ten-second heartbeats,
   fleet inventory/capacity, and generation, Chat, and transcription job state.
   SQLite remains authoritative; PostgreSQL outages cannot fail local job saves.
-- Global job claiming remains deliberately locked until lease renewal,
-  agent-side fencing, reconciliation, and failure drills are implemented.
+- The ownership-shaped fields in this initial schema are legacy/reserved.
+  GenStudio permanently owns global claims, attempts, fencing, and failover;
+  Studio Hub writes PostgreSQL execution evidence only.
 
 ## [1.52.0] — 2026-07-20
 

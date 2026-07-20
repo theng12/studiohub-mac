@@ -31,10 +31,11 @@ The Hub runs on fixed port **47873** and provides:
 - **Host-aware registry** — studios on other machines (LAN/Tailscale) can be added
   with a reusable hardware profile and stable machine ID. The selected profile is
   published with live resources for routing and GenStudio operating-cost records.
-- **Controller migration foundation** — the same Hub release can run as a
-  standalone Hub, site controller, or agent. Optional PostgreSQL shadow mode
-  publishes heartbeats, fleet capacity, inventory, and job state while SQLite
-  remains the safe authority until distributed leases and fencing are qualified.
+- **Site-controller boundary** — the same Hub release can run as a standalone
+  Hub, location controller, or agent. GenStudio owns customer jobs, attempts,
+  billing, global retries, fencing, and cross-location routing. Optional
+  PostgreSQL shadow mode publishes operational evidence only; SQLite remains
+  permanently authoritative for Studio Hub's site-local scheduler.
 - **Machine-level work leases** — image generation and final rendering take turns
   on each Mac without pausing active work. Waiting render jobs are assigned first,
   with faster M4 16 GB workers preferred when available.
@@ -198,9 +199,9 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/auto-updates/update-idle` | Start a staggered, health-gated update for selected idle sibling Studios |
 | `POST /api/hub/auto-updates/jobs/{id}/retry` | Retry only the failed apps from a saved automatic fleet update |
 | `GET /api/hub/studios` | Registry + live status per studio |
-| `GET /health/live` · `GET /health/ready` · `GET /health/capacity` | Controller liveness, database-aware readiness, and non-secret routing capacity |
-| `GET /api/hub/controller` · `PUT /api/hub/controller` | Read or configure this Hub's `standalone`, `controller`, or `agent` role, site identity, and migration stage |
-| `POST /api/hub/controller/check` | Initialize/verify the PostgreSQL controller schema and publish an immediate heartbeat |
+| `GET /health/live` · `GET /health/ready` · `GET /health/capacity` | Controller liveness, site-execution readiness, and non-secret routing capacity; optional telemetry never gates readiness |
+| `GET /api/hub/controller` · `PUT /api/hub/controller` | Read or configure this Hub's `standalone`, `controller`, or `agent` role, site identity, and optional evidence-shadow mode |
+| `POST /api/hub/controller/check` | Verify the optional PostgreSQL evidence schema and publish an immediate heartbeat |
 | `POST /api/hub/registry/studios/{id}/enabled` | Pause/resume new jobs for one Studio with `{"enabled": false/true}`; running work and the process are untouched |
 | `GET /api/hub/health` | Aggregate: totals + per-studio statuses |
 | `GET /api/hub/catalog` | Raw per-studio catalog rows (annotated `hub_cached`, `hub_machine`). Query: `q`, `modality`, `downloaded`, `cloud`, `force` |
@@ -307,9 +308,13 @@ with open("aiden.wav", "rb") as audio:
 response.raise_for_status()
 ```
 
-## Client integration (Story Studio KH)
+## Client integration
 
-External apps never talk to studios directly — they talk to the Hub:
+Customer-facing and GenStudio-routed applications call GenStudio KH, never a
+Studio, Studio Hub, or inference provider. GenStudio's private adapter then
+assigns an execution attempt to a location controller. The existing direct
+Story Studio/Hub route remains available only as the explicitly selected legacy
+or internal route during migration:
 
 1. Store two values: the Hub URL (`http://<tailscale-ip>:47873`) and the token.
 2. Submit work: `POST /api/hub/jobs` with `label` (your app's name) and,
@@ -328,11 +333,13 @@ validated WAV voice result it contains `asset_id`, Hub-relative `artifact_url`,
 separate from decoded audio duration. `duration_s` remains temporarily as a
 backward-compatible alias for `runtime_s` only.
 
-The result maps to the Audio Job Result v1 contract as follows: `asset_id`,
+The evidence maps to the Audio Job Result v1 contract as follows: `asset_id`,
 `artifact_url`, and the media facts map to `audio`; `runtime_s * 1000` maps to
-`execution.runtime_ms`; the Hub batch ID and worker job ID map to `job_id` and
-`attempt_id`. The consumer owns its final object-store `object_key`. The Hub
-never includes a worker-local `artifact_path` in this public result.
+`execution.runtime_ms`. Hub batch IDs and worker IDs remain site-local execution
+identities and must never be presented as GenStudio customer job or global
+attempt ownership IDs. GenStudio supplies those IDs separately and owns its
+final object-store `object_key`. The Hub never includes a worker-local
+`artifact_path` in this public result.
 
 For current WAV-producing Voice Studio workers, Hub downloads and validates the
 artifact once at terminal completion, then stores the facts with the batch so
@@ -533,21 +540,23 @@ sent only in headers or an HttpOnly same-site session—never in a URL.
 
 ### Controller and agent roles
 
-All Macs install the same Studio Hub repository and version. Configure the
-current primary as a `controller`; configure worker-node Hubs as `agent`. Agent
-Hubs remain the local authority for their Studios but reject new customer queue
-submissions so two control planes cannot accidentally own the same work.
+All Macs install the same Studio Hub repository and version. Configure one Hub
+per location as a `controller`; configure worker-node Hubs as `agent`. Agent Hubs
+remain the local authority for their Studios, reject customer-style queue
+submissions, and must not receive PostgreSQL credentials.
 
-The first PostgreSQL migration stage is intentionally shadow-only: it creates the
-shared schema and publishes controller/site heartbeats, fleet inventory,
-capacity, and job snapshots without changing dispatch ownership. See
+GenStudio is the sole global customer-job and business authority. It selects a
+healthy location, issues the execution attempt and fencing token, and owns
+cross-location recovery. Studio Hub performs only site-local admission,
+dispatch, safe local retry, and execution evidence. Its optional PostgreSQL
+integration is permanently shadow-only and cannot claim or transfer work. See
 [`CONTROLLER_ARCHITECTURE.md`](CONTROLLER_ARCHITECTURE.md) for setup, environment
-variables, safety boundaries, and the lease/fencing qualification required before
-active-active claiming is enabled.
+variables, external-attempt validation, and the permanent ADR-0007 boundary.
 
 ## Multiple Macs (registry)
 
-Every Mac keeps running its own studios; ONE Hub coordinates them all:
+Every Mac keeps running its own studios; one location controller coordinates the
+workers registered at that site. GenStudio will choose between locations:
 
 1. On each other Mac, install whichever studios it should serve (2, 3, or 5).
 2. On the Hub Mac, open **Remote → Add another Mac's studios**, choose its
@@ -603,6 +612,24 @@ curl -X POST http://localhost:47873/api/hub/jobs \
   "items": [{"prompt": "Line one."}, {"prompt": "Line two."}],
   "sharedParams": {}
 }'
+```
+
+GenStudio may additionally assign the site execution by supplying
+`genstudio_job_id`, `genstudio_attempt_id`, `idempotency_key`, `fencing_token`,
+`site_id`, and `operation` (plus optional model/voice revisions). Studio Hub
+hashes the idempotency key, rejects stale externally issued fences, and returns
+the same local batch for an exact replay. It never issues or increments the
+global fence:
+
+```json
+{
+  "genstudio_job_id": "job_01...",
+  "genstudio_attempt_id": "attempt_01...",
+  "idempotency_key": "stable-non-secret-attempt-key",
+  "fencing_token": 42,
+  "site_id": "phnom-penh-1",
+  "operation": "tts"
+}
 ```
 
 The **fleet memory governor** uses live host telemetry from each connected peer

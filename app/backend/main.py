@@ -292,7 +292,7 @@ def controller_liveness():
 
 @app.get("/health/ready")
 def controller_readiness():
-    """Controller readiness. Shadow mode requires its configured PostgreSQL."""
+    """Site-execution readiness; optional PostgreSQL never gates dispatch."""
     result = control_plane.runtime.readiness()
     return JSONResponse(result, status_code=200 if result["ready"] else 503)
 

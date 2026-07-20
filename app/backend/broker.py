@@ -30,7 +30,7 @@ from pathlib import Path
 
 import httpx
 
-from . import artifact_metadata, ledger, peers, shared_voices
+from . import artifact_metadata, execution_identity, ledger, peers, shared_voices
 from .peers import studio_request
 from .monitor import is_cached, is_cloud_lane
 from .registry import base_url, machine_enabled, studio_enabled
@@ -381,6 +381,16 @@ def _submit_batch_locked(envelope: dict) -> dict:
         return {"error": "batch payload must be valid JSON"}
     if not envelope.get("model"):
         return {"error": "model (repo) is required"}
+    routing = str(envelope.get("routing") or "pool")
+    if routing not in {"pool", "remote"} and not (
+        routing.startswith("studio:") and routing.split(":", 1)[1]
+    ):
+        return {"error": "routing must be pool, remote, or studio:<id>"}
+    try:
+        prepared = execution_identity.prepare(envelope)
+    except execution_identity.ExecutionIdentityError as exc:
+        return {"error": str(exc)}
+    envelope = prepared.envelope
     client_request_id = envelope.get("clientRequestId")
     if client_request_id is not None:
         if (
@@ -393,6 +403,15 @@ def _submit_batch_locked(envelope: dict) -> dict:
         fingerprint_payload = {
             key: value for key, value in envelope.items() if key != "clientRequestId"
         }
+        # GenStudio may reassign the exact attempt with a newer externally
+        # issued fence. Ownership transport is not generation payload, so it
+        # must not turn an otherwise exact idempotent replay into a conflict.
+        if isinstance(fingerprint_payload.get("genstudio_execution"), dict):
+            fingerprint_payload["genstudio_execution"] = {
+                key: value
+                for key, value in fingerprint_payload["genstudio_execution"].items()
+                if key != "fencing_token"
+            }
         request_fingerprint = hashlib.sha256(
             json.dumps(
                 fingerprint_payload, sort_keys=True, separators=(",", ":")
@@ -409,6 +428,20 @@ def _submit_batch_locked(envelope: dict) -> dict:
         if existing is not None:
             if existing.get("request_fingerprint") != request_fingerprint:
                 return {"error": "clientRequestId was already used for a different batch"}
+            current_execution = existing.get("genstudio_execution") or {}
+            if (
+                prepared.evidence
+                and current_execution
+                and prepared.evidence["fencing_token"]
+                    > int(current_execution.get("fencing_token") or 0)
+            ):
+                # Preserve the newest GenStudio-issued fence as evidence while
+                # returning the same local batch and creating no new work.
+                existing["genstudio_execution"] = prepared.evidence
+                if existing["id"] in batches:
+                    batches[existing["id"]]["genstudio_execution"] = prepared.evidence
+                ledger.save_batch(existing)
+            execution_identity.bind_local_batch(prepared.evidence, existing["id"])
             return {
                 "batch_id": existing["id"],
                 "items": len(existing.get("items") or []),
@@ -416,16 +449,14 @@ def _submit_batch_locked(envelope: dict) -> dict:
             }
     else:
         request_fingerprint = None
-    routing = str(envelope.get("routing") or "pool")
-    if routing not in {"pool", "remote"} and not (
-        routing.startswith("studio:") and routing.split(":", 1)[1]
-    ):
-        return {"error": "routing must be pool, remote, or studio:<id>"}
     batch_id = uuid.uuid4().hex[:10]
     batches[batch_id] = {
         "id": batch_id,
         "client_request_id": client_request_id,
         "request_fingerprint": request_fingerprint,
+        # Non-authoritative identity assigned by GenStudio. Studio Hub only
+        # uses it to fence and evidence this one site-local execution.
+        "genstudio_execution": prepared.evidence,
         "modality": modality,
         "model": envelope["model"],
         "shared_params": envelope.get("sharedParams") or {},
@@ -453,6 +484,7 @@ def _submit_batch_locked(envelope: dict) -> dict:
         } for i, it in enumerate(items_in)],
     }
     ledger.save_batch(batches[batch_id])
+    execution_identity.bind_local_batch(prepared.evidence, batch_id)
     _wakeup.set()
     return {"batch_id": batch_id, "items": len(items_in), "replayed": False}
 
