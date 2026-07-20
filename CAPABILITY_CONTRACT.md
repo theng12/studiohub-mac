@@ -103,6 +103,13 @@ availability. Voice models may report `preset_voice`,
 `reference_audio_clone`, `voice_design`, or `provider_voice_id` modes when the
 worker catalog provides enough evidence.
 
+Locally brokered Image, Voice, Music, and Video generation models also report
+`memory_admission`: catalog, Hub-default, and effective minimum total/free RAM,
+policy source, current observed memory, and whether the machine is eligible
+now. Operator overrides are site-local scheduling policy; they do not modify
+the worker catalog or transfer global authority from GenStudio.
+`availability.available_now` reflects the effective policy.
+
 ## Runtime revisions
 
 `runtime_revision` is populated only from a worker-reported immutable full hash

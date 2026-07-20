@@ -11,7 +11,7 @@ import re
 import time
 from datetime import datetime, timezone
 
-from . import broker, chat_jobs, hardware_profiles, peers, transcription_jobs
+from . import broker, chat_jobs, hardware_profiles, memory_admission, peers, transcription_jobs
 from .monitor import is_cloud_lane
 from .registry import machine_enabled, studio_enabled
 from .resources import host_stats
@@ -216,9 +216,31 @@ def _model_capability(model: dict, studio: dict, worker: dict, monitor) -> dict:
     installed = None if cloud else bool(model.get("hub_cached"))
     runtime_compatible = model.get("runtime_compatible") is not False
     subsystem_ready = model.get("hub_ready") is not False
+    admission = None
+    memory_ready = None
+    if memory_admission.applies_to(modality, is_cloud=cloud):
+        admission = memory_admission.describe(repo, model)
+        host_known, host = _machine_host(studio.get("machine", "local"))
+        if host_known and host:
+            total_floor = admission.get("effective_min_total_memory_gb") or 0
+            free_floor = admission.get("effective_min_free_memory_gb") or 0
+            memory_ready = bool(
+                float(host.get("total_gb") or 0) >= total_floor
+                and float(host.get("available_gb") or 0) >= free_floor
+            )
+            admission = {
+                **admission,
+                "observed_total_memory_gb": host.get("total_gb"),
+                "observed_available_memory_gb": host.get("available_gb"),
+                "eligible_now": memory_ready,
+            }
+        else:
+            admission = {**admission, "observed_total_memory_gb": None,
+                         "observed_available_memory_gb": None,
+                         "eligible_now": None}
     model_ready = runtime_compatible and subsystem_ready and (
         provider_ready is True if cloud else installed is True
-    )
+    ) and memory_ready is not False
     available_now = bool(worker["available_capacity"]["slots"] and model_ready)
     if not worker["online"]:
         reason = "worker_offline"
@@ -236,6 +258,12 @@ def _model_capability(model: dict, studio: dict, worker: dict, monitor) -> dict:
         reason = "runtime_incompatible"
     elif not subsystem_ready:
         reason = "subsystem_unavailable"
+    elif memory_ready is False and admission and (
+            (admission.get("observed_total_memory_gb") or 0)
+            < (admission.get("effective_min_total_memory_gb") or 0)):
+        reason = "insufficient_total_memory"
+    elif memory_ready is False:
+        reason = "waiting_for_memory"
     elif cloud and provider_ready is not True:
         reason = "provider_unavailable_or_unverified"
     elif not cloud and installed is not True:
@@ -259,6 +287,7 @@ def _model_capability(model: dict, studio: dict, worker: dict, monitor) -> dict:
         "input_limits": _selected(model, _INPUT_LIMIT_FIELDS),
         "output_limits": _selected(model, _OUTPUT_LIMIT_FIELDS),
         "controls": _controls(model, modality, cloud),
+        "memory_admission": admission,
         "availability": {
             "supported": True,
             "installed": installed,

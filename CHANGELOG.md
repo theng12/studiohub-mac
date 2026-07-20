@@ -10,6 +10,36 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.57.0] — 2026-07-20
+
+### Added — adjustable per-model RAM admission
+
+- Added a transparent **Models -> RAM admission guard** editor showing the
+  Studio catalog requirement, Hub default, effective total-RAM floor, current
+  free-RAM floor, and whether the value comes from the catalog, a fleet default,
+  or an operator override.
+- Owners can save or reset a persistent override for each locally brokered
+  Image, Voice, Music, or Video model. Changes
+  immediately wake the SQLite dispatcher so queued work is re-evaluated; no
+  worker restart or active-job interruption is required.
+- Added authenticated RAM-admission read/update/reset APIs and included the
+  effective policy in the Models API and private GenStudio capability snapshot.
+
+### Fixed
+
+- FLUX.2 Klein 4B MLX 4-bit now uses the measured fleet default of 8 GB total
+  RAM with 2 GB currently free. ImageStudio's newly conservative 16 GB catalog
+  value remains visible for provenance but no longer excludes proven 8 GB Macs.
+- Download size remains excluded from runtime RAM calculations. Too-small Macs
+  are skipped, temporarily pressured Macs wait, and worker memory refusals still
+  requeue safely instead of consuming a generation attempt.
+
+### Safety
+
+- Overrides are site-local operator policy, not GenStudio global job authority.
+  Cloud models remain outside local RAM admission, and physical-machine leases
+  still prevent sibling Studios from starting overlapping heavy workloads.
+
 ## [1.56.1] — 2026-07-20
 
 ### Added — GenStudio integration handoff

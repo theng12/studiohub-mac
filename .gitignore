@@ -39,6 +39,7 @@ transcription_jobs/
 transcription_settings.json
 job_storage_settings.json
 fleet_storage_policy.json
+memory_admission_overrides.json
 shared_voices/
 service/
 logs/service/

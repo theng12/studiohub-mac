@@ -35,7 +35,7 @@ from .peers import studio_request
 from .monitor import is_cached, is_cloud_lane
 from .registry import base_url, machine_enabled, studio_enabled
 from .resources import host_stats
-from .workload_policy import required_free_memory_gb, required_total_memory_gb
+from . import memory_admission
 
 _MIME_EXT = {"image/png": ".png", "image/jpeg": ".jpg", "image/jpg": ".jpg",
              "image/webp": ".webp"}
@@ -153,7 +153,7 @@ MAX_BATCH_JSON_BYTES = 25 * 1024 * 1024
 # short of usable memory. Model-specific cold-load floors can raise this value
 # through workload_policy.required_free_memory_gb(). Catalog ``size_gb`` is
 # download/disk size and must never be used as a RAM estimate.
-DEFAULT_MIN_FREE_MEMORY_GB = 2.0
+DEFAULT_MIN_FREE_MEMORY_GB = memory_admission.DEFAULT_MIN_FREE_MEMORY_GB
 
 batches: dict[str, dict] = {}
 _busy: set[str] = set()  # studio ids currently running an item for us
@@ -182,10 +182,10 @@ def _required_free_memory(mem: dict) -> float:
     planning, not runtime unified-memory planning.
     """
     try:
-        explicit = float(mem.get("min_free") or 0)
+        explicit = float(mem.get("min_free"))
     except (TypeError, ValueError):
-        explicit = 0.0
-    return max(DEFAULT_MIN_FREE_MEMORY_GB, explicit)
+        return DEFAULT_MIN_FREE_MEMORY_GB
+    return max(0.0, explicit)
 
 
 def _memory_gate(mem: dict, host: dict, reserved_gb: float = 0.0) -> tuple[str, str | None]:
@@ -211,6 +211,17 @@ def _memory_gate(mem: dict, host: dict, reserved_gb: float = 0.0) -> tuple[str, 
 def _local_gate(mem: dict, host: dict) -> tuple[str, str | None]:
     """Compatibility wrapper for the local unified-memory reservation."""
     return _memory_gate(mem, host, _reserved["gb"])
+
+
+def _admission_requirements(model: str, entry: dict) -> dict | None:
+    """Resolve the editable site policy used immediately before dispatch."""
+    if entry.get("is_cloud"):
+        return None
+    policy = memory_admission.describe(model, entry)
+    return {
+        "min_total": policy["effective_min_total_memory_gb"],
+        "min_free": policy["effective_min_free_memory_gb"],
+    }
 
 
 def _host_for_studio(studio: dict) -> dict | None:
@@ -1157,14 +1168,10 @@ async def _dispatch_loop():
                     # reject. Missing/stale telemetry does not strand work:
                     # the worker's own guard remains the final authority.
                     is_local = studio.get("machine", "local") == "local"
-                    mem = None if entry.get("is_cloud") else {
-                        # A worker catalog is a technical capability, while
-                        # this is the customer-service admission policy. Qwen
-                        # 0.6B can run on 8 GB Macs, but only after its safe
-                        # cold-load free-memory floor is available.
-                        "min_total": required_total_memory_gb(b["model"], entry),
-                        "min_free": required_free_memory_gb(b["model"], entry),
-                    }
+                    # A worker catalog is one input. Measured fleet defaults
+                    # and visible owner overrides form the effective site-local
+                    # admission policy used immediately before dispatch.
+                    mem = _admission_requirements(b["model"], entry)
                     reserve = 0.0
                     host = _host_for_studio(studio) if mem is not None else None
                     if mem is not None and host:
@@ -1412,3 +1419,8 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
 
 def start_dispatcher():
     asyncio.create_task(_dispatch_loop())
+
+
+def wake_dispatcher() -> None:
+    """Re-evaluate queued work after an operator changes admission policy."""
+    _wakeup.set()

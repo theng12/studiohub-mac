@@ -21,7 +21,7 @@ from starlette.testclient import TestClient
 
 
 def _reset_state():
-    from backend import (alerts, auth, broker, chat_jobs, control_plane, execution_identity, fleet_ops, fleet_storage, hardware_profiles, job_storage,
+    from backend import (alerts, auth, broker, chat_jobs, control_plane, execution_identity, fleet_ops, fleet_storage, hardware_profiles, job_storage, memory_admission,
                          ledger, metrics, peers, shared_voices, transcription_jobs)
     from backend import main
     from backend import registry as reg
@@ -40,6 +40,7 @@ def _reset_state():
               fleet_storage.SETTINGS_FILE,
               hardware_profiles.CUSTOM_PROFILES_FILE,
               hardware_profiles.MACHINE_PROFILES_FILE,
+              memory_admission.SETTINGS_FILE,
               execution_identity.DB_FILE,
               fleet_ops._STATE_FILE, control_plane.SETTINGS_FILE,
               control_plane.DATABASE_URL_FILE):
@@ -92,6 +93,7 @@ def _reset_state():
     reg._flags_cache = None
     hardware_profiles._custom_cache = None
     hardware_profiles._assignment_cache = None
+    memory_admission.reset_for_tests()
     # monitor: reload default registry, mark everything unknown (no network)
     monitor.reload_registry()
     monitor.status = {s["id"]: {"status": "unknown", "last_seen": None,

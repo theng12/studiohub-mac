@@ -244,6 +244,8 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/memory` | Read model-memory policy, loaded-model state, friendly process title, and reachability for every model-hosting Studio |
 | `PUT /api/hub/memory-policy` | Apply `{mode, studio_ids?}` using `performance`, `balanced`, `memory_saver`, or `immediate` |
 | `POST /api/hub/memory/release` | Release idle model/accelerator memory on selected Studios; returns one result per worker |
+| `GET /api/hub/memory-admission` | Read catalog, Hub-default, and effective total/free RAM floors for locally brokered Image, Voice, Music, and Video models |
+| `PUT /api/hub/memory-admission` · `DELETE /api/hub/memory-admission?model=...` | Save `{model, min_total_memory_gb, min_free_memory_gb}` or reset one model to its visible Hub default |
 | `GET /api/releases` | Current Hub version and complete release details read from the shipped changelog |
 | `GET /api/hub/summary` | One-shot dashboard payload (studios + resources + cloud provider inventory) |
 | `POST /api/hub/studios/{id}/start` | Start a local studio (via Pinokio's `pterm` CLI) |
@@ -676,19 +678,25 @@ global fence:
 ```
 
 The **fleet memory governor** uses live host telemetry from each connected peer
-Hub before local or remote dispatch. A model whose `min_unified_memory_gb`
-exceeds a machine is skipped for a compatible larger Mac; one whose size does
-not fit in currently-free memory waits (visible as `governor_note`). The Hub
-can apply a stricter live-free-memory floor for a workload when its technical
-minimum alone would not leave reliable operating headroom. GenStudio's Qwen3
-0.6B standard-voice model is supported on 8 GB Apple-silicon Macs, but is sent
-there only when at least 3.2 GB is currently free for a safe cold load. When
-that capacity is unavailable, the item waits or uses another eligible worker;
-the 8 GB machine remains available for image work throughout. A worker's own
-MemoryGuard remains the final authority, and its refusal waits/rebalances
-without consuming an attempt. Repeated connection failures temporarily pause
-that physical Mac and let another worker steal the item. Cloud-backed models
-bypass the memory governor entirely.
+Hub before local or remote dispatch. Open **Models -> RAM admission guard** to
+see the worker catalog value, Hub default, effective minimum total RAM, and
+minimum currently-free RAM for every local model. The effective floors can be
+overridden and reset without restarting workers or interrupting active jobs.
+
+A machine below the effective total-RAM floor is skipped for a compatible
+larger Mac. A machine below the live free-RAM floor waits (visible as
+`governor_note`) until pressure clears or another worker takes the item. Model
+download `size_gb` is never used as a RAM estimate. FLUX.2 Klein 4B MLX 4-bit
+defaults to the fleet-qualified 8 GB total / 2 GB free policy even though its
+conservative ImageStudio catalog currently says 16 GB. Qwen3 0.6B standard
+voice defaults to 8 GB total / 3.2 GB free for a safe cold load.
+
+Lowering a floor is an explicit operator choice and can increase memory-failure
+risk. A worker MemoryGuard remains the final authority where implemented; a
+memory refusal waits/rebalances without consuming an attempt. Physical-machine
+leases prevent sibling Studios from overlapping heavy work, repeated connection
+failures temporarily pause that Mac, and cloud-backed models bypass local RAM
+admission entirely.
 
 ## Chat prompt packs
 

@@ -3,7 +3,7 @@ import time
 
 from starlette.testclient import TestClient
 
-from backend import auth, broker, control_plane, hardware_profiles, peers, registry
+from backend import auth, broker, capabilities, control_plane, hardware_profiles, peers, registry
 
 
 def _seed_capability_site(monitor):
@@ -247,3 +247,25 @@ def test_agent_reports_drained_and_never_claims_global_work(authed, monitor):
     assert payload["controller"]["drained"] is True
     assert payload["controller"]["ready"] is False
     assert payload["authority"]["global_job_claiming"] is False
+
+
+def test_capability_snapshot_uses_effective_flux_ram_policy(
+        authed, monitor, monkeypatch):
+    _seed_capability_site(monitor)
+    monitor._catalog_cache["image"] = (time.time(), {"models": [{
+        "repo": "AITRADER/FLUX2-klein-4B-mlx-4bit",
+        "min_unified_memory_gb": 16,
+        "cache": {"state": "cached"},
+        "capabilities": ["txt2img"],
+    }]})
+    monkeypatch.setattr(capabilities, "host_stats", lambda: {
+        "total_gb": 8.59, "available_gb": 2.4,
+    })
+
+    payload = authed.get("/api/hub/capabilities").json()
+    model = _model(_worker(payload, "image"), "image.generation")
+
+    assert model["memory_admission"]["catalog_min_total_memory_gb"] == 16
+    assert model["memory_admission"]["effective_min_total_memory_gb"] == 8
+    assert model["memory_admission"]["eligible_now"] is True
+    assert model["availability"]["available_now"] is True

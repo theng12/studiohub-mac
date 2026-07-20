@@ -1,8 +1,8 @@
 # GenStudio KH handoff: consume Studio Hub site capabilities
 
 Use this file as the implementation brief for a GenStudio KH coding session.
-The Studio Hub side is complete in Studio Hub KH `v1.56.0`, commit
-`ba464010978d6033b3e70a1db18a9b3c5598384e`.
+The Studio Hub capability contract is available in Studio Hub KH `v1.56.0`
+and later. Version `v1.57.0` adds effective site-local RAM-admission facts.
 
 The canonical response contract is documented in
 [`CAPABILITY_CONTRACT.md`](CAPABILITY_CONTRACT.md). If this handoff and that
@@ -127,6 +127,13 @@ as if they could all perform heavy work simultaneously.
 `availability.available_now` is an observation, not a reservation. GenStudio
 must still handle a safe assignment rejection because capacity can change
 between observation and dispatch.
+
+For local models, `memory_admission` explains the catalog requirement, Hub
+default, effective total/free-memory floors, policy source, and observed machine
+memory. GenStudio should treat `availability.available_now` as the routing
+decision and retain `memory_admission` as sanitized diagnostics. The location
+operator may adjust these floors from Studio Hub; GenStudio must not overwrite
+them or turn them into global ownership state.
 
 ## Availability and revision rules
 

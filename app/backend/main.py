@@ -26,7 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, control_plane, fleet_ops, fleet_storage, gateway, hardware_profiles, job_storage,
+from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, control_plane, fleet_ops, fleet_storage, gateway, hardware_profiles, job_storage, memory_admission,
                ledger, metrics, peers, recipes, shared_voices, transcription_jobs)
 from .auto_update import UpdateError
 from .auto_update_config import create_updater
@@ -74,6 +74,12 @@ class FleetMemoryPolicyBody(BaseModel):
 
 class FleetMemoryReleaseBody(BaseModel):
     studio_ids: list[str] | None = Field(default=None, max_length=100)
+
+
+class MemoryAdmissionBody(BaseModel):
+    model: str = Field(min_length=1, max_length=500)
+    min_total_memory_gb: float = Field(ge=4, le=512)
+    min_free_memory_gb: float = Field(ge=0.5, le=128)
 
 
 class SharedVoiceUpdateBody(BaseModel):
@@ -1153,6 +1159,12 @@ async def hub_models(modality: str | None = None, q: str | None = None,
     """Deduped-by-repo model list with per-machine availability (Models tab).
     Reports local vs cloud as distinct lanes (never one merged number)."""
     rows = await monitor.models_by_repo(force=force)
+    for row in rows:
+        row["memory_admission"] = (
+            None if not memory_admission.applies_to(
+                row.get("modality"), is_cloud=bool(row.get("is_cloud")))
+            else memory_admission.describe(row["repo"], row)
+        )
     if modality:
         rows = [r for r in rows if r["modality"] == modality]
     if q:
@@ -1173,6 +1185,56 @@ async def hub_models(modality: str | None = None, q: str | None = None,
     if cloud is not None:
         rows = [r for r in rows if r["is_cloud"] == cloud]
     return {"models": rows, "count": len(rows), "lanes": lanes, "providers": providers}
+
+
+async def _local_model_for_admission(model: str) -> dict:
+    row = next(
+        (item for item in await monitor.models_by_repo(force=False)
+         if item.get("repo") == model),
+        None,
+    )
+    if row is None:
+        raise HTTPException(404, "Model is not present in the current fleet catalog.")
+    if not memory_admission.applies_to(
+            row.get("modality"), is_cloud=bool(row.get("is_cloud"))):
+        raise HTTPException(
+            400, "This model's queue does not use the local generation RAM governor.")
+    return row
+
+
+@app.get("/api/hub/memory-admission")
+async def get_memory_admission():
+    """Effective per-model local RAM floors and their visible source."""
+    rows = [row for row in await monitor.models_by_repo(force=False)
+            if memory_admission.applies_to(
+                row.get("modality"), is_cloud=bool(row.get("is_cloud")))]
+    return {
+        "default_min_free_memory_gb": memory_admission.DEFAULT_MIN_FREE_MEMORY_GB,
+        "policies": [memory_admission.describe(row["repo"], row) for row in rows],
+    }
+
+
+@app.put("/api/hub/memory-admission")
+async def put_memory_admission(body: MemoryAdmissionBody):
+    """Save an owner-selected site-local override without changing workers."""
+    row = await _local_model_for_admission(body.model)
+    policy = memory_admission.set_override(
+        body.model,
+        min_total_memory_gb=body.min_total_memory_gb,
+        min_free_memory_gb=body.min_free_memory_gb,
+        catalog_entry=row,
+    )
+    broker.wake_dispatcher()
+    return {"ok": True, "policy": policy}
+
+
+@app.delete("/api/hub/memory-admission")
+async def delete_memory_admission(model: str = Query(min_length=1, max_length=500)):
+    """Remove an override and return to the visible Hub/catalog default."""
+    row = await _local_model_for_admission(model)
+    policy = memory_admission.reset_override(model, row)
+    broker.wake_dispatcher()
+    return {"ok": True, "policy": policy}
 
 
 @app.get("/api/hub/transcription")
