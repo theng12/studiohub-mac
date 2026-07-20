@@ -10,6 +10,9 @@ This is a private, read-only machine-to-machine contract from a Studio Hub
 location controller to GenStudio KH. It is routing input only. It does not
 transfer customer-job authority to Studio Hub.
 
+For a ready-to-use GenStudio implementation brief, see
+[`GENSTUDIO_CAPABILITY_HANDOFF.md`](GENSTUDIO_CAPABILITY_HANDOFF.md).
+
 ## Authentication
 
 Every request requires one of these headers, including requests from loopback:

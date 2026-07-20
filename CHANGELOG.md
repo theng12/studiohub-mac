@@ -10,6 +10,12 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+### Documentation
+
+- Added a self-contained GenStudio capability-integration handoff covering
+  authentication, freshness, routing semantics, shared physical-Mac capacity,
+  failure handling, privacy constraints, and required client tests.
+
 ## [1.56.0] — 2026-07-20
 
 ### Added — private GenStudio site-capability contract
