@@ -234,6 +234,8 @@ def remove_machine(machine: str) -> int:
         if flags.pop(machine, None) is not None:
             FLAGS_FILE.write_text(json.dumps(flags, indent=2) + "\n")
         _flags_cache = flags
+        from .hardware_profiles import remove_machine_hardware_profile
+        remove_machine_hardware_profile(machine)
     return removed
 
 

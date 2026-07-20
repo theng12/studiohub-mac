@@ -29,7 +29,8 @@ The Hub runs on fixed port **47873** and provides:
   review the words, then synchronize the same stable ID, audio hash, and
   transcript to every Voice Studio Mac. Offline machines catch up automatically.
 - **Host-aware registry** — studios on other machines (LAN/Tailscale) can be added
-  via `studios.json`, the foundation for multi-machine federation and Swarm Batch.
+  with a reusable hardware profile and stable machine ID. The selected profile is
+  published with live resources for routing and GenStudio operating-cost records.
 - **Controller migration foundation** — the same Hub release can run as a
   standalone Hub, site controller, or agent. Optional PostgreSQL shadow mode
   publishes heartbeats, fleet capacity, inventory, and job state while SQLite
@@ -229,6 +230,8 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET` / `POST /api/hub/job-storage` · `POST /api/hub/job-storage/cleanup` | Compatibility API for the Hub transcription store; defaults to enabled, three days, and 80 GB |
 | `GET /api/auth/status` · `POST /api/auth/login` · `POST /api/auth/logout` | Browser password-sign-in capability, 90-day remembered-device session, and sign-out |
 | `POST /api/auth/setup` | Set or replace the owner password; accepted only through loopback on the Hub Mac |
+| `GET` / `POST /api/hub/registry/hardware-profiles` | List the reusable hardware catalog and assignments / add a future hardware class |
+| `PUT /api/hub/registry/machines/{machine}/hardware-profile` | Assign, change, or clear an existing machine's profile with `{"hardware_profile_id": "mac-mini-m4-16gb"}` |
 | `DELETE /api/hub/registry/machines/{machine}` | Unregister a machine and purge its live inventory/update state (history is retained) |
 | `GET /api/hub/fleet` · `POST /api/hub/fleet` | Fleet token status / set (`{token}`) — enables remote specs + control |
 | `GET /api/hub/resources?local_only=true` | This machine only (peers call with this to prevent recursion) |
@@ -460,8 +463,10 @@ await fetch(`${HUB}/api/hub/jobs`, {
 - **Resources** — this Mac's unified-memory bar + hour sparkline, per-studio process memory.
 - **Jobs / Assets** — Swarm Batch submit + progress; searchable asset ledger.
 - **Remote** — reachable URLs + token, **Discover & Add** a machine, and a permanent
-  **Registered machines** list. Each Studio has its own new-job pause/resume
-  switch, while the machine switch remains the master control.
+  **Registered machines** list. Registration starts with a reusable hardware
+  profile and suggested stable ID; profiles remain editable later. Each Studio
+  has its own new-job pause/resume switch, while the machine switch remains the
+  master control.
 
 ## Run as an always-on service (auto-start)
 
@@ -545,16 +550,23 @@ active-active claiming is enabled.
 Every Mac keeps running its own studios; ONE Hub coordinates them all:
 
 1. On each other Mac, install whichever studios it should serve (2, 3, or 5).
-2. On the Hub Mac, open **Remote → Add another Mac's studios**, enter that
-   Mac's Tailscale IP and a name. Two ways to add:
+2. On the Hub Mac, open **Remote → Add another Mac's studios**, choose its
+   hardware profile, and enter its Tailscale IP. Studio Hub suggests a stable ID
+   such as `macmini-m2-8gb-001`; you may edit it before saving. Two ways to add:
    - **Discover & Add** — probes the machine now and registers whatever answers
-     (machine must be online). `POST /api/hub/registry/discover {host, machine}`.
+     (machine must be online).
+     `POST /api/hub/registry/discover {host, machine, hardware_profile_id}`.
    - **Add manually (offline OK)** — pre-registers the *checked* studios without
      probing, so you can set a machine up before it's online; it flips from
      "down" to live automatically when reachable.
-     `POST /api/hub/registry/add {host, machine, modalities}`.
+     `POST /api/hub/registry/add {host, machine, modalities, hardware_profile_id}`.
 3. Remote studios join the health grid, catalog, gateway and **worker pools**
    automatically.
+
+The built-in list covers the approved Mac mini M1/M2/M4, MacBook M4, and iMac
+M1/M3 memory classes. Use **Add another hardware profile to this list** for a
+future machine class. Existing machines can be assigned or corrected directly
+in **Registered machines** without re-registering their Studios.
 
 Use each Studio switch in **Remote → Registered machines** to dedicate a Mac to
 only the job types you want. For example, pause Voice, Chat, and Render while

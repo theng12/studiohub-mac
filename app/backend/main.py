@@ -26,7 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, control_plane, fleet_ops, fleet_storage, gateway, job_storage,
+from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, control_plane, fleet_ops, fleet_storage, gateway, hardware_profiles, job_storage,
                ledger, metrics, peers, recipes, shared_voices, transcription_jobs)
 from .auto_update import UpdateError
 from .auto_update_config import create_updater
@@ -104,6 +104,20 @@ class ControllerSettingsBody(BaseModel):
     database_mode: str = "off"
     database_url: str | None = Field(default=None, max_length=4096)
     clear_database_url: bool = False
+
+
+class HardwareProfileBody(BaseModel):
+    id: str = Field(min_length=3, max_length=64)
+    display_name: str = Field(min_length=1, max_length=100)
+    machine_type: str = Field(min_length=1, max_length=50)
+    machine_prefix: str = Field(min_length=3, max_length=80)
+    chip: str = Field(min_length=2, max_length=18)
+    memory_gb: int = Field(ge=4, le=512)
+    planned_units: int = Field(default=0, ge=0, le=10_000)
+
+
+class MachineHardwareProfileBody(BaseModel):
+    hardware_profile_id: str | None = Field(default=None, max_length=64)
 
 # Give our loggers a handler regardless of how uvicorn configures logging, so
 # structured warnings/alerts actually reach the service log.
@@ -518,11 +532,51 @@ def studios():
     for s in monitor.registry:
         st = monitor.status.get(s["id"], {})
         machine = s.get("machine", "local")
+        hardware_profile = hardware_profiles.machine_hardware_profile(machine)
         out.append({**s, "url": base_url(s),
                     "machine_label": labels.get(machine, machine), **st,
                     "enabled": studio_enabled(machine, s["id"]),
-                    "machine_enabled": machine_enabled(machine)})
+                    "machine_enabled": machine_enabled(machine),
+                    "hardware_profile_id": (hardware_profile or {}).get("id")})
     return {"studios": out}
+
+
+def _registered_machine_ids() -> set[str]:
+    return {s.get("machine", "local") for s in monitor.registry}
+
+
+@app.get("/api/hub/registry/hardware-profiles")
+def registry_hardware_profiles():
+    """Reusable machine classes plus persistent machine assignments."""
+    return hardware_profiles.hardware_profile_catalog(_registered_machine_ids())
+
+
+@app.post("/api/hub/registry/hardware-profiles")
+def create_registry_hardware_profile(body: HardwareProfileBody):
+    """Add a reusable profile without changing existing machine records."""
+    try:
+        profile = hardware_profiles.add_custom_hardware_profile(body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {
+        "profile": profile,
+        "catalog": hardware_profiles.hardware_profile_catalog(_registered_machine_ids()),
+    }
+
+
+@app.put("/api/hub/registry/machines/{machine}/hardware-profile")
+def set_registry_machine_hardware_profile(
+    machine: str, body: MachineHardwareProfileBody,
+):
+    if machine not in _registered_machine_ids():
+        raise HTTPException(404, f"no registered machine {machine!r}")
+    try:
+        profile = hardware_profiles.set_machine_hardware_profile(
+            machine, body.hardware_profile_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "machine": machine, "hardware_profile": profile}
 
 
 @app.post("/api/hub/registry/machines/{machine}/name")
@@ -627,6 +681,7 @@ def hub_resources(local_only: bool = Query(False)):
     local_proxy = proxy_stats()
     machines = {"local": {"host": host_stats(), "reachable": True,
                           "enabled": machine_enabled("local"),
+                          "hardware_profile": hardware_profiles.machine_hardware_profile("local"),
                           "proxy": local_proxy,
                           "protection": protections.get("local")}}
     per_studio = {}
@@ -656,6 +711,7 @@ def hub_resources(local_only: bool = Query(False)):
                 "status": (peer.get("status") if peer else "pending"),
                 # operator toggle — a disabled machine takes no jobs
                 "enabled": machine_enabled(machine),
+                "hardware_profile": hardware_profiles.machine_hardware_profile(machine),
                 "proxy": peer.get("proxy") if peer else None,
                 "protection": protections.get(machine),
             }
@@ -2019,6 +2075,21 @@ def _validated_registry_identity(body: dict) -> tuple[str, str]:
     return host, machine
 
 
+def _registration_identity(body: dict) -> tuple[str, str, str | None]:
+    """Resolve an optional profile into a stable, editable machine id."""
+    prepared = dict(body)
+    profile_id = str(prepared.get("hardware_profile_id") or "").strip() or None
+    if profile_id:
+        if hardware_profiles.hardware_profile(profile_id) is None:
+            raise HTTPException(400, f"unknown hardware profile {profile_id!r}")
+        if not str(prepared.get("machine") or "").strip():
+            prepared["machine"] = hardware_profiles.suggested_machine_id(
+                profile_id, _registered_machine_ids(),
+            )
+    host, machine = _validated_registry_identity(prepared)
+    return host, machine, profile_id
+
+
 @app.delete("/api/hub/registry/machines/{machine}")
 def remove_machine_route(machine: str):
     """Unregister a machine and purge its live fleet-control state."""
@@ -2069,7 +2140,7 @@ def add_machine_manual(body: dict):
     from .registry import (FAMILY_PORTS, add_user_entries,
                            build_machine_entries)
 
-    host, machine = _validated_registry_identity(body)
+    host, machine, profile_id = _registration_identity(body)
     modalities = body.get("modalities") or list(FAMILY_PORTS.values())
     valid = set(FAMILY_PORTS.values())
     bad = [m for m in modalities if m not in valid]
@@ -2078,8 +2149,12 @@ def add_machine_manual(body: dict):
     entries = build_machine_entries(host, machine, modalities)
     added = add_user_entries(entries)
     monitor.reload_registry()
+    profile = None
+    if profile_id and machine in _registered_machine_ids():
+        profile = hardware_profiles.set_machine_hardware_profile(machine, profile_id)
     return {"host": host, "machine": machine, "requested": modalities,
             "registered": added,
+            "hardware_profile": profile,
             "note": "saved — will show 'down' until the machine is reachable, "
                     "then activate automatically"}
 
@@ -2093,7 +2168,7 @@ async def discover_machine(body: dict):
 
     from .registry import FAMILY_PORTS, MODALITY_EMOJI, add_user_entries
 
-    host, machine = _validated_registry_identity(body)
+    host, machine, profile_id = _registration_identity(body)
     known = {(s["host"], s["port"]) for s in monitor.registry}
     found, entries = [], []
     async with httpx.AsyncClient() as client:
@@ -2117,8 +2192,12 @@ async def discover_machine(body: dict):
     added = add_user_entries(entries) if entries else 0
     if added:
         monitor.reload_registry()
+    profile = None
+    if profile_id and machine in _registered_machine_ids():
+        profile = hardware_profiles.set_machine_hardware_profile(machine, profile_id)
     return {"host": host, "machine": machine, "found": found,
             "registered": added,
+            "hardware_profile": profile,
             "note": None if found else
             "nothing answered — is the machine on and reachable over Tailscale?"}
 

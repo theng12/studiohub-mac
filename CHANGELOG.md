@@ -10,6 +10,21 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.54.0] — 2026-07-20
+
+### Added — reusable machine hardware registration
+
+- Added the approved Mac mini, MacBook, and iMac hardware catalog to the Remote
+  registration flow, including planned-unit counts and stable suggested machine
+  IDs that match GenStudio's operating-cost profile IDs.
+- Hardware profile assignments persist independently of Studio records, can be
+  changed for an existing machine, and are removed when that machine is
+  unregistered. Operators can add future hardware classes from the dashboard.
+- Studio and resource APIs now publish each machine's selected hardware profile,
+  giving GenStudio an explicit identity instead of relying on name inference.
+- The dashboard requires a hardware selection when registering a new Mac and
+  shows an editable profile control on every registered-machine row.
+
 ## [1.53.0] — 2026-07-20
 
 ### Added — controller backend and PostgreSQL migration foundation

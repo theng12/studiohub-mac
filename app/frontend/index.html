@@ -239,6 +239,7 @@
   .btn.primary{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:9px 15px;border-color:var(--accent);background:linear-gradient(135deg,#1b8b62,#126d4c);color:#fff;box-shadow:0 7px 16px #167a5528;font-weight:750}.btn.primary:hover:not(:disabled){border-color:#0e6546;background:linear-gradient(135deg,#197f5b,#0e6546);color:#fff;box-shadow:0 9px 20px #167a5534}.btn.compact{padding:6px 10px;font-size:11px}.btn[aria-busy="true"]{cursor:progress}.btn.primary:disabled{transform:none;box-shadow:none}
   .update-progress{margin:2px 0 12px;padding:12px 14px;border:1px solid #cbd9cc;border-radius:13px;background:linear-gradient(135deg,#f2f7ef,#fbfaf4);box-shadow:inset 3px 0 var(--accent)}.update-progress.error{border-color:#e2c2b9;background:#fbf1ed;box-shadow:inset 3px 0 var(--down)}.update-progress.success{border-color:#b9d7c4;background:#edf7ef;box-shadow:inset 3px 0 var(--up)}.update-progress-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.update-progress-title{font-weight:750;color:var(--accent2)}.update-progress-count{font:700 10.5px/1 var(--mono);color:var(--dim);white-space:nowrap}.update-progress .bar{margin:9px 0 6px;height:7px;background:#dce5dc}.update-progress-detail{font-size:11.5px;color:var(--dim)}
   .machine-sortbar{display:flex;align-items:end;justify-content:flex-end;gap:9px;margin:0 0 12px}.machine-sortbar label{display:flex;flex-direction:column;gap:6px;color:var(--dim);font:700 9px/1 var(--mono);letter-spacing:.09em;text-transform:uppercase}.machine-sortbar .selctl{min-width:155px;padding:7px 10px;text-transform:none;letter-spacing:0;font-family:var(--sans)}.machine-sortbar .btn{min-width:112px}
+  .hardware-profile-hint{min-height:18px;color:var(--dim);font-size:11px}.hardware-profile-select{min-width:220px;max-width:100%}.machine-hardware{display:grid;gap:5px;min-width:180px}.machine-hardware b{font-size:11px}.machine-hardware .selctl{width:100%;padding:7px 9px;font-size:10px}.hardware-profile-builder{margin-top:12px;padding:11px 13px;border:1px dashed var(--border);border-radius:10px;background:var(--panel2)}.hardware-profile-builder summary{cursor:pointer;font-weight:700;font-size:11px}.hardware-profile-builder .fields{display:grid;grid-template-columns:1.4fr .7fr .7fr .7fr auto;gap:8px;align-items:end;margin-top:10px}.hardware-profile-builder label{display:grid;gap:5px;color:var(--dim);font-size:9px;text-transform:uppercase}.hardware-profile-builder input{width:100%}
   .studio-schedules{display:flex;gap:6px;flex-wrap:wrap;min-width:270px}.studio-schedule-wrap{display:inline-flex;align-items:stretch;border:1px solid #cbd1c8;border-radius:10px;background:#f5f6f1;overflow:hidden}.studio-schedule{display:flex;align-items:center;gap:7px;border:0;background:transparent;color:var(--text);padding:6px 8px;font:700 10.5px/1.1 var(--sans);cursor:pointer}.studio-schedule:hover{background:#fff}.studio-schedule small{padding:2px 5px;border-radius:999px;background:#dfeae2;color:#176f50;font:700 8.5px/1 var(--mono);letter-spacing:.03em;text-transform:uppercase}.studio-schedule.off{background:#fbf1dc;color:#7a611d}.studio-schedule.off small{background:#f1dcae;color:#7a5a0d}.studio-schedule.master-off small{background:#e6e8e2;color:#6d746d}.studio-schedule-remove{display:grid;place-items:center;width:24px;border:0;border-left:1px solid #d8ddd5;background:transparent;color:var(--dim);cursor:pointer}.studio-schedule-remove:hover{background:#f9e8e4;color:var(--down)}
   .rows,.table-wrap{border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:var(--shadow)}.lrow{grid-template-columns:22px minmax(0,1.7fr) minmax(0,1fr) 100px minmax(0,1.15fr) 80px 205px;background:#fffef9;border-color:#e2e3da;padding:12px 15px}.lrow .actions{width:100%;justify-content:flex-end}.lrow:hover:not(.lhead){background:#f8f8f2}.lrow.lhead{background:#edf0e9;color:#6f776f;font:700 9px/1 var(--mono);letter-spacing:.09em}
   table{background:#fffef9;border-radius:14px;overflow:hidden;box-shadow:0 8px 28px #2945350a}th,td{padding:11px 12px;border-color:#e2e3da}th{top:0;background:#edf0e9;color:#68736b;font:700 9px/1.2 var(--mono);letter-spacing:.08em;text-transform:uppercase}tbody tr{transition:background .12s}tbody tr:hover{background:#f5f6ef}td{font-size:12.5px}
@@ -263,7 +264,7 @@
   #bell-dropdown{top:37px;right:0;width:370px;padding:8px;border-color:var(--border);border-radius:16px;background:#fffef9;box-shadow:0 22px 55px #18362935}#bell-dropdown .bd-row:hover{background:#eff2ea}
   .modal-backdrop{background:rgba(12,35,26,.66);backdrop-filter:blur(7px)}.modal{max-width:650px;padding:26px;border:1px solid #d9ded5;border-radius:22px;background:#fffef9;box-shadow:0 30px 80px #0a241950}.modal h2{font:700 29px/1 var(--display)}.wn-rel{padding:16px 0;border-color:#dfe2d8}.wn-rel h3{font:700 14px/1.2 var(--mono);color:var(--accent2)}.wn-rel li{font-size:13px}
   .empty{padding:44px;color:#7b847d}.muted,.sub{color:var(--dim)}
-  @media(max-width:1050px){header{margin-left:210px;padding:0 24px}nav{width:210px}main{margin-left:210px;padding:26px 24px 60px}.lrow{grid-template-columns:22px minmax(0,1.7fr) minmax(0,1fr) 90px minmax(0,1.15fr) 170px}.lrow>div:nth-child(6),.lrow.lhead>span:nth-child(6){display:none}.auto-update-controls{grid-template-columns:repeat(2,minmax(180px,1fr))}.auto-update-facts{grid-template-columns:repeat(3,minmax(110px,1fr))}.memory-modes{grid-template-columns:repeat(2,minmax(150px,1fr))}.voice-form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  @media(max-width:1050px){header{margin-left:210px;padding:0 24px}nav{width:210px}main{margin-left:210px;padding:26px 24px 60px}.lrow{grid-template-columns:22px minmax(0,1.7fr) minmax(0,1fr) 90px minmax(0,1.15fr) 170px}.lrow>div:nth-child(6),.lrow.lhead>span:nth-child(6){display:none}.auto-update-controls{grid-template-columns:repeat(2,minmax(180px,1fr))}.auto-update-facts{grid-template-columns:repeat(3,minmax(110px,1fr))}.memory-modes{grid-template-columns:repeat(2,minmax(150px,1fr))}.voice-form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.hardware-profile-builder .fields{grid-template-columns:repeat(2,minmax(150px,1fr))}}
   @media(max-width:820px){header{margin-left:0;height:68px;padding:0 18px}header .summary{display:none}nav{position:sticky;top:68px;width:auto;height:58px;padding:7px 12px;flex-direction:row;overflow-x:auto;background:#123126;box-shadow:0 8px 20px #1736281c}nav:before,nav:after{display:none}nav button{width:auto;flex:0 0 auto;padding:8px 11px}nav button:hover{transform:none}main{margin-left:0;padding:22px 18px 54px}.workspace-head{padding:25px 26px}.live-chip{display:none}.grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}}
   @media(max-width:600px){header>span:first-child{display:none}header{gap:9px;padding:0 14px}header h1{font-size:18px}header #last-refresh{display:none}nav button{font-size:0;gap:0;padding:7px 12px}nav button:before{font-size:14px}nav button.active{font-size:11px;gap:7px}main{padding:16px 12px 45px}main>section,.card{min-width:0}.workspace-head{margin-bottom:16px;padding:22px 20px;border-radius:18px}.workspace-head h2{font-size:32px}.workspace-head p{font-size:12.5px}.controls,.toolbar{padding:10px}.controls .grp{width:100%;justify-content:space-between}.seg{max-width:100%;overflow-x:auto}.grid{grid-template-columns:1fr}.card{overflow:hidden;border-radius:15px;padding:16px}table{display:block;max-width:100%;overflow-x:auto}table thead,table tbody{display:table;width:max-content;min-width:100%;table-layout:auto}.lrow{grid-template-columns:20px 1.5fr .8fr auto;gap:8px}.lrow>div:nth-child(3),.lrow>div:nth-child(5),.lrow>div:nth-child(6),.lrow.lhead>span:nth-child(3),.lrow.lhead>span:nth-child(5),.lrow.lhead>span:nth-child(6){display:none}.modal{padding:20px;border-radius:18px}#bell-dropdown{position:fixed;left:12px;right:12px;top:72px;width:auto}.auto-update-controls{grid-template-columns:1fr;padding:11px}.auto-update-idle{height:auto;padding:7px 2px}.auto-update-actions .btn{flex:1 1 145px}.auto-update-actions .sub{flex-basis:100%}.auto-update-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.memory-modes{grid-template-columns:1fr}.memory-actions .btn{flex:1 1 135px}.voice-form-grid{grid-template-columns:1fr}.voice-field.wide{grid-column:auto}.voice-list{grid-template-columns:1fr}.voice-audio-row .voice-field,.voice-audio-row .voice-field.model{min-width:100%}}
   @media(max-width:600px){.resource-studio-table thead,.resource-studio-table tbody{min-width:720px}}
@@ -851,10 +852,12 @@
       <p class="muted" style="font-size:13px;margin-bottom:10px">
         Enter a Tailscale (or LAN) IP and a name. Added studios are saved <b>permanently</b> and join the worker pools.
       </p>
-      <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <select id="d-profile" class="selctl hardware-profile-select" onchange="selectRegistrationHardware()"><option value="">Choose hardware profile…</option></select>
         <input id="d-host" placeholder="100.x.y.z" style="max-width:200px">
-        <input id="d-name" placeholder="machine name (e.g. mac-studio)" style="max-width:240px">
+        <input id="d-name" placeholder="stable machine ID" style="max-width:260px">
       </div>
+      <div id="d-profile-hint" class="hardware-profile-hint">Choose a profile to fill a consistent machine ID. You can still edit the ID before registering.</div>
       <div style="display:flex;gap:16px;flex-wrap:wrap;margin:4px 0 12px;align-items:center">
         <span class="muted" style="font-size:12px">Studios it runs:</span>
         <label class="wd" style="margin:0"><input type="checkbox" class="d-mod" value="image" checked> 🎨 image</label>
@@ -869,6 +872,17 @@
         <button class="btn" onclick="addMachineManual()" style="white-space:nowrap">Add manually (offline OK)</button>
       </div>
       <div class="sub" id="d-result" style="margin-top:8px"></div>
+      <details class="hardware-profile-builder">
+        <summary>Add another hardware profile to this list</summary>
+        <div class="fields">
+          <label>Machine type<input id="hp-type" placeholder="Mac Studio"></label>
+          <label>Apple chip<input id="hp-chip" placeholder="M4"></label>
+          <label>Unified RAM<input id="hp-memory" type="number" min="4" max="512" placeholder="64"></label>
+          <label>Units planned<input id="hp-units" type="number" min="0" max="10000" value="0"></label>
+          <button class="btn" onclick="addHardwareProfile()">Add profile</button>
+        </div>
+        <div class="sub" id="hp-result" style="margin-top:8px"></div>
+      </details>
     </div>
 
     <div class="card section">
@@ -881,7 +895,7 @@
       </div>
       <p class="muted" style="font-size:12px;margin:-4px 0 12px">Click a Studio to pause or resume <b>new jobs for only that app</b>. Running work finishes safely. The machine switch remains the master control. <b>Refetch</b> adds Studios that came online later.</p>
       <div class="sub" id="mach-refetch-status" style="margin-bottom:8px"></div>
-      <table><thead><tr><th class="num">#</th><th>Machine</th><th>Address</th><th>Studios</th><th></th></tr></thead><tbody id="mach-body"></tbody></table>
+      <table><thead><tr><th class="num">#</th><th>Machine</th><th>Hardware profile</th><th>Address</th><th>Studios</th><th></th></tr></thead><tbody id="mach-body"></tbody></table>
     </div>
 
     <div class="card section">
@@ -1234,6 +1248,8 @@ function markWhatsNewSeen() {
 }
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeWhatsNew(); });
 let machineLabels = {};                       // machine-key -> friendly name
+let hardwareProfiles = [];
+let machineHardwareAssignments = {};
 const MOD_ORDER = ["image", "chat", "voice", "music", "video", "render"];
 const mlabel = (m) => machineLabels[m] || m;  // display name, fallback to key
 async function renameMachine(m) {
@@ -3632,6 +3648,77 @@ async function loadAccess() {
     <td><button class="btn" onclick="navigator.clipboard.writeText('${jsq(a.url)}')">Copy</button></td></tr>`).join("") || `<tr><td colspan="3" class="empty">No non-loopback interfaces</td></tr>`;
   if (r.token) { $("#acc-token-wrap").style.display = "block"; $("#acc-token").textContent = r.token; $("#acc-copy").onclick = () => navigator.clipboard.writeText(r.token); }
 }
+function hardwareProfileOptions(selected = "") {
+  return `<option value="">Not assigned</option>` + hardwareProfiles.map(profile =>
+    `<option value="${esc(profile.id)}"${profile.id === selected ? " selected" : ""}>${esc(profile.display_name)}</option>`
+  ).join("");
+}
+async function loadHardwareProfiles() {
+  const data = await api("/api/hub/registry/hardware-profiles").then(r => r.json()).catch(() => null);
+  if (!data) return;
+  hardwareProfiles = data.profiles || [];
+  machineHardwareAssignments = data.assignments || {};
+  const select = $("#d-profile"), selected = select?.value || "";
+  if (select) {
+    select.innerHTML = `<option value="">Choose hardware profile…</option>` + hardwareProfiles.map(profile =>
+      `<option value="${esc(profile.id)}"${profile.id === selected ? " selected" : ""}>${esc(profile.display_name)} · ${profile.assigned_units}/${profile.planned_units || "—"} assigned</option>`
+    ).join("");
+  }
+  selectRegistrationHardware(false);
+  renderMachines();
+}
+function selectRegistrationHardware(fillId = true) {
+  const select = $("#d-profile"), input = $("#d-name"), hint = $("#d-profile-hint");
+  if (!select || !input || !hint) return;
+  const profile = hardwareProfiles.find(row => row.id === select.value);
+  const previous = input.dataset.profileSuggestion || "";
+  if (!profile) {
+    hint.textContent = "Choose a profile to fill a consistent machine ID. You can still edit the ID before registering.";
+    input.dataset.profileSuggestion = "";
+    return;
+  }
+  if (fillId && (!input.value.trim() || input.value.trim() === previous)) input.value = profile.suggested_machine_id;
+  input.dataset.profileSuggestion = profile.suggested_machine_id;
+  const capacity = profile.planned_units
+    ? `${profile.assigned_units}/${profile.planned_units} planned units assigned`
+    : `${profile.assigned_units} assigned`;
+  hint.textContent = `${profile.machine_type} · ${profile.chip} · ${profile.memory_gb} GB · ${capacity}. Suggested ID: ${profile.suggested_machine_id}`;
+}
+async function assignMachineHardware(machine, profileId) {
+  const response = await api(`/api/hub/registry/machines/${encodeURIComponent(machine)}/hardware-profile`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ hardware_profile_id: profileId || null }),
+  }).catch(() => null);
+  if (!response?.ok) {
+    const error = response ? await response.json().catch(() => ({})) : {};
+    alert(error.detail || "Hardware profile could not be saved.");
+    await loadHardwareProfiles();
+    return;
+  }
+  await refresh();
+  await loadHardwareProfiles();
+}
+async function addHardwareProfile() {
+  const type = $("#hp-type").value.trim(), chip = $("#hp-chip").value.trim().toUpperCase();
+  const memory = Number($("#hp-memory").value), units = Number($("#hp-units").value || 0);
+  const result = $("#hp-result");
+  if (!type || !chip || !Number.isInteger(memory)) { result.textContent = "Enter machine type, Apple chip, and whole-number RAM."; return; }
+  const typeSlug = type.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const id = `${typeSlug}-${chip.toLowerCase()}-${memory}gb`;
+  const machinePrefix = id.replace(/^mac-mini-/, "macmini-");
+  result.textContent = "Adding profile…";
+  const response = await api("/api/hub/registry/hardware-profiles", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, display_name: `${type} ${chip} · ${memory} GB`, machine_type: type,
+      machine_prefix: machinePrefix, chip, memory_gb: memory, planned_units: units }),
+  }).catch(() => null);
+  const data = response ? await response.json().catch(() => ({})) : {};
+  if (!response?.ok) { result.textContent = data.detail || "Profile could not be added."; return; }
+  result.textContent = `${data.profile.display_name} added to the reusable list.`;
+  await loadHardwareProfiles();
+  $("#d-profile").value = data.profile.id;
+  selectRegistrationHardware();
+}
 let machSort = localStorage.getItem("mach_sort") || "status";
 $("#mach-sort").value = machSort;
 $("#mach-sort").onchange = e => { machSort = e.target.value; localStorage.setItem("mach_sort", machSort); loadMachines(); };
@@ -3674,11 +3761,13 @@ function renderMachines() {
     const label = mlabel(e.m);
     const named = label !== e.m;
     const enabled = mstat[e.m] ? mstat[e.m].enabled !== false : true;
+    const profile = mstat[e.m]?.hardware_profile || hardwareProfiles.find(row => row.id === machineHardwareAssignments[e.m]) || null;
     const disBadge = enabled ? "" : ' <span class="pill warn">⏸ disabled — no jobs</span>';
     const toggle = `<button class="btn${enabled ? " stop" : ""}" onclick="toggleMachine('${jsq(e.m)}', ${enabled ? "false" : "true"})">${enabled ? "Disable" : "Enable"}</button>`;
     return `<tr style="${enabled ? "" : "opacity:.62"}">
     <td class="num"><span class="numbadge">${i + 1}</span></td>
     <td><b>${esc(label)}</b>${named ? ` <span class="sub">(${esc(e.m)})</span>` : ""}${e.m === "local" ? ' <span class="sub">· this Mac</span>' : ""}${disBadge}<br><span class="sub">${e.up}/${e.total} up</span></td>
+    <td><div class="machine-hardware"><b>${profile ? esc(profile.display_name) : "Profile needed"}</b><select class="selctl" aria-label="Hardware profile for ${esc(label)}" onchange="assignMachineHardware('${jsq(e.m)}', this.value)">${hardwareProfileOptions(profile?.id || "")}</select></div></td>
     <td class="sub">${esc(e.host)}${peerBadge(e.m)}</td>
     <td><div class="studio-schedules">${e.list.map(s => {
       const accepting = s.enabled !== false;
@@ -3719,6 +3808,7 @@ async function toggleStudio(id, enabled) {
 }
 async function loadMachines() {
   if (!lastSummary) { await pollOnce(); }
+  if (!hardwareProfiles.length) { await loadHardwareProfiles(); }
   renderMachines();     // renders from the summary; also refreshed live by applySummary
 }
 async function removeMachine(m) {
@@ -3779,21 +3869,23 @@ async function refetchAllMachines() {
 }
 function checkedModalities() { return [...document.querySelectorAll(".d-mod:checked")].map(c => c.value); }
 async function discoverMachine() {
-  const host = $("#d-host").value.trim();
+  const host = $("#d-host").value.trim(), profileId = $("#d-profile").value;
+  if (!profileId) { $("#d-result").textContent = "choose the machine's hardware profile"; return; }
   if (!host) { $("#d-result").textContent = "enter an IP"; return; }
   $("#d-result").textContent = "probing " + host + "…";
-  const r = await api("/api/hub/registry/discover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ host, machine: $("#d-name").value.trim() || undefined }) }).then(x => x.json()).catch(e => ({ note: String(e) }));
+  const r = await api("/api/hub/registry/discover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ host, machine: $("#d-name").value.trim() || undefined, hardware_profile_id: profileId }) }).then(x => x.json()).catch(e => ({ note: String(e) }));
   $("#d-result").textContent = r.found?.length ? `found ${r.found.map(f => f.modality).join(", ")} — ${r.registered} newly added (saved permanently)` : (r.note || r.detail || "nothing answered — if the machine is off, use “Add manually” instead");
-  loadMachines(); refresh();
+  loadHardwareProfiles(); loadMachines(); refresh();
 }
 async function addMachineManual() {
-  const host = $("#d-host").value.trim(); const modalities = checkedModalities();
+  const host = $("#d-host").value.trim(), profileId = $("#d-profile").value; const modalities = checkedModalities();
+  if (!profileId) { $("#d-result").textContent = "choose the machine's hardware profile"; return; }
   if (!host) { $("#d-result").textContent = "enter an IP"; return; }
   if (!modalities.length) { $("#d-result").textContent = "check at least one studio"; return; }
   $("#d-result").textContent = "saving " + host + "…";
-  const r = await api("/api/hub/registry/add", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ host, machine: $("#d-name").value.trim() || undefined, modalities }) }).then(x => x.json()).catch(e => ({ detail: String(e) }));
+  const r = await api("/api/hub/registry/add", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ host, machine: $("#d-name").value.trim() || undefined, modalities, hardware_profile_id: profileId }) }).then(x => x.json()).catch(e => ({ detail: String(e) }));
   $("#d-result").textContent = r.registered != null ? `added ${r.registered} studio(s) for ${r.machine} — saved; they'll activate when online` : (r.detail || "failed");
-  loadMachines(); refresh();
+  loadHardwareProfiles(); loadMachines(); refresh();
 }
 
 // ── live updates (SSE) with a polling fallback ─────────────────────────────

@@ -28,6 +28,8 @@ hub_state.json
 .fleet_token
 machine_labels.json
 machine_flags.json
+hardware_profiles.json
+machine_hardware_profiles.json
 controller_settings.json
 .controller_database_url
 uploads/
