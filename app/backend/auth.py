@@ -33,7 +33,8 @@ PASSWORD_FILE = DATA_DIR / ".hub_password.json"
 SESSIONS_FILE = DATA_DIR / ".hub_sessions.json"
 
 # Paths any client may hit without a token.
-PUBLIC_PATHS = {"/", "/api/health", "/api/version", "/api/auth/status",
+PUBLIC_PATHS = {"/", "/api/health", "/api/version", "/health/live",
+                "/health/ready", "/health/capacity", "/api/auth/status",
                 "/api/auth/login", "/api/auth/logout"}
 COOKIE_NAME = "kh_hub_token"
 SESSION_COOKIE_NAME = "kh_hub_session"

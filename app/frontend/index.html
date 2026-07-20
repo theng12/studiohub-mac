@@ -722,6 +722,27 @@
 
   <!-- REMOTE -->
   <section id="tab-remote" class="hide">
+    <div class="card jform section" id="controller-card">
+      <div class="top"><span class="emoji">🧠</span><h3>Controller role &amp; site</h3><span id="controller-state" class="pill">Loading</span></div>
+      <p class="muted" style="font-size:13px;margin-bottom:12px">The same Studio Hub software runs everywhere. This Hub can remain in compatible Standalone mode, become this site's Controller, or act only as an Agent for its local Studios. PostgreSQL shadow mode copies heartbeats and job state without replacing the proven local queue yet.</p>
+      <div class="auto-update-controls">
+        <label class="field-label">Role<select class="selctl" id="controller-role"><option value="standalone">Standalone (compatible)</option><option value="controller">Controller</option><option value="agent">Agent only</option></select></label>
+        <label class="field-label">Site ID<input id="controller-site-id" placeholder="phnom-penh-1"></label>
+        <label class="field-label">Site name<input id="controller-site-name" placeholder="Phnom Penh · Site 1"></label>
+        <label class="field-label">Controller / Hub ID<input id="controller-id" placeholder="controller-pp-a"></label>
+        <label class="field-label">Database stage<select class="selctl" id="controller-db-mode"><option value="off">Local SQLite only</option><option value="shadow">PostgreSQL shadow migration</option></select></label>
+        <label class="field-label">PostgreSQL URL<input id="controller-db-url" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved private URL"></label>
+      </div>
+      <label class="wd" style="margin:4px 0 0"><input type="checkbox" id="controller-db-clear"> Remove the saved PostgreSQL URL</label>
+      <div class="actions auto-update-actions">
+        <button class="btn primary" id="controller-save" onclick="saveController()">Save &amp; initialize</button>
+        <button class="btn" id="controller-check" onclick="checkController()">Check database now</button>
+        <span class="sub" id="controller-message" role="status" aria-live="polite"></span>
+      </div>
+      <div class="auto-update-facts" id="controller-facts"></div>
+      <details class="tx-items"><summary class="sub">Migration safety</summary><p class="sub" style="margin-top:8px">This release creates the shared schema and publishes controller, machine, Studio, capacity, and shadow job state. SQLite remains authoritative and global job claiming is intentionally disabled until lease renewal, fencing-token rejection, and failover reconciliation are qualified.</p></details>
+    </div>
+
     <div class="card section">
       <div class="top"><span class="emoji">🌐</span><h3>Reach this Hub from other devices</h3></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
@@ -925,6 +946,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.53.0", date: "2026-07-20", items: [
+    "Studio Hub can now be configured as a Standalone Hub, site Controller, or Agent using the same release on every Mac.",
+    "The first PostgreSQL migration stage publishes heartbeats, capacity, fleet inventory, and shadow job state while SQLite safely remains authoritative.",
+    "New live, ready, and capacity health endpoints prepare GenStudio for health-aware site routing; global claims stay locked until lease and fencing qualification.",
+  ] },
   { v: "1.52.0", date: "2026-07-20", items: [
     "Pause or resume Image, Voice, Chat, Music, Video, or Render scheduling independently on each Mac from Remote → Registered machines.",
     "Running work finishes safely, monitoring and updates stay online, and the machine-wide switch remains the master control.",
@@ -1370,13 +1396,16 @@ document.querySelectorAll("nav button").forEach(btn => {
     if (btn.dataset.tab === "voices") loadSharedVoices();
     if (btn.dataset.tab === "memory") loadFleetMemory();
     if (btn.dataset.tab === "updates") loadAutoUpdates();
-    if (btn.dataset.tab === "remote") { loadAccess(); loadMachines(); loadAlerts(); loadMaintenance(); }
+    if (btn.dataset.tab === "remote") { loadController(); loadAccess(); loadMachines(); loadAlerts(); loadMaintenance(); }
     if (btn.dataset.tab === "jobs") { loadJobModels(); loadBatches(); loadTranscriptionSettings(); loadFleetStorage(); selectJobKind(activeJobKind); }
     if (btn.dataset.tab === "assets") loadAssets();
     if (btn.dataset.tab === "stats") loadStats();
     if (btn.dataset.tab === "resources") { loadSpark(); renderResources(lastSummary); }
   };
 });
+$("#controller-role").onchange = event => {
+  if (event.target.value !== "controller") $("#controller-db-mode").value = "off";
+};
 updatePageHeading("overview");
 
 // ── shared voice library ────────────────────────────────────────────────
@@ -2707,6 +2736,76 @@ document.addEventListener("click", (ev) => {
   if (dd && !dd.classList.contains("hide") && !ev.target.closest("#bell-dropdown") && ev.target.id !== "alert-bell") dd.classList.add("hide");
 });
 
+let controllerData = null;
+function renderController(data, hydrate = true) {
+  if (!data) return;
+  controllerData = data;
+  const settings = data.settings || {}, runtime = data.runtime || {}, ready = data.readiness || {};
+  if (hydrate) {
+    $("#controller-role").value = settings.role || "standalone";
+    $("#controller-site-id").value = settings.site_id || "local-site";
+    $("#controller-site-name").value = settings.site_name || "Local site";
+    $("#controller-id").value = settings.controller_id || "";
+    $("#controller-db-mode").value = settings.database_mode || "off";
+    $("#controller-db-url").value = "";
+    $("#controller-db-clear").checked = false;
+  }
+  const state = $("#controller-state");
+  const connected = runtime.connected === true;
+  state.className = `pill ${ready.ready ? "ok" : "err"}`;
+  state.textContent = settings.role === "agent" ? "agent · local execution" :
+    settings.database_mode === "shadow" ? (connected ? "controller · shadow connected" : "controller · database needed") :
+    `${settings.role || "standalone"} · local queue`;
+  const facts = [
+    ["Role", settings.role || "standalone"],
+    ["Site", settings.site_id || "—"],
+    ["Hub ID", settings.controller_id || "—"],
+    ["Database", settings.database_configured ? (runtime.connected ? "connected" : "configured") : "not configured"],
+    ["Job authority", settings.sqlite_authoritative ? "local SQLite" : "PostgreSQL"],
+    ["Global claims", settings.global_job_claiming ? "enabled" : "safely locked"],
+  ];
+  $("#controller-facts").innerHTML = facts.map(([name, value]) =>
+    `<div class="auto-update-fact" title="${esc(value)}"><span>${esc(name)}</span><b>${esc(value)}</b></div>`).join("");
+  const message = $("#controller-message");
+  if (runtime.last_error) message.textContent = runtime.last_error;
+  else if (runtime.last_success_at) message.textContent = `PostgreSQL schema v${runtime.schema_version || 1} verified · heartbeat ${fmtAgo(runtime.last_success_at)}`;
+  else if (settings.database_endpoint) message.textContent = `${settings.database_endpoint} · ${settings.database_mode === "off" ? "shadow mode is off" : "waiting for first check"}`;
+  else message.textContent = "Local compatibility mode; add PostgreSQL when the managed database is ready.";
+}
+async function loadController() {
+  const data = await api("/api/hub/controller").then(r => r.json()).catch(() => null);
+  if (data) renderController(data, true);
+}
+async function saveController() {
+  const role = $("#controller-role").value;
+  if (role === "agent" && !confirm("Switch this Hub to Agent mode?\nIt will keep managing local Studios but refuse new customer job submissions. Existing jobs can finish.")) return;
+  const button = $("#controller-save"), message = $("#controller-message");
+  button.disabled = true; button.setAttribute("aria-busy", "true"); message.textContent = "Saving identity and checking the control plane…";
+  const payload = {
+    role,
+    site_id: $("#controller-site-id").value.trim(),
+    site_name: $("#controller-site-name").value.trim(),
+    controller_id: $("#controller-id").value.trim(),
+    database_mode: $("#controller-db-mode").value,
+    database_url: $("#controller-db-url").value.trim() || null,
+    clear_database_url: $("#controller-db-clear").checked,
+  };
+  const response = await api("/api/hub/controller", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }).catch(() => null);
+  const data = response ? await response.json().catch(() => ({})) : {};
+  button.disabled = false; button.removeAttribute("aria-busy");
+  if (!response?.ok) { message.textContent = data.detail || "Controller settings could not be saved."; return; }
+  renderController(data, true); await refresh();
+}
+async function checkController() {
+  const button = $("#controller-check"), message = $("#controller-message");
+  button.disabled = true; button.setAttribute("aria-busy", "true"); message.textContent = "Checking PostgreSQL, schema, and heartbeat…";
+  const response = await api("/api/hub/controller/check", { method: "POST" }).catch(() => null);
+  const data = response ? await response.json().catch(() => ({})) : null;
+  button.disabled = false; button.removeAttribute("aria-busy");
+  if (!data) { message.textContent = "Hub is unreachable."; return; }
+  renderController(data, false);
+}
+
 async function loadFleet() {
   const r = await api("/api/hub/fleet").then(x => x.json()).catch(() => null);
   if (!r) return;
@@ -3707,7 +3806,10 @@ function applySummary(sum) {
   // need to switch away and back for fresh data.
   if (vis("resources")) renderResources(sum);
   if (vis("jobs")) renderBatches(sum.jobs);
-  if (vis("remote")) { renderMachines(); renderFleetStatus(); }
+  if (vis("remote")) {
+    renderMachines(); renderFleetStatus();
+    if (sum.control_plane) renderController(sum.control_plane, false);
+  }
   updateBell(sum.alerts_active || 0);
   $("#last-refresh").textContent = _liveMode + " · " + new Date().toLocaleTimeString();
 }

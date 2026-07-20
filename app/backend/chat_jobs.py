@@ -64,6 +64,8 @@ def _save(batch: dict) -> None:
             (batch["id"], batch["created_at"], batch["updated_at"], finished,
              batch["idempotency_key"], json.dumps(batch)),
         )
+    from . import control_plane
+    control_plane.queue_shadow_job("chat", batch)
 
 
 def _load_rows(where: str = "", params: tuple = ()) -> list[dict]:

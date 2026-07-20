@@ -10,6 +10,26 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.53.0] — 2026-07-20
+
+### Added — controller backend and PostgreSQL migration foundation
+
+- Added explicit Standalone, Controller, and Agent roles using the same Studio
+  Hub build. Agent Hubs continue local monitoring, lifecycle, gateway, memory,
+  storage, and update duties while refusing new customer-owned queue submissions.
+- Added durable site/controller identity and a modern setup panel under Remote.
+  PostgreSQL credentials are kept in a separate owner-only file and are never
+  returned by the API or included in normal settings.
+- Added `/health/live`, `/health/ready`, and `/health/capacity` for future
+  GenStudio site routing, plus authenticated controller setup/check endpoints.
+- Added the first PostgreSQL schema for sites, controllers, machines, Studios,
+  jobs, items, attempts, leases, fencing tokens, and audit events.
+- Added a safe shadow migration runtime that publishes ten-second heartbeats,
+  fleet inventory/capacity, and generation, Chat, and transcription job state.
+  SQLite remains authoritative; PostgreSQL outages cannot fail local job saves.
+- Global job claiming remains deliberately locked until lease renewal,
+  agent-side fencing, reconciliation, and failure drills are implemented.
+
 ## [1.52.0] — 2026-07-20
 
 ### Added — per-Studio fleet scheduling controls

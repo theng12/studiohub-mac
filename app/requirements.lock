@@ -30,6 +30,10 @@ idna==3.18
     #   httpx
 psutil==7.2.2
     # via -r app/requirements.txt
+psycopg==3.3.4
+    # via -r app/requirements.txt
+psycopg-binary==3.3.4
+    # via psycopg
 pydantic==2.13.4
     # via fastapi
 pydantic-core==2.46.4
@@ -44,6 +48,7 @@ typing-extensions==4.16.0
     # via
     #   anyio
     #   fastapi
+    #   psycopg
     #   pydantic
     #   pydantic-core
     #   starlette

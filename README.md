@@ -30,6 +30,10 @@ The Hub runs on fixed port **47873** and provides:
   transcript to every Voice Studio Mac. Offline machines catch up automatically.
 - **Host-aware registry** — studios on other machines (LAN/Tailscale) can be added
   via `studios.json`, the foundation for multi-machine federation and Swarm Batch.
+- **Controller migration foundation** — the same Hub release can run as a
+  standalone Hub, site controller, or agent. Optional PostgreSQL shadow mode
+  publishes heartbeats, fleet capacity, inventory, and job state while SQLite
+  remains the safe authority until distributed leases and fencing are qualified.
 - **Machine-level work leases** — image generation and final rendering take turns
   on each Mac without pausing active work. Waiting render jobs are assigned first,
   with faster M4 16 GB workers preferred when available.
@@ -193,6 +197,9 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/auto-updates/update-idle` | Start a staggered, health-gated update for selected idle sibling Studios |
 | `POST /api/hub/auto-updates/jobs/{id}/retry` | Retry only the failed apps from a saved automatic fleet update |
 | `GET /api/hub/studios` | Registry + live status per studio |
+| `GET /health/live` · `GET /health/ready` · `GET /health/capacity` | Controller liveness, database-aware readiness, and non-secret routing capacity |
+| `GET /api/hub/controller` · `PUT /api/hub/controller` | Read or configure this Hub's `standalone`, `controller`, or `agent` role, site identity, and migration stage |
+| `POST /api/hub/controller/check` | Initialize/verify the PostgreSQL controller schema and publish an immediate heartbeat |
 | `POST /api/hub/registry/studios/{id}/enabled` | Pause/resume new jobs for one Studio with `{"enabled": false/true}`; running work and the process are untouched |
 | `GET /api/hub/health` | Aggregate: totals + per-studio statuses |
 | `GET /api/hub/catalog` | Raw per-studio catalog rows (annotated `hub_cached`, `hub_machine`). Query: `q`, `modality`, `downloaded`, `cloud`, `force` |
@@ -518,6 +525,20 @@ trusted value and then verifies the replacement. To repair a rejected value,
 open that Mac's Hub locally, paste the primary value, save it once, and
 restart/update Studios that still show an authentication warning. The value is
 sent only in headers or an HttpOnly same-site session—never in a URL.
+
+### Controller and agent roles
+
+All Macs install the same Studio Hub repository and version. Configure the
+current primary as a `controller`; configure worker-node Hubs as `agent`. Agent
+Hubs remain the local authority for their Studios but reject new customer queue
+submissions so two control planes cannot accidentally own the same work.
+
+The first PostgreSQL migration stage is intentionally shadow-only: it creates the
+shared schema and publishes controller/site heartbeats, fleet inventory,
+capacity, and job snapshots without changing dispatch ownership. See
+[`CONTROLLER_ARCHITECTURE.md`](CONTROLLER_ARCHITECTURE.md) for setup, environment
+variables, safety boundaries, and the lease/fencing qualification required before
+active-active claiming is enabled.
 
 ## Multiple Macs (registry)
 

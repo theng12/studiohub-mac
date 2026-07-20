@@ -26,7 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, fleet_ops, fleet_storage, gateway, job_storage,
+from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, control_plane, fleet_ops, fleet_storage, gateway, job_storage,
                ledger, metrics, peers, recipes, shared_voices, transcription_jobs)
 from .auto_update import UpdateError
 from .auto_update_config import create_updater
@@ -95,6 +95,16 @@ class FleetStoragePolicyBody(BaseModel):
     retention_days: int = 3
     max_gb: float = Field(default=80, ge=1, le=1000)
 
+
+class ControllerSettingsBody(BaseModel):
+    role: str
+    site_id: str
+    site_name: str
+    controller_id: str
+    database_mode: str = "off"
+    database_url: str | None = Field(default=None, max_length=4096)
+    clear_database_url: bool = False
+
 # Give our loggers a handler regardless of how uvicorn configures logging, so
 # structured warnings/alerts actually reach the service log.
 import logging as _logging
@@ -147,6 +157,7 @@ fleet_auto_updates = FleetAutoUpdates(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     monitor.start()
+    await control_plane.runtime.start(monitor, _app_version())
     fleet_ops.start_published_version_monitor()
     resumed_updates = fleet_auto_updates.resume_pending()
     if resumed_updates:
@@ -169,6 +180,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await fleet_ops.stop_published_version_monitor()
+        await control_plane.runtime.stop()
         await fleet_storage.stop()
         await shared_voices.stop()
         await chat_jobs.stop()
@@ -251,7 +263,30 @@ def auth_logout(request: Request):
 @app.get("/api/health")
 def health():
     return {"ok": True, "version": "0.1.0", "app_version": _app_version(),
-            "process_title": PROCESS_TITLE, "process_title_applied": PROCESS_TITLE_APPLIED}
+            "process_title": PROCESS_TITLE, "process_title_applied": PROCESS_TITLE_APPLIED,
+            "control_plane": control_plane.runtime.readiness()}
+
+
+@app.get("/health/live")
+def controller_liveness():
+    """Load-balancer liveness: this process can answer HTTP."""
+    settings = control_plane.public_settings()
+    return {"live": True, "app_version": _app_version(),
+            "role": settings["role"], "site_id": settings["site_id"],
+            "controller_id": settings["controller_id"]}
+
+
+@app.get("/health/ready")
+def controller_readiness():
+    """Controller readiness. Shadow mode requires its configured PostgreSQL."""
+    result = control_plane.runtime.readiness()
+    return JSONResponse(result, status_code=200 if result["ready"] else 503)
+
+
+@app.get("/health/capacity")
+def controller_capacity():
+    """Non-secret capacity signal for GenStudio's future site router."""
+    return control_plane.runtime.capacity()
 
 
 # ── Update auto-check (surfaced by the web-UI banner; mirrors the studios) ──
@@ -350,6 +385,37 @@ def _release_notes() -> list[dict]:
 @app.get("/api/releases")
 def releases():
     return {"current_version": _app_version(), "releases": _release_notes()}
+
+
+# ── controller / agent migration foundation ───────────────────────────────
+@app.get("/api/hub/controller")
+def controller_status():
+    return {
+        "settings": control_plane.public_settings(),
+        "runtime": control_plane.runtime.status(),
+        "readiness": control_plane.runtime.readiness(),
+        "capacity": control_plane.runtime.capacity(),
+    }
+
+
+@app.put("/api/hub/controller")
+async def controller_save_settings(body: ControllerSettingsBody):
+    try:
+        control_plane.save_settings(
+            body.model_dump(exclude={"database_url", "clear_database_url"}),
+            new_database_url=body.database_url,
+            clear_database_url=body.clear_database_url,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    # Return an immediate, truthful database/schema result rather than making
+    # the operator wait for the next ten-second heartbeat.
+    return await control_plane.runtime.check_now()
+
+
+@app.post("/api/hub/controller/check")
+async def controller_check_database():
+    return await control_plane.runtime.check_now()
 
 
 @app.get("/api/auto-update/status")
@@ -698,6 +764,11 @@ def _build_summary() -> dict:
         # every remote machine from the summary (and thus the live dashboard).
         "resources": resources,
         "cloud_providers": _cloud_provider_inventory(resources),
+        "control_plane": {
+            "settings": control_plane.public_settings(),
+            "runtime": control_plane.runtime.status(),
+            "readiness": control_plane.runtime.readiness(),
+        },
         "watchdog": metrics.watchdog_status(),
         "jobs": [broker.batch_summary(b) for b in broker.batches.values()],
         "alerts_active": active_alerts,
@@ -841,6 +912,8 @@ def hub_broadcast_env(body: dict):
 # ── job broker / Swarm Batch ───────────────────────────────────────────────
 @app.post("/api/hub/jobs")
 def hub_submit_jobs(envelope: dict):
+    if not control_plane.accepts_customer_jobs():
+        raise HTTPException(409, "This Hub is in agent mode; submit customer jobs to a controller.")
     result = broker.submit_batch(envelope)
     if "error" in result:
         raise HTTPException(400, result["error"])
@@ -1190,6 +1263,8 @@ async def hub_create_transcription_job(
     episode: str | None = Form(None),
 ):
     """Spool an episode upload and immediately enqueue its chapters."""
+    if not control_plane.accepts_customer_jobs():
+        raise HTTPException(409, "This Hub is in agent mode; submit transcription to a controller.")
     batch, duplicate = await transcription_jobs.create_batch(
         files, item_ids, model, language, word_timestamps, label, project, episode)
     transcription_jobs.start_dispatcher(monitor)
@@ -1321,6 +1396,8 @@ def hub_retry_transcription_job(batch_id: str):
 # ── saved Chat Studio packs ───────────────────────────────────────────────
 @app.post("/api/hub/chat/jobs")
 async def hub_create_chat_job(body: dict):
+    if not control_plane.accepts_customer_jobs():
+        raise HTTPException(409, "This Hub is in agent mode; submit Chat work to a controller.")
     batch, duplicate = chat_jobs.create_batch(body)
     chat_jobs.start_dispatcher(monitor)
     result = {"batch_id": batch["id"], "packs": len(batch["packs"]),
@@ -1415,6 +1492,8 @@ async def hub_transcribe(
     word_timestamps: bool = Form(False),
 ):
     """Backward-compatible one-file request, implemented through the queue."""
+    if not control_plane.accepts_customer_jobs():
+        raise HTTPException(409, "This Hub is in agent mode; submit transcription to a controller.")
     return await _run_single_transcription(file, model, language, word_timestamps)
 
 
@@ -1678,6 +1757,8 @@ def hub_stats(
 # ── recipes + director ─────────────────────────────────────────────────────
 @app.post("/api/hub/recipes/run")
 async def hub_run_recipe(body: dict):
+    if not control_plane.accepts_customer_jobs():
+        raise HTTPException(409, "This Hub is in agent mode; run recipes on a controller.")
     recipe = body.get("recipe")
     if not recipe:
         raise HTTPException(400, "recipe is required")
@@ -1704,6 +1785,8 @@ def hub_recipe_run(run_id: str):
 
 @app.post("/api/hub/director")
 async def hub_director(body: dict):
+    if not control_plane.accepts_customer_jobs():
+        raise HTTPException(409, "This Hub is in agent mode; run the director on a controller.")
     brief = body.get("brief")
     if not brief:
         raise HTTPException(400, "brief is required")
