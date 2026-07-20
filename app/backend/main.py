@@ -973,7 +973,10 @@ def hub_access(request: Request):
             })
     addresses.sort(key=lambda x: {"tailscale": 0, "lan": 1, "public": 2}[x["kind"]])
     out = {"addresses": addresses, "auth": "token required for non-loopback clients"}
-    if is_loopback(request):
+    owner_session = auth.valid_browser_session(
+        request.cookies.get(auth.SESSION_COOKIE_NAME)
+    )
+    if is_loopback(request) or owner_session:
         out["token"] = HUB_TOKEN
     return out
 
@@ -2028,10 +2031,13 @@ async def studio_lifecycle(studio_id: str, action: str):
 
 @app.get("/api/hub/fleet")
 def get_fleet(request: Request):
-    """Fleet-token status. The token itself is revealed only to loopback."""
+    """Fleet-token status. Reveal it only locally or to a signed-in owner."""
     token = peers.fleet_token()
     out = {"fleet_token_set": token is not None}
-    if is_loopback(request) and token:
+    owner_session = auth.valid_browser_session(
+        request.cookies.get(auth.SESSION_COOKIE_NAME)
+    )
+    if (is_loopback(request) or owner_session) and token:
         out["token"] = token
     return out
 

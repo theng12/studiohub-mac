@@ -221,6 +221,22 @@ def test_fleet_get_set(authed):
     assert stat.S_IMODE(peers.FLEET_TOKEN_FILE.stat().st_mode) == 0o600
 
 
+def test_owner_session_can_reveal_tokens_but_machine_token_cannot(app, token):
+    from starlette.testclient import TestClient
+    from backend import auth, peers
+
+    peers.set_fleet_token("owner-fleet-secret")
+    machine = TestClient(app, client=("100.66.3.3", 50000),
+                         headers={"X-Hub-Token": token})
+    assert "token" not in machine.get("/api/hub/access").json()
+    assert "token" not in machine.get("/api/hub/fleet").json()
+
+    owner = TestClient(app, client=("100.66.3.3", 50000))
+    owner.cookies.set(auth.SESSION_COOKIE_NAME, auth.create_browser_session())
+    assert owner.get("/api/hub/access").json()["token"] == token
+    assert owner.get("/api/hub/fleet").json()["token"] == "owner-fleet-secret"
+
+
 def test_fleet_save_rejects_ambiguous_short_credentials(authed):
     response = authed.post("/api/hub/fleet", json={"token": "short"})
     assert response.status_code == 400

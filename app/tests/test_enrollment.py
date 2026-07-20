@@ -214,6 +214,12 @@ def test_dashboard_exposes_simple_setup_and_masks_secrets():
     assert 'class="card section setup-advanced"' in dashboard
     assert 'id="setup-enrollment-code" type="password"' in dashboard
     assert 'id="fleet-token" type="password"' in dashboard
+    assert 'id="fleet-reveal"' in dashboard
+    assert 'id="fleet-copy"' in dashboard
+    assert 'id="acc-reveal"' in dashboard
+    assert 'id="acc-copy"' in dashboard
+    assert "function toggleHubToken()" in dashboard
+    assert "function copyFleetToken()" in dashboard
     assert 'api("/api/hub/enrollment-codes"' in dashboard
     assert 'api("/api/hub/setup/join"' in dashboard
     assert "localStorage.setItem" not in dashboard[dashboard.index("function createEnrollmentCode"):dashboard.index("function renderController")]

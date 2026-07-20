@@ -10,6 +10,19 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.58.1] — 2026-07-20
+
+### Fixed — owner token visibility and copying
+
+- Added explicit **Reveal/Hide** and **Copy** controls for both the Hub token
+  and fleet token. Credentials remain masked by default and are never saved in
+  browser storage or written to logs.
+- Token copying now includes a safe fallback for private HTTP/Tailscale
+  dashboards where the browser Clipboard API is unavailable.
+- Remembered owner sessions may reveal these credentials over Tailscale, while
+  requests authenticated only with a Hub or fleet machine token still receive
+  status without either secret.
+
 ## [1.58.0] — 2026-07-20
 
 ### Added — simple private controller and agent enrollment
