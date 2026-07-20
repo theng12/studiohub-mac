@@ -294,10 +294,10 @@ class ControlPlaneRuntime:
         return {**self._status, "pending_job_snapshots": pending,
                 "pending_shadow_bytes": pending_bytes}
 
-    def capacity(self) -> dict:
+    def capacity(self, monitor_override=None) -> dict:
         from . import broker, chat_jobs, transcription_jobs
 
-        monitor = self._monitor
+        monitor = monitor_override or self._monitor
         registry = list(getattr(monitor, "registry", []) or [])
         statuses = getattr(monitor, "status", {}) or {}
         modalities: dict[str, dict] = {}
@@ -355,6 +355,19 @@ class ControlPlaneRuntime:
                 if shadow_enabled and not database_ready else None
             ),
         }
+
+    async def capability_snapshot(self, app_version: str, monitor_override=None) -> dict:
+        """Private GenStudio routing facts composed from existing local state."""
+        from .capabilities import build_snapshot
+
+        monitor = monitor_override or self._monitor
+        return await build_snapshot(
+            monitor,
+            app_version=app_version,
+            settings=public_settings(),
+            readiness=self.readiness(),
+            base_capacity=self.capacity(monitor),
+        )
 
     async def check_now(self) -> dict:
         settings = load_settings()

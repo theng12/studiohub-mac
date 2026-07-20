@@ -212,6 +212,27 @@ def presented_token(request: Request) -> str | None:
     return cookie.strip() if cookie else None
 
 
+def presented_machine_token(request: Request) -> str | None:
+    """Header-only credential for private service-to-service contracts."""
+    authorization = request.headers.get("authorization", "")
+    if authorization.lower().startswith("bearer "):
+        return authorization[7:].strip()
+    header = request.headers.get("x-hub-token")
+    return header.strip() if header else None
+
+
+def valid_machine_token(request: Request, hub_token: str) -> bool:
+    """Accept the Hub or fleet token; never a browser cookie or URL value."""
+    offered = presented_machine_token(request)
+    if not offered:
+        return False
+    if secrets.compare_digest(offered, hub_token):
+        return True
+    from . import peers
+    fleet = peers.fleet_token()
+    return bool(fleet and secrets.compare_digest(offered, fleet))
+
+
 def make_middleware(token: str):
     from . import peers
 

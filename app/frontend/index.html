@@ -960,6 +960,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.56.0", date: "2026-07-20", items: [
+    "GenStudio now has one private, authenticated, schema-versioned snapshot of site machines, hardware, workers, supported operations, models, controls, limits, revisions, and current capacity.",
+    "Capability telemetry is read-only and explicitly excludes customer prompts, generated content, credentials, cache paths, and global job ownership identifiers.",
+    "Studio Hub reports missing immutable model revisions honestly instead of inventing them, while SQLite remains the local scheduler and GenStudio remains the global authority.",
+  ]},
   { v: "1.55.0", date: "2026-07-20", items: [
     "Studio Hub now enforces the permanent GenStudio boundary: GenStudio owns global customer jobs, attempts, fencing, retries, billing, and cross-location routing; Hub owns only site-local execution.",
     "Externally assigned GenStudio job IDs, attempt IDs, idempotency identity, site, revisions, and fencing tokens are preserved as execution evidence with stale-fence and conflicting-replay rejection.",

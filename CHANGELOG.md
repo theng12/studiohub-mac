@@ -10,6 +10,34 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.56.0] — 2026-07-20
+
+### Added — private GenStudio site-capability contract
+
+- Added authenticated `GET /api/hub/capabilities`, schema
+  `studiohub.site-capabilities` version 1, for GenStudio's private site router.
+  It composes the existing health, capacity, registry, hardware-profile,
+  catalog, maintenance, and scheduler state without changing worker dispatch.
+- The snapshot reports controller readiness/drain state, physical machines,
+  registered hardware profiles, worker versions and availability, shared local
+  capacity, supported operations, sanitized model controls/limits, voice modes,
+  and immutable runtime revisions when workers actually report one.
+- Missing or mutable model revisions remain explicitly unqualified instead of
+  receiving a Hub-generated replacement. Current execution availability and
+  revision-pinning readiness are reported independently.
+- The contract requires a Hub or fleet token in an `Authorization: Bearer` or
+  `X-Hub-Token` header even on loopback. Browser sessions, cookies, and URL
+  tokens do not authenticate this machine-to-machine endpoint.
+
+### Safety
+
+- Capability output uses an explicit field allowlist. It cannot include cache
+  paths, credentials, customer prompts/text, generated content, artifacts,
+  GenStudio job/attempt IDs, idempotency keys, or fencing tokens.
+- GenStudio remains the global routing/job/billing/retry authority; SQLite
+  remains the site-local scheduler; PostgreSQL remains optional shadow evidence
+  only. No outbound connector, global claiming, or worker mutation was added.
+
 ## [1.55.0] — 2026-07-20
 
 ### Changed — permanent GenStudio architecture boundary

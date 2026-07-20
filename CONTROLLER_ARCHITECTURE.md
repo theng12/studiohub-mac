@@ -111,6 +111,9 @@ requests without the new metadata retain their current behavior.
 - `GET /health/ready` — site-execution readiness. An optional telemetry outage
   is reported as a warning and never removes a healthy local scheduler.
 - `GET /health/capacity` — non-secret site capacity for GenStudio routing.
+- `GET /api/hub/capabilities` — private, schema-versioned routing capability
+  snapshot. It requires a Hub/fleet token header even on loopback and reports
+  only allowlisted operational facts; no customer content or ownership IDs.
 - `GET /api/hub/controller` — authenticated role/site/shadow status.
 - `PUT /api/hub/controller` — save role, site, and optional shadow settings.
 - `POST /api/hub/controller/check` — verify the optional shadow schema and send
@@ -118,6 +121,12 @@ requests without the new metadata retain their current behavior.
 
 The existing `/api/health` and `/api/hub/summary` include the same boundary
 status for backward-compatible monitoring.
+
+The capability snapshot reports a model's immutable runtime revision only when
+the worker catalog supplies a full immutable hash. A missing or mutable
+revision is returned as `null` and marked unqualified for revision pinning.
+Studio Hub does not synthesize revisions, GenStudio IDs, idempotency keys, or
+fencing tokens.
 
 ## Configuration
 

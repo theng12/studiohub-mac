@@ -36,6 +36,9 @@ The Hub runs on fixed port **47873** and provides:
   billing, global retries, fencing, and cross-location routing. Optional
   PostgreSQL shadow mode publishes operational evidence only; SQLite remains
   permanently authoritative for Studio Hub's site-local scheduler.
+- **Private site-capability contract** — GenStudio can authenticate with the Hub
+  or fleet token and read one schema-versioned snapshot of machines, hardware,
+  workers, models, controls, limits, revisions, and truthful current capacity.
 - **Machine-level work leases** — image generation and final rendering take turns
   on each Mac without pausing active work. Waiting render jobs are assigned first,
   with faster M4 16 GB workers preferred when available.
@@ -200,6 +203,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/auto-updates/jobs/{id}/retry` | Retry only the failed apps from a saved automatic fleet update |
 | `GET /api/hub/studios` | Registry + live status per studio |
 | `GET /health/live` · `GET /health/ready` · `GET /health/capacity` | Controller liveness, site-execution readiness, and non-secret routing capacity; optional telemetry never gates readiness |
+| `GET /api/hub/capabilities` | Private schema-versioned GenStudio capability snapshot; requires a Hub/fleet token header even on loopback |
 | `GET /api/hub/controller` · `PUT /api/hub/controller` | Read or configure this Hub's `standalone`, `controller`, or `agent` role, site identity, and optional evidence-shadow mode |
 | `POST /api/hub/controller/check` | Verify the optional PostgreSQL evidence schema and publish an immediate heartbeat |
 | `POST /api/hub/registry/studios/{id}/enabled` | Pause/resume new jobs for one Studio with `{"enabled": false/true}`; running work and the process are untouched |
@@ -552,6 +556,38 @@ dispatch, safe local retry, and execution evidence. Its optional PostgreSQL
 integration is permanently shadow-only and cannot claim or transfer work. See
 [`CONTROLLER_ARCHITECTURE.md`](CONTROLLER_ARCHITECTURE.md) for setup, environment
 variables, external-attempt validation, and the permanent ADR-0007 boundary.
+
+### Private GenStudio capability snapshot
+
+GenStudio reads one current site snapshot composed from the Hub's existing
+health, registry, catalog, hardware, resource, and scheduler sources. Catalog
+reads use the existing monitor cache and read-only Studio catalog API. This
+endpoint never drains, dispatches, claims, or retries work:
+
+```bash
+curl "$HUB/api/hub/capabilities" \
+  -H "Authorization: Bearer $HUB_TOKEN"
+```
+
+`X-Hub-Token` is also accepted, and either this Hub's token or the shared fleet
+token may be used. Unlike the normal operator API, this machine-to-machine
+contract requires a header token even from loopback; browser sessions and
+cookies are not accepted.
+
+Schema `studiohub.site-capabilities`, version `1`, includes controller/site
+identity, machine hardware profiles, worker readiness and shared physical-Mac
+capacity, supported operations, and sanitized model controls. A model's
+`runtime_revision` is populated only when the Studio catalog reports a full
+immutable hash. Otherwise it remains `null` with
+`availability.revision_pinning_ready=false`; Studio Hub never invents a model
+revision.
+
+Capability telemetry never includes customer prompts/text, generated content,
+artifact paths, cache paths, credentials, GenStudio job or attempt IDs,
+idempotency keys, or fencing tokens.
+
+The complete stable field and availability semantics are documented in
+[`CAPABILITY_CONTRACT.md`](CAPABILITY_CONTRACT.md).
 
 ## Multiple Macs (registry)
 

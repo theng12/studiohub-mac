@@ -303,6 +303,18 @@ def controller_capacity():
     return control_plane.runtime.capacity()
 
 
+@app.get("/api/hub/capabilities")
+async def controller_capabilities(request: Request):
+    """Versioned private capability snapshot for GenStudio's site router."""
+    if not auth.valid_machine_token(request, HUB_TOKEN):
+        raise HTTPException(
+            401,
+            "Hub or fleet token required for the private capability snapshot.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return await control_plane.runtime.capability_snapshot(_app_version(), monitor)
+
+
 # ── Update auto-check (surfaced by the web-UI banner; mirrors the studios) ──
 import threading as _threading
 import time as _time
