@@ -216,4 +216,3 @@ GET above and must not submit, drain, restart, or alter workers or jobs.
 - GenStudio's existing billing, idempotency, attempt, fencing, retry, and asset
   behavior remains authoritative and unchanged except where it consumes these
   read-only routing facts.
-

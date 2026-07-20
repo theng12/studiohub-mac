@@ -11,7 +11,7 @@ location controller to GenStudio KH. It is routing input only. It does not
 transfer customer-job authority to Studio Hub.
 
 For a ready-to-use GenStudio implementation brief, see
-[`GENSTUDIO_CAPABILITY_HANDOFF.md`](GENSTUDIO_CAPABILITY_HANDOFF.md).
+[`studiohub_genstudio_integration.md`](studiohub_genstudio_integration.md).
 
 ## Authentication
 
