@@ -10,6 +10,24 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.57.1] — 2026-07-20
+
+### Fixed — exact model revision is enforced before worker assignment
+
+- GenStudio attempts with a pinned model revision now dispatch only to a worker
+  whose authenticated catalog advertises that exact immutable cached snapshot.
+  Missing, mutable, or different revisions leave the job safely queued for a
+  compatible worker instead of wasting compute and failing after generation.
+- The guard applies consistently to every Studio Hub local modality while
+  preserving the existing route for Story Studio and other legacy callers that
+  do not yet supply GenStudio execution identity.
+
+### Safety
+
+- Studio Hub still cannot invent or advance global ownership or revision
+  evidence. GenStudio remains the job authority, SQLite remains the site-local
+  scheduler, and charging remains outside Studio Hub.
+
 ## [1.57.0] — 2026-07-20
 
 ### Added — adjustable per-model RAM admission

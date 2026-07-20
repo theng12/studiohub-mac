@@ -172,6 +172,10 @@ _reserved = {"gb": 0.0}
 _submit_lock = threading.Lock()
 _CLIENT_REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9._:-]{8,160}")
 _GENSTUDIO_VOICE_EVIDENCE_VERSION = (1, 20, 13)
+_IMMUTABLE_MODEL_REVISION = re.compile(r"^(?:sha256:)?[0-9a-fA-F]{40,64}$")
+_MODEL_REVISION_FIELDS = (
+    "runtime_revision", "model_revision", "snapshot_revision", "commit_sha", "revision",
+)
 
 
 def _required_free_memory(mem: dict) -> float:
@@ -351,6 +355,41 @@ async def _catalog_entry(studio: dict, model: str) -> dict | None:
         if m.get("repo") == model or model in (m.get("aliases") or []):
             return m
     return None
+
+
+def _normalized_immutable_revision(value: object) -> str | None:
+    text = str(value or "").strip()
+    if not _IMMUTABLE_MODEL_REVISION.fullmatch(text):
+        return None
+    return text.removeprefix("sha256:").lower()
+
+
+def _catalog_immutable_revision(entry: dict) -> str | None:
+    """Return only an immutable worker-owned cached model revision."""
+    sources = [entry]
+    if isinstance(entry.get("cache"), dict):
+        sources.append(entry["cache"])
+    for source in sources:
+        for field in _MODEL_REVISION_FIELDS:
+            revision = _normalized_immutable_revision(source.get(field))
+            if revision is not None:
+                return revision
+    return None
+
+
+def _catalog_matches_genstudio_revision(batch: dict, entry: dict) -> bool:
+    """Fence a GenStudio attempt to the exact model snapshot it assigned.
+
+    Legacy callers without GenStudio execution identity retain their existing
+    dispatch behavior. A supplied but mutable/invalid expected revision cannot
+    be satisfied by inventing evidence at Studio Hub.
+    """
+    execution = batch.get("genstudio_execution")
+    if not isinstance(execution, dict) or not execution.get("model_revision"):
+        return True
+    expected = _normalized_immutable_revision(execution.get("model_revision"))
+    actual = _catalog_immutable_revision(entry)
+    return expected is not None and actual == expected
 
 
 def restore_batches():
@@ -1156,6 +1195,12 @@ async def _dispatch_loop():
                     if entry is None:
                         b["governor_note"] = (
                             f"'{b['model']}' not in {studio['id']}'s catalog")
+                        continue
+                    if not _catalog_matches_genstudio_revision(b, entry):
+                        b["governor_note"] = (
+                            "Waiting for a worker with the exact immutable model "
+                            "revision assigned by GenStudio"
+                        )
                         continue
                     if not entry.get("is_cloud") and not is_cached(entry):
                         b["governor_note"] = (

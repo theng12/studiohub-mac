@@ -128,6 +128,30 @@ def test_genstudio_voice_jobs_require_worker_revision_evidence(reset, monkeypatc
     assert broker._supports_genstudio_voice_evidence(batch, studio) is True
 
 
+def test_genstudio_revision_fence_requires_exact_immutable_worker_snapshot(reset):
+    revision = "a" * 40
+    batch = {"genstudio_execution": {"model_revision": revision}}
+
+    assert broker._catalog_matches_genstudio_revision(
+        batch, {"cache": {"snapshot_revision": revision}}
+    ) is True
+    assert broker._catalog_matches_genstudio_revision(
+        batch, {"cache": {"snapshot_revision": "b" * 40}}
+    ) is False
+    assert broker._catalog_matches_genstudio_revision(
+        batch, {"cache": {"snapshot_revision": "main"}}
+    ) is False
+    assert broker._catalog_matches_genstudio_revision(
+        batch, {"cache": {"snapshot_revision": None}}
+    ) is False
+
+
+def test_legacy_dispatch_does_not_require_genstudio_revision_fence(reset):
+    assert broker._catalog_matches_genstudio_revision(
+        {"label": "storystudio"}, {"cache": {"snapshot_revision": "main"}}
+    ) is True
+
+
 def test_summary_running_items_and_avg(reset):
     import time
     r = broker.submit_batch({"modality": "image", "model": "a/b",

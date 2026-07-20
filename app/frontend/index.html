@@ -978,6 +978,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.57.1", date: "2026-07-20", items: [
+    "GenStudio-pinned work now waits for a worker that advertises the exact immutable cached model revision assigned to the attempt.",
+    "Workers with missing, mutable, or different revision evidence are skipped before generation, avoiding wasted compute and late revision-mismatch failures.",
+    "Legacy Story Studio and direct Hub jobs remain compatible when they do not carry GenStudio execution identity.",
+  ]},
   { v: "1.57.0", date: "2026-07-20", items: [
     "The Models tab now shows a clear RAM admission guard for locally brokered Image, Voice, Music, and Video models: catalog requirement, Hub default, effective total RAM, currently-free RAM, and policy source.",
     "You can save or reset per-model RAM overrides without restarting workers. Queued work is re-evaluated immediately, while active jobs remain untouched.",
