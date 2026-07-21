@@ -218,6 +218,12 @@ def test_dashboard_exposes_simple_setup_and_masks_secrets():
     assert 'id="fleet-copy"' in dashboard
     assert 'id="acc-reveal"' in dashboard
     assert 'id="acc-copy"' in dashboard
+    assert 'id="setup-code-reveal"' in dashboard
+    assert 'id="setup-code-copy"' in dashboard
+    assert "function toggleEnrollmentCode()" in dashboard
+    assert 'mask.dataset.revealed = "0"' in dashboard
+    assert 'reveal.disabled = true; reveal.textContent = "Reveal"' in dashboard
+    assert 'copyPrivateValue(activeEnrollmentCode, $("#setup-code-copy"), "Copy code")' in dashboard
     assert "function toggleHubToken()" in dashboard
     assert "function copyFleetToken()" in dashboard
     assert 'api("/api/hub/enrollment-codes"' in dashboard

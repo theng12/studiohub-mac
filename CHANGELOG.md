@@ -10,6 +10,23 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.58.3] — 2026-07-22
+
+### Fixed — visible one-time enrollment codes
+
+- Added explicit **Reveal/Hide** and **Copy code** controls to newly created
+  10-minute agent enrollment codes. The value remains masked by default.
+- Reveal state is cleared whenever a code is replaced or expires, at which point
+  both Reveal and Copy become unavailable.
+- Code copying now uses the same safe private-HTTP fallback as the Hub and fleet
+  credentials, so it works from local and Tailscale dashboards without storing
+  the code in browser storage.
+
+### Safety
+
+- Enrollment codes remain memory-only, single-use, and limited to ten minutes;
+  the controller still persists only their SHA-256 hashes and expiry metadata.
+
 ## [1.58.2] — 2026-07-21
 
 ### Fixed — readable dashboard pickers and typography

@@ -539,8 +539,9 @@ flows:
   hostname, assigns the local profile, keeps `database_mode=off`, and prepares
   the site fleet credential.
 - **Join an existing location** — on the controller, click **Create code**. On
-  the new Mac, enter the controller's private/Tailscale HTTP URL, paste the
-  one-time code, and choose that Mac's hardware profile. The new Mac receives
+  the controller, use **Reveal** or **Copy code**, then on the new Mac enter the
+  controller's private/Tailscale HTTP URL, paste the one-time code, and choose
+  that Mac's hardware profile. The new Mac receives
   only the site name/ID, controller ID, and site fleet credential, then saves
   itself as an agent with PostgreSQL off.
 

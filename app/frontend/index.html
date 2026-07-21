@@ -770,6 +770,7 @@
         <div style="flex:1;min-width:220px"><b>Create a code for another Mac</b><div class="sub">The code works once and expires after 10 minutes.</div></div>
         <code id="setup-code-mask" class="setup-secret-mask">not created</code>
         <button class="btn" id="setup-code-create" onclick="createEnrollmentCode()">Create code</button>
+        <button class="btn" id="setup-code-reveal" onclick="toggleEnrollmentCode()" disabled>Reveal</button>
         <button class="btn" id="setup-code-copy" onclick="copyEnrollmentCode()" disabled>Copy code</button>
       </div>
     </div>
@@ -1019,6 +1020,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.58.3", date: "2026-07-22", items: [
+    "New 10-minute agent enrollment codes now have clear Reveal, Hide, and Copy code controls while remaining masked by default.",
+    "Reveal state is cleared and both controls are disabled when a code is replaced or expires.",
+    "Copy code now works reliably from private HTTP and Tailscale dashboards without storing enrollment codes in browser storage.",
+  ]},
   { v: "1.58.2", date: "2026-07-21", items: [
     "Model, hardware, and every other native picker now use a readable 15 px control face with 16 px menu options on macOS.",
     "Studio Hub now follows one dashboard-wide text scale with a 12 px compact-text floor across every tab, table, badge, and mobile view.",
@@ -3003,8 +3009,11 @@ async function setupNewController() {
   renderSetupResult(data); renderSetupStatus(data.settings); await loadController(); await loadHardwareProfiles(); await refresh();
 }
 async function createEnrollmentCode() {
-  const create = $("#setup-code-create"), copy = $("#setup-code-copy"), mask = $("#setup-code-mask");
-  activeEnrollmentCode = null; clearTimeout(enrollmentCodeExpiryTimer); copy.disabled = true; create.disabled = true; create.textContent = "Creating…"; mask.textContent = "not created";
+  const create = $("#setup-code-create"), reveal = $("#setup-code-reveal"), copy = $("#setup-code-copy"), mask = $("#setup-code-mask");
+  activeEnrollmentCode = null; clearTimeout(enrollmentCodeExpiryTimer);
+  reveal.disabled = true; reveal.textContent = "Reveal"; copy.disabled = true;
+  create.disabled = true; create.textContent = "Creating…";
+  mask.dataset.revealed = "0"; mask.classList.add("setup-secret-mask"); mask.textContent = "not created";
   const response = await api("/api/hub/enrollment-codes", { method: "POST" }).catch(() => null);
   const data = response ? await response.json().catch(() => ({})) : {};
   create.disabled = false; create.textContent = "Create another code";
@@ -3012,18 +3021,24 @@ async function createEnrollmentCode() {
   activeEnrollmentCode = data.code;
   mask.textContent = "••••••••••••••••••••••••";
   mask.title = `Expires ${new Date(data.expires_at * 1000).toLocaleTimeString()}`;
-  copy.disabled = false;
+  reveal.disabled = false; copy.disabled = false;
   enrollmentCodeExpiryTimer = setTimeout(() => {
-    activeEnrollmentCode = null; mask.textContent = "expired"; mask.title = ""; copy.disabled = true;
+    activeEnrollmentCode = null;
+    mask.dataset.revealed = "0"; mask.classList.add("setup-secret-mask"); mask.textContent = "expired"; mask.title = "";
+    reveal.disabled = true; reveal.textContent = "Reveal"; copy.disabled = true;
   }, Math.max(0, data.expires_at * 1000 - Date.now()));
   renderSetupResult({ mode: "controller", settings: data.site ? { site_name: data.site.name, site_id: data.site.id } : {}, checklist: ["One-time code created", "Expires in 10 minutes", "Copy it directly to the agent Mac; it is not persisted in this browser"] });
 }
-async function copyEnrollmentCode() {
+function toggleEnrollmentCode() {
   if (!activeEnrollmentCode) return;
-  await navigator.clipboard.writeText(activeEnrollmentCode);
-  const button = $("#setup-code-copy"); button.textContent = "Copied";
-  setTimeout(() => { button.textContent = "Copy code"; }, 1500);
+  const mask = $("#setup-code-mask"), button = $("#setup-code-reveal");
+  const reveal = mask.dataset.revealed !== "1";
+  mask.dataset.revealed = reveal ? "1" : "0";
+  mask.textContent = reveal ? activeEnrollmentCode : "••••••••••••••••••••••••";
+  mask.classList.toggle("setup-secret-mask", !reveal);
+  button.textContent = reveal ? "Hide" : "Reveal";
 }
+function copyEnrollmentCode() { copyPrivateValue(activeEnrollmentCode, $("#setup-code-copy"), "Copy code"); }
 async function setupJoinAgent() {
   const controllerUrl = $("#setup-controller-url").value.trim();
   const codeInput = $("#setup-enrollment-code"), code = codeInput.value.trim();
