@@ -62,6 +62,16 @@ Swarm Batch, recipes).
 4. The dashboard updates continuously over SSE, falls back to 5-second polling
    if the stream drops, and reconnects automatically with bounded backoff.
 
+### Dashboard text and control sizing
+
+The dashboard uses one shared readability scale: 12 px is the absolute floor
+for compact labels and badges, secondary text is 13 px, body text is 14 px,
+form controls are 15 px, and native picker options are 16 px. Standard controls
+are at least 40 px high where the layout permits. These values live as CSS
+tokens in `app/frontend/index.html`; the frontend typography regression tests
+reject any future literal font size below the 12 px floor and verify that native
+select menus keep their dedicated readable option size.
+
 ### Control model memory
 
 Open **Memory** in Studio Hub. Every registered Image, Chat, Video, Music, and

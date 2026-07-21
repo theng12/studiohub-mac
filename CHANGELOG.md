@@ -10,6 +10,24 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.58.2] — 2026-07-21
+
+### Fixed — readable dashboard pickers and typography
+
+- Increased every native select menu to a 15 px control face with 16 px picker
+  options, fixing the tiny model and hardware picker text on macOS.
+- Replaced the dashboard's scattered 8–11.5 px text with a shared readability
+  scale across Models, Remote, Jobs, Updates, Resources, Memory, Voices, tables,
+  badges, inline code, and mobile navigation. Compact readable text now has a
+  true rendered 12 px floor.
+- Added a frontend regression guard that rejects future literal font sizes below
+  12 px and verifies the shared control and native-picker sizing contract.
+
+### Safety
+
+- This is a frontend-only release. It does not restart workers, alter active
+  jobs, or change SQLite dispatch, GenStudio routing, or PostgreSQL settings.
+
 ## [1.58.1] — 2026-07-20
 
 ### Fixed — owner token visibility and copying
