@@ -751,7 +751,7 @@
       <p class="muted" style="font-size:13px;margin-bottom:8px">Choose what this Mac should do. Studio Hub fills the technical settings, keeps PostgreSQL off, assigns the hardware profile, and never gives this Mac global job or billing authority.</p>
       <div class="setup-modes" role="radiogroup" aria-label="Studio Hub setup mode">
         <label class="setup-mode on" data-setup-mode="controller"><input type="radio" name="setup-mode" value="controller" checked onchange="setSetupMode('controller')"><b>New location controller</b><span>Use one Mac to coordinate the Studios at a new house or location.</span></label>
-        <label class="setup-mode" data-setup-mode="agent"><input type="radio" name="setup-mode" value="agent" onchange="setSetupMode('agent')"><b>Join an existing location</b><span>Connect this worker Mac using a private controller URL and one-time code.</span></label>
+        <label class="setup-mode" data-setup-mode="agent"><input type="radio" name="setup-mode" value="agent" onchange="setSetupMode('agent')"><b>Join an existing location</b><span>Connect this worker Mac using a private controller URL and permanent enrollment code.</span></label>
       </div>
       <div id="setup-controller-fields" class="setup-fields">
         <label>Location name<input id="setup-location-name" placeholder="KT-PPS" oninput="suggestSetupSiteId()"></label>
@@ -762,16 +762,17 @@
       <div id="setup-agent-fields" class="setup-fields hide">
         <label class="wide">Controller private URL<input id="setup-controller-url" inputmode="url" autocomplete="off" placeholder="http://100.x.y.z:47873"></label>
         <label>Hardware profile<select class="selctl" id="setup-agent-profile"><option value="">Choose this Mac's hardware…</option></select></label>
-        <label class="wide">One-time enrollment code<input id="setup-enrollment-code" type="password" autocomplete="one-time-code" placeholder="Paste the 10-minute code"></label>
+        <label class="wide">Permanent enrollment code<input id="setup-enrollment-code" type="password" autocomplete="off" placeholder="Paste the site enrollment code"></label>
         <div class="action"><button class="btn primary" id="setup-agent-join" onclick="setupJoinAgent()">Join location</button></div>
       </div>
       <div id="setup-result" class="setup-result hide" role="status" aria-live="polite"></div>
       <div id="setup-enrollment-tools" class="setup-code hide">
-        <div style="flex:1;min-width:220px"><b>Create a code for another Mac</b><div class="sub">The code works once and expires after 10 minutes.</div></div>
+        <div style="flex:1;min-width:220px"><b>Permanent enrollment code</b><div class="sub">Reuse this private code for new Macs until you rotate or revoke it.</div></div>
         <code id="setup-code-mask" class="setup-secret-mask">not created</code>
-        <button class="btn" id="setup-code-create" onclick="createEnrollmentCode()">Create code</button>
+        <button class="btn primary" id="setup-code-create" onclick="createEnrollmentCode()">Generate code</button>
         <button class="btn" id="setup-code-reveal" onclick="toggleEnrollmentCode()" disabled>Reveal</button>
         <button class="btn" id="setup-code-copy" onclick="copyEnrollmentCode()" disabled>Copy code</button>
+        <button class="btn" id="setup-code-revoke" onclick="revokeEnrollmentCode()" disabled>Revoke</button>
       </div>
     </div>
 
@@ -856,6 +857,19 @@
           <li>The value stays in owner-only local files and request headers. It is never included in URLs, logs, screenshots, or fleet diagnostics.</li>
         </ul>
       </details>
+    </div>
+
+    <div class="card section">
+      <div class="top"><span class="emoji">⚡</span><h3>Automatic startup across the fleet</h3>
+        <span style="margin-left:auto"></span>
+        <button class="btn" id="startup-refresh" onclick="loadStartupServices()">↻&nbsp; Check startup</button>
+        <button class="btn primary" id="startup-install-all" onclick="installMissingStartupServices()" disabled>Install missing</button>
+      </div>
+      <p class="muted" style="font-size:13px;margin-bottom:10px">
+        Checks whether each installed Image, Voice, Chat, Music, Video, and Render Studio starts automatically and has its watchdog loaded. Install or repair one service at a time, or install every missing service. Installation is refused while that Studio has active Hub work.
+      </p>
+      <div id="startup-status" class="update-progress hide" role="status" aria-live="polite"></div>
+      <div style="overflow-x:auto"><table><thead><tr><th>Studio</th><th>Machine</th><th>Startup status</th><th>Service check</th><th></th></tr></thead><tbody id="startup-body"><tr><td colspan="5" class="empty">Click “Check startup” to audit the fleet.</td></tr></tbody></table></div>
     </div>
 
     <div class="card section">
@@ -1020,6 +1034,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.59.0", date: "2026-07-22", items: [
+    "Agent enrollment now uses one permanent reusable code that owners can reveal, copy, rotate, or revoke; already joined Macs remain connected.",
+    "Remote now audits automatic startup for Image, Voice, Chat, Music, Video, and Render Studio on every reachable Hub machine.",
+    "Install, Repair, and Install missing controls run each trusted sibling installer on its own Mac, refuse Hub-tracked busy work, and verify both the launchd server and watchdog.",
+  ]},
   { v: "1.58.3", date: "2026-07-22", items: [
     "New 10-minute agent enrollment codes now have clear Reveal, Hide, and Copy code controls while remaining masked by default.",
     "Reveal state is cleared and both controls are disabled when a code is replaced or expires.",
@@ -1516,7 +1535,7 @@ document.querySelectorAll("nav button").forEach(btn => {
     if (btn.dataset.tab === "voices") loadSharedVoices();
     if (btn.dataset.tab === "memory") loadFleetMemory();
     if (btn.dataset.tab === "updates") loadAutoUpdates();
-    if (btn.dataset.tab === "remote") { loadController(); loadAccess(); loadMachines(); loadAlerts(); loadMaintenance(); }
+    if (btn.dataset.tab === "remote") { loadController(); loadEnrollmentCode(); loadAccess(); loadMachines(); loadAlerts(); loadMaintenance(); loadStartupServices(); }
     if (btn.dataset.tab === "jobs") { loadJobModels(); loadBatches(); loadTranscriptionSettings(); loadFleetStorage(); selectJobKind(activeJobKind); }
     if (btn.dataset.tab === "assets") loadAssets();
     if (btn.dataset.tab === "stats") loadStats();
@@ -2957,7 +2976,6 @@ document.addEventListener("click", (ev) => {
 let controllerData = null;
 let setupMode = "controller";
 let activeEnrollmentCode = null;
-let enrollmentCodeExpiryTimer = null;
 function setSetupMode(mode) {
   setupMode = mode === "agent" ? "agent" : "controller";
   document.querySelectorAll(".setup-mode").forEach(card => card.classList.toggle("on", card.dataset.setupMode === setupMode));
@@ -3009,25 +3027,31 @@ async function setupNewController() {
   renderSetupResult(data); renderSetupStatus(data.settings); await loadController(); await loadHardwareProfiles(); await refresh();
 }
 async function createEnrollmentCode() {
-  const create = $("#setup-code-create"), reveal = $("#setup-code-reveal"), copy = $("#setup-code-copy"), mask = $("#setup-code-mask");
-  activeEnrollmentCode = null; clearTimeout(enrollmentCodeExpiryTimer);
-  reveal.disabled = true; reveal.textContent = "Reveal"; copy.disabled = true;
-  create.disabled = true; create.textContent = "Creating…";
-  mask.dataset.revealed = "0"; mask.classList.add("setup-secret-mask"); mask.textContent = "not created";
+  if (activeEnrollmentCode && !confirm("Rotate the permanent enrollment code?\nThe current code will stop working immediately, but already joined Macs stay connected.")) return;
+  const create = $("#setup-code-create"), reveal = $("#setup-code-reveal"), copy = $("#setup-code-copy"), revoke = $("#setup-code-revoke"), mask = $("#setup-code-mask");
+  reveal.disabled = true; reveal.textContent = "Reveal"; copy.disabled = true; revoke.disabled = true;
+  create.disabled = true; create.textContent = activeEnrollmentCode ? "Rotating…" : "Generating…";
+  mask.dataset.revealed = "0"; mask.classList.add("setup-secret-mask"); mask.textContent = "working…"; mask.title = "";
   const response = await api("/api/hub/enrollment-codes", { method: "POST" }).catch(() => null);
   const data = response ? await response.json().catch(() => ({})) : {};
-  create.disabled = false; create.textContent = "Create another code";
-  if (!response?.ok || !data.code) { renderSetupResult(data.detail || "A code could not be created.", true); return; }
-  activeEnrollmentCode = data.code;
-  mask.textContent = "••••••••••••••••••••••••";
-  mask.title = `Expires ${new Date(data.expires_at * 1000).toLocaleTimeString()}`;
-  reveal.disabled = false; copy.disabled = false;
-  enrollmentCodeExpiryTimer = setTimeout(() => {
-    activeEnrollmentCode = null;
-    mask.dataset.revealed = "0"; mask.classList.add("setup-secret-mask"); mask.textContent = "expired"; mask.title = "";
-    reveal.disabled = true; reveal.textContent = "Reveal"; copy.disabled = true;
-  }, Math.max(0, data.expires_at * 1000 - Date.now()));
-  renderSetupResult({ mode: "controller", settings: data.site ? { site_name: data.site.name, site_id: data.site.id } : {}, checklist: ["One-time code created", "Expires in 10 minutes", "Copy it directly to the agent Mac; it is not persisted in this browser"] });
+  if (!response?.ok || !data.code) { await loadEnrollmentCode(); renderSetupResult(data.detail || "The enrollment code could not be generated.", true); return; }
+  renderEnrollmentCode({...data, active: true, revealable: true});
+  renderSetupResult({ mode: "controller", settings: data.site ? { site_name: data.site.name, site_id: data.site.id } : {}, checklist: ["Permanent enrollment code ready", "Reusable until you rotate or revoke it", "Stored only in the controller's owner-private files"] });
+}
+function renderEnrollmentCode(data) {
+  const create = $("#setup-code-create"), reveal = $("#setup-code-reveal"), copy = $("#setup-code-copy"), revoke = $("#setup-code-revoke"), mask = $("#setup-code-mask");
+  const active = !!data?.active;
+  activeEnrollmentCode = data?.code || null;
+  mask.dataset.revealed = "0"; mask.classList.add("setup-secret-mask");
+  mask.textContent = activeEnrollmentCode ? "••••••••••••••••••••••••" : (active ? "active · rotate if lost" : "not created");
+  mask.title = active ? "Permanent until rotated or revoked" : "";
+  reveal.textContent = "Reveal"; reveal.disabled = !activeEnrollmentCode;
+  copy.disabled = !activeEnrollmentCode; revoke.disabled = !active;
+  create.disabled = false; create.textContent = active ? "Rotate code" : "Generate code";
+}
+async function loadEnrollmentCode() {
+  const data = await api("/api/hub/enrollment-codes").then(r => r.json()).catch(() => null);
+  if (data) renderEnrollmentCode(data);
 }
 function toggleEnrollmentCode() {
   if (!activeEnrollmentCode) return;
@@ -3039,11 +3063,21 @@ function toggleEnrollmentCode() {
   button.textContent = reveal ? "Hide" : "Reveal";
 }
 function copyEnrollmentCode() { copyPrivateValue(activeEnrollmentCode, $("#setup-code-copy"), "Copy code"); }
+async function revokeEnrollmentCode() {
+  if (!confirm("Revoke the permanent enrollment code?\nNew Macs cannot join until you generate another code. Already joined Macs are unaffected.")) return;
+  const revoke = $("#setup-code-revoke"); revoke.disabled = true; revoke.textContent = "Revoking…";
+  const response = await api("/api/hub/enrollment-codes", { method: "DELETE" }).catch(() => null);
+  const data = response ? await response.json().catch(() => ({})) : {};
+  revoke.textContent = "Revoke";
+  if (!response?.ok) { await loadEnrollmentCode(); renderSetupResult(data.detail || "The enrollment code could not be revoked.", true); return; }
+  renderEnrollmentCode(data);
+  renderSetupResult({ mode: "controller", settings: controllerData?.settings || {}, checklist: ["Permanent enrollment code revoked", "Already joined Macs remain connected", "Generate a new code before enrolling another Mac"] });
+}
 async function setupJoinAgent() {
   const controllerUrl = $("#setup-controller-url").value.trim();
   const codeInput = $("#setup-enrollment-code"), code = codeInput.value.trim();
   const profile = $("#setup-agent-profile").value;
-  if (!controllerUrl || !code || !profile) { renderSetupResult("Enter the controller private URL, one-time code, and this Mac's hardware.", true); return; }
+  if (!controllerUrl || !code || !profile) { renderSetupResult("Enter the controller private URL, permanent enrollment code, and this Mac's hardware.", true); return; }
   const button = $("#setup-agent-join"); button.disabled = true; button.setAttribute("aria-busy", "true"); button.textContent = "Joining…";
   const response = await api("/api/hub/setup/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ controller_url: controllerUrl, enrollment_code: code, hardware_profile_id: profile }) }).catch(() => null);
   const data = response ? await response.json().catch(() => ({})) : {};
@@ -3793,6 +3827,78 @@ async function rescanStudioVersions() {
   btn.disabled = false; btn.removeAttribute("aria-busy");
   if (data) renderStudioUpdates(data);
   else { progress.className = "update-progress error"; progress.innerHTML = `<div class="update-progress-title">! Version scan failed</div><div class="update-progress-detail">Try again.</div>`; }
+}
+let startupServiceRows = [];
+function renderStartupServices(data) {
+  const body = $("#startup-body"), status = $("#startup-status"), installAll = $("#startup-install-all");
+  startupServiceRows = [];
+  const machineRows = Object.entries(data?.machines || {});
+  body.innerHTML = machineRows.map(([machine, snapshot]) => {
+    if (!snapshot.reachable || !snapshot.supported) {
+      const detail = snapshot.detail || (snapshot.reachable ? "Startup control is unavailable" : "Peer Hub is offline or unreachable");
+      return `<tr><td class="sub">All Studios</td><td><b>${esc(mlabel(machine))}</b></td><td><span class="pill no">${snapshot.reachable ? "Hub update needed" : "unreachable"}</span></td><td class="sub">${esc(detail)}</td><td>—</td></tr>`;
+    }
+    return (snapshot.services || []).map(service => {
+      const row = {...service, machine, reachable: true}; startupServiceRows.push(row);
+      const state = service.installed ? ["ok", "automatic"] :
+        service.status === "repair_needed" ? ["warn", "repair needed"] :
+        service.status === "not_installed" ? ["warn", "not installed"] :
+        ["app_missing", "runtime_missing"].includes(service.status) ? ["no", "app not installed"] : ["no", "unsupported"];
+      const action = service.can_install
+        ? `<button class="btn primary compact" data-startup-install onclick="installStartupService('${jsq(machine)}','${jsq(service.modality)}')">${service.status === "repair_needed" ? "Repair" : "Install"}</button>` : "—";
+      return `<tr><td><b>${esc(service.title)}</b></td><td>${esc(mlabel(machine))}</td><td><span class="pill ${state[0]}">${state[1]}</span></td><td class="sub">${esc(service.detail || "")}</td><td>${action}</td></tr>`;
+    }).join("");
+  }).join("") || `<tr><td colspan="5" class="empty">No Hub machines are registered.</td></tr>`;
+  const installed = startupServiceRows.filter(row => row.installed).length;
+  const actionable = startupServiceRows.filter(row => row.can_install).length;
+  installAll.disabled = actionable === 0;
+  installAll.textContent = actionable ? `Install ${actionable} missing` : "All installed";
+  status.className = "update-progress";
+  status.innerHTML = `<div class="update-progress-head"><span class="update-progress-title">✓ Startup audit complete</span><span class="update-progress-count">${installed}/${startupServiceRows.length} ready</span></div><div class="update-progress-detail">${actionable} service${actionable === 1 ? "" : "s"} can be installed or repaired${machineRows.some(([, row]) => !row.reachable) ? " · offline machines can be retried later" : ""}</div>`;
+}
+async function loadStartupServices() {
+  const refresh = $("#startup-refresh"), status = $("#startup-status");
+  refresh.disabled = true; refresh.setAttribute("aria-busy", "true");
+  status.className = "update-progress";
+  status.innerHTML = `<div class="update-progress-title">↻ Checking startup services on every reachable Mac…</div>`;
+  const response = await api("/api/hub/startup-services").catch(() => null);
+  const data = response ? await response.json().catch(() => ({})) : {};
+  refresh.disabled = false; refresh.removeAttribute("aria-busy");
+  if (!response?.ok) { status.className = "update-progress error"; status.innerHTML = `<div class="update-progress-title">! Startup audit failed</div><div class="update-progress-detail">${esc(data.detail || "Try again.")}</div>`; return; }
+  renderStartupServices(data);
+}
+async function runStartupInstall(machine, modality) {
+  const response = await api(`/api/hub/startup-services/${encodeURIComponent(machine)}/${encodeURIComponent(modality)}/install`, { method: "POST" }).catch(() => null);
+  const data = response ? await response.json().catch(() => ({})) : {};
+  return {ok: !!response?.ok, detail: data.detail || data.error || "Startup installation failed"};
+}
+async function installStartupService(machine, modality) {
+  const row = startupServiceRows.find(item => item.machine === machine && item.modality === modality);
+  if (!row || !confirm(`Install automatic startup for ${row.title} on ${mlabel(machine)}?\nThe Studio may restart while launchd takes ownership. Hub-tracked active work is protected.`)) return;
+  const status = $("#startup-status"); document.querySelectorAll("[data-startup-install]").forEach(button => button.disabled = true);
+  status.className = "update-progress"; status.innerHTML = `<div class="update-progress-title">↻ Installing ${esc(row.title)} startup on ${esc(mlabel(machine))}…</div>`;
+  const result = await runStartupInstall(machine, modality);
+  await loadStartupServices();
+  if (!result.ok) { status.className = "update-progress error"; status.innerHTML = `<div class="update-progress-title">! Startup installation failed</div><div class="update-progress-detail">${esc(result.detail)}</div>`; }
+}
+async function installMissingStartupServices() {
+  const rows = startupServiceRows.filter(row => row.can_install);
+  if (!rows.length || !confirm(`Install or repair ${rows.length} startup service${rows.length === 1 ? "" : "s"} one at a time?\nEach Studio may restart as launchd takes ownership. Busy Hub work will be refused, not interrupted.`)) return;
+  const status = $("#startup-status"), button = $("#startup-install-all");
+  button.disabled = true; button.setAttribute("aria-busy", "true");
+  let succeeded = 0, failures = [];
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index];
+    status.className = "update-progress";
+    status.innerHTML = `<div class="update-progress-head"><span class="update-progress-title">↻ Installing startup services…</span><span class="update-progress-count">${index + 1}/${rows.length}</span></div><div class="update-progress-detail">${esc(row.title)} · ${esc(mlabel(row.machine))}</div>`;
+    const result = await runStartupInstall(row.machine, row.modality);
+    if (result.ok) succeeded++; else failures.push(`${row.title} on ${mlabel(row.machine)}: ${result.detail}`);
+  }
+  button.removeAttribute("aria-busy"); await loadStartupServices();
+  if (failures.length) {
+    status.className = "update-progress error";
+    status.innerHTML = `<div class="update-progress-title">! ${succeeded} installed · ${failures.length} need attention</div><div class="update-progress-detail">${esc(failures.join(" · "))}</div>`;
+  }
 }
 async function startFleetUpdate(ids) {
   if (!ids.length || !confirm(`Update ${ids.length} Studio${ids.length > 1 ? "s" : ""} one at a time? Active work will drain first.`)) return;

@@ -41,6 +41,21 @@ class FakeSyncClient:
         return FakeResp(200, {"host": {}})
 
 
+class FakeStartupClient:
+    def __init__(self, status=200, data=None):
+        self.status = status
+        self.data = data or {}
+        self.calls = []
+
+    async def get(self, url, headers=None, timeout=None):
+        self.calls.append(("GET", url, headers, timeout))
+        return FakeResp(self.status, self.data)
+
+    async def post(self, url, headers=None, timeout=None):
+        self.calls.append(("POST", url, headers, timeout))
+        return FakeResp(self.status, self.data)
+
+
 def test_fleet_token_roundtrip(reset):
     generated = peers.fleet_token()
     assert generated
@@ -117,3 +132,40 @@ async def test_fleet_token_sync_uses_old_token_then_verifies_new(reset):
     assert client.calls[0][3] == {"token": "new-shared-secret", "sync": False}
     assert client.calls[1][2] == {"X-Hub-Token": "new-shared-secret"}
     assert peers.fleet_token() == "new-shared-secret"
+
+
+@pytest.mark.asyncio
+async def test_remote_startup_audit_uses_authenticated_peer_hub(reset):
+    peers.set_fleet_token("shared-secret")
+    client = FakeStartupClient(data={
+        "schema_version": 1, "services": [{"modality": "image", "installed": True}],
+    })
+    result = await peers.startup_services_status(REMOTE, client)
+
+    assert result["mac-b"]["reachable"] is True
+    assert result["mac-b"]["services"][0]["installed"] is True
+    method, url, headers, timeout = client.calls[0]
+    assert method == "GET" and url.endswith("/api/hub/startup-services?local_only=true")
+    assert headers == {"X-Hub-Token": "shared-secret"}
+    assert timeout == peers.PEER_TIMEOUT_S
+
+
+@pytest.mark.asyncio
+async def test_old_peer_reports_update_needed_for_startup_audit(reset):
+    peers.set_fleet_token("shared-secret")
+    result = await peers.startup_services_status(REMOTE, FakeStartupClient(status=404))
+    assert result["mac-b"]["supported"] is False
+    assert "Update" in result["mac-b"]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_remote_startup_install_targets_peer_local_machine(reset):
+    peers.set_fleet_token("shared-secret")
+    client = FakeStartupClient(data={"ok": True, "changed": True})
+    result = await peers.install_remote_startup_service(client, REMOTE[0], "voice")
+    assert result["ok"] is True
+    method, url, headers, timeout = client.calls[0]
+    assert method == "POST"
+    assert url.endswith("/api/hub/startup-services/local/voice/install")
+    assert headers == {"X-Hub-Token": "shared-secret"}
+    assert timeout == 260.0

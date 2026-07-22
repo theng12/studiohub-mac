@@ -697,6 +697,11 @@ def _active_studio_leases() -> set[str]:
             | set(transcription_jobs.busy_studios))
 
 
+def studio_has_active_work(studio_id: str) -> bool:
+    """Public safety check shared by drained maintenance operations."""
+    return studio_id in _active_studio_leases()
+
+
 async def _update_one(monitor, studio: dict, item: dict):
     sid = studio["id"]
     item.update(status="draining", detail="waiting for active work to finish", started_at=time.time())

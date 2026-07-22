@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import json
 import os
 import re
 import secrets
@@ -26,7 +27,7 @@ from . import control_plane, hardware_profiles, peers
 from .registry import DATA_DIR
 
 DB_FILE = DATA_DIR / "setup_enrollment.db"
-CODE_TTL_SECONDS = 10 * 60
+ENROLLMENT_CODE_FILE = DATA_DIR / ".enrollment_code"
 TAILSCALE_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 _CODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{32,256}$")
 
@@ -46,9 +47,29 @@ def _connect() -> sqlite3.Connection:
              expires_at REAL NOT NULL,
              used_at REAL,
              site_id TEXT NOT NULL,
-             controller_id TEXT NOT NULL
+             controller_id TEXT NOT NULL,
+             kind TEXT NOT NULL DEFAULT 'legacy_one_time',
+             revoked_at REAL,
+             last_used_at REAL,
+             use_count INTEGER NOT NULL DEFAULT 0
            )"""
     )
+    columns = {
+        row["name"] for row in connection.execute(
+            "PRAGMA table_info(enrollment_codes)"
+        ).fetchall()
+    }
+    migrations = {
+        "kind": "TEXT NOT NULL DEFAULT 'legacy_one_time'",
+        "revoked_at": "REAL",
+        "last_used_at": "REAL",
+        "use_count": "INTEGER NOT NULL DEFAULT 0",
+    }
+    for name, definition in migrations.items():
+        if name not in columns:
+            connection.execute(
+                f"ALTER TABLE enrollment_codes ADD COLUMN {name} {definition}"
+            )
     return connection
 
 
@@ -57,31 +78,49 @@ def _code_hash(code: str) -> str:
 
 
 def create_enrollment_code(*, now: float | None = None) -> dict:
-    """Return one high-entropy code while persisting only its digest."""
+    """Create or rotate the permanent site enrollment credential.
+
+    The database remains the claim authority and stores only a digest.  A
+    private mode-0600 file keeps the controller-owned value revealable after a
+    dashboard reload, matching the existing Hub and fleet credential model.
+    """
     settings = control_plane.load_settings()
     if settings["role"] != "controller":
         raise ValueError("Enrollment codes can be created only by a location controller.")
     issued_at = float(time.time() if now is None else now)
-    expires_at = issued_at + CODE_TTL_SECONDS
     code = secrets.token_urlsafe(32)
-    with _connect() as connection:
-        connection.execute("BEGIN IMMEDIATE")
-        connection.execute(
-            "DELETE FROM enrollment_codes WHERE expires_at < ? AND used_at IS NOT NULL",
-            (issued_at - 24 * 60 * 60,),
+    credential_id = secrets.token_hex(12)
+    saved_file = _snapshot((ENROLLMENT_CODE_FILE,))
+    try:
+        _replace_private(
+            ENROLLMENT_CODE_FILE,
+            (json.dumps({"id": credential_id, "code": code}, separators=(",", ":"))
+             + "\n").encode("utf-8"),
         )
-        connection.execute(
-            """INSERT INTO enrollment_codes
-                 (id, code_hash, created_at, expires_at, site_id, controller_id)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (secrets.token_hex(12), _code_hash(code), issued_at, expires_at,
-             settings["site_id"], settings["controller_id"]),
-        )
-        connection.commit()
+        with _connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """UPDATE enrollment_codes SET revoked_at = ?
+                   WHERE kind = 'permanent' AND revoked_at IS NULL""",
+                (issued_at,),
+            )
+            connection.execute(
+                """INSERT INTO enrollment_codes
+                     (id, code_hash, created_at, expires_at, site_id, controller_id,
+                      kind, revoked_at, last_used_at, use_count)
+                   VALUES (?, ?, ?, 0, ?, ?, 'permanent', NULL, NULL, 0)""",
+                (credential_id, _code_hash(code), issued_at,
+                 settings["site_id"], settings["controller_id"]),
+            )
+            connection.commit()
+    except Exception:
+        _restore(saved_file)
+        raise
     return {
         "code": code,
-        "expires_at": expires_at,
-        "expires_in_seconds": CODE_TTL_SECONDS,
+        "permanent": True,
+        "expires_at": None,
+        "created_at": issued_at,
         "site": {
             "id": settings["site_id"],
             "name": settings["site_name"],
@@ -91,7 +130,7 @@ def create_enrollment_code(*, now: float | None = None) -> dict:
 
 
 def claim_enrollment_code(code: str, *, now: float | None = None) -> dict:
-    """Atomically consume a code and return the minimum private site config."""
+    """Validate a permanent or legacy code and return private site config."""
     settings = control_plane.load_settings()
     if settings["role"] != "controller":
         raise ValueError("This Hub is not a location controller.")
@@ -108,21 +147,39 @@ def claim_enrollment_code(code: str, *, now: float | None = None) -> dict:
         if row is None:
             connection.rollback()
             raise ValueError("Enrollment code is invalid.")
-        if row["used_at"] is not None:
-            connection.rollback()
-            raise ValueError("Enrollment code has already been used.")
-        if float(row["expires_at"]) <= claimed_at:
-            connection.rollback()
-            raise ValueError("Enrollment code has expired.")
+        permanent = row["kind"] == "permanent"
+        if permanent:
+            if row["revoked_at"] is not None:
+                connection.rollback()
+                raise ValueError("Enrollment code has been revoked.")
+            if (row["site_id"] != settings["site_id"]
+                    or row["controller_id"] != settings["controller_id"]):
+                connection.rollback()
+                raise ValueError("Enrollment code belongs to an older site identity; rotate it.")
+        else:
+            if row["used_at"] is not None:
+                connection.rollback()
+                raise ValueError("Enrollment code has already been used.")
+            if float(row["expires_at"]) <= claimed_at:
+                connection.rollback()
+                raise ValueError("Enrollment code has expired.")
         token = peers.fleet_token()
         if not token:
             connection.rollback()
             raise ValueError("The controller has no site fleet credential.")
-        changed = connection.execute(
-            """UPDATE enrollment_codes SET used_at = ?
-               WHERE id = ? AND used_at IS NULL AND expires_at > ?""",
-            (claimed_at, row["id"], claimed_at),
-        ).rowcount
+        if permanent:
+            changed = connection.execute(
+                """UPDATE enrollment_codes
+                   SET last_used_at = ?, use_count = use_count + 1
+                   WHERE id = ? AND revoked_at IS NULL""",
+                (claimed_at, row["id"]),
+            ).rowcount
+        else:
+            changed = connection.execute(
+                """UPDATE enrollment_codes SET used_at = ?
+                   WHERE id = ? AND used_at IS NULL AND expires_at > ?""",
+                (claimed_at, row["id"], claimed_at),
+            ).rowcount
         if changed != 1:
             connection.rollback()
             raise ValueError("Enrollment code could not be claimed.")
@@ -134,6 +191,62 @@ def claim_enrollment_code(code: str, *, now: float | None = None) -> dict:
         "controller_id": settings["controller_id"],
         "fleet_token": token,
     }
+
+
+def enrollment_credential_status(*, include_code: bool = False) -> dict:
+    """Return the current permanent credential without exposing it by default."""
+    settings = control_plane.load_settings()
+    if settings["role"] != "controller":
+        return {"active": False, "permanent": True, "code": None}
+    with _connect() as connection:
+        row = connection.execute(
+            """SELECT * FROM enrollment_codes
+               WHERE kind = 'permanent' AND revoked_at IS NULL
+               ORDER BY created_at DESC LIMIT 1"""
+        ).fetchone()
+    if row is None:
+        return {"active": False, "permanent": True, "code": None}
+    code = None
+    if include_code:
+        try:
+            saved = json.loads(ENROLLMENT_CODE_FILE.read_text(encoding="utf-8"))
+            candidate = str(saved.get("code") or "")
+            if (saved.get("id") == row["id"]
+                    and _CODE_PATTERN.fullmatch(candidate)
+                    and secrets.compare_digest(_code_hash(candidate), row["code_hash"])):
+                os.chmod(ENROLLMENT_CODE_FILE, 0o600)
+                code = candidate
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            pass
+    return {
+        "active": True,
+        "permanent": True,
+        "code": code,
+        "revealable": code is not None,
+        "created_at": float(row["created_at"]),
+        "last_used_at": (float(row["last_used_at"])
+                         if row["last_used_at"] is not None else None),
+        "use_count": int(row["use_count"] or 0),
+    }
+
+
+def revoke_enrollment_credential(*, now: float | None = None) -> dict:
+    """Revoke the permanent enrollment credential immediately."""
+    settings = control_plane.load_settings()
+    if settings["role"] != "controller":
+        raise ValueError("Enrollment codes can be revoked only by a location controller.")
+    revoked_at = float(time.time() if now is None else now)
+    with _connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        changed = connection.execute(
+            """UPDATE enrollment_codes SET revoked_at = ?
+               WHERE kind = 'permanent' AND revoked_at IS NULL""",
+            (revoked_at,),
+        ).rowcount
+        connection.commit()
+    ENROLLMENT_CODE_FILE.unlink(missing_ok=True)
+    return {"ok": True, "revoked": bool(changed), "active": False,
+            "permanent": True, "code": None}
 
 
 def _allowed_private_ip(value: str) -> bool:
@@ -304,7 +417,7 @@ def configure_new_controller(location_name: str, site_id: str,
             "Local SQLite scheduler remains authoritative",
             "PostgreSQL and global claiming remain off",
             "Local hardware profile assigned",
-            "Site fleet credential is ready for one-time agent enrollment",
+            "Site fleet credential is ready for permanent-code agent enrollment",
         ],
     }
 
@@ -399,5 +512,6 @@ def configure_joined_agent(controller_url: str, hardware_profile_id: str,
 
 
 def reset_for_tests() -> None:
+    ENROLLMENT_CODE_FILE.unlink(missing_ok=True)
     for suffix in ("", "-wal", "-shm"):
         Path(f"{DB_FILE}{suffix}").unlink(missing_ok=True)

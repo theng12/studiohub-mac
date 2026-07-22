@@ -18,39 +18,72 @@ def _controller():
     })
 
 
-def test_enrollment_code_expires_and_persists_only_hash(reset):
+def test_enrollment_code_is_permanent_and_privately_revealable(reset):
     _controller()
     issued = enrollment.create_enrollment_code(now=100)
 
-    assert issued["expires_at"] == 700
-    assert issued["expires_in_seconds"] == 600
+    assert issued["permanent"] is True
+    assert issued["expires_at"] is None
     assert issued["code"] not in enrollment.DB_FILE.read_bytes().decode(
         "utf-8", errors="ignore")
-    with pytest.raises(ValueError, match="expired"):
-        enrollment.claim_enrollment_code(issued["code"], now=700)
+    assert enrollment.ENROLLMENT_CODE_FILE.stat().st_mode & 0o777 == 0o600
+    status = enrollment.enrollment_credential_status(include_code=True)
+    assert status["active"] is True and status["code"] == issued["code"]
+    assert enrollment.enrollment_credential_status(include_code=False)["code"] is None
 
 
-def test_enrollment_code_is_single_use(reset):
+def test_enrollment_code_is_reusable_until_rotated_or_revoked(reset):
     _controller()
     peers.set_fleet_token("fleet-secret-for-location-a")
     issued = enrollment.create_enrollment_code(now=100)
 
     claimed = enrollment.claim_enrollment_code(issued["code"], now=200)
+    replayed = enrollment.claim_enrollment_code(issued["code"], now=201)
 
-    assert claimed == {
+    assert claimed == replayed == {
         "schema_version": 1,
         "site_id": "location-a",
         "site_name": "Location A",
         "controller_id": "controller-a",
         "fleet_token": "fleet-secret-for-location-a",
     }
-    with pytest.raises(ValueError, match="already been used"):
-        enrollment.claim_enrollment_code(issued["code"], now=201)
     with sqlite3.connect(enrollment.DB_FILE) as connection:
         row = connection.execute(
-            "SELECT code_hash, used_at FROM enrollment_codes"
+            "SELECT code_hash, used_at, last_used_at, use_count FROM enrollment_codes"
         ).fetchone()
-    assert len(row[0]) == 64 and row[1] == 200
+    assert len(row[0]) == 64 and row[1] is None and row[2:] == (201, 2)
+
+    rotated = enrollment.create_enrollment_code(now=300)
+    with pytest.raises(ValueError, match="revoked"):
+        enrollment.claim_enrollment_code(issued["code"], now=301)
+    assert enrollment.claim_enrollment_code(rotated["code"], now=302)["site_id"] == "location-a"
+
+    revoked = enrollment.revoke_enrollment_credential(now=400)
+    assert revoked["revoked"] is True
+    assert not enrollment.ENROLLMENT_CODE_FILE.exists()
+    with pytest.raises(ValueError, match="revoked"):
+        enrollment.claim_enrollment_code(rotated["code"], now=401)
+
+
+def test_legacy_one_time_rows_keep_expiry_and_single_use_semantics(reset):
+    _controller()
+    peers.set_fleet_token("fleet-secret-for-location-a")
+    code = "a" * 43
+    with sqlite3.connect(enrollment.DB_FILE) as connection:
+        connection.execute(
+            """CREATE TABLE enrollment_codes (
+                 id TEXT PRIMARY KEY, code_hash TEXT NOT NULL UNIQUE,
+                 created_at REAL NOT NULL, expires_at REAL NOT NULL, used_at REAL,
+                 site_id TEXT NOT NULL, controller_id TEXT NOT NULL)"""
+        )
+        connection.execute(
+            "INSERT INTO enrollment_codes VALUES (?, ?, ?, ?, NULL, ?, ?)",
+            ("legacy", enrollment._code_hash(code), 100, 700,
+             "location-a", "controller-a"),
+        )
+    assert enrollment.claim_enrollment_code(code, now=200)["site_id"] == "location-a"
+    with pytest.raises(ValueError, match="already been used"):
+        enrollment.claim_enrollment_code(code, now=201)
 
 
 def test_enrollment_role_checks(reset):
@@ -109,7 +142,21 @@ def test_code_creation_requires_authenticated_controller(app, token):
     allowed = remote.post(
         "/api/hub/enrollment-codes", headers={"X-Hub-Token": token})
     assert allowed.status_code == 200
-    assert allowed.json()["expires_in_seconds"] == 600
+    assert allowed.json()["permanent"] is True
+    assert allowed.json()["expires_at"] is None
+    revealed = remote.get(
+        "/api/hub/enrollment-codes", headers={"X-Hub-Token": token})
+    assert revealed.json()["code"] == allowed.json()["code"]
+
+    peers.set_fleet_token("peer-fleet-token-123")
+    peer = remote.post(
+        "/api/hub/enrollment-codes", headers={"X-Hub-Token": "peer-fleet-token-123"})
+    assert peer.status_code == 403
+    peer_status = remote.get(
+        "/api/hub/enrollment-codes", headers={"X-Hub-Token": "peer-fleet-token-123"})
+    assert peer_status.status_code == 200
+    assert peer_status.json()["active"] is True
+    assert peer_status.json()["code"] is None
 
 
 def test_agent_join_endpoint_is_loopback_only(app, token):
@@ -212,7 +259,7 @@ def test_dashboard_exposes_simple_setup_and_masks_secrets():
     assert "New location controller" in dashboard
     assert "Join an existing location" in dashboard
     assert 'class="card section setup-advanced"' in dashboard
-    assert 'id="setup-enrollment-code" type="password"' in dashboard
+    assert 'id="setup-enrollment-code" type="password" autocomplete="off"' in dashboard
     assert 'id="fleet-token" type="password"' in dashboard
     assert 'id="fleet-reveal"' in dashboard
     assert 'id="fleet-copy"' in dashboard
@@ -220,12 +267,16 @@ def test_dashboard_exposes_simple_setup_and_masks_secrets():
     assert 'id="acc-copy"' in dashboard
     assert 'id="setup-code-reveal"' in dashboard
     assert 'id="setup-code-copy"' in dashboard
+    assert 'id="setup-code-revoke"' in dashboard
     assert "function toggleEnrollmentCode()" in dashboard
     assert 'mask.dataset.revealed = "0"' in dashboard
-    assert 'reveal.disabled = true; reveal.textContent = "Reveal"' in dashboard
+    assert "function revokeEnrollmentCode()" in dashboard
+    assert "function loadEnrollmentCode()" in dashboard
     assert 'copyPrivateValue(activeEnrollmentCode, $("#setup-code-copy"), "Copy code")' in dashboard
     assert "function toggleHubToken()" in dashboard
     assert "function copyFleetToken()" in dashboard
     assert 'api("/api/hub/enrollment-codes"' in dashboard
     assert 'api("/api/hub/setup/join"' in dashboard
+    assert "enrollmentCodeExpiryTimer" not in dashboard
+    assert "expires after 10 minutes" not in dashboard
     assert "localStorage.setItem" not in dashboard[dashboard.index("function createEnrollmentCode"):dashboard.index("function renderController")]

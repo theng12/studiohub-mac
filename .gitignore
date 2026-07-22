@@ -35,6 +35,7 @@ controller_settings.json
 execution_identity.db
 setup_enrollment.db
 setup_enrollment.db-*
+.enrollment_code
 uploads/
 render_uploads/
 transcription_jobs/

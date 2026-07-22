@@ -217,9 +217,11 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/controller` · `PUT /api/hub/controller` | Read or configure this Hub's `standalone`, `controller`, or `agent` role, site identity, and optional evidence-shadow mode |
 | `POST /api/hub/controller/check` | Verify the optional PostgreSQL evidence schema and publish an immediate heartbeat |
 | `POST /api/hub/setup/controller` | Loopback-only simple setup for a new location controller; assigns identity and local hardware while forcing PostgreSQL off |
-| `POST /api/hub/enrollment-codes` | Authenticated controller-only creation of a single-use, 10-minute agent enrollment code |
-| `POST /api/hub/enrollment/claim` | Private LAN/Tailscale claim of one code; returns the minimum site identity and current site fleet credential once |
-| `POST /api/hub/setup/join` | Loopback-only agent setup using a private controller URL, one-time code, and local hardware profile |
+| `GET` · `POST` · `DELETE /api/hub/enrollment-codes` | Read, generate/rotate, or revoke the controller's permanent reusable enrollment code; owner access is required to reveal or change it |
+| `POST /api/hub/enrollment/claim` | Private LAN/Tailscale claim of the permanent code; returns the minimum site identity and current site fleet credential |
+| `POST /api/hub/setup/join` | Loopback-only agent setup using a private controller URL, permanent enrollment code, and local hardware profile |
+| `GET /api/hub/startup-services` | Audit sibling Studio launchd service and watchdog readiness on this Hub and authenticated peer Hubs |
+| `POST /api/hub/startup-services/{machine}/{studio}/install` | Install or repair one sibling's startup service on its own machine; refuses Hub-tracked active work |
 | `POST /api/hub/registry/studios/{id}/enabled` | Pause/resume new jobs for one Studio with `{"enabled": false/true}`; running work and the process are untouched |
 | `GET /api/hub/health` | Aggregate: totals + per-studio statuses |
 | `GET /api/hub/catalog` | Raw per-studio catalog rows (annotated `hub_cached`, `hub_machine`). Query: `q`, `modality`, `downloaded`, `cloud`, `force` |
@@ -493,7 +495,8 @@ await fetch(`${HUB}/api/hub/jobs`, {
   **Registered machines** list. Registration starts with a reusable hardware
   profile and suggested stable ID; profiles remain editable later. Each Studio
   has its own new-job pause/resume switch, while the machine switch remains the
-  master control.
+  master control. **Automatic startup across the fleet** audits every sibling's
+  launchd service and watchdog, with per-Studio and install-all repair controls.
 
 ## Run as an always-on service (auto-start)
 
@@ -538,17 +541,19 @@ flows:
   selects the controller role, creates a stable Hub ID from the hardware and
   hostname, assigns the local profile, keeps `database_mode=off`, and prepares
   the site fleet credential.
-- **Join an existing location** — on the controller, click **Create code**. On
-  the controller, use **Reveal** or **Copy code**, then on the new Mac enter the
-  controller's private/Tailscale HTTP URL, paste the one-time code, and choose
+- **Join an existing location** — on the controller, click **Generate code**.
+  Use **Reveal** or **Copy code**, then on the new Mac enter the controller's
+  private/Tailscale HTTP URL, paste the permanent code, and choose
   that Mac's hardware profile. The new Mac receives
   only the site name/ID, controller ID, and site fleet credential, then saves
   itself as an agent with PostgreSQL off.
 
-Enrollment codes contain at least 256 bits of entropy, expire after ten
-minutes, and can be claimed once. The controller persists only a SHA-256 hash
-plus expiry/use metadata in an owner-only SQLite file. Claims are accepted only
-from loopback, private LAN, or Tailscale source addresses. The agent's local
+The enrollment code contains at least 256 bits of entropy and remains reusable
+until an owner explicitly rotates or revokes it. The controller's claim database
+stores only its SHA-256 hash and use metadata; a separate mode-0600 owner-private
+file keeps the value available to Reveal after a Hub restart, like the Hub and
+fleet credentials. Claims are accepted only from loopback, private LAN, or
+Tailscale source addresses. The agent's local
 join endpoint accepts only a credential-free private HTTP base URL and is
 callable only from that Mac's loopback dashboard. Failed network or validation
 steps do not change local settings; a failed local commit is rolled back as far
@@ -558,6 +563,23 @@ Codes and fleet credentials are sent in request bodies/headers, never URLs.
 The dashboard masks them by default and does not put them in localStorage. The
 existing role, PostgreSQL-shadow, and manual credential controls remain under
 **Advanced settings and manual recovery**.
+
+## Fleet startup-service control
+
+Open **Remote → Automatic startup across the fleet → Check startup**. The
+controller asks each reachable peer Hub to inspect only its own Mac. Each row
+reports whether the Studio app exists, its trusted `install_service.sh` is
+available, both launchd plists exist, and both the server and watchdog labels
+are loaded. Older peer Hubs report **Hub update needed** instead of guessing.
+
+**Install** or **Repair** runs that sibling's existing idempotent installer on
+the target Mac; **Install missing** performs the same operation sequentially.
+The Hub validates that the installer is a regular file inside the registered
+Studio app, drains new Hub dispatch with maintenance mode, and refuses the
+operation if that Studio still has Hub-tracked active work. Installation can
+restart the Studio as launchd takes ownership, so direct jobs started outside
+the Hub should also be allowed to finish first. No startup service is installed
+automatically merely by opening or refreshing the audit.
 
 ## The fleet: remote specs + remote control
 

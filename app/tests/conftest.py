@@ -43,7 +43,8 @@ def _reset_state():
               memory_admission.SETTINGS_FILE,
               execution_identity.DB_FILE,
               fleet_ops._STATE_FILE, control_plane.SETTINGS_FILE,
-              control_plane.DATABASE_URL_FILE, enrollment.DB_FILE):
+              control_plane.DATABASE_URL_FILE, enrollment.DB_FILE,
+              enrollment.ENROLLMENT_CODE_FILE):
         try:
             f.unlink()
         except FileNotFoundError:

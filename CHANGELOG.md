@@ -10,6 +10,42 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.59.0] — 2026-07-22
+
+### Added — permanent enrollment and fleet startup control
+
+- Replaced expiring, single-use agent enrollment codes with one permanent,
+  reusable site enrollment credential. Owners can reveal, copy, rotate, or
+  revoke it from **Remote**; already enrolled Macs remain connected after a
+  rotation or revocation.
+- Added **Automatic startup across the fleet** to audit Image, Voice, Chat,
+  Music, Video, and Render Studio startup services on this Mac and every
+  reachable peer Hub. The table distinguishes installed, missing, incomplete,
+  unsupported, app-missing, outdated-Hub, and unreachable states.
+- Added per-Studio **Install/Repair** controls and a sequential **Install
+  missing** action. Each target machine runs and verifies its own sibling
+  Studio installer through its authenticated local Hub.
+
+### Changed
+
+- Permanent enrollment claims remain limited to loopback, private LAN, and
+  Tailscale sources. The claim database stores only the SHA-256 digest and use
+  metadata; a separate mode-0600 controller file keeps the owner-visible value
+  available after restarts.
+- Previously issued expiring codes retain their original expiry and single-use
+  behavior after the backward-compatible SQLite schema migration. Creating the
+  new permanent credential rotates only permanent credentials.
+
+### Safety
+
+- Startup auditing is read-only and never installs anything automatically.
+  Installation accepts only a regular `install_service.sh` inside a known
+  sibling app, enters maintenance mode, refuses Hub-tracked active work, runs
+  one target at a time, and verifies both launchd server and watchdog labels.
+- Remote startup operations use the existing fleet credential and always run
+  on the target machine's own Hub. No live workers or jobs are changed merely
+  by updating Studio Hub or opening the audit.
+
 ## [1.58.3] — 2026-07-22
 
 ### Fixed — visible one-time enrollment codes

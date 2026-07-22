@@ -212,6 +212,80 @@ async def control_remote(client: httpx.AsyncClient, studio: dict, action: str) -
                 f"— run Studio Hub on that Mac ({e})"}
 
 
+async def startup_services_status(
+    registry: list[dict], client: httpx.AsyncClient,
+) -> dict[str, dict]:
+    """Read each machine's local startup-service audit through its peer Hub."""
+    machines = _remote_machines(registry)
+
+    async def one(machine: str, studios: list[dict]) -> tuple[str, dict]:
+        studio = studios[0]
+        token = _peer_token(studio)
+        headers = {"X-Hub-Token": token} if token else {}
+        try:
+            response = await client.get(
+                f"{_peer_url(studio)}/api/hub/startup-services?local_only=true",
+                headers=headers, timeout=PEER_TIMEOUT_S,
+            )
+            if response.status_code in {401, 403}:
+                return machine, {
+                    "machine": machine, "reachable": True, "supported": False,
+                    "services": [], "detail": "Peer rejected the fleet credential",
+                }
+            if response.status_code == 404:
+                return machine, {
+                    "machine": machine, "reachable": True, "supported": False,
+                    "services": [], "detail": "Update this machine's Studio Hub to add startup control",
+                }
+            if response.status_code >= 400:
+                return machine, {
+                    "machine": machine, "reachable": True, "supported": False,
+                    "services": [], "detail": f"Peer returned HTTP {response.status_code}",
+                }
+            payload = response.json()
+            return machine, {
+                **payload, "machine": machine, "reachable": True,
+                "supported": payload.get("supported", True),
+            }
+        except (httpx.HTTPError, ValueError) as exc:
+            return machine, {
+                "machine": machine, "reachable": False, "supported": False,
+                "services": [],
+                "detail": (str(exc).strip() or type(exc).__name__)[:180],
+            }
+
+    rows = await asyncio.gather(*(one(machine, studios)
+                                  for machine, studios in machines.items()))
+    return dict(rows)
+
+
+async def install_remote_startup_service(
+    client: httpx.AsyncClient, studio: dict, modality: str,
+) -> dict:
+    """Ask one peer Hub to install one sibling's service on its own Mac."""
+    token = _peer_token(studio)
+    if not token:
+        return {"ok": False, "error": "no fleet token set"}
+    try:
+        response = await client.post(
+            f"{_peer_url(studio)}/api/hub/startup-services/local/{modality}/install",
+            headers={"X-Hub-Token": token}, timeout=260.0,
+        )
+        payload = (response.json()
+                   if response.headers.get("content-type", "").startswith("application/json")
+                   else {})
+        if response.status_code in {401, 403}:
+            return {"ok": False, "error": "remote Hub rejected the fleet credential"}
+        if response.status_code == 404:
+            return {"ok": False, "error": "update the remote Studio Hub before installing startup services"}
+        if response.status_code >= 400:
+            return {"ok": False, "error": str(payload.get("detail") or
+                                                f"remote Hub returned HTTP {response.status_code}")}
+        return payload
+    except httpx.HTTPError as exc:
+        return {"ok": False, "error": f"can't reach the remote Hub ({exc})"}
+
+
 async def sync_fleet_token(
     registry: list[dict], client: httpx.AsyncClient, new_token: str,
 ) -> dict:

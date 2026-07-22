@@ -13,6 +13,7 @@ studios, so the Hub itself is monitorable by the same convention.
 import asyncio
 import hashlib
 import re
+import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -27,7 +28,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from pydantic import BaseModel, Field
 
 from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, control_plane, enrollment, fleet_ops, fleet_storage, gateway, hardware_profiles, job_storage, memory_admission,
-               ledger, metrics, peers, recipes, shared_voices, transcription_jobs)
+               ledger, metrics, peers, recipes, shared_voices, startup_services, transcription_jobs)
 from .auto_update import UpdateError
 from .auto_update_config import create_updater
 from .fleet_auto_updates import FleetAutoUpdates
@@ -479,10 +480,36 @@ def setup_new_location_controller(request: Request, body: SimpleControllerSetupB
         raise HTTPException(400, str(exc)) from exc
 
 
+def _can_manage_enrollment(request: Request) -> bool:
+    if is_loopback(request) or auth.valid_browser_session(
+            request.cookies.get(auth.SESSION_COOKIE_NAME)):
+        return True
+    offered = auth.presented_token(request)
+    return bool(offered and secrets.compare_digest(offered, HUB_TOKEN))
+
+
+@app.get("/api/hub/enrollment-codes")
+def get_agent_enrollment_code(request: Request):
+    return enrollment.enrollment_credential_status(
+        include_code=_can_manage_enrollment(request))
+
+
 @app.post("/api/hub/enrollment-codes")
-def create_agent_enrollment_code():
+def create_agent_enrollment_code(request: Request):
+    if not _can_manage_enrollment(request):
+        raise HTTPException(403, "Owner access is required to rotate the enrollment code.")
     try:
         return enrollment.create_enrollment_code()
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.delete("/api/hub/enrollment-codes")
+def revoke_agent_enrollment_code(request: Request):
+    if not _can_manage_enrollment(request):
+        raise HTTPException(403, "Owner access is required to revoke the enrollment code.")
+    try:
+        return enrollment.revoke_enrollment_credential()
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 
@@ -2027,6 +2054,61 @@ async def studio_lifecycle(studio_id: str, action: str):
         raise HTTPException(409, result["error"])
     await monitor.poll_all()  # reflect the transition quickly
     return result
+
+
+@app.get("/api/hub/startup-services")
+async def fleet_startup_services(local_only: bool = Query(False)):
+    """Audit sibling startup services locally or across authenticated peer Hubs."""
+    local = startup_services.local_snapshot()
+    if local_only:
+        return local
+    remote = await peers.startup_services_status(monitor.registry, monitor._client)
+    return {
+        "schema_version": 1,
+        "observed_at": time.time(),
+        "machines": {"local": local, **remote},
+    }
+
+
+@app.post("/api/hub/startup-services/{machine}/{modality}/install")
+async def install_fleet_startup_service(machine: str, modality: str):
+    """Install one sibling's startup service on its own machine only."""
+    if modality not in startup_services.SERVICE_SPECS:
+        raise HTTPException(404, f"unknown Studio type: {modality}")
+    if machine == "local":
+        broker.set_maintenance(modality, True)
+        try:
+            if fleet_ops.studio_has_active_work(modality):
+                raise HTTPException(
+                    409, "This Studio has active Hub work; wait for it to finish before installing startup.")
+            try:
+                return await asyncio.to_thread(startup_services.install_service, modality)
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from exc
+        finally:
+            broker.set_maintenance(modality, False)
+    target = next((row for row in monitor.registry
+                   if row.get("machine") == machine
+                   and row.get("modality") == modality), None)
+    peer = target or next((row for row in monitor.registry
+                           if row.get("machine") == machine), None)
+    if peer is None:
+        raise HTTPException(404, f"unknown machine: {machine}")
+    maintenance_id = target["id"] if target else None
+    if maintenance_id:
+        broker.set_maintenance(maintenance_id, True)
+    try:
+        if maintenance_id and fleet_ops.studio_has_active_work(maintenance_id):
+            raise HTTPException(
+                409, "This Studio has active Hub work; wait for it to finish before installing startup.")
+        result = await peers.install_remote_startup_service(
+            monitor._client, peer, modality)
+        if not result.get("ok"):
+            raise HTTPException(409, result.get("error", "remote startup installation failed"))
+        return result
+    finally:
+        if maintenance_id:
+            broker.set_maintenance(maintenance_id, False)
 
 
 @app.get("/api/hub/fleet")
