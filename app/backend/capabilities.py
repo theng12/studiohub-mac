@@ -40,6 +40,7 @@ _INPUT_LIMIT_FIELDS = (
 )
 _OUTPUT_LIMIT_FIELDS = (
     "max_duration_seconds", "max_duration_s", "max_frames", "sample_rate_hz",
+    "max_output_tokens", "max_tokens",
 )
 _SAFE_SIZE_FIELDS = ("aspect_ratio", "label", "width", "height", "tier", "default")
 _SAFE_CUSTOM_FIELDS = ("min_px", "max_px", "step", "max_pixels")
@@ -172,6 +173,8 @@ def _controls(model: dict, modality: str, cloud: bool) -> dict:
             controls["defaults"] = safe_defaults
     if modality == "voice":
         controls["voice_modes"] = _voice_modes(model, cloud)
+    if modality == "chat" and model.get("verified_token_usage") is True:
+        controls["verified_token_usage"] = True
     return controls
 
 

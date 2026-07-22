@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from backend import broker, chat_jobs as jobs
+from backend import broker, chat_jobs as jobs, control_plane
 
 
 MODEL = "mlx-community/Llama-3.2-3B-Instruct-4bit"
@@ -39,15 +39,38 @@ class _Response:
     status_code = 200
     text = ""
 
-    def __init__(self, content: str, elapsed: float = 1.25):
+    def __init__(self, content: str, elapsed: float = 1.25, *, usage=None,
+                 model_revision=None):
         self.content = content
         self.elapsed = elapsed
+        self.usage = usage
+        self.model_revision = model_revision
 
     def json(self):
-        return {
+        payload = {
             "choices": [{"message": {"content": self.content}}],
             "elapsed_seconds": self.elapsed,
         }
+        if self.usage is not None:
+            payload["usage"] = self.usage
+        if self.model_revision is not None:
+            payload["model_revision"] = self.model_revision
+        return payload
+
+
+def _genstudio_payload() -> dict:
+    revision = "7f0dc925e0d0afb0322d96f9255cfddf2ba5636e"
+    payload = _payload(1, 1)
+    payload["genstudio_execution"] = {
+        "genstudio_job_id": "job-local-llama",
+        "genstudio_attempt_id": "attempt-local-llama",
+        "idempotency_key": "b" * 64,
+        "fencing_token": 1,
+        "site_id": "site-local-llama",
+        "operation": "chat.completion",
+        "model_revision": revision,
+    }
+    return payload
 
 
 def _results(scene_ids: list[str], key: str = "visual_prompt") -> str:
@@ -86,6 +109,58 @@ def test_api_submission_is_authenticated_persistent_and_idempotent(authed, clien
     assert duplicate["batch_id"] == created["batch_id"]
     assert duplicate["duplicate"] is True
     assert client.post("/api/hub/chat/jobs", json=_payload()).status_code == 401
+
+
+def test_genstudio_chat_identity_is_fenced_bound_and_replayed(reset):
+    control_plane.save_settings({
+        "role": "controller",
+        "site_id": "site-local-llama",
+        "site_name": "Local Llama",
+        "controller_id": "controller-local-llama",
+        "database_mode": "off",
+    })
+    created, duplicate = jobs.create_batch(_genstudio_payload())
+    assert duplicate is False
+    assert created["genstudio_execution"]["authority"] == "genstudio"
+    replayed, duplicate = jobs.create_batch(_genstudio_payload())
+    assert duplicate is True
+    assert replayed["id"] == created["id"]
+
+
+@pytest.mark.asyncio
+async def test_genstudio_chat_preserves_verified_usage_and_revision(
+        reset, monitor, monkeypatch):
+    control_plane.save_settings({
+        "role": "controller",
+        "site_id": "site-local-llama",
+        "site_name": "Local Llama",
+        "controller_id": "controller-local-llama",
+        "database_mode": "off",
+    })
+    batch, _ = jobs.create_batch(_genstudio_payload())
+    _add_chat_workers(monitor, 1)
+    revision = batch["genstudio_execution"]["model_revision"]
+
+    async def catalog(studio):
+        return {"models": [{"repo": MODEL, "cache": {"state": "cached"}}]}
+
+    async def post(url, **kwargs):
+        return _Response(
+            "Verified local response",
+            usage={"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16},
+            model_revision=revision,
+        )
+
+    monkeypatch.setattr(monitor, "get_catalog", catalog)
+    monkeypatch.setattr(monitor._client, "post", post)
+    assert await jobs.dispatch_once(monitor) == 1
+    await asyncio.gather(*list(jobs._pack_tasks.values()))
+    result = jobs.summary(batch)
+    assert result["status"] == "done"
+    assert result["usage"] == {
+        "prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16,
+    }
+    assert result["model_revision"] == revision
 
 
 def test_pack_validation_enforces_adaptive_tier_limits_and_unique_ids(authed):

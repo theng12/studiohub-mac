@@ -10,6 +10,27 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.60.0] — 2026-07-22
+
+### Added — verified local LLM execution handoff
+
+- Chat capability snapshots now carry immutable model revisions, output-token
+  limits, and ChatStudio's explicit verified-token-usage capability to
+  GenStudio's site assignment engine.
+- GenStudio chat batches now use the same restart-safe execution identity,
+  idempotency, and fencing guard as other local modalities. Exact replays return
+  the original local batch without creating duplicate work.
+- Completed chat batches preserve tokenizer-native usage and model-revision
+  evidence from ChatStudio for GenStudio settlement and audit.
+
+### Safety
+
+- GenStudio-assigned chat work rejects missing or inconsistent token evidence
+  and any runtime revision mismatch. Legacy direct Story Studio chat batches
+  remain compatible when they do not carry GenStudio execution identity.
+- Existing queued and running work is not moved, cancelled, or rewritten by
+  this release.
+
 ## [1.59.0] — 2026-07-22
 
 ### Added — permanent enrollment and fleet startup control

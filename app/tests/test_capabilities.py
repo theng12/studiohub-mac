@@ -150,6 +150,35 @@ def test_private_capability_snapshot_contract_is_versioned_and_truthful(
     assert transcription["availability"]["available_now"] is True
 
 
+def test_chat_capability_reports_verified_usage_revision_and_output_limit(
+        authed, monitor):
+    _seed_capability_site(monitor)
+    chat = {
+        **next(row for row in registry.load_registry() if row["id"] == "chat"),
+        "id": "chat",
+        "machine": "local",
+    }
+    monitor.registry.append(chat)
+    monitor.status["chat"] = {
+        "status": "up", "app_version": "1.24.0", "last_seen": time.time(),
+        "health": {"ok": True},
+    }
+    revision = "7f0dc925e0d0afb0322d96f9255cfddf2ba5636e"
+    monitor._catalog_cache["chat"] = (time.time(), {"models": [{
+        "repo": "mlx-community/Llama-3.2-3B-Instruct-4bit",
+        "runtime_revision": revision,
+        "cache": {"state": "cached"},
+        "max_output_tokens": 32768,
+        "verified_token_usage": True,
+    }]})
+
+    payload = authed.get("/api/hub/capabilities").json()
+    model = _model(_worker(payload, "chat"), "chat.completion")
+    assert model["runtime_revision"] == revision
+    assert model["output_limits"] == {"max_output_tokens": 32768}
+    assert model["controls"]["verified_token_usage"] is True
+
+
 def test_capability_snapshot_is_strictly_header_authenticated_even_on_loopback(
         app, token, monitor):
     _seed_capability_site(monitor)

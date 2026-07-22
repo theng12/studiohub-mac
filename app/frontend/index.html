@@ -1034,6 +1034,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.60.0", date: "2026-07-22", items: [
+    "Local Chat capability snapshots now report immutable model revision, output limit, and verified native token-usage support to GenStudio.",
+    "GenStudio chat assignments now use restart-safe idempotency and fencing, with exact replays returning the original local batch instead of duplicate work.",
+    "Completed GenStudio chat batches preserve verified prompt, completion, and total token counts and reject runtime-revision mismatches before settlement.",
+  ]},
   { v: "1.59.0", date: "2026-07-22", items: [
     "Agent enrollment now uses one permanent reusable code that owners can reveal, copy, rotate, or revoke; already joined Macs remain connected.",
     "Remote now audits automatic startup for Image, Voice, Chat, Music, Video, and Render Studio on every reachable Hub machine.",

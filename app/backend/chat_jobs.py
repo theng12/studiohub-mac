@@ -11,7 +11,7 @@ import uuid
 import httpx
 from fastapi import HTTPException
 
-from . import broker, ledger
+from . import broker, execution_identity, ledger
 from .peers import studio_request
 from .registry import machine_enabled, studio_enabled
 
@@ -23,6 +23,10 @@ MAX_MESSAGE_CHARS = 500_000
 MAX_TRIES = 3
 TRANSIENT_RETRY_DELAYS = (5, 15)
 TERMINAL_STATES = {"done", "partial", "error", "cancelled"}
+
+
+class ExecutionEvidenceError(RuntimeError):
+    """A GenStudio execution result cannot be trusted for settlement."""
 
 batches: dict[str, dict] = {}
 busy_studios: set[str] = set()
@@ -157,6 +161,26 @@ def _idempotency(payload: dict) -> str:
 def create_batch(payload: dict) -> tuple[dict, bool]:
     if not isinstance(payload, dict):
         raise HTTPException(400, "request body must be an object")
+    nested_execution = payload.get("genstudio_execution")
+    supplied_operation = (
+        payload.get("operation")
+        if "operation" in payload
+        else nested_execution.get("operation")
+        if isinstance(nested_execution, dict)
+        else None
+    )
+    if supplied_operation is not None and str(supplied_operation).strip().lower() != "chat.completion":
+        raise HTTPException(400, "GenStudio execution operation must be chat.completion")
+    try:
+        prepared = execution_identity.prepare(payload)
+    except execution_identity.ExecutionIdentityError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    payload = prepared.envelope
+    if prepared.replay_batch_id:
+        replay = get_batch(prepared.replay_batch_id)
+        if replay is not None:
+            batches.setdefault(replay["id"], replay)
+            return replay, True
     raw_packs = payload.get("packs")
     if not isinstance(raw_packs, list) or not raw_packs or len(raw_packs) > MAX_PACKS:
         raise HTTPException(400, f"packs must contain 1 to {MAX_PACKS} entries")
@@ -194,6 +218,7 @@ def create_batch(payload: dict) -> tuple[dict, bool]:
             "messages": _messages(raw.get("messages")), "params": _params(raw.get("params")),
             "state": "queued", "tries": 0, "studio": None,
             "duration_seconds": None, "error": None, "results": {},
+            "usage": None, "model_revision": None,
             "raw_responses": [], "started_at": None, "finished_at": None,
             "retry_at": None,
         })
@@ -221,9 +246,11 @@ def create_batch(payload: dict) -> tuple[dict, bool]:
         "cancelled": False, "model": model, "model_cost_tier": model_cost_tier,
         "kind": kind, "label": label,
         "project": project, "episode": episode, "packs": packs,
+        "genstudio_execution": prepared.evidence,
     }
     batches[batch["id"]] = batch
     _save(batch)
+    execution_identity.bind_local_batch(prepared.evidence, batch["id"])
     _wakeup.set()
     return batch, False
 
@@ -303,6 +330,15 @@ def summary(batch: dict, include_raw: bool = False, include_results: bool = True
         "completed_scenes": sum(len(pack.get("results", {})) for pack in batch["packs"]),
         "duration_seconds": round(sum(pack.get("duration_seconds") or 0 for pack in batch["packs"]), 2),
     }
+    verified_usage = [pack.get("usage") for pack in batch["packs"] if isinstance(pack.get("usage"), dict)]
+    if verified_usage:
+        result["usage"] = {
+            field: sum(int(usage[field]) for usage in verified_usage)
+            for field in ("prompt_tokens", "completion_tokens", "total_tokens")
+        }
+    revisions = {pack.get("model_revision") for pack in batch["packs"] if pack.get("model_revision")}
+    if len(revisions) == 1:
+        result["model_revision"] = next(iter(revisions))
     result["packs"] = []
     for pack in batch["packs"]:
         row = {
@@ -312,6 +348,7 @@ def summary(batch: dict, include_raw: bool = False, include_results: bool = True
             "max_tries": MAX_TRIES, "started_at": pack.get("started_at"),
             "retry_at": pack.get("retry_at"),
             "duration_seconds": pack.get("duration_seconds"), "error": pack.get("error"),
+            "usage": pack.get("usage"), "model_revision": pack.get("model_revision"),
             "missing_scene_ids": [scene_id for scene_id in pack["scene_ids"]
                                   if scene_id not in pack.get("results", {})],
         }
@@ -465,6 +502,29 @@ async def _run_pack(monitor, batch: dict, pack: dict, studio: dict, owner: str) 
             error.transient = response.status_code in {408, 409, 425, 429, 500, 502, 503, 504}
             raise error
         payload = response.json()
+        execution = batch.get("genstudio_execution") or {}
+        usage = payload.get("usage")
+        if usage is not None:
+            fields = ("prompt_tokens", "completion_tokens", "total_tokens")
+            if not isinstance(usage, dict) or any(
+                isinstance(usage.get(field), bool)
+                or not isinstance(usage.get(field), int)
+                or usage.get(field) < 0
+                for field in fields
+            ):
+                raise ExecutionEvidenceError("Chat Studio returned invalid token usage evidence")
+            if usage["total_tokens"] < usage["prompt_tokens"] + usage["completion_tokens"]:
+                raise ExecutionEvidenceError("Chat Studio returned inconsistent token usage evidence")
+            pack["usage"] = {field: usage[field] for field in fields}
+        elif execution:
+            raise ExecutionEvidenceError("Chat Studio did not return verified token usage evidence")
+        revision = str(payload.get("model_revision") or "").strip().lower() or None
+        expected_revision = str(execution.get("model_revision") or "").strip().lower() or None
+        if expected_revision and revision != expected_revision:
+            raise ExecutionEvidenceError(
+                "Chat Studio model revision did not match the GenStudio assignment"
+            )
+        pack["model_revision"] = revision
         content = str(payload.get("choices", [{}])[0].get("message", {}).get("content") or "")
         if not content.strip():
             raise ValueError("Chat Studio returned empty content")
