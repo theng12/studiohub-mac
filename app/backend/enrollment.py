@@ -30,6 +30,7 @@ DB_FILE = DATA_DIR / "setup_enrollment.db"
 ENROLLMENT_CODE_FILE = DATA_DIR / ".enrollment_code"
 TAILSCALE_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 _CODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{32,256}$")
+DEFAULT_CONTROLLER_PORT = 47873
 
 
 def _connect() -> sqlite3.Connection:
@@ -267,19 +268,28 @@ def private_request_host(host: str | None) -> bool:
 
 
 def validate_private_controller_url(value: str) -> str:
-    """Validate a credential-free private HTTP controller base URL."""
+    """Normalize and validate a credential-free private Hub address.
+
+    Operators normally paste an address copied from the controller dashboard,
+    but may omit ``http://`` or use an HTTPS Tailscale Serve hostname.  Direct
+    HTTP addresses without a port use Studio Hub's standard port.
+    """
     candidate = str(value or "").strip()
+    if not candidate:
+        raise ValueError("Enter the controller address shown in its Remote tab.")
+    if "://" not in candidate:
+        candidate = f"http://{candidate.lstrip('/')}"
     try:
         parsed = urlsplit(candidate)
         port = parsed.port
     except ValueError as exc:
         raise ValueError("Enter a valid controller URL.") from exc
-    if parsed.scheme != "http" or not parsed.hostname:
-        raise ValueError("Controller URL must use private HTTP.")
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Controller address must use HTTP or HTTPS.")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ValueError("Controller URL must not contain credentials, a query, or a fragment.")
     if parsed.path not in {"", "/"}:
-        raise ValueError("Controller URL must be the Hub base address without a path.")
+        raise ValueError("Paste the Hub's main address without a page path.")
     hostname = parsed.hostname.rstrip(".").lower()
     try:
         literal = ipaddress.ip_address(hostname.split("%", 1)[0])
@@ -295,7 +305,63 @@ def validate_private_controller_url(value: str) -> str:
     if not addresses or not all(_allowed_private_ip(address) for address in addresses):
         raise ValueError("Controller URL must resolve only to loopback, LAN, or Tailscale addresses.")
     host_display = f"[{hostname}]" if ":" in hostname else hostname
-    return f"http://{host_display}{f':{port}' if port else ''}"
+    if port is None and parsed.scheme == "http":
+        port = DEFAULT_CONTROLLER_PORT
+    return f"{parsed.scheme}://{host_display}{f':{port}' if port else ''}"
+
+
+def _connection_failure(base_url: str, exc: httpx.HTTPError) -> ValueError:
+    if isinstance(exc, httpx.ConnectTimeout):
+        return ValueError(
+            f"Connection to {base_url} timed out. Confirm the controller Mac is online, "
+            "Studio Hub is running, and both Macs are connected to Tailscale."
+        )
+    if isinstance(exc, httpx.ConnectError):
+        return ValueError(
+            f"No Studio Hub answered at {base_url}. Copy the controller address from "
+            "Remote > Reach this Hub from other devices, then try again."
+        )
+    return ValueError(f"The controller at {base_url} could not be reached over the private link.")
+
+
+async def probe_remote_controller(controller_url: str) -> dict:
+    """Check a private controller without sending an enrollment credential."""
+    base_url = validate_private_controller_url(controller_url)
+    async with httpx.AsyncClient(follow_redirects=False, trust_env=False) as client:
+        try:
+            response = await client.get(
+                f"{base_url}/api/hub/enrollment/info", timeout=8.0,
+            )
+        except httpx.HTTPError as exc:
+            raise _connection_failure(base_url, exc) from exc
+    try:
+        payload = response.json() if response.headers.get("content-type", "").startswith(
+            "application/json") else {}
+    except ValueError as exc:
+        raise ValueError(f"{base_url} answered, but it is not a compatible Studio Hub.") from exc
+    if response.status_code == 404:
+        raise ValueError(
+            f"{base_url} is running an older Studio Hub. Update that controller first, "
+            "then check the connection again."
+        )
+    if response.status_code >= 400:
+        raise ValueError(str(payload.get("detail") or f"{base_url} rejected the connection check."))
+    if payload.get("schema_version") != 1:
+        raise ValueError(f"{base_url} returned an unsupported enrollment response.")
+    if payload.get("role") != "controller":
+        raise ValueError(
+            f"{base_url} is reachable, but it is not this location's controller. "
+            "Use the address from the main controller Mac."
+        )
+    return {
+        "ok": True,
+        "controller_url": base_url,
+        "site_id": str(payload.get("site_id") or ""),
+        "site_name": str(payload.get("site_name") or ""),
+        "controller_id": str(payload.get("controller_id") or ""),
+        "version": str(payload.get("version") or ""),
+        "enrollment_active": payload.get("enrollment_active") is True,
+    }
 
 
 def _safe_fragment(value: str, fallback: str) -> str:
@@ -455,14 +521,20 @@ async def claim_remote(controller_url: str, code: str) -> dict:
                 timeout=10.0,
             )
         except httpx.HTTPError as exc:
-            raise ValueError("The location controller could not be reached over the private link.") from exc
+            raise _connection_failure(base_url, exc) from exc
     try:
         payload = response.json() if response.headers.get("content-type", "").startswith(
             "application/json") else {}
     except ValueError as exc:
         raise ValueError("Controller returned an invalid enrollment response.") from exc
     if response.status_code >= 400:
-        raise ValueError(str(payload.get("detail") or "Enrollment code was rejected."))
+        detail = str(payload.get("detail") or "Enrollment code was rejected.")
+        if "enrollment code" in detail.lower():
+            detail += (
+                " Copy the permanent enrollment code from the controller's Remote tab; "
+                "do not use its Hub token or fleet token."
+            )
+        raise ValueError(detail)
     return _validated_claim(payload)
 
 
@@ -503,7 +575,7 @@ def configure_joined_agent(controller_url: str, hardware_profile_id: str,
         "hardware_profile": profile,
         "checklist": [
             "Joined the controller over a private link",
-            "Agent role and location identity saved",
+            "Worker role and location identity saved automatically",
             "Site fleet credential stored in owner-only files",
             "PostgreSQL and customer submission remain disabled",
             "Local hardware profile assigned",

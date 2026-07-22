@@ -99,24 +99,65 @@ def test_enrollment_role_checks(reset):
 
 
 @pytest.mark.parametrize("url", [
-    "https://100.70.0.2:47873",
     "http://8.8.8.8:47873",
     "http://user:secret@100.70.0.2:47873",
     "http://100.70.0.2:47873/path",
     "http://100.70.0.2:47873?token=secret",
+    "ftp://100.70.0.2:47873",
 ])
 def test_private_controller_url_rejects_unsafe_destinations(url):
     with pytest.raises(ValueError):
         enrollment.validate_private_controller_url(url)
 
 
-@pytest.mark.parametrize("url", [
-    "http://127.0.0.1:47873",
-    "http://192.168.1.20:47873/",
-    "http://100.70.0.2:47873",
+@pytest.mark.parametrize(("url", "expected"), [
+    ("http://127.0.0.1:47873", "http://127.0.0.1:47873"),
+    ("http://192.168.1.20:47873/", "http://192.168.1.20:47873"),
+    ("http://100.70.0.2:47873", "http://100.70.0.2:47873"),
+    ("100.70.0.2:47873", "http://100.70.0.2:47873"),
+    ("100.70.0.2", "http://100.70.0.2:47873"),
+    ("https://100.70.0.2", "https://100.70.0.2"),
+    ("https://100.70.0.2:443/", "https://100.70.0.2:443"),
 ])
-def test_private_controller_url_accepts_loopback_lan_and_tailscale(url):
-    assert enrollment.validate_private_controller_url(url).startswith("http://")
+def test_private_controller_url_accepts_common_private_forms(url, expected):
+    assert enrollment.validate_private_controller_url(url) == expected
+
+
+@pytest.mark.asyncio
+async def test_controller_probe_preserves_normalized_url_and_reports_readiness(
+        reset, monkeypatch):
+    class Response:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+
+        @staticmethod
+        def json():
+            return {
+                "schema_version": 1, "role": "controller",
+                "site_id": "location-a", "site_name": "Location A",
+                "controller_id": "controller-a", "version": "1.60.3",
+                "enrollment_active": True,
+            }
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+
+        async def get(self, url, timeout):
+            assert url == "http://100.70.0.2:47873/api/hub/enrollment/info"
+            assert timeout == 8.0
+            return Response()
+
+    monkeypatch.setattr(enrollment.httpx, "AsyncClient", lambda **kwargs: Client())
+
+    result = await enrollment.probe_remote_controller("100.70.0.2")
+
+    assert result == {
+        "ok": True, "controller_url": "http://100.70.0.2:47873",
+        "site_id": "location-a", "site_name": "Location A",
+        "controller_id": "controller-a", "version": "1.60.3",
+        "enrollment_active": True,
+    }
 
 
 def test_claim_endpoint_requires_controller_and_private_source(app, token):
@@ -132,6 +173,22 @@ def test_claim_endpoint_requires_controller_and_private_source(app, token):
     assert claimed.status_code == 200
     assert claimed.json()["site_id"] == "location-a"
     assert "fleet_token" in claimed.json()
+
+
+def test_enrollment_info_is_private_read_only_and_contains_no_secret(app):
+    _controller()
+    issued = enrollment.create_enrollment_code()
+
+    private = TestClient(app, client=("100.70.0.8", 50000))
+    response = private.get("/api/hub/enrollment/info")
+
+    assert response.status_code == 200
+    assert response.json()["role"] == "controller"
+    assert response.json()["enrollment_active"] is True
+    assert issued["code"] not in response.text
+    assert "fleet_token" not in response.text
+    public = TestClient(app, client=("8.8.8.8", 50000))
+    assert public.get("/api/hub/enrollment/info").status_code == 403
 
 
 def test_code_creation_requires_authenticated_controller(app, token):
@@ -159,9 +216,8 @@ def test_code_creation_requires_authenticated_controller(app, token):
     assert peer_status.json()["code"] is None
 
 
-def test_agent_join_endpoint_is_loopback_only(app, token):
-    remote = TestClient(
-        app, client=("100.70.0.8", 50000), headers={"X-Hub-Token": token})
+def test_agent_join_endpoint_requires_local_or_owner_access(app, token, monkeypatch):
+    remote = TestClient(app, client=("100.70.0.8", 50000))
 
     refused = remote.post("/api/hub/setup/join", json={
         "controller_url": "http://100.70.0.2:47873",
@@ -169,7 +225,52 @@ def test_agent_join_endpoint_is_loopback_only(app, token):
         "hardware_profile_id": "mac-mini-m4-16gb",
     })
 
-    assert refused.status_code == 403
+    assert refused.status_code == 401
+
+    peers.set_fleet_token("peer-fleet-token-123")
+    fleet_only = remote.post(
+        "/api/hub/setup/join", headers={"X-Hub-Token": "peer-fleet-token-123"},
+        json={
+            "controller_url": "100.70.0.2",
+            "enrollment_code": "a" * 43,
+            "hardware_profile_id": "mac-mini-m4-16gb",
+        },
+    )
+    assert fleet_only.status_code == 403
+
+    async def claim_remote(controller_url, code):
+        assert controller_url == "100.70.0.2"
+        return {
+            "site_id": "location-a", "site_name": "Location A",
+            "controller_id": "controller-a", "fleet_token": "new-site-token-123",
+        }
+
+    monkeypatch.setattr(enrollment, "claim_remote", claim_remote)
+    allowed = remote.post(
+        "/api/hub/setup/join", headers={"X-Hub-Token": token}, json={
+            "controller_url": "100.70.0.2",
+            "enrollment_code": "a" * 43,
+            "hardware_profile_id": "mac-mini-m4-16gb",
+        },
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["settings"]["role"] == "agent"
+
+
+def test_controller_check_endpoint_uses_read_only_probe(app, monkeypatch):
+    async def probe(controller_url):
+        assert controller_url == "100.70.0.2"
+        return {"ok": True, "controller_url": "http://100.70.0.2:47873",
+                "site_name": "Location A", "enrollment_active": True}
+
+    monkeypatch.setattr(enrollment, "probe_remote_controller", probe)
+    local = TestClient(app, client=("127.0.0.1", 50000))
+
+    response = local.post(
+        "/api/hub/setup/check-controller", json={"controller_url": "100.70.0.2"})
+
+    assert response.status_code == 200
+    assert response.json()["enrollment_active"] is True
 
 
 def test_new_controller_setup_assigns_hardware_and_keeps_authority_local(reset):
@@ -256,8 +357,12 @@ def test_dashboard_exposes_simple_setup_and_masks_secrets():
     dashboard = (Path(__file__).parents[1] / "frontend" / "index.html").read_text()
 
     assert 'id="simple-setup-card"' in dashboard
-    assert "New location controller" in dashboard
-    assert "Join an existing location" in dashboard
+    assert "Add this Mac to your fleet" in dashboard
+    assert "Starting the first Mac at a brand-new location?" in dashboard
+    assert "you do not need Agent mode, Controller mode, or a fleet token" in dashboard
+    assert 'id="setup-controller-check"' in dashboard
+    assert 'api("/api/hub/setup/check-controller"' in dashboard
+    assert "function checkSetupController" in dashboard
     assert 'class="card section setup-advanced"' in dashboard
     assert 'id="setup-enrollment-code" type="password" autocomplete="off"' in dashboard
     assert 'id="fleet-token" type="password"' in dashboard

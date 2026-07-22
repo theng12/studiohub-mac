@@ -10,6 +10,43 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.60.3] — 2026-07-22
+
+### Fixed — one guided worker-enrollment flow
+
+- Replaced the role-first setup chooser with one three-step **Add this Mac to
+  your fleet** flow. A normal worker now needs only the main controller address,
+  permanent enrollment code, and its hardware profile; Studio Hub selects Agent
+  mode and transfers the fleet credential automatically.
+- Added a read-only **Check connection** action that verifies the selected Hub,
+  location, version, controller role, and enrollment-code readiness without
+  sending the code or changing either Mac.
+- Controller addresses now accept common Tailscale forms: an IP or MagicDNS
+  hostname with no scheme, direct HTTP with an omitted port, and explicit HTTPS
+  Tailscale Serve URLs. Direct HTTP defaults safely to Studio Hub port 47873.
+- Join failures now distinguish invalid addresses, DNS failures, timeouts,
+  unreachable Hubs, outdated Hubs, the wrong location Hub, missing enrollment
+  setup, and using a Hub/fleet token instead of the permanent enrollment code.
+
+### Changed
+
+- Existing location managers and joined workers show their configured state
+  instead of the setup form. Starting a brand-new location is a secondary,
+  clearly labelled path, and raw role/PostgreSQL controls remain collapsed
+  under **Technical recovery settings · rarely needed**.
+- An owner-authenticated Tailscale browser may configure the Hub it is signed
+  into, matching local setup convenience. Anonymous and fleet-token-only remote
+  requests remain unable to change a Hub's location.
+
+### Safety
+
+- Enrollment discovery exposes only non-secret site identity, Hub version,
+  role, and code-ready state over private LAN/Tailscale sources. It never
+  exposes the enrollment code, Hub token, or fleet token.
+- Connection checks are read-only. Existing rollback, private-network,
+  controller-role, permanent-code, local SQLite, and agent submission
+  protections remain unchanged.
+
 ## [1.60.2] — 2026-07-22
 
 ### Fixed — generic GenStudio completion responses

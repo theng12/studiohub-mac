@@ -216,10 +216,12 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/capabilities` | Private schema-versioned GenStudio capability snapshot; requires a Hub/fleet token header even on loopback |
 | `GET /api/hub/controller` · `PUT /api/hub/controller` | Read or configure this Hub's `standalone`, `controller`, or `agent` role, site identity, and optional evidence-shadow mode |
 | `POST /api/hub/controller/check` | Verify the optional PostgreSQL evidence schema and publish an immediate heartbeat |
-| `POST /api/hub/setup/controller` | Loopback-only simple setup for a new location controller; assigns identity and local hardware while forcing PostgreSQL off |
+| `POST /api/hub/setup/controller` | Local simple setup for the first Mac at a new location; assigns identity and local hardware while forcing PostgreSQL off |
 | `GET` · `POST` · `DELETE /api/hub/enrollment-codes` | Read, generate/rotate, or revoke the controller's permanent reusable enrollment code; owner access is required to reveal or change it |
+| `GET /api/hub/enrollment/info` | Private read-only controller identity, version, role, and enrollment-readiness check; contains no credentials |
 | `POST /api/hub/enrollment/claim` | Private LAN/Tailscale claim of the permanent code; returns the minimum site identity and current site fleet credential |
-| `POST /api/hub/setup/join` | Loopback-only agent setup using a private controller URL, permanent enrollment code, and local hardware profile |
+| `POST /api/hub/setup/check-controller` | Read-only validation of a pasted private controller address; accepted locally or from an owner-authenticated browser |
+| `POST /api/hub/setup/join` | Guided worker setup using a private controller address, permanent enrollment code, and local hardware profile; accepted locally or from an owner-authenticated browser |
 | `GET /api/hub/startup-services` | Audit sibling Studio launchd service and watchdog readiness on this Hub and authenticated peer Hubs |
 | `POST /api/hub/startup-services/{machine}/{studio}/install` | Install or repair one sibling's startup service on its own machine; refuses Hub-tracked active work |
 | `POST /api/hub/registry/studios/{id}/enabled` | Pause/resume new jobs for one Studio with `{"enabled": false/true}`; running work and the process are untouched |
@@ -531,38 +533,46 @@ The existing Hub token is still required for scripts, API clients, peer Hubs,
 and recovery. It is shown only locally in **Remote**. Replacing the owner
 password signs every remembered browser out immediately.
 
-## Simple controller and agent setup
+## Simple fleet setup
 
-Open **Remote → Set up this Mac**. New installations need only one of these
-flows:
+Open **Remote → Add this Mac to your fleet**. On a normal worker Mac there are
+only three fields:
 
-- **New location controller** — enter a friendly location name, confirm the
-  suggested stable site ID, and choose this Mac's hardware profile. Studio Hub
-  selects the controller role, creates a stable Hub ID from the hardware and
-  hostname, assigns the local profile, keeps `database_mode=off`, and prepares
-  the site fleet credential.
-- **Join an existing location** — on the controller, click **Generate code**.
-  Use **Reveal** or **Copy code**, then on the new Mac enter the controller's
-  private/Tailscale HTTP URL, paste the permanent code, and choose
-  that Mac's hardware profile. The new Mac receives
-  only the site name/ID, controller ID, and site fleet credential, then saves
-  itself as an agent with PostgreSQL off.
+1. Copy the main controller's address from **Remote → Reach this Hub from other
+   devices**. Paste an HTTP/HTTPS URL, Tailscale IP, or MagicDNS hostname and use
+   **Check connection**. If a direct HTTP address omits its port, Studio Hub uses
+   47873 automatically.
+2. On the controller, click **Generate code**, then **Reveal** or **Copy code**.
+   Paste that permanent enrollment code on the new Mac. Do not paste the Hub
+   token or fleet token.
+3. Choose the new Mac's hardware and click **Add this Mac to the location**.
+
+Studio Hub selects the worker/Agent role, receives and stores the site fleet
+credential, assigns the hardware profile, and keeps PostgreSQL off. Users do not
+need to choose a role or manually copy the fleet token. **Check connection** is
+read-only and sends no enrollment code.
+
+For the first Mac at a brand-new physical location, expand **Starting the first
+Mac at a brand-new location?**, enter the location name and hardware once, and
+create it. The raw role and PostgreSQL fields are retained only under
+**Technical recovery settings · rarely needed**.
 
 The enrollment code contains at least 256 bits of entropy and remains reusable
 until an owner explicitly rotates or revokes it. The controller's claim database
 stores only its SHA-256 hash and use metadata; a separate mode-0600 owner-private
 file keeps the value available to Reveal after a Hub restart, like the Hub and
 fleet credentials. Claims are accepted only from loopback, private LAN, or
-Tailscale source addresses. The agent's local
-join endpoint accepts only a credential-free private HTTP base URL and is
-callable only from that Mac's loopback dashboard. Failed network or validation
-steps do not change local settings; a failed local commit is rolled back as far
-as the filesystem permits.
+Tailscale source addresses. The worker join endpoint accepts only a
+credential-free address that resolves entirely to loopback, private LAN, or
+Tailscale IPs. It is callable from that Mac itself or an owner-authenticated
+remote browser; a fleet token alone cannot reconfigure a Hub. Failed network or
+validation steps do not change local settings, and a failed local commit is
+rolled back as far as the filesystem permits.
 
 Codes and fleet credentials are sent in request bodies/headers, never URLs.
 The dashboard masks them by default and does not put them in localStorage. The
 existing role, PostgreSQL-shadow, and manual credential controls remain under
-**Advanced settings and manual recovery**.
+**Technical recovery settings · rarely needed**.
 
 ## Fleet startup-service control
 

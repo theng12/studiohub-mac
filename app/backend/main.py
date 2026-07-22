@@ -123,8 +123,12 @@ class EnrollmentCodeBody(BaseModel):
     code: str = Field(min_length=1, max_length=256)
 
 
+class ControllerProbeBody(BaseModel):
+    controller_url: str = Field(min_length=1, max_length=500)
+
+
 class AgentJoinBody(BaseModel):
-    controller_url: str = Field(min_length=8, max_length=500)
+    controller_url: str = Field(min_length=1, max_length=500)
     enrollment_code: str = Field(min_length=1, max_length=256)
     hardware_profile_id: str = Field(min_length=3, max_length=64)
 
@@ -488,6 +492,11 @@ def _can_manage_enrollment(request: Request) -> bool:
     return bool(offered and secrets.compare_digest(offered, HUB_TOKEN))
 
 
+def _can_configure_this_hub(request: Request) -> bool:
+    """Local setup also works from an owner-authenticated remote browser."""
+    return _can_manage_enrollment(request)
+
+
 @app.get("/api/hub/enrollment-codes")
 def get_agent_enrollment_code(request: Request):
     return enrollment.enrollment_credential_status(
@@ -514,6 +523,24 @@ def revoke_agent_enrollment_code(request: Request):
         raise HTTPException(409, str(exc)) from exc
 
 
+@app.get("/api/hub/enrollment/info")
+def enrollment_info(request: Request):
+    """Private, read-only information used before sending an enrollment code."""
+    if not enrollment.private_request_host(request.client.host if request.client else None):
+        raise HTTPException(403, "Enrollment discovery is available only over a private LAN or Tailscale link.")
+    settings = control_plane.load_settings()
+    status = enrollment.enrollment_credential_status(include_code=False)
+    return {
+        "schema_version": 1,
+        "role": settings["role"],
+        "site_id": settings["site_id"],
+        "site_name": settings["site_name"],
+        "controller_id": settings["controller_id"],
+        "version": _app_version(),
+        "enrollment_active": status["active"],
+    }
+
+
 @app.post("/api/hub/enrollment/claim")
 def claim_agent_enrollment(request: Request, body: EnrollmentCodeBody):
     if not enrollment.private_request_host(request.client.host if request.client else None):
@@ -524,10 +551,20 @@ def claim_agent_enrollment(request: Request, body: EnrollmentCodeBody):
         raise HTTPException(409, str(exc)) from exc
 
 
+@app.post("/api/hub/setup/check-controller")
+async def check_existing_location(request: Request, body: ControllerProbeBody):
+    if not _can_configure_this_hub(request):
+        raise HTTPException(403, "Open this Hub locally or sign in as its owner before changing its location.")
+    try:
+        return await enrollment.probe_remote_controller(body.controller_url)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @app.post("/api/hub/setup/join")
 async def join_existing_location(request: Request, body: AgentJoinBody):
-    if not is_loopback(request):
-        raise HTTPException(403, "Join a location from this Mac's local Studio Hub dashboard.")
+    if not _can_configure_this_hub(request):
+        raise HTTPException(403, "Open this Hub locally or sign in as its owner before changing its location.")
     try:
         claim = await enrollment.claim_remote(body.controller_url, body.enrollment_code)
         return enrollment.configure_joined_agent(
