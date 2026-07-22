@@ -1051,6 +1051,9 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.61.3", date: "2026-07-23", items: [
+    "Whisper Tiny baseline state is now treated as private per-controller runtime data, so saving or reconciling the baseline can never dirty the Git worktree or block an automatic update.",
+  ]},
   { v: "1.61.2", date: "2026-07-23", items: [
     "Automatic updates now compare release numbers directionally, so stale update history can never offer an older Hub release as an available update.",
   ]},

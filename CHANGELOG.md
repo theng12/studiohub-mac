@@ -10,6 +10,22 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.61.3] — 2026-07-23
+
+### Fixed — model baseline state cannot block Hub updates
+
+- Classified `model_baselines.json` as per-controller runtime state. Whisper
+  Tiny reconciliation can now persist its enabled flag and target evidence
+  without making the Git worktree dirty or blocking automatic updates and
+  service restarts.
+- Added regression coverage for the runtime-state ignore rule. No dispatch,
+  model admission, customer jobs, or global GenStudio authority changed.
+
+### Verification
+
+- Passed the complete Studio Hub test suite, JavaScript syntax validation,
+  release metadata validation, and whitespace validation.
+
 ## [1.61.2] — 2026-07-23
 
 ### Fixed — stale update history cannot offer a downgrade

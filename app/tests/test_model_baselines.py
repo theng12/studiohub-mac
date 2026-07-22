@@ -1,7 +1,15 @@
+from pathlib import Path
+
 import pytest
 
 from backend import model_baselines
 from backend.main import monitor
+
+
+def test_model_baseline_runtime_state_is_ignored_by_git() -> None:
+    root = Path(__file__).parents[2]
+    ignored = (root / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert "model_baselines.json" in ignored
 
 
 def _voice(studio_id: str, machine: str = "local") -> dict:
