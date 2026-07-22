@@ -340,6 +340,18 @@
       have each downloaded — a model can live on your media server but not this Mac.
     </p>
     <div class="card jform section">
+      <div class="top"><span class="emoji">🪶</span><h3>Lightweight transcription baseline</h3><span id="baseline-state" class="pill">Loading</span></div>
+      <p class="muted" style="font-size:13px;margin-bottom:10px">
+        Keeps <b>Whisper Tiny (~70 MB)</b> cached on every registered Voice Studio transcription worker. Offline Macs are never treated as failures: each site controller retries when they return. Image, Chat, and Render workers do not receive an irrelevant speech model.
+      </p>
+      <div class="actions" style="align-items:center">
+        <label class="wd"><input id="baseline-enabled" type="checkbox" onchange="saveModelBaseline()"> keep installed automatically</label>
+        <button class="btn primary" id="baseline-reconcile" onclick="reconcileModelBaseline()">Check & install now</button>
+        <span class="sub" id="baseline-summary" role="status" aria-live="polite"></span>
+      </div>
+      <div id="baseline-targets" style="margin-top:8px"></div>
+    </div>
+    <div class="card jform section">
       <div class="top"><span class="emoji">📦</span><h3>Distribute a model to the fleet</h3></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
         Tell every studio of a type to download a model from Hugging Face — <b>each machine pulls it itself</b>, so you never copy files between Macs. Only studios that are <b>online</b> receive it; run it again while others are up to catch them.
@@ -1039,6 +1051,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.61.0", date: "2026-07-23", items: [
+    "The Models tab can now keep <b>Whisper Tiny (~70 MB)</b> cached automatically on every Voice Studio transcription worker at this location.",
+    "Per-machine ready, pending, offline, and retry state is visible, with a one-click <b>Check &amp; install now</b> action for immediate reconciliation.",
+    "The baseline is site-local and non-blocking: offline Macs retry when they return, while unrelated Image, Chat, and Render workers do not receive an unusable speech model.",
+  ]},
   { v: "1.60.3", date: "2026-07-22", items: [
     "Adding a worker Mac is now one guided three-step flow: controller address, permanent enrollment code, and this Mac's hardware—roles and fleet credentials are configured automatically.",
     "A new read-only Check connection button validates the private controller, location, version, and code readiness without sending the code or changing either Mac.",
@@ -1964,6 +1981,46 @@ async function loadModels() {
   renderModels();
   fillBroadcastRepos();
   fillRamAdmissionModels();
+  loadModelBaseline();
+}
+
+async function loadModelBaseline() {
+  const data = await api("/api/hub/model-baselines").then(r => r.json()).catch(() => null);
+  if (!data) {
+    $("#baseline-state").textContent = "Unavailable";
+    $("#baseline-summary").textContent = "Could not read the site baseline.";
+    return;
+  }
+  $("#baseline-enabled").checked = !!data.enabled;
+  const summary = data.summary || {};
+  $("#baseline-state").textContent = data.enabled ? "Automatic" : "Paused";
+  $("#baseline-summary").textContent = `${summary.cached || 0}/${summary.total || 0} ready · ${summary.pending || 0} downloading · ${summary.failed || 0} need retry`;
+  const rows = data.targets || [];
+  $("#baseline-targets").innerHTML = rows.length
+    ? `<table><thead><tr><th>Voice Studio</th><th>Machine</th><th>Status</th><th>Detail</th></tr></thead><tbody>${rows.map(row => `<tr><td>${esc(row.studio_id)}</td><td>${esc(mlabel(row.machine || "local"))}</td><td><span class="pill ${row.state === "cached" ? "ok" : row.state === "error" ? "err" : ""}">${esc(row.state)}</span></td><td>${esc(row.detail || "Waiting for the next check")}</td></tr>`).join("")}</tbody></table>`
+    : '<span class="sub">No Voice Studio workers are registered at this site.</span>';
+}
+
+async function saveModelBaseline() {
+  const enabled = $("#baseline-enabled").checked;
+  $("#baseline-summary").textContent = "Saving…";
+  const result = await api("/api/hub/model-baselines", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled })
+  }).then(r => r.json()).catch(e => ({ error: String(e) }));
+  if (result.error) $("#baseline-summary").textContent = `Save failed: ${result.error}`;
+  else loadModelBaseline();
+}
+
+async function reconcileModelBaseline() {
+  const button = $("#baseline-reconcile");
+  button.disabled = true;
+  $("#baseline-summary").textContent = "Checking every Voice Studio…";
+  const result = await api("/api/hub/model-baselines/reconcile", { method: "POST" })
+    .then(r => r.json()).catch(e => ({ error: String(e) }));
+  button.disabled = false;
+  if (result.error) $("#baseline-summary").textContent = `Check failed: ${result.error}`;
+  else loadModelBaseline();
 }
 // datalist of repos for the chosen modality, so you can pick instead of type
 function fillBroadcastRepos() {

@@ -41,6 +41,7 @@ def _reset_state():
               hardware_profiles.CUSTOM_PROFILES_FILE,
               hardware_profiles.MACHINE_PROFILES_FILE,
               memory_admission.SETTINGS_FILE,
+              main.model_baselines.state_path,
               execution_identity.DB_FILE,
               fleet_ops._STATE_FILE, control_plane.SETTINGS_FILE,
               control_plane.DATABASE_URL_FILE, enrollment.DB_FILE,
@@ -96,6 +97,10 @@ def _reset_state():
     hardware_profiles._custom_cache = None
     hardware_profiles._assignment_cache = None
     memory_admission.reset_for_tests()
+    main.model_baselines.enabled = True
+    main.model_baselines.last_reconciled_at = None
+    main.model_baselines.targets.clear()
+    main.model_baselines._lock = None
     # monitor: reload default registry, mark everything unknown (no network)
     monitor.reload_registry()
     monitor.status = {s["id"]: {"status": "unknown", "last_seen": None,

@@ -2,7 +2,8 @@
 
 Use this file as the implementation brief for a GenStudio KH coding session.
 The Studio Hub capability contract is available in Studio Hub KH `v1.56.0`
-and later. Version `v1.57.0` adds effective site-local RAM-admission facts.
+and later. Version `v1.57.0` adds effective site-local RAM-admission facts;
+version `v1.61.0` adds the site-local Whisper Tiny baseline contract.
 
 The canonical response contract is documented in
 [`CAPABILITY_CONTRACT.md`](CAPABILITY_CONTRACT.md). If this handoff and that
@@ -50,6 +51,46 @@ Expected identity:
 
 GenStudio must reject an unknown schema name or unsupported major schema
 version and should ignore unknown additive fields within version 1.
+
+## Multi-controller maintenance composition
+
+GenStudio may provide one global operator button, but each selected Studio Hub
+continues to own and persist only its site-local maintenance jobs. Use each
+site's stored authenticated transport and compose these existing contracts:
+
+1. Confirm the site has no queued/running Hub work from `GET /api/hub/jobs`,
+   `GET /api/hub/chat/jobs`, and `GET /api/hub/transcription/jobs`.
+2. Audit or repair startup services with `GET /api/hub/startup-services` and
+   `POST /api/hub/startup-services/{machine}/{modality}/install`.
+3. Rescan and start drained Studio updates with
+   `POST /api/hub/maintenance/studio-versions` and
+   `POST /api/hub/maintenance/updates`; poll the returned site-owned job.
+4. Update agent Hubs with `POST /api/hub/maintenance/hub-updates` and poll the
+   returned site-owned job.
+5. Reconcile the lightweight transcription baseline with
+   `POST /api/hub/model-baselines/reconcile`.
+6. Update the location controller itself last through
+   `POST /api/hub/maintenance/self-update`, then verify its version and
+   capability identity after it returns.
+
+Run locations with bounded concurrency and retain per-site results. A dropped
+connection is not proof of failure: reconnect to the site-owned update job or
+rescan versions before retrying. Never start a second update merely because a
+poll response was lost. These are operator maintenance operations, not customer
+jobs; they must not mint GenStudio job IDs, attempts, idempotency keys, leases,
+or fencing tokens.
+
+The Whisper baseline endpoints contain no customer material:
+
+```http
+GET  /api/hub/model-baselines
+POST /api/hub/model-baselines              {"enabled": true}
+POST /api/hub/model-baselines/reconcile
+```
+
+They apply only to registered Voice Studio transcription workers. Offline
+targets remain retryable and baseline failures never replace or block the
+site-local SQLite scheduler.
 
 ## Configuration and secret handling
 

@@ -36,6 +36,7 @@ from .auth import is_loopback, is_tailscale, load_token, make_middleware
 from .control import control_studio
 from .monitor import StudioMonitor
 from .memory_control import FleetMemoryControl
+from .model_baselines import FleetModelBaselines
 from .process_title import PROCESS_TITLE, apply_process_title
 from .registry import DATA_DIR, LAUNCHER_ROOT, base_url
 from .resources import host_stats, proxy_stats, studio_process_stats
@@ -66,6 +67,10 @@ class FleetAutoModeBody(BaseModel):
 
 class FleetAutoRunBody(BaseModel):
     target_ids: list[str] | None = Field(default=None, max_length=100)
+
+
+class ModelBaselineSettingsBody(BaseModel):
+    enabled: bool = True
 
 
 class FleetMemoryPolicyBody(BaseModel):
@@ -193,6 +198,9 @@ fleet_auto_updates = FleetAutoUpdates(
     monitor, auto_updater,
     state_path=DATA_DIR / "auto_update" / "fleet_jobs.json",
 )
+model_baselines = FleetModelBaselines(
+    monitor, state_path=DATA_DIR / "model_baselines.json",
+)
 
 
 @asynccontextmanager
@@ -217,12 +225,14 @@ async def lifespan(app: FastAPI):
     chat_jobs.start_dispatcher(monitor)
     shared_voices.start_reconciler(monitor)
     fleet_storage.start(monitor)
+    model_baselines.start()
     try:
         yield
     finally:
         await fleet_ops.stop_published_version_monitor()
         await control_plane.runtime.stop()
         await fleet_storage.stop()
+        await model_baselines.stop()
         await shared_voices.stop()
         await chat_jobs.stop()
         await transcription_jobs.stop()
@@ -1083,6 +1093,23 @@ async def hub_broadcast_download(body: dict):
         results = await broadcast.broadcast_download(
             client, _pick_studios(body.get("studios")), repo, body.get("token"))
     return {"repo": repo, "results": results}
+
+
+@app.get("/api/hub/model-baselines")
+def hub_model_baselines():
+    """Site-local lightweight model policy; contains no customer data."""
+    return model_baselines.snapshot()
+
+
+@app.post("/api/hub/model-baselines")
+def save_hub_model_baselines(body: ModelBaselineSettingsBody):
+    return model_baselines.save_settings(enabled=body.enabled)
+
+
+@app.post("/api/hub/model-baselines/reconcile")
+async def reconcile_hub_model_baselines():
+    """Check every Voice Studio now; missing/offline targets retry safely."""
+    return await model_baselines.reconcile()
 
 
 @app.post("/api/hub/broadcast/hf-token")

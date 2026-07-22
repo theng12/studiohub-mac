@@ -10,6 +10,30 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.61.0] — 2026-07-23
+
+### Added — self-healing Whisper Tiny fleet baseline
+
+- Studio Hub can now keep `mlx-community/whisper-tiny` (approximately 70 MB)
+  cached on every registered Voice Studio transcription worker at its site.
+  The Models tab shows exact per-machine ready, pending, offline, and failure
+  state and provides **Check & install now** plus an automatic-policy toggle.
+- Added authenticated `GET` / `POST /api/hub/model-baselines` and
+  `POST /api/hub/model-baselines/reconcile` contracts for site-local operators
+  and GenStudio's multi-controller maintenance view.
+
+### Reliability and safety
+
+- Offline Voice Studios are retained as retryable targets and reconciled when
+  they return. A failed baseline download is observable but can never block the
+  SQLite scheduler or customer work.
+- The policy is intentionally limited to transcription-capable Voice Studios.
+  Image, Chat, Render, and other workers do not waste storage on a model they
+  cannot execute.
+- Model-baseline telemetry contains only Studio IDs, machine IDs, reachability,
+  and download state. It carries no prompts, audio, generated assets, customer
+  IDs, billing data, or global job ownership.
+
 ## [1.60.3] — 2026-07-22
 
 ### Fixed — one guided worker-enrollment flow

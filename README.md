@@ -277,6 +277,8 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/metrics?minutes=60` | Time-series (host memory/CPU + per-studio RSS, 15s samples, 24h) |
 | `GET /api/hub/watchdog` · `POST /api/hub/studios/{id}/watchdog` | Auto-restart-if-down per studio (`{"enabled": true}`; 2-min cooldown, auto-off after 5 failed revives) |
 | `POST /api/hub/broadcast/download` | `{repo, studios?}` — start the same model download on many studios |
+| `GET` / `POST /api/hub/model-baselines` | Read or enable the site-local Whisper Tiny baseline for Voice Studio transcription workers |
+| `POST /api/hub/model-baselines/reconcile` | Recheck every registered Voice Studio now; cache Whisper Tiny where missing and retain offline targets for retry |
 | `POST /api/hub/broadcast/env` | `{key, value, studios?}` — set an env var in studios' ENVIRONMENT files (restart to apply) |
 | `POST /api/hub/jobs` | **Swarm Batch** — submit a batch (envelope below) |
 | `GET /api/hub/jobs` · `GET /api/hub/jobs/{batch}` · `DELETE /api/hub/jobs/{batch}` | Track / cancel batches |
