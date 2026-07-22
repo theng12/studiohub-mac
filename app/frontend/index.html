@@ -1034,6 +1034,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.60.1", date: "2026-07-22", items: [
+    "GenStudio local LLM jobs now stay pinned inside Studio Hub to a ChatStudio worker with the exact immutable revision, verified token usage, and sufficient output limit.",
+    "Older ChatStudio workers that only report the same mutable model name are skipped for new GenStudio chat work while remaining compatible with legacy direct requests.",
+    "The stricter filter changes only new worker selection and never moves an already queued or running job.",
+  ]},
   { v: "1.60.0", date: "2026-07-22", items: [
     "Local Chat capability snapshots now report immutable model revision, output limit, and verified native token-usage support to GenStudio.",
     "GenStudio chat assignments now use restart-safe idempotency and fencing, with exact replays returning the original local batch instead of duplicate work.",

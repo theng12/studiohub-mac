@@ -10,6 +10,22 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.60.1] — 2026-07-22
+
+### Fixed — exact local ChatStudio selection
+
+- GenStudio-assigned local LLM batches now remain pinned inside Studio Hub to
+  a ChatStudio worker that reports the exact immutable model revision, verified
+  native token usage, and enough output-token capacity for the request.
+- Older workers that only report the same mutable model name are skipped. They
+  remain available for compatible legacy direct work and can rejoin GenStudio
+  routing after updating and reporting the full capability contract.
+
+### Safety
+
+- Existing queued and running jobs are not moved. The stricter filter applies
+  only when selecting a worker for newly dispatchable GenStudio chat work.
+
 ## [1.60.0] — 2026-07-22
 
 ### Added — verified local LLM execution handoff

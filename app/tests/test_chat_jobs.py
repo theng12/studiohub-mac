@@ -142,7 +142,13 @@ async def test_genstudio_chat_preserves_verified_usage_and_revision(
     revision = batch["genstudio_execution"]["model_revision"]
 
     async def catalog(studio):
-        return {"models": [{"repo": MODEL, "cache": {"state": "cached"}}]}
+        return {"models": [{
+            "repo": MODEL,
+            "cache": {"state": "cached"},
+            "runtime_revision": revision,
+            "verified_token_usage": True,
+            "max_output_tokens": 32768,
+        }]}
 
     async def post(url, **kwargs):
         return _Response(
@@ -355,6 +361,36 @@ async def test_model_capability_and_physical_machine_lease_filter_workers(reset,
     assert [studio["id"] for studio in await jobs._eligible_studios(monitor, MODEL)] == [workers[1]["id"]]
     broker._external_machine_leases[workers[1]["machine"]] = "render:test"
     assert await jobs._eligible_studios(monitor, MODEL) == []
+
+
+@pytest.mark.asyncio
+async def test_genstudio_chat_uses_only_exact_verified_executor(
+        reset, monitor, monkeypatch):
+    workers = _add_chat_workers(monitor, 2)
+    revision = "7f0dc925e0d0afb0322d96f9255cfddf2ba5636e"
+
+    async def catalog(studio):
+        if studio["id"] == workers[0]["id"]:
+            return {"models": [{
+                "repo": MODEL,
+                "cache": {"state": "cached"},
+                "runtime_revision": revision,
+                "verified_token_usage": True,
+                "max_output_tokens": 32768,
+            }]}
+        return {"models": [{
+            "repo": MODEL,
+            "cache": {"state": "cached"},
+        }]}
+
+    monkeypatch.setattr(monitor, "get_catalog", catalog)
+    eligible = await jobs._eligible_studios(
+        monitor,
+        MODEL,
+        {"model_revision": revision},
+        2048,
+    )
+    assert [studio["id"] for studio in eligible] == [workers[0]["id"]]
 
 
 @pytest.mark.asyncio

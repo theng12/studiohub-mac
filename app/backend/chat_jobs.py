@@ -417,7 +417,9 @@ def clear_terminal() -> int:
     return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
 
 
-async def _eligible_studios(monitor, model: str) -> list[dict]:
+async def _eligible_studios(
+        monitor, model: str, execution: dict | None = None,
+        required_output_tokens: int = 0) -> list[dict]:
     eligible = []
     for studio in monitor.registry:
         if (studio.get("modality") != "chat" or studio["id"] in busy_studios
@@ -432,8 +434,28 @@ async def _eligible_studios(monitor, model: str) -> list[dict]:
         catalog = await monitor.get_catalog(studio)
         entry = next((item for item in (catalog or {}).get("models", [])
                       if item.get("repo") == model or model in (item.get("aliases") or [])), None)
-        if entry and (entry.get("is_cloud") or broker.is_cached(entry)):
-            eligible.append(studio)
+        if not entry or not (entry.get("is_cloud") or broker.is_cached(entry)):
+            continue
+        if execution:
+            expected_revision = str(execution.get("model_revision") or "").strip().lower()
+            reported_revision = str(
+                entry.get("runtime_revision")
+                or entry.get("model_revision")
+                or entry.get("snapshot_revision")
+                or ""
+            ).strip().lower()
+            if not expected_revision or reported_revision != expected_revision:
+                continue
+            if entry.get("verified_token_usage") is not True:
+                continue
+            reported_limit = entry.get("max_output_tokens", entry.get("max_tokens"))
+            if (
+                isinstance(reported_limit, bool)
+                or not isinstance(reported_limit, int)
+                or reported_limit < required_output_tokens
+            ):
+                continue
+        eligible.append(studio)
     return eligible
 
 
@@ -452,7 +474,22 @@ async def dispatch_once(monitor) -> int:
             batch["queue_note"] = (f"Automatic retry in {max(1, round(min(retry_times) - now))}s"
                                    if retry_times else None)
             continue
-        eligible = await _eligible_studios(monitor, batch["model"])
+        output_limits = [
+            value
+            for pack in queued
+            for value in (
+                pack.get("params", {}).get("max_tokens")
+                or pack.get("params", {}).get("max_completion_tokens"),
+            )
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0
+        ]
+        required_output_tokens = max(output_limits, default=0)
+        eligible = await _eligible_studios(
+            monitor,
+            batch["model"],
+            batch.get("genstudio_execution"),
+            required_output_tokens,
+        )
         if not eligible:
             batch["queue_note"] = "Waiting for a free online Chat Studio with this model cached"
             continue
