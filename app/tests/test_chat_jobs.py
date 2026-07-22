@@ -2,6 +2,7 @@ import asyncio
 import json
 
 import pytest
+from fastapi import HTTPException
 
 from backend import broker, chat_jobs as jobs, control_plane
 
@@ -61,6 +62,7 @@ class _Response:
 def _genstudio_payload() -> dict:
     revision = "7f0dc925e0d0afb0322d96f9255cfddf2ba5636e"
     payload = _payload(1, 1)
+    payload["kind"] = "completion"
     payload["genstudio_execution"] = {
         "genstudio_job_id": "job-local-llama",
         "genstudio_attempt_id": "attempt-local-llama",
@@ -206,6 +208,24 @@ def test_result_parser_accepts_supported_shapes_and_rejects_unknown_ids():
     }
     assert jobs.parse_scene_results("plain prose", ["scene-1", "scene-2"], "visual") == {}
     assert jobs.parse_scene_results("plain prose", ["scene-1"], "visual") == {"scene-1": "plain prose"}
+
+
+def test_generic_completion_preserves_valid_json_as_one_opaque_response():
+    content = json.dumps({
+        "summary": "Grounded summary",
+        "claims": [{"text": "A supplied claim"}],
+    })
+    assert jobs.parse_scene_results(content, ["response"], "completion") == {
+        "response": content,
+    }
+
+
+def test_generic_completion_requires_exactly_one_result_id():
+    payload = _payload(1, 1)
+    payload["kind"] = "completion"
+    payload["packs"][0]["scene_ids"] = ["response", "unexpected"]
+    with pytest.raises(HTTPException, match="exactly one result id"):
+        jobs.create_batch(payload)
 
 
 def test_result_parser_salvages_rows_after_reasoning_and_from_truncated_outer_json():

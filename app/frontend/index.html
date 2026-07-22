@@ -1034,6 +1034,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.60.2", date: "2026-07-22", items: [
+    "Studio Hub now accepts GenStudio's generic completion chat batches and preserves each response as one opaque result, including valid JSON output.",
+    "Completion batches require exactly one result ID, keeping GenStudio's job, usage, and settlement handoff unambiguous.",
+    "Story Studio visual and motion batch parsing remains unchanged, and the completion path never triggers a second model invocation.",
+  ]},
   { v: "1.60.1", date: "2026-07-22", items: [
     "GenStudio local LLM jobs now stay pinned inside Studio Hub to a ChatStudio worker with the exact immutable revision, verified token usage, and sufficient output limit.",
     "Older ChatStudio workers that only report the same mutable model name are skipped for new GenStudio chat work while remaining compatible with legacy direct requests.",

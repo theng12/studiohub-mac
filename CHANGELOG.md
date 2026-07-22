@@ -10,6 +10,22 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.60.2] — 2026-07-22
+
+### Fixed — generic GenStudio completion responses
+
+- Studio Hub now accepts GenStudio's explicit `completion` chat-batch kind and
+  preserves the model response as one opaque result, including valid JSON
+  objects whose keys are ordinary response content rather than scene IDs.
+- Completion batches require exactly one result ID, keeping the handoff
+  unambiguous for GenStudio's durable LLM job and settlement record.
+
+### Safety
+
+- Existing Story Studio visual and motion batches keep their current parsing
+  contract. The new behavior applies only to requests explicitly marked as a
+  generic completion and never triggers another model invocation.
+
 ## [1.60.1] — 2026-07-22
 
 ### Fixed — exact local ChatStudio selection

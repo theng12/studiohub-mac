@@ -189,8 +189,8 @@ def create_batch(payload: dict) -> tuple[dict, bool]:
     max_scenes_per_pack = (MAX_PAID_CLOUD_SCENES_PER_PACK
                            if model_cost_tier == "paid" else MAX_SCENES_PER_PACK)
     kind = str(payload.get("kind") or "visual").strip().lower()
-    if kind not in {"visual", "motion"}:
-        raise HTTPException(400, "kind must be visual or motion")
+    if kind not in {"visual", "motion", "completion"}:
+        raise HTTPException(400, "kind must be visual, motion, or completion")
     label = _identifier(payload["label"], "label") if payload.get("label") else None
     project = _identifier(payload["project"], "project") if payload.get("project") else None
     episode = _identifier(payload["episode"], "episode") if payload.get("episode") else None
@@ -207,6 +207,8 @@ def create_batch(payload: dict) -> tuple[dict, bool]:
             raise HTTPException(400, f"each {model_cost_tier} pack must contain 1 to "
                                 f"{max_scenes_per_pack} scene_ids")
         scene_ids = [_identifier(scene_id, "scene_id") for scene_id in scene_values]
+        if kind == "completion" and len(scene_ids) != 1:
+            raise HTTPException(400, "completion packs must contain exactly one result id")
         if len(set(scene_ids)) != len(scene_ids):
             raise HTTPException(400, f"scene_ids must be unique in {pack_id}")
         overlap = all_scene_ids.intersection(scene_ids)
@@ -264,6 +266,11 @@ def _strip_fence(content: str) -> str:
 
 def parse_scene_results(content: str, expected: list[str], kind: str) -> dict[str, str]:
     """Extract stable scene-id results from the accepted compact JSON shapes."""
+    # Generic chat completions are opaque text. A valid JSON object is still
+    # the caller's complete response; its top-level keys must never be
+    # mistaken for scene IDs or trigger another paid/model invocation.
+    if kind == "completion":
+        return {expected[0]: content.strip()} if len(expected) == 1 and content.strip() else {}
     try:
         data = json.loads(_strip_fence(content))
     except (json.JSONDecodeError, TypeError):
