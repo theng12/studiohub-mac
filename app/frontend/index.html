@@ -1051,6 +1051,9 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.61.2", date: "2026-07-23", items: [
+    "Automatic updates now compare release numbers directionally, so stale update history can never offer an older Hub release as an available update.",
+  ]},
   { v: "1.61.1", date: "2026-07-23", items: [
     "Update status now compares the version loaded by the live Hub with the checkout on disk instead of treating a successful pull as a completed restart.",
     "If new code is present but the old service is still answering, the Hub and fleet update cards clearly show <b>Restart required</b> until both versions match.",

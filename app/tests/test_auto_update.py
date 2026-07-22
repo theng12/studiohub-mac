@@ -55,6 +55,20 @@ def test_default_is_off_and_idle_only(updater: AutoUpdater):
     assert updater.public_status()["scheduler"]["installed"] is False
 
 
+@pytest.mark.parametrize(("latest", "expected"), [
+    ("0.9.9", False),
+    ("1.0.0", False),
+    ("1.0.1", True),
+    ("v1.2.0", True),
+    ("invalid", False),
+])
+def test_update_availability_never_offers_a_downgrade(
+    updater: AutoUpdater, latest: str, expected: bool,
+):
+    updater._write_status(latest_version=latest)
+    assert updater.public_status()["update_available"] is expected
+
+
 def test_settings_modes_install_and_remove_schedule(updater: AutoUpdater):
     assert _save(updater, "notify")["scheduler"]["installed"] is True
     assert _save(updater, "auto")["scheduler"]["installed"] is True

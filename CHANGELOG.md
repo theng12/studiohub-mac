@@ -10,6 +10,14 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.61.2] — 2026-07-23
+
+### Fixed — stale update history cannot offer a downgrade
+
+- Automatic-update availability now compares semantic versions instead of
+  treating any difference as newer. A stale cached `latest_version` below the
+  running Hub can no longer display an update or trigger a downgrade attempt.
+
 ## [1.61.1] — 2026-07-23
 
 ### Fixed — update status verifies the running Hub

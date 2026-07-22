@@ -72,6 +72,23 @@ def _redact(value: object) -> object:
     return value
 
 
+def _semantic_version(value: object) -> Optional[tuple[int, int, int]]:
+    match = re.fullmatch(
+        r"v?(\d+)\.(\d+)\.(\d+)(?:[.+-][A-Za-z0-9._-]+)?",
+        str(value or "").strip(),
+    )
+    if not match:
+        return None
+    return tuple(int(part) for part in match.groups())
+
+
+def _is_newer_version(candidate: object, installed: object) -> bool:
+    candidate_version = _semantic_version(candidate)
+    installed_version = _semantic_version(installed)
+    return bool(candidate_version and installed_version
+                and candidate_version > installed_version)
+
+
 def _atomic_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.parent.is_symlink():
@@ -203,7 +220,7 @@ class AutoUpdater:
             "settings": settings,
             "installed_version": installed,
             "latest_version": latest,
-            "update_available": bool(latest and latest != installed),
+            "update_available": _is_newer_version(latest, installed),
             "scheduler": self.scheduler_status(),
             "release_notes_url": self.release_notes_url(),
         }
