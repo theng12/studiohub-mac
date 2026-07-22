@@ -402,3 +402,37 @@ def test_watchdog_toggle(authed):
     r = authed.post("/api/hub/studios/image/watchdog", json={"enabled": True})
     assert r.json()["watchdog"]["enabled"] is True
     assert authed.post("/api/hub/studios/bogus/watchdog", json={"enabled": True}).status_code == 404
+
+
+def test_update_status_never_calls_pulled_code_loaded(monkeypatch, authed):
+    from backend import main
+
+    monkeypatch.setattr(main.auto_updater, "public_status", lambda: {
+        "installed_version": "9.9.9", "state": "succeeded",
+        "last_update_result": "Updated successfully",
+    })
+    response = authed.get("/api/auto-update/status")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["installed_version"] == main.APP_VERSION
+    assert payload["loaded_version"] == main.APP_VERSION
+    assert payload["disk_version"] == "9.9.9"
+    assert payload["state"] == "restart_required"
+    assert payload["restart_required"] is True
+
+
+def test_fleet_update_inventory_uses_loaded_hub_version(monkeypatch, authed):
+    from backend import main
+
+    async def snapshot():
+        return {"apps": [{"id": "hub@local", "kind": "hub",
+                           "installed_version": "9.9.9", "state": "succeeded"}]}
+
+    monkeypatch.setattr(main.fleet_auto_updates, "snapshot", snapshot)
+    monkeypatch.setattr(main.auto_updater, "public_status", lambda: {
+        "installed_version": "9.9.9", "state": "succeeded",
+    })
+    payload = authed.get("/api/hub/auto-updates").json()
+    assert payload["apps"][0]["installed_version"] == main.APP_VERSION
+    assert payload["apps"][0]["disk_version"] == "9.9.9"
+    assert payload["apps"][0]["state"] == "restart_required"

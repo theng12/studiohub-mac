@@ -10,6 +10,17 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.61.1] — 2026-07-23
+
+### Fixed — update status verifies the running Hub
+
+- Studio Hub no longer reports a pulled version as installed/current while the
+  live service is still answering with older code. Both the Hub update card and
+  fleet update inventory now show the loaded version, retain the on-disk
+  version separately, and display **Restart required** until they match.
+- This prevents a cross-controller maintenance run from accepting a successful
+  Git pull as proof that a controller actually restarted and loaded the release.
+
 ## [1.61.0] — 2026-07-23
 
 ### Added — self-healing Whisper Tiny fleet baseline

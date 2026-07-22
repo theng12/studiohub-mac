@@ -586,7 +586,30 @@ async def join_existing_location(request: Request, body: AgentJoinBody):
 
 @app.get("/api/auto-update/status")
 def automatic_update_status():
-    return auto_updater.public_status()
+    return _truthful_hub_update_status()
+
+
+def _truthful_hub_update_status() -> dict:
+    """Distinguish a pulled checkout from code loaded by the live service."""
+    result = dict(auto_updater.public_status())
+    disk_version = result.get("installed_version")
+    loaded_version = _app_version()
+    result["disk_version"] = disk_version
+    result["loaded_version"] = loaded_version
+    result["installed_version"] = loaded_version
+    if disk_version and disk_version != loaded_version:
+        result.update(
+            state="restart_required",
+            restart_required=True,
+            defer_reason=(
+                f"v{disk_version} is on disk, but the running service is still "
+                f"v{loaded_version}; restart Studio Hub to finish"
+            ),
+            last_update_result="Update downloaded; service restart still required",
+        )
+    else:
+        result["restart_required"] = False
+    return result
 
 
 @app.get("/api/auto-update/readiness")
@@ -628,7 +651,19 @@ def automatic_update_retry():
 
 @app.get("/api/hub/auto-updates")
 async def fleet_automatic_update_status():
-    return await fleet_auto_updates.snapshot()
+    result = await fleet_auto_updates.snapshot()
+    truth = _truthful_hub_update_status()
+    hub = next((row for row in result.get("apps", []) if row.get("kind") == "hub"), None)
+    if hub is not None:
+        hub.update(
+            installed_version=truth["loaded_version"],
+            disk_version=truth["disk_version"],
+            state=truth["state"],
+            restart_required=truth["restart_required"],
+            defer_reason=truth.get("defer_reason"),
+            last_update_result=truth.get("last_update_result"),
+        )
+    return result
 
 
 @app.post("/api/hub/auto-updates/check-all")
