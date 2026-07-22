@@ -10,6 +10,22 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.61.4] — 2026-07-23
+
+### Fixed — transient health misses no longer restart the controller
+
+- The startup watchdog now requires three consecutive failed health probes
+  before restarting Studio Hub. A successful probe immediately clears the
+  streak, so a brief model load, update handoff, or network pause cannot create
+  a restart loop.
+- Added isolated watchdog tests proving the first two failures are tolerated,
+  the third triggers one restart request, and recovery resets the counter.
+
+### Verification
+
+- Passed the complete Studio Hub test suite, watchdog shell syntax, launcher
+  JavaScript syntax, release metadata coverage, and whitespace validation.
+
 ## [1.61.3] — 2026-07-23
 
 ### Fixed — model baseline state cannot block Hub updates
