@@ -14,10 +14,19 @@ from fastapi import HTTPException
 from .registry import DATA_DIR
 
 SETTINGS_FILE = DATA_DIR / "job_storage_settings.json"
+POLICY_VERSION = 2
 DEFAULT_MAX_BYTES = 80 * 1024 ** 3
-DEFAULT_RETENTION_DAYS = 3
+DEFAULT_RETENTION_DAYS = 30
 MIN_MAX_BYTES = 1 * 1024 ** 3
 MAX_MAX_BYTES = 1000 * 1024 ** 3
+
+
+def _write(value: dict) -> None:
+    payload = {**value, "policy_version": POLICY_VERSION}
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    partial = SETTINGS_FILE.with_suffix(".json.tmp")
+    partial.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    partial.replace(SETTINGS_FILE)
 
 
 def _read() -> dict:
@@ -31,11 +40,19 @@ def _read() -> dict:
     retention = saved.get("retention_days", DEFAULT_RETENTION_DAYS)
     if not isinstance(retention, int) or retention not in {1, 3, 7, 15, 30, 90}:
         retention = DEFAULT_RETENTION_DAYS
-    return {
+    value = {
         "enabled": bool(saved.get("enabled", True)),
         "max_bytes": maximum,
         "retention_days": retention,
     }
+    try:
+        policy_version = int(saved.get("policy_version", 1))
+    except (TypeError, ValueError):
+        policy_version = 1
+    if policy_version < POLICY_VERSION and value["retention_days"] == 3:
+        value["retention_days"] = DEFAULT_RETENTION_DAYS
+        _write(value)
+    return value
 
 
 def _bytes_under(root: Path) -> int:
@@ -79,10 +96,7 @@ def save(enabled: object, max_gb: object, retention_days: object = None) -> dict
         raise HTTPException(400, "retention_days must be 1, 3, 7, 15, 30, or 90")
     value = {"enabled": enabled, "max_bytes": max_bytes,
              "retention_days": retention_days}
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    partial = SETTINGS_FILE.with_suffix(".json.tmp")
-    partial.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
-    partial.replace(SETTINGS_FILE)
+    _write(value)
     # Keep the transcription queue's existing retention endpoint in sync.
     from . import transcription_jobs
     transcription_jobs.set_retention(retention_days)

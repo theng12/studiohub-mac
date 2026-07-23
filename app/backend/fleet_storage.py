@@ -19,7 +19,8 @@ from . import job_storage, peers
 from .registry import DATA_DIR, label_for
 
 SETTINGS_FILE = DATA_DIR / "fleet_storage_policy.json"
-DEFAULT_POLICY = {"enabled": True, "retention_days": 3, "max_gb": 80.0}
+POLICY_VERSION = 2
+DEFAULT_POLICY = {"enabled": True, "retention_days": 30, "max_gb": 80.0}
 RETENTION_CHOICES = {1, 3, 7, 15, 30, 90}
 CHECK_INTERVAL_SECONDS = 60 * 60
 REQUEST_TIMEOUT_SECONDS = 12.0
@@ -29,6 +30,14 @@ _task: asyncio.Task | None = None
 _lock: asyncio.Lock | None = None
 _lock_loop = None
 _last_local: dict | None = None
+
+
+def _write_policy(value: dict) -> None:
+    payload = {**value, "policy_version": POLICY_VERSION}
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    partial = SETTINGS_FILE.with_suffix(".json.tmp")
+    partial.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    partial.replace(SETTINGS_FILE)
 
 
 def read_policy() -> dict:
@@ -45,7 +54,19 @@ def read_policy() -> dict:
         retention = DEFAULT_POLICY["retention_days"]
     if not isinstance(maximum, (int, float)) or isinstance(maximum, bool) or not 1 <= maximum <= 1000:
         maximum = DEFAULT_POLICY["max_gb"]
-    return {"enabled": enabled, "retention_days": retention, "max_gb": float(maximum)}
+    policy = {
+        "enabled": enabled,
+        "retention_days": retention,
+        "max_gb": float(maximum),
+    }
+    try:
+        policy_version = int(saved.get("policy_version", 1))
+    except (TypeError, ValueError):
+        policy_version = 1
+    if policy_version < POLICY_VERSION and policy["retention_days"] == 3:
+        policy["retention_days"] = DEFAULT_POLICY["retention_days"]
+        _write_policy(policy)
+    return policy
 
 
 def save_policy(enabled: object, retention_days: object, max_gb: object) -> dict:
@@ -58,10 +79,7 @@ def save_policy(enabled: object, retention_days: object, max_gb: object) -> dict
         raise HTTPException(400, "max_gb must be between 1 and 1000")
     value = {"enabled": enabled, "retention_days": retention_days,
              "max_gb": float(max_gb)}
-    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    partial = SETTINGS_FILE.with_suffix(".json.tmp")
-    partial.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
-    partial.replace(SETTINGS_FILE)
+    _write_policy(value)
     return value
 
 

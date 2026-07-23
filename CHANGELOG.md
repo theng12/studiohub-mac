@@ -10,6 +10,25 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.61.5] — 2026-07-23
+
+### Changed — automatic 30-day fleet backup retention
+
+- Raised the generated-output backup-retention default from 3 days to 30 days
+  while preserving the existing combined 80 GB hard cap per physical Mac.
+- Existing saved 3-day Hub, transcription, and Studio policies migrate
+  automatically once during update. Agent Hubs enforce the migration locally,
+  so offline workers catch up when they update and reconnect without per-Mac
+  setup.
+- Explicit retention choices saved after migration remain respected. Active
+  jobs, source uploads, shared voices, models, credentials, chat history, and
+  pinned outputs remain protected.
+
+### Verification
+
+- Added regression coverage for Hub fleet-policy, Hub transcription-policy,
+  and worker migration behavior, including explicit post-migration overrides.
+
 ## [1.61.4] — 2026-07-23
 
 ### Fixed — transient health misses no longer restart the controller

@@ -104,7 +104,7 @@ class OwnerPasswordBody(BaseModel):
 
 class FleetStoragePolicyBody(BaseModel):
     enabled: bool = True
-    retention_days: int = 3
+    retention_days: int = 30
     max_gb: float = Field(default=80, ge=1, le=1000)
 
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 import pytest
 
@@ -135,10 +136,24 @@ async def test_protected_store_that_cannot_shrink_remains_visible_as_over_limit(
 
 def test_policy_defaults_and_round_trip(reset):
     assert fleet_storage.read_policy() == {
-        "enabled": True, "retention_days": 3, "max_gb": 80.0}
+        "enabled": True, "retention_days": 30, "max_gb": 80.0}
     saved = fleet_storage.save_policy(True, 1, 64)
     assert saved == {"enabled": True, "retention_days": 1, "max_gb": 64.0}
     assert fleet_storage.read_policy() == saved
+
+
+def test_legacy_three_day_policy_migrates_once_to_thirty_days(reset):
+    fleet_storage.SETTINGS_FILE.write_text(json.dumps({
+        "enabled": True, "retention_days": 3, "max_gb": 80,
+    }))
+
+    assert fleet_storage.read_policy()["retention_days"] == 30
+    migrated = json.loads(fleet_storage.SETTINGS_FILE.read_text())
+    assert migrated["retention_days"] == 30
+    assert migrated["policy_version"] == fleet_storage.POLICY_VERSION
+
+    fleet_storage.save_policy(True, 3, 80)
+    assert fleet_storage.read_policy()["retention_days"] == 3
 
 
 @pytest.mark.asyncio
@@ -163,3 +178,5 @@ def test_dashboard_has_modern_fleet_storage_controls():
     assert "optional Studio store" in text
     assert "this Mac will self-enforce when it reconnects" in text
     assert 'class="storage-machine${offline ? " offline" : ""}' in text
+    assert "cleared after 30 days" in text
+    assert '<option value="30" selected>30 days</option>' in text

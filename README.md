@@ -890,7 +890,7 @@ curl http://localhost:47873/api/hub/resources
 # Save the default local-backup policy to every reachable Mac
 curl -X PUT http://localhost:47873/api/hub/storage-policy \
   -H 'Content-Type: application/json' \
-  -d '{"enabled":true,"retention_days":3,"max_gb":80}'
+  -d '{"enabled":true,"retention_days":30,"max_gb":80}'
 
 # Start / stop a studio
 curl -X POST http://localhost:47873/api/hub/studios/music/start

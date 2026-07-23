@@ -522,17 +522,29 @@ def retry_batch(batch_id: str) -> tuple[dict | None, int]:
 
 def settings() -> dict:
     try:
-        value = json.loads(SETTINGS_FILE.read_text()).get("retention_days", 3)
+        saved = json.loads(SETTINGS_FILE.read_text())
     except (OSError, ValueError, TypeError):
-        value = 3
-    return {"retention_days": value if value in RETENTION_CHOICES else 3}
+        saved = {}
+    value = saved.get("retention_days", 30)
+    value = value if value in RETENTION_CHOICES else 30
+    try:
+        policy_version = int(saved.get("policy_version", 1))
+    except (TypeError, ValueError):
+        policy_version = 1
+    if policy_version < 2 and value == 3:
+        value = 30
+        set_retention(value)
+    return {"retention_days": value}
 
 
 def set_retention(days: int) -> dict:
     if days not in RETENTION_CHOICES:
         raise HTTPException(400, f"retention_days must be one of {sorted(RETENTION_CHOICES)}")
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    SETTINGS_FILE.write_text(json.dumps({"retention_days": days}), encoding="utf-8")
+    SETTINGS_FILE.write_text(
+        json.dumps({"retention_days": days, "policy_version": 2}),
+        encoding="utf-8",
+    )
     return {"retention_days": days}
 
 

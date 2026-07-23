@@ -1,5 +1,6 @@
 import asyncio
 import io
+import json
 import time
 from pathlib import Path
 
@@ -374,6 +375,17 @@ def test_retention_never_removes_active_batch(authed):
     ).json()
     assert result["cleaned"] == 0
     assert jobs.get_batch(created["batch_id"])["items"][0]["state"] == "queued"
+
+
+def test_legacy_transcription_retention_migrates_once(reset):
+    jobs.SETTINGS_FILE.write_text(json.dumps({"retention_days": 3}))
+
+    assert jobs.settings()["retention_days"] == 30
+    migrated = json.loads(jobs.SETTINGS_FILE.read_text())
+    assert migrated == {"retention_days": 30, "policy_version": 2}
+
+    jobs.set_retention(3)
+    assert jobs.settings()["retention_days"] == 3
 
 
 def test_manual_cleanup_removes_terminal_files_but_keeps_lifetime_stats(authed):
