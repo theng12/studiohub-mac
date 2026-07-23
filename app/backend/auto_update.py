@@ -421,6 +421,21 @@ class AutoUpdater:
         reasons = self.readiness_reasons()
         return {"idle": not reasons, "reasons": reasons}
 
+    def restart_safety(self) -> dict:
+        """Validate that a detached service restart can safely load this checkout."""
+        if not self._service_loaded():
+            raise UpdateError(
+                "Studio Hub is not running as the installed startup service. "
+                "Install the startup service before using remote restart."
+            )
+        preflight = self._git_preflight(fetch=False)
+        return {
+            "ready": True,
+            "mode": "service",
+            "expected_version": self.installed_version(),
+            "commit": preflight["local"],
+        }
+
     def _notify(self, title: str, message: str) -> None:
         clean_title = str(_redact(title))[:100]
         clean_message = str(_redact(message))[:240]

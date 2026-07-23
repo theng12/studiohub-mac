@@ -14,6 +14,7 @@ Pinokio kernel. Remote studios will be controlled by their own machine's Hub
 once federation lands.
 """
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -122,6 +123,56 @@ def run_hub_script(script: str) -> dict:
     except OSError as e:
         return {"ok": False, "error": f"failed to spawn pterm: {e}"}
     return {"ok": True, "script": script, "app": app, "ref": ref}
+
+
+def restart_hub_service(*, delay_seconds: float = 1.5) -> dict:
+    """Restart the installed Hub LaunchAgent after the API response is sent.
+
+    The fixed script and launchd label are repository-owned; callers cannot
+    provide a command, path, or service name.
+    """
+    script = (LAUNCHER_ROOT / "restart_service.sh").resolve()
+    if script.parent != LAUNCHER_ROOT.resolve() or not script.is_file():
+        return {"ok": False, "error": "trusted restart helper is unavailable"}
+    if delay_seconds < 0.5 or delay_seconds > 10:
+        return {"ok": False, "error": "restart delay is outside the safe range"}
+    label = "com.kh.studiohub.server"
+    domain = f"gui/{os.getuid()}/{label}"
+    loaded = subprocess.run(
+        ["/bin/launchctl", "print", domain],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+        timeout=15,
+    )
+    if loaded.returncode:
+        return {
+            "ok": False,
+            "error": "Studio Hub startup service is not loaded; install it before remote restart",
+        }
+    log_dir = LAUNCHER_ROOT / "logs" / "service"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stream = open(log_dir / "manual-restart.log", "a", encoding="utf-8")
+    try:
+        subprocess.Popen(
+            ["/bin/bash", str(script), f"{delay_seconds:g}"],
+            cwd=str(LAUNCHER_ROOT),
+            stdout=stream,
+            stderr=stream,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
+    except OSError as exc:
+        return {"ok": False, "error": f"failed to schedule Studio Hub restart: {exc}"}
+    finally:
+        stream.close()
+    return {
+        "ok": True,
+        "state": "restarting",
+        "service": label,
+        "delay_seconds": delay_seconds,
+    }
 
 
 def run_studio_script(studio: dict, script: str) -> dict:

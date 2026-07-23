@@ -49,6 +49,9 @@ def test_dashboard_includes_render_studio():
     assert 'generationDetailToggle(this' in dashboard
     assert 'function toggleStudio(id, enabled)' in dashboard
     assert 'new jobs for only that app' in dashboard
+    assert 'id="hau-restart"' in dashboard
+    assert 'function restartHub(force = false, confirmed = false)' in dashboard
+    assert 'function waitForHubRestart(expectedVersion' in dashboard
 
 
 def test_job_storage_cap_defaults_to_safe_fleet_policy_and_is_configurable(authed):
@@ -436,3 +439,66 @@ def test_fleet_update_inventory_uses_loaded_hub_version(monkeypatch, authed):
     assert payload["apps"][0]["installed_version"] == main.APP_VERSION
     assert payload["apps"][0]["disk_version"] == "9.9.9"
     assert payload["apps"][0]["state"] == "restart_required"
+
+
+def test_hub_restart_schedules_installed_service(monkeypatch, authed):
+    from backend import control, main
+
+    monkeypatch.setattr(main.auto_updater, "restart_safety", lambda: {
+        "ready": True, "mode": "service", "expected_version": "1.62.0",
+        "commit": "a" * 40,
+    })
+    monkeypatch.setattr(main, "_automatic_update_blockers", lambda: [])
+    monkeypatch.setattr(control, "restart_hub_service", lambda: {
+        "ok": True, "state": "restarting",
+        "service": "com.kh.studiohub.server", "delay_seconds": 1.5,
+    })
+    response = authed.post("/api/hub/maintenance/restart", json={"force": False})
+    assert response.status_code == 202
+    assert response.json()["expected_version"] == "1.62.0"
+    assert response.json()["service"] == "com.kh.studiohub.server"
+    assert response.json()["forced"] is False
+
+
+def test_hub_restart_protects_active_work_unless_explicitly_forced(monkeypatch, authed):
+    from backend import control, main
+
+    monkeypatch.setattr(main.auto_updater, "restart_safety", lambda: {
+        "ready": True, "mode": "service", "expected_version": "1.62.0",
+        "commit": "a" * 40,
+    })
+    monkeypatch.setattr(main, "_automatic_update_blockers",
+                        lambda: ["image generation is running"])
+    scheduled = []
+    monkeypatch.setattr(control, "restart_hub_service", lambda: (
+        scheduled.append(True) or {
+            "ok": True, "state": "restarting",
+            "service": "com.kh.studiohub.server", "delay_seconds": 1.5,
+        }
+    ))
+    refused = authed.post("/api/hub/maintenance/restart", json={"force": False})
+    assert refused.status_code == 409
+    assert "Active work prevents" in refused.json()["detail"]
+    assert scheduled == []
+
+    forced = authed.post("/api/hub/maintenance/restart", json={"force": True})
+    assert forced.status_code == 202
+    assert forced.json()["forced"] is True
+    assert forced.json()["active_work"] == ["image generation is running"]
+    assert scheduled == [True]
+
+
+def test_hub_restart_cannot_bypass_repository_safety(monkeypatch, authed):
+    from backend import control, main
+
+    def unsafe():
+        raise main.UpdateError("Working tree has local changes")
+
+    monkeypatch.setattr(main.auto_updater, "restart_safety", unsafe)
+    monkeypatch.setattr(
+        control, "restart_hub_service",
+        lambda: (_ for _ in ()).throw(AssertionError("unsafe restart was scheduled")),
+    )
+    response = authed.post("/api/hub/maintenance/restart", json={"force": True})
+    assert response.status_code == 409
+    assert "local changes" in response.json()["detail"]

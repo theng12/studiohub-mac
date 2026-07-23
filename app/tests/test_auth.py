@@ -43,6 +43,7 @@ def test_remote_requires_token(client):
     assert client.get("/api/hub/health").status_code == 401
     assert client.post("/api/auto-update/check").status_code == 401
     assert client.post("/api/hub/auto-updates/check-all").status_code == 401
+    assert client.post("/api/hub/maintenance/restart", json={}).status_code == 401
 
 
 def test_remote_with_token_ok(authed):

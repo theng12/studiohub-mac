@@ -9,6 +9,15 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 UID_NUM="$(id -u)"
 SRV="com.kh.studiohub.server"
 PORT=47873
+DELAY_SECONDS="${1:-0}"
+
+if ! [[ "$DELAY_SECONDS" =~ ^([0-9]+|[0-9]+\.[0-9]+)$ ]]; then
+  echo "❌ Invalid restart delay."
+  exit 2
+fi
+if [[ "$DELAY_SECONDS" != "0" ]]; then
+  sleep "$DELAY_SECONDS"
+fi
 
 if launchctl kickstart -k "gui/$UID_NUM/$SRV" 2>/dev/null; then
   echo "🔄 Restart signal sent to $SRV."

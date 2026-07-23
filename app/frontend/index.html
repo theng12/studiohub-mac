@@ -735,6 +735,7 @@
         <button class="btn" id="hau-update" onclick="hubAutoAction('update')">Update now</button>
         <button class="btn" id="hau-after" onclick="hubAutoAction('update',true)">Update after current work</button>
         <button class="btn" id="hau-retry" onclick="hubAutoAction('retry')" style="display:none">Retry</button>
+        <button class="btn" id="hau-restart" onclick="restartHub()">Restart Hub</button>
         <span class="sub" id="hau-message" role="status" aria-live="polite"></span>
       </div>
       <div class="auto-update-facts" id="hau-facts"></div>
@@ -1051,6 +1052,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.62.0", date: "2026-07-23", items: [
+    "The Updates page now has an authenticated <b>Restart Hub</b> control, including a one-click action when a downloaded update reports <b>Restart required</b>.",
+    "The dashboard waits through the brief connection drop, verifies the expected running version, and reloads itself when Studio Hub is healthy again.",
+    "Unsafe repositories and missing startup services are refused; active Hub work is protected unless a supervised caller explicitly forces the restart.",
+  ]},
   { v: "1.61.5", date: "2026-07-23", items: [
     "Fleet local-backup retention now defaults to <b>30 days</b> while the existing <b>80 GB per-Mac hard cap</b> continues to protect small SSDs.",
     "Every saved 3-day Hub and Studio policy migrates automatically once during update, including workers that reconnect later; no per-machine setup is required.",
@@ -3581,7 +3587,7 @@ function autoState(value) {
   const states = {
     idle: ["", "Idle"], checking: ["warn", "Checking"], available: ["warn", "Update available"], update_available: ["warn", "Update available"],
     up_to_date: ["ok", "Up to date"], updating: ["gen", "Updating"], restarting: ["gen", "Restarting"],
-    deferred: ["warn", "Deferred"], scheduled: ["warn", "Queued until idle"], failed: ["err", "Needs attention"], succeeded: ["ok", "Updated"],
+    restart_required: ["warn", "Restart required"], deferred: ["warn", "Deferred"], scheduled: ["warn", "Queued until idle"], failed: ["err", "Needs attention"], succeeded: ["ok", "Updated"],
     unavailable: ["no", "Unavailable"]
   };
   return states[value] || ["", String(value || "Idle")];
@@ -3632,6 +3638,10 @@ function renderHubAutoUpdate(status) {
   $("#hau-update").disabled = busy || !hubAutoStatus.update_available;
   $("#hau-after").disabled = busy;
   $("#hau-retry").style.display = hubAutoStatus.state === "failed" ? "inline-flex" : "none";
+  const restart = $("#hau-restart");
+  restart.disabled = busy || hubRestartPolling;
+  restart.classList.toggle("primary", !!hubAutoStatus.restart_required);
+  restart.textContent = hubAutoStatus.restart_required ? "Restart Hub now" : "Restart Hub";
   if (!fleetAutoBusy) $("#hau-message").textContent = result;
 }
 
@@ -3678,13 +3688,17 @@ function renderFleetAutoUpdates(data) {
     const statusDetail = row.error || row.defer_reason || row.last_update_result || label;
     const settingsUrl = safeHttpUrl(row.settings_url || "");
     const updateReady = row.supported && row.healthy && row.update_available && !jobBusy;
+    const restartReady = row.kind === "hub" && row.healthy && row.restart_required && !jobBusy;
+    const action = restartReady
+      ? `<button class="btn compact primary" onclick="restartHub()">Restart</button>`
+      : `<button class="btn compact ${updateReady ? "primary" : ""}" ${updateReady ? "" : "disabled"} onclick="updateOneAutoApp('${jsq(row.id)}')">Update</button>`;
     return `<tr class="${unavailable}"><td class="auto-update-app"><b>${esc(row.title)}</b><span class="sub">${esc(row.modality)}</span></td>
       <td>${esc(mlabel(row.machine))}</td><td class="num">${esc(version)}</td>
       <td><select class="selctl" aria-label="Update mode for ${esc(row.title)}" ${row.supported && !jobBusy ? "" : "disabled"} onchange="setFleetAutoMode('${jsq(row.id)}',this.value)">
         <option value="off" ${row.mode === "off" ? "selected" : ""}>Off</option><option value="notify" ${row.mode === "notify" ? "selected" : ""}>Notify</option><option value="auto" ${row.mode === "auto" ? "selected" : ""}>Auto</option></select></td>
       <td class="num">${esc(fmtAutoTime(row.last_checked))}</td><td class="num">${esc(row.mode === "off" ? "Off" : fmtAutoTime(row.next_check))}</td>
       <td class="auto-update-status"><span class="pill ${tone}">${esc(label)}</span><div class="sub" title="${esc(statusDetail)}">${esc(statusDetail)}</div></td>
-      <td><div class="actions"><button class="btn compact ${updateReady ? "primary" : ""}" ${updateReady ? "" : "disabled"} onclick="updateOneAutoApp('${jsq(row.id)}')">Update</button>${settingsUrl ? `<a class="btn compact" href="${settingsUrl}" target="_blank" rel="noopener">Settings ↗</a>` : ""}</div></td></tr>`;
+      <td><div class="actions">${action}${settingsUrl ? `<a class="btn compact" href="${settingsUrl}" target="_blank" rel="noopener">Settings ↗</a>` : ""}</div></td></tr>`;
   }).join("");
 }
 
@@ -3758,6 +3772,65 @@ async function hubAutoAction(action, afterCurrent = false) {
   } finally {
     fleetAutoBusy = false;
     button.disabled = false; button.removeAttribute("aria-busy"); button.textContent = old;
+  }
+}
+
+let hubRestartPolling = false;
+async function waitForHubRestart(expectedVersion, startedAt = Date.now(), sawOffline = false) {
+  if (!hubRestartPolling) return;
+  const elapsed = Date.now() - startedAt;
+  try {
+    const response = await fetch("/api/health", { cache: "no-store" });
+    const health = response.ok ? await response.json() : {};
+    if (health.ok && health.app_version === expectedVersion && (sawOffline || elapsed > 2500)) {
+      $("#hau-message").textContent = `Studio Hub v${expectedVersion} is healthy again. Reloading…`;
+      setTimeout(() => location.reload(), 400);
+      return;
+    }
+    $("#hau-message").textContent = health.ok
+      ? `Reconnected to v${health.app_version || "unknown"}; waiting for v${expectedVersion}…`
+      : "Studio Hub is restarting; reconnecting…";
+  } catch (_) {
+    sawOffline = true;
+    $("#hau-message").textContent = "Studio Hub is restarting; reconnecting…";
+  }
+  if (elapsed >= 90000) {
+    hubRestartPolling = false;
+    $("#hau-restart").disabled = false;
+    $("#hau-message").textContent = "The restart was accepted, but the Hub did not return within 90 seconds. Check the startup-service log.";
+    return;
+  }
+  setTimeout(() => waitForHubRestart(expectedVersion, startedAt, sawOffline), 1200);
+}
+
+async function restartHub(force = false, confirmed = false) {
+  if (hubRestartPolling) return;
+  if (!confirmed && !confirm("Restart Studio Hub now? The dashboard will reconnect automatically. Studio workers keep running, but active Hub dispatch may pause briefly.")) return;
+  const button = $("#hau-restart");
+  button.disabled = true; button.setAttribute("aria-busy", "true"); button.textContent = "Restarting…";
+  $("#hau-message").textContent = "Checking restart safety and the installed startup service…";
+  try {
+    const response = await api("/api/hub/maintenance/restart", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force })
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = String(body.detail || body.error || `Request failed (${response.status})`);
+      if (!force && detail.startsWith("Active work prevents a normal restart:")) {
+        const proceed = confirm(`${detail}\n\nForce the restart anyway? Active Hub work may be interrupted and recover from its durable queue.`);
+        button.removeAttribute("aria-busy"); button.textContent = "Restart Hub";
+        if (proceed) return restartHub(true, true);
+      }
+      throw new Error(detail);
+    }
+    hubRestartPolling = true;
+    $("#hau-message").textContent = `Restart accepted; reconnecting to v${body.expected_version}…`;
+    waitForHubRestart(body.expected_version);
+  } catch (error) {
+    $("#hau-message").textContent = `Restart failed: ${error.message}`;
+    button.disabled = false; button.removeAttribute("aria-busy");
+    button.textContent = hubAutoStatus && hubAutoStatus.restart_required ? "Restart Hub now" : "Restart Hub";
   }
 }
 

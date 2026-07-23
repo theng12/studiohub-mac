@@ -155,6 +155,33 @@ def test_active_work_defers_and_records_reason(updater: AutoUpdater, monkeypatch
     assert status["next_retry"]
 
 
+def test_restart_safety_requires_loaded_service_and_clean_checkout(
+    updater: AutoUpdater, monkeypatch,
+):
+    monkeypatch.setattr(updater, "_service_loaded", lambda: False)
+    with pytest.raises(UpdateError, match="startup service"):
+        updater.restart_safety()
+
+    monkeypatch.setattr(updater, "_service_loaded", lambda: True)
+    monkeypatch.setattr(updater, "_git_preflight", lambda **kwargs: {
+        "local": "a" * 40, "remote": "a" * 40,
+        "latest": "1.0.0", "available": False,
+    })
+    assert updater.restart_safety() == {
+        "ready": True,
+        "mode": "service",
+        "expected_version": "1.0.0",
+        "commit": "a" * 40,
+    }
+
+    def unsafe(**_kwargs):
+        raise UpdateError("Working tree has local changes")
+
+    monkeypatch.setattr(updater, "_git_preflight", unsafe)
+    with pytest.raises(UpdateError, match="local changes"):
+        updater.restart_safety()
+
+
 def test_update_after_work_creates_pending_retry(updater: AutoUpdater, monkeypatch):
     monkeypatch.setattr(updater, "readiness_reasons", lambda: ["download active"])
     status = updater.trigger_update(after_current=True)

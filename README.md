@@ -160,6 +160,12 @@ reconnect through the expected restart connection drop, and require the updated
 app to reach the published version and answer healthy before the next one starts.
 Render Studio participates in the same inventory and controls, including a
 shortcut to its local automatic-update card.
+If a downloaded Hub update remains on disk while the old process is still
+answering, use **Restart Hub now**. The authenticated action validates the Git
+checkout and installed startup service, delays shutdown until the API response
+has returned, then reconnects the dashboard after the expected version is
+healthy. Active work is refused by default; an explicit forced API request is
+available for supervised recovery.
 If an update command never starts a restart, the operation fails visibly after
 three minutes instead of looking busy for the entire 20-minute recovery window;
 once a restart really begins, the longer window remains available for slow Macs.
@@ -207,6 +213,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/auto-update/status` · `GET /api/auto-update/readiness` | Hub updater settings/state and idle blockers |
 | `POST /api/auto-update/settings` · `POST /api/auto-update/check` | Save and validate the opt-in schedule / check safely now |
 | `POST /api/auto-update/update` · `POST /api/auto-update/retry` | Update now or after current work / retry a failed update |
+| `POST /api/hub/maintenance/restart` | Restart the installed Hub startup service; JSON body `{"force": false}` refuses active work by default |
 | `GET /api/hub/auto-updates` · `POST /api/hub/auto-updates/check-all` | Fleet automatic-update inventory / ask every app to check |
 | `POST /api/hub/auto-updates/{target}/mode` | Change one app's Off, Notify, or Auto mode while preserving its schedule |
 | `POST /api/hub/auto-updates/update-idle` | Start a staggered, health-gated update for selected idle sibling Studios |

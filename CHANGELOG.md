@@ -10,6 +10,26 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.62.0] — 2026-07-23
+
+### Added — authenticated remote Hub restart
+
+- Added a modern **Restart Hub** control to the Hub update card and a
+  **Restart** action whenever the fleet row reports `restart_required`.
+- Added an authenticated `POST /api/hub/maintenance/restart` endpoint backed by
+  the installed `com.kh.studiohub.server` LaunchAgent. It returns before the
+  delayed restart, then the dashboard reconnects and reloads only after the
+  expected version answers healthy.
+- Restart safety refuses missing startup-service installations, dirty or
+  divergent Git checkouts, and active Hub work by default. A caller must send
+  an explicit `{"force": true}` request to override only the active-work guard;
+  repository safety cannot be bypassed.
+
+### Verification
+
+- Added API, authentication, service-spawn, restart-safety, and dashboard
+  regression coverage. No live workers or jobs are restarted by the tests.
+
 ## [1.61.5] — 2026-07-23
 
 ### Changed — automatic 30-day fleet backup retention

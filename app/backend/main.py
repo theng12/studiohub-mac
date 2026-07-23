@@ -61,6 +61,10 @@ class AutoUpdateRequestBody(BaseModel):
     after_current: bool = False
 
 
+class HubRestartBody(BaseModel):
+    force: bool = False
+
+
 class FleetAutoModeBody(BaseModel):
     mode: str
 
@@ -647,6 +651,37 @@ def automatic_update_retry():
         return auto_updater.retry()
     except UpdateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/hub/maintenance/restart", status_code=202)
+def restart_hub(body: HubRestartBody):
+    """Safely restart the installed Hub service after returning this response."""
+    try:
+        safety = auto_updater.restart_safety()
+    except UpdateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    blockers = _automatic_update_blockers()
+    if blockers and not body.force:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Active work prevents a normal restart: "
+                + "; ".join(blockers)
+                + ". Retry with force=true only if interruption is acceptable."
+            ),
+        )
+    from .control import restart_hub_service
+    result = restart_hub_service()
+    if not result["ok"]:
+        raise HTTPException(status_code=409, detail=result["error"])
+    return {
+        **result,
+        "expected_version": safety["expected_version"],
+        "loaded_version": _app_version(),
+        "forced": bool(body.force),
+        "active_work": blockers,
+        "message": "Restart accepted. Reconnect to this Hub after a few seconds.",
+    }
 
 
 @app.get("/api/hub/auto-updates")
