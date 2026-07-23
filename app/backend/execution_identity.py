@@ -21,6 +21,7 @@ import re
 import sqlite3
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from .registry import DATA_DIR
 
@@ -30,7 +31,7 @@ _OPERATION = re.compile(r"^[a-z][a-z0-9._:-]{0,79}$")
 _FIELDS = {
     "genstudio_job_id", "genstudio_attempt_id", "idempotency_key",
     "fencing_token", "site_id", "operation", "model_revision",
-    "voice_revision",
+    "voice_revision", "lease_expires_at",
 }
 
 _SCHEMA = """
@@ -61,6 +62,7 @@ CREATE TABLE IF NOT EXISTS genstudio_attempt_fences (
   highest_fencing_token INTEGER NOT NULL,
   idempotency_hash TEXT NOT NULL,
   payload_hash TEXT NOT NULL,
+  lease_expires_at REAL,
   updated_at REAL NOT NULL
 );
 """
@@ -81,6 +83,16 @@ def _conn() -> sqlite3.Connection:
     connection = sqlite3.connect(DB_FILE, timeout=10)
     connection.row_factory = sqlite3.Row
     connection.executescript(_SCHEMA)
+    columns = {
+        row["name"]
+        for row in connection.execute(
+            "PRAGMA table_info(genstudio_attempt_fences)"
+        ).fetchall()
+    }
+    if "lease_expires_at" not in columns:
+        connection.execute(
+            "ALTER TABLE genstudio_attempt_fences ADD COLUMN lease_expires_at REAL"
+        )
     return connection
 
 
@@ -94,6 +106,20 @@ def _clean_id(name: str, value: object) -> str:
         raise ExecutionIdentityError(
             f"{name} must be 1-200 safe letters, digits, or ._:-")
     return text
+
+
+def _lease_timestamp(value: object) -> tuple[str, float]:
+    text = str(value or "").strip()
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ExecutionIdentityError(
+            "lease_expires_at must be an ISO-8601 timestamp"
+        ) from exc
+    if parsed.tzinfo is None:
+        raise ExecutionIdentityError("lease_expires_at must include a timezone")
+    normalized = parsed.astimezone(UTC)
+    return normalized.isoformat(), normalized.timestamp()
 
 
 def _canonical_payload(envelope: dict, identity: dict) -> str:
@@ -150,6 +176,9 @@ def _extract(envelope: dict) -> dict | None:
     if not _OPERATION.fullmatch(operation):
         raise ExecutionIdentityError(
             "operation must start with a lowercase letter and use safe characters")
+    lease_text = None
+    if supplied.get("lease_expires_at") is not None:
+        lease_text, _lease_epoch = _lease_timestamp(supplied["lease_expires_at"])
     return {
         "genstudio_job_id": _clean_id("genstudio_job_id", supplied["genstudio_job_id"]),
         "genstudio_attempt_id": _clean_id(
@@ -164,6 +193,7 @@ def _extract(envelope: dict) -> dict | None:
         "voice_revision": (
             str(supplied.get("voice_revision")).strip()
             if supplied.get("voice_revision") is not None else None),
+        "lease_expires_at": lease_text,
     }
 
 
@@ -187,6 +217,13 @@ def prepare(envelope: dict) -> PreparedExecution:
         "authority": "genstudio",
     })
     now = time.time()
+    lease_epoch = None
+    if identity.get("lease_expires_at"):
+        _lease_text, lease_epoch = _lease_timestamp(identity["lease_expires_at"])
+        if lease_epoch <= now:
+            raise ExecutionIdentityError(
+                "GenStudio execution lease has already expired"
+            )
     replay_batch_id = None
     with _conn() as connection:
         connection.execute("BEGIN IMMEDIATE")
@@ -226,6 +263,11 @@ def prepare(envelope: dict) -> PreparedExecution:
             ):
                 raise ExecutionIdentityError(
                     "GenStudio attempt identity was already accepted for a different assignment")
+            existing_lease = attempt_fence["lease_expires_at"]
+            if existing_lease is not None and float(existing_lease) <= now:
+                raise ExecutionIdentityError(
+                    "GenStudio execution lease has expired and cannot be revived"
+                )
 
         existing = connection.execute(
             "SELECT * FROM genstudio_idempotency "
@@ -260,12 +302,22 @@ def prepare(envelope: dict) -> PreparedExecution:
             connection.execute(
                 "INSERT INTO genstudio_attempt_fences "
                 "(genstudio_attempt_id, genstudio_job_id, highest_fencing_token, "
-                " idempotency_hash, payload_hash, updated_at) VALUES (?,?,?,?,?,?) "
+                " idempotency_hash, payload_hash, lease_expires_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?) "
                 "ON CONFLICT(genstudio_attempt_id) DO UPDATE SET "
                 "highest_fencing_token=excluded.highest_fencing_token, "
+                "lease_expires_at=excluded.lease_expires_at, "
                 "updated_at=excluded.updated_at",
                 (identity["genstudio_attempt_id"], identity["genstudio_job_id"],
-                 identity["fencing_token"], idem_hash, payload_hash, now),
+                 identity["fencing_token"], idem_hash, payload_hash,
+                 lease_epoch, now),
+            )
+        elif lease_epoch is not None:
+            connection.execute(
+                "UPDATE genstudio_attempt_fences "
+                "SET lease_expires_at = ?, updated_at = ? "
+                "WHERE genstudio_attempt_id = ?",
+                (lease_epoch, now, identity["genstudio_attempt_id"]),
             )
         connection.execute(
             "INSERT INTO genstudio_idempotency "
@@ -301,6 +353,89 @@ def bind_local_batch(evidence: dict | None, batch_id: str) -> None:
             (batch_id, time.time(), evidence["genstudio_job_id"],
              evidence["idempotency_hash"]),
         )
+
+
+def lease_expired(evidence: dict | None, *, now: float | None = None) -> bool:
+    """Return whether a GenStudio-owned local execution lost its renewable lease."""
+    if not evidence or not evidence.get("lease_expires_at"):
+        return False
+    try:
+        _normalized, deadline = _lease_timestamp(evidence["lease_expires_at"])
+    except ExecutionIdentityError:
+        return True
+    return deadline <= (time.time() if now is None else now)
+
+
+def renew_lease(payload: dict) -> dict:
+    """Renew one active attempt without allowing an expired fence to revive."""
+    job_id = _clean_id("genstudio_job_id", payload.get("genstudio_job_id"))
+    attempt_id = _clean_id(
+        "genstudio_attempt_id", payload.get("genstudio_attempt_id")
+    )
+    try:
+        token = int(payload.get("fencing_token"))
+    except (TypeError, ValueError) as exc:
+        raise ExecutionIdentityError(
+            "fencing_token must be a positive integer issued by GenStudio"
+        ) from exc
+    if isinstance(payload.get("fencing_token"), bool) or token < 1:
+        raise ExecutionIdentityError(
+            "fencing_token must be a positive integer issued by GenStudio"
+        )
+    lease_text, lease_epoch = _lease_timestamp(payload.get("lease_expires_at"))
+    now = time.time()
+    if lease_epoch <= now:
+        raise ExecutionIdentityError("renewed lease must expire in the future")
+
+    with _conn() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        attempt = connection.execute(
+            "SELECT * FROM genstudio_attempt_fences "
+            "WHERE genstudio_attempt_id = ?",
+            (attempt_id,),
+        ).fetchone()
+        fence = connection.execute(
+            "SELECT * FROM genstudio_fences WHERE genstudio_job_id = ?",
+            (job_id,),
+        ).fetchone()
+        if attempt is None or fence is None:
+            raise ExecutionIdentityError("unknown GenStudio execution attempt")
+        if (
+            attempt["genstudio_job_id"] != job_id
+            or int(attempt["highest_fencing_token"]) != token
+            or fence["genstudio_attempt_id"] != attempt_id
+            or int(fence["highest_fencing_token"]) != token
+        ):
+            raise ExecutionIdentityError(
+                "GenStudio execution lease belongs to a stale fencing token"
+            )
+        current_deadline = attempt["lease_expires_at"]
+        if current_deadline is None:
+            raise ExecutionIdentityError(
+                "GenStudio execution attempt has no renewable lease"
+            )
+        if float(current_deadline) <= now:
+            raise ExecutionIdentityError(
+                "GenStudio execution lease has expired and cannot be revived"
+            )
+        connection.execute(
+            "UPDATE genstudio_attempt_fences "
+            "SET lease_expires_at = ?, updated_at = ? "
+            "WHERE genstudio_attempt_id = ?",
+            (lease_epoch, now, attempt_id),
+        )
+        binding = connection.execute(
+            "SELECT local_batch_id FROM genstudio_idempotency "
+            "WHERE genstudio_attempt_id = ? ORDER BY accepted_at DESC LIMIT 1",
+            (attempt_id,),
+        ).fetchone()
+    return {
+        "genstudio_job_id": job_id,
+        "genstudio_attempt_id": attempt_id,
+        "fencing_token": token,
+        "lease_expires_at": lease_text,
+        "local_batch_id": binding["local_batch_id"] if binding else None,
+    }
 
 
 def reset_for_tests() -> None:

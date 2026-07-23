@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import UTC, datetime, timedelta
 
 from backend import broker, control_plane, execution_identity, ledger
 
@@ -14,8 +15,9 @@ def _configure_site():
 
 
 def _envelope(*, token=7, text="Hello", idempotency_key="stable-attempt-key",
-              job_id="job-100", attempt_id="attempt-200"):
-    return {
+              job_id="job-100", attempt_id="attempt-200",
+              lease_expires_at=None):
+    envelope = {
         "modality": "voice",
         "model": "org/qwen-tts",
         "items": [{"text": text}],
@@ -30,6 +32,9 @@ def _envelope(*, token=7, text="Hello", idempotency_key="stable-attempt-key",
             "voice_revision": "voice-sha-2",
         },
     }
+    if lease_expires_at is not None:
+        envelope["genstudio_execution"]["lease_expires_at"] = lease_expires_at
+    return envelope
 
 
 def test_external_genstudio_identity_and_token_are_preserved_as_evidence(reset):
@@ -155,3 +160,87 @@ def test_existing_direct_story_studio_and_genstudio_requests_are_unchanged(reset
     assert replay["replayed"] is True
     assert batch["client_request_id"] == direct["clientRequestId"]
     assert batch["genstudio_execution"] is None
+
+
+def test_active_lease_renews_batch_but_expired_lease_cannot_be_revived(reset):
+    _configure_site()
+    first_deadline = datetime.now(UTC) + timedelta(minutes=5)
+    submitted = broker.submit_batch(
+        _envelope(lease_expires_at=first_deadline.isoformat())
+    )
+    batch = broker.batches[submitted["batch_id"]]
+    renewed_deadline = datetime.now(UTC) + timedelta(minutes=10)
+
+    renewal = execution_identity.renew_lease({
+        "genstudio_job_id": "job-100",
+        "genstudio_attempt_id": "attempt-200",
+        "fencing_token": 7,
+        "lease_expires_at": renewed_deadline.isoformat(),
+    })
+
+    assert broker.renew_execution_lease(renewal) is True
+    assert (
+        batch["genstudio_execution"]["lease_expires_at"]
+        == renewed_deadline.isoformat()
+    )
+
+    with sqlite3.connect(execution_identity.DB_FILE) as connection:
+        connection.execute(
+            "UPDATE genstudio_attempt_fences SET lease_expires_at = ? "
+            "WHERE genstudio_attempt_id = ?",
+            (datetime.now(UTC).timestamp() - 1, "attempt-200"),
+        )
+    try:
+        execution_identity.renew_lease({
+            "genstudio_job_id": "job-100",
+            "genstudio_attempt_id": "attempt-200",
+            "fencing_token": 7,
+            "lease_expires_at": (
+                datetime.now(UTC) + timedelta(minutes=15)
+            ).isoformat(),
+        })
+    except execution_identity.ExecutionIdentityError as exc:
+        assert "expired and cannot be revived" in str(exc)
+    else:
+        raise AssertionError("expired execution lease was revived")
+
+
+def test_already_expired_assignment_is_rejected_before_dispatch(reset):
+    _configure_site()
+
+    result = broker.submit_batch(
+        _envelope(
+            lease_expires_at=(
+                datetime.now(UTC) - timedelta(seconds=1)
+            ).isoformat()
+        )
+    )
+
+    assert "lease has already expired" in result["error"]
+    assert broker.batches == {}
+
+
+def test_expired_batch_is_fenced_instead_of_requeued_after_hub_restart(reset):
+    _configure_site()
+    submitted = broker.submit_batch(
+        _envelope(
+            lease_expires_at=(
+                datetime.now(UTC) + timedelta(minutes=5)
+            ).isoformat()
+        )
+    )
+    batch = broker.batches[submitted["batch_id"]]
+    batch["genstudio_execution"]["lease_expires_at"] = (
+        datetime.now(UTC) - timedelta(seconds=1)
+    ).isoformat()
+    batch["items"][0]["state"] = "running"
+    ledger.save_batch(batch)
+    broker.batches.clear()
+
+    broker.restore_batches()
+
+    restored = broker.batches[submitted["batch_id"]]
+    assert restored["cancelled"] is True
+    assert restored["lease_expired"] is True
+    assert restored["items"][0]["state"] == "cancelled"
+    assert restored["items"][0]["error"] == "GenStudio execution lease expired"

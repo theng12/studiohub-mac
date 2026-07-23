@@ -376,6 +376,56 @@ def test_jobs_submit_list_get_cancel(authed):
     assert authed.get("/api/hub/jobs/does-not-exist").status_code == 404
 
 
+def test_genstudio_execution_lease_renews_through_authenticated_api(client, authed):
+    from datetime import UTC, datetime, timedelta
+
+    from backend import broker, control_plane
+
+    control_plane.save_settings({
+        "role": "controller",
+        "site_id": "site-a",
+        "site_name": "Site A",
+        "controller_id": "controller-a",
+        "database_mode": "off",
+    })
+    initial_deadline = datetime.now(UTC) + timedelta(minutes=5)
+    submitted = authed.post("/api/hub/jobs", json={
+        "modality": "voice",
+        "model": "org/qwen-tts",
+        "items": [{"text": "Qualification lease contract"}],
+        "genstudio_execution": {
+            "genstudio_job_id": "job-qualification",
+            "genstudio_attempt_id": "attempt-qualification",
+            "idempotency_key": "qualification-lease-contract",
+            "fencing_token": 1,
+            "site_id": "site-a",
+            "operation": "voice.tts",
+            "model_revision": "model-sha-1",
+            "voice_revision": "voice-sha-1",
+            "lease_expires_at": initial_deadline.isoformat(),
+        },
+    })
+    assert submitted.status_code == 200
+    batch_id = submitted.json()["batch_id"]
+    renewed_deadline = datetime.now(UTC) + timedelta(minutes=10)
+    body = {
+        "genstudio_job_id": "job-qualification",
+        "genstudio_attempt_id": "attempt-qualification",
+        "fencing_token": 1,
+        "lease_expires_at": renewed_deadline.isoformat(),
+    }
+
+    assert client.post("/api/hub/executions/leases", json=body).status_code == 401
+    renewed = authed.post("/api/hub/executions/leases", json=body)
+
+    assert renewed.status_code == 200
+    assert renewed.json()["lease_expires_at"] == renewed_deadline.isoformat()
+    assert (
+        broker.batches[batch_id]["genstudio_execution"]["lease_expires_at"]
+        == renewed_deadline.isoformat()
+    )
+
+
 def test_bulk_image_cancel_and_clear_do_not_touch_other_modalities(authed):
     image = authed.post("/api/hub/jobs", json={
         "modality": "image", "model": "a/b", "items": [{"prompt": "image"}],

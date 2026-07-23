@@ -27,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, control_plane, enrollment, fleet_ops, fleet_storage, gateway, hardware_profiles, job_storage, memory_admission,
+from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, control_plane, enrollment, execution_identity, fleet_ops, fleet_storage, gateway, hardware_profiles, job_storage, memory_admission,
                ledger, metrics, peers, recipes, shared_voices, startup_services, transcription_jobs)
 from .auto_update import UpdateError
 from .auto_update_config import create_updater
@@ -1615,18 +1615,45 @@ async def hub_create_transcription_job(
     label: str | None = Form(None),
     project: str | None = Form(None),
     episode: str | None = Form(None),
+    genstudio_execution: str | None = Form(None),
 ):
     """Spool an episode upload and immediately enqueue its chapters."""
     if not control_plane.accepts_customer_jobs():
         raise HTTPException(409, "This Hub is in agent mode; submit transcription to a controller.")
     batch, duplicate = await transcription_jobs.create_batch(
-        files, item_ids, model, language, word_timestamps, label, project, episode)
+        files, item_ids, model, language, word_timestamps, label, project,
+        episode, genstudio_execution)
     transcription_jobs.start_dispatcher(monitor)
     result = {"batch_id": batch["id"], "items": len(batch["items"]),
               "queued": sum(i["state"] == "queued" for i in batch["items"])}
     if duplicate:
         result["duplicate"] = True
     return result
+
+
+@app.post("/api/hub/executions/leases")
+def hub_renew_execution_lease(body: dict):
+    """Renew one GenStudio-owned batch without reviving an expired fence."""
+    try:
+        renewal = execution_identity.renew_lease(body)
+    except execution_identity.ExecutionIdentityError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    updated = any(
+        updater(renewal)
+        for updater in (
+            broker.renew_execution_lease,
+            transcription_jobs.renew_execution_lease,
+            chat_jobs.renew_execution_lease,
+        )
+    )
+    if not updated:
+        raise HTTPException(404, "GenStudio execution batch is not available")
+    return {
+        "genstudio_job_id": renewal["genstudio_job_id"],
+        "genstudio_attempt_id": renewal["genstudio_attempt_id"],
+        "fencing_token": renewal["fencing_token"],
+        "lease_expires_at": renewal["lease_expires_at"],
+    }
 
 
 @app.get("/api/hub/transcription/jobs")

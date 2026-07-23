@@ -10,6 +10,35 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.63.0] — 2026-07-23
+
+### Added — fenced GenStudio site failover
+
+- Added renewable GenStudio execution leases for generation, transcription,
+  and Chat batches, including an authenticated lease-renewal endpoint.
+- Expired work is cancelled before dispatch, after worker completion, and
+  during Hub restart recovery. An expired or superseded fencing token cannot
+  be revived, so a restored power-cut location cannot publish a stale result.
+- Transcription uploads now carry the same GenStudio job, attempt, fencing,
+  idempotency, site, revision, and lease evidence as other fleet jobs.
+
+### Fixed
+
+- Fixed GenStudio release qualification repeatedly fencing voice and image
+  canaries even after Studio Hub completed them. The authenticated renewal
+  contract now keeps active attempts pollable until GenStudio receives and
+  verifies the terminal result.
+
+### Safety
+
+- Expired or superseded attempts remain permanently fenced. Updating restores
+  live result polling but never adopts outputs from an earlier failed run.
+
+### Verification
+
+- Added authenticated API coverage for the exact submit-and-renew contract,
+  including rejection without a Hub token and durable batch evidence updates.
+
 ## [1.62.0] — 2026-07-23
 
 ### Added — authenticated remote Hub restart

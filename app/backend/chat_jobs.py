@@ -472,6 +472,9 @@ async def dispatch_once(monitor) -> int:
         key=lambda batch: batch["created_at"],
     )
     for position, batch in enumerate(active):
+        if _expire_genstudio_batch(batch):
+            _save(batch)
+            continue
         now = time.time()
         queued_all = [pack for pack in batch["packs"] if pack["state"] == "queued"]
         queued = [pack for pack in queued_all if not pack.get("retry_at")
@@ -527,6 +530,8 @@ async def dispatch_once(monitor) -> int:
 async def _run_pack(monitor, batch: dict, pack: dict, studio: dict, owner: str) -> None:
     started = time.time()
     try:
+        if _expire_genstudio_batch(batch):
+            return
         missing = [scene_id for scene_id in pack["scene_ids"] if scene_id not in pack["results"]]
         messages = list(pack["messages"])
         if pack["results"]:
@@ -546,6 +551,8 @@ async def _run_pack(monitor, batch: dict, pack: dict, studio: dict, owner: str) 
             error.transient = response.status_code in {408, 409, 425, 429, 500, 502, 503, 504}
             raise error
         payload = response.json()
+        if _expire_genstudio_batch(batch):
+            return
         execution = batch.get("genstudio_execution") or {}
         usage = payload.get("usage")
         if usage is not None:
@@ -624,9 +631,47 @@ async def _dispatch_loop(monitor) -> None:
             await asyncio.sleep(2)
 
 
+def _expire_genstudio_batch(batch: dict) -> bool:
+    if not execution_identity.lease_expired(batch.get("genstudio_execution")):
+        return False
+    batch["cancelled"] = True
+    batch["lease_expired"] = True
+    now = time.time()
+    for pack in batch.get("packs") or []:
+        if pack.get("state") in {"queued", "running"}:
+            pack.update(
+                state="cancelled",
+                error="GenStudio execution lease expired",
+                finished_at=now,
+                retry_at=None,
+            )
+    return True
+
+
+def renew_execution_lease(renewal: dict) -> bool:
+    batch_id = renewal.get("local_batch_id")
+    batch = batches.get(batch_id) if batch_id else None
+    if batch is None and batch_id:
+        batch = get_batch(batch_id)
+    if batch is None:
+        return False
+    evidence = dict(batch.get("genstudio_execution") or {})
+    evidence["lease_expires_at"] = renewal["lease_expires_at"]
+    batch["genstudio_execution"] = evidence
+    batches[batch["id"]] = batch
+    _save(batch)
+    _wakeup.set()
+    return True
+
+
 def restore_batches() -> int:
     restored = 0
     for batch in _load_rows("finished = 0"):
+        if _expire_genstudio_batch(batch):
+            batches[batch["id"]] = batch
+            _save(batch)
+            restored += 1
+            continue
         for pack in batch["packs"]:
             if pack["state"] == "running":
                 pack.update(state="queued", studio=None, retry_at=None,

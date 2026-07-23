@@ -392,12 +392,62 @@ def _catalog_matches_genstudio_revision(batch: dict, entry: dict) -> bool:
     return expected is not None and actual == expected
 
 
+def _expire_genstudio_batch(batch: dict) -> bool:
+    """Fence unfinished local work after GenStudio's renewable lease expires."""
+    if not execution_identity.lease_expired(batch.get("genstudio_execution")):
+        return False
+    batch["cancelled"] = True
+    batch["lease_expired"] = True
+    batch["governor_note"] = "GenStudio execution lease expired"
+    now = time.time()
+    for item in batch.get("items") or []:
+        if item.get("state") in {"queued", "running"}:
+            item["state"] = "cancelled"
+            item["error"] = "GenStudio execution lease expired"
+            item["finished_at"] = now
+            item["retry_at"] = None
+    return True
+
+
+def renew_execution_lease(renewal: dict) -> bool:
+    """Apply a validated renewal to the matching in-memory/durable batch."""
+    batch_id = renewal.get("local_batch_id")
+    batch = batches.get(batch_id) if batch_id else None
+    if batch is None and batch_id:
+        batch = ledger.load_batch(batch_id)
+    if batch is None:
+        batch = next(
+            (
+                candidate
+                for candidate in batches.values()
+                if (candidate.get("genstudio_execution") or {}).get(
+                    "genstudio_attempt_id"
+                )
+                == renewal.get("genstudio_attempt_id")
+            ),
+            None,
+        )
+    if batch is None:
+        return False
+    evidence = dict(batch.get("genstudio_execution") or {})
+    evidence["lease_expires_at"] = renewal["lease_expires_at"]
+    batch["genstudio_execution"] = evidence
+    batches[batch["id"]] = batch
+    ledger.save_batch(batch)
+    _wakeup.set()
+    return True
+
+
 def restore_batches():
     """Reload unfinished batches from hub.db after a Hub restart. Items that
     were mid-flight ('running') go back to 'queued' — their studio-side job is
     orphaned but the work is simply redone (generation is idempotent-enough;
     the ledger keys on the new artifact)."""
     for b in ledger.load_unfinished_batches():
+        if _expire_genstudio_batch(b):
+            batches[b["id"]] = b
+            ledger.save_batch(b)
+            continue
         for it in b["items"]:
             if it["state"] == "running":
                 it["state"] = "queued"
@@ -917,6 +967,9 @@ async def _record_worker_success(client: httpx.AsyncClient, b: dict, item: dict,
     drops after the worker finishes, recovery can record the already-produced
     artifact instead of submitting a duplicate generation.
     """
+    if _expire_genstudio_batch(b):
+        await _signal_worker_cancel(client, item)
+        return
     if item.get("state") == "done" and item.get("asset_id"):
         return  # terminal polling/recovery is idempotent
     item["artifact_path"] = job.get("output_path")
@@ -978,6 +1031,9 @@ async def _recover_worker_job(client, b: dict, item: dict, studio: dict,
     deadline = time.monotonic() + RECOVERY_WINDOW_S
     delay = 1.0
     while time.monotonic() < deadline:
+        if _expire_genstudio_batch(b):
+            await _signal_worker_cancel(client, item)
+            return False
         try:
             url, headers = studio_request(studio, f"/api/generate/jobs/{job_id}")
             jr = await client.get(
@@ -1141,6 +1197,9 @@ async def _dispatch_loop():
         try:
             assigned = False
             for b in _queued_batches():
+                if _expire_genstudio_batch(b):
+                    ledger.save_batch(b)
+                    continue
                 if b["cancelled"]:
                     continue
                 now = time.time()
@@ -1315,6 +1374,10 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
     ref_mode = body.pop("ref_mode", None)
     body.pop("reference_images", None)  # never forward references as JSON
     try:
+        if _expire_genstudio_batch(b):
+            item["state"] = "cancelled"
+            item["error"] = "GenStudio execution lease expired"
+            return
         if refs:
             entry = await _catalog_entry(studio, b["model"])
             caps = (entry or {}).get("capabilities") or []
@@ -1358,18 +1421,26 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             raise _worker_http_error(r)
         job = r.json()["job"]
         item["studio_job_id"] = job["id"]
-        if b["cancelled"]:
+        if _expire_genstudio_batch(b) or b["cancelled"]:
             await _signal_worker_cancel(client, item)
             item["state"] = "cancelled"
-            item["error"] = "Cancelled by user"
+            item["error"] = (
+                "GenStudio execution lease expired"
+                if b.get("lease_expired")
+                else "Cancelled by user"
+            )
             return
         # poll the studio's async job until terminal
         while True:
             await asyncio.sleep(POLL_S)
-            if b["cancelled"]:
+            if _expire_genstudio_batch(b) or b["cancelled"]:
                 await _signal_worker_cancel(client, item)
                 item["state"] = "cancelled"
-                item["error"] = "Cancelled by user"
+                item["error"] = (
+                    "GenStudio execution lease expired"
+                    if b.get("lease_expired")
+                    else "Cancelled by user"
+                )
                 return
             url, headers = studio_request(studio, f"/api/generate/jobs/{job['id']}")
             jr = await client.get(

@@ -13,7 +13,7 @@ from pathlib import Path
 import httpx
 from fastapi import HTTPException, UploadFile
 
-from . import broker, ledger
+from . import broker, execution_identity, ledger
 from .peers import studio_request
 from .registry import DATA_DIR, machine_enabled, studio_enabled
 
@@ -139,6 +139,7 @@ def _active_duplicate(key: str) -> dict | None:
 async def create_batch(files: list[UploadFile], item_ids: list[str], model: str,
                        language: str | None, word_timestamps: bool, label: str | None,
                        project: str | None, episode: str | None,
+                       genstudio_execution_json: str | None = None,
                        deduplicate: bool = True) -> tuple[dict, bool]:
     if not files or len(files) > MAX_FILES:
         raise HTTPException(400, f"files must contain 1 to {MAX_FILES} uploads")
@@ -155,8 +156,47 @@ async def create_batch(files: list[UploadFile], item_ids: list[str], model: str,
     clean_project = _safe_identifier(project, "project") if project else None
     clean_episode = _safe_identifier(episode, "episode") if episode else None
     clean_label = _safe_identifier(label, "label") if label else None
+    execution = None
+    if genstudio_execution_json:
+        try:
+            execution = json.loads(genstudio_execution_json)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                400, "genstudio_execution must be valid JSON"
+            ) from exc
+        if not isinstance(execution, dict):
+            raise HTTPException(400, "genstudio_execution must be a JSON object")
+    envelope = {
+        "modality": "transcription",
+        "model": model,
+        "language": language or None,
+        "word_timestamps": bool(word_timestamps),
+        "project": clean_project,
+        "episode": clean_episode,
+        "items": [
+            {"item_id": item_id, "filename": filename}
+            for item_id, filename in zip(clean_ids, filenames)
+        ],
+    }
+    if execution is not None:
+        envelope["genstudio_execution"] = execution
+    try:
+        prepared = execution_identity.prepare(envelope)
+    except execution_identity.ExecutionIdentityError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if prepared.replay_batch_id:
+        replay = get_batch(prepared.replay_batch_id)
+        if replay is not None:
+            for upload in files:
+                await upload.close()
+            batches.setdefault(replay["id"], replay)
+            return replay, True
     key = _idempotency_key(clean_project, clean_episode, model, clean_ids, filenames)
-    duplicate = _active_duplicate(key) if deduplicate else None
+    duplicate = (
+        _active_duplicate(key)
+        if deduplicate and prepared.evidence is None
+        else None
+    )
     if duplicate:
         for upload in files:
             await upload.close()
@@ -212,9 +252,11 @@ async def create_batch(files: list[UploadFile], item_ids: list[str], model: str,
         "label": clean_label, "project": clean_project, "episode": clean_episode,
         "model": model, "language": language or None,
         "word_timestamps": bool(word_timestamps), "items": items,
+        "genstudio_execution": prepared.evidence,
     }
     batches[batch_id] = batch
     _save(batch)
+    execution_identity.bind_local_batch(prepared.evidence, batch_id)
     _wakeup.set()
     return batch, False
 
@@ -245,6 +287,14 @@ def summary(batch: dict, include_items: bool = True,
         "duration_seconds": round(sum(i.get("duration_seconds") or 0 for i in batch["items"]), 2),
         "storage_cleaned": bool(batch.get("storage_cleaned_at")),
     }
+    execution = batch.get("genstudio_execution")
+    if isinstance(execution, dict):
+        out["genstudio_execution"] = {
+            "genstudio_job_id": execution.get("genstudio_job_id"),
+            "genstudio_attempt_id": execution.get("genstudio_attempt_id"),
+            "fencing_token": execution.get("fencing_token"),
+            "lease_expires_at": execution.get("lease_expires_at"),
+        }
     if include_items:
         out["items"] = [{
             "index": item["index"], "item_id": item["item_id"],
@@ -308,6 +358,50 @@ async def _eligible_studios(monitor, model: str, item: dict | None = None) -> li
     return eligible
 
 
+def _expire_genstudio_batch(batch: dict) -> bool:
+    if not execution_identity.lease_expired(batch.get("genstudio_execution")):
+        return False
+    batch["cancelled"] = True
+    batch["lease_expired"] = True
+    now = time.time()
+    for item in batch.get("items") or []:
+        if item.get("state") in {"queued", "running"}:
+            item.update(
+                state="cancelled",
+                error="GenStudio execution lease expired",
+                finished_at=now,
+            )
+    return True
+
+
+def renew_execution_lease(renewal: dict) -> bool:
+    batch_id = renewal.get("local_batch_id")
+    batch = batches.get(batch_id) if batch_id else None
+    if batch is None and batch_id:
+        batch = get_batch(batch_id)
+    if batch is None:
+        batch = next(
+            (
+                candidate
+                for candidate in batches.values()
+                if (candidate.get("genstudio_execution") or {}).get(
+                    "genstudio_attempt_id"
+                )
+                == renewal.get("genstudio_attempt_id")
+            ),
+            None,
+        )
+    if batch is None:
+        return False
+    evidence = dict(batch.get("genstudio_execution") or {})
+    evidence["lease_expires_at"] = renewal["lease_expires_at"]
+    batch["genstudio_execution"] = evidence
+    batches[batch["id"]] = batch
+    _save(batch)
+    _wakeup.set()
+    return True
+
+
 async def dispatch_once(monitor) -> int:
     assigned = 0
     while True:
@@ -317,6 +411,9 @@ async def dispatch_once(monitor) -> int:
             key=lambda batch: (batch.get("last_dispatched_at", 0), batch["created_at"]),
         )
         for batch in active:
+            if _expire_genstudio_batch(batch):
+                _save(batch)
+                continue
             item = next((i for i in batch["items"] if i["state"] == "queued"), None)
             if not item:
                 continue
@@ -343,6 +440,8 @@ async def dispatch_once(monitor) -> int:
 async def _run_item(monitor, batch: dict, item: dict, studio: dict, owner: str) -> None:
     started = time.time()
     try:
+        if _expire_genstudio_batch(batch):
+            return
         input_path = Path(item["input_path"])
         if not input_path.is_file():
             raise FileNotFoundError("uploaded audio is missing")
@@ -368,6 +467,8 @@ async def _run_item(monitor, batch: dict, item: dict, studio: dict, owner: str) 
             error.transient = response.status_code in TRANSIENT_STATUS
             raise error
         payload = response.json()
+        if _expire_genstudio_batch(batch):
+            return
         srt = str(payload.get("srt") or "")
         if not srt.strip():
             raise ValueError("Voice Studio returned an empty SRT artifact")
@@ -446,6 +547,11 @@ async def _dispatch_loop(monitor) -> None:
 def restore_batches() -> int:
     restored = 0
     for batch in _load_rows("finished = 0"):
+        if _expire_genstudio_batch(batch):
+            batches[batch["id"]] = batch
+            _save(batch)
+            restored += 1
+            continue
         for item in batch["items"]:
             if item["state"] == "running":
                 item.update(state="queued", studio=None, studio_task_id=None,

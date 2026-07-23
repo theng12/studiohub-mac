@@ -746,10 +746,13 @@ curl -X POST http://localhost:47873/api/hub/jobs \
 
 GenStudio may additionally assign the site execution by supplying
 `genstudio_job_id`, `genstudio_attempt_id`, `idempotency_key`, `fencing_token`,
-`site_id`, and `operation` (plus optional model/voice revisions). Studio Hub
-hashes the idempotency key, rejects stale externally issued fences, and returns
-the same local batch for an exact replay. It never issues or increments the
-global fence:
+`lease_expires_at`, `site_id`, and `operation` (plus optional model/voice
+revisions). Studio Hub hashes the idempotency key, rejects stale externally
+issued fences, and returns the same local batch for an exact replay. GenStudio
+renews the lease through `POST /api/hub/executions/leases`. An expired lease
+cannot be revived: unfinished work is cancelled instead of requeued after a
+Hub restart, and late worker output is not adopted into the asset ledger.
+Studio Hub never issues or increments the global fence:
 
 ```json
 {
@@ -757,6 +760,7 @@ global fence:
   "genstudio_attempt_id": "attempt_01...",
   "idempotency_key": "stable-non-secret-attempt-key",
   "fencing_token": 42,
+  "lease_expires_at": "2026-07-23T10:05:00+00:00",
   "site_id": "phnom-penh-1",
   "operation": "tts"
 }

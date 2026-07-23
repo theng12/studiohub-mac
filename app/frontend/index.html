@@ -1052,6 +1052,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.63.0", date: "2026-07-23", items: [
+    "GenStudio qualification and customer jobs now keep a renewable execution lease while Studio Hub runs them, so completed voice, image, transcription, and Chat work remains available for verified collection.",
+    "Power-cut recovery stays safely fenced: expired or superseded attempts cannot be revived, and late outputs from an old attempt are never published or charged.",
+    "Updating the location controller is sufficient for the lease contract; existing Studio workers remain compatible.",
+  ]},
   { v: "1.62.0", date: "2026-07-23", items: [
     "The Updates page now has an authenticated <b>Restart Hub</b> control, including a one-click action when a downloaded update reports <b>Restart required</b>.",
     "The dashboard waits through the brief connection drop, verifies the expected running version, and reloads itself when Studio Hub is healthy again.",
