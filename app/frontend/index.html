@@ -1102,6 +1102,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.64.1", date: "2026-07-24", items: [
+    "Manual-mode updates now stop Studio Hub with its canonical app-local script path, avoiding the Pinokio 8.0.40 invalid-URI crash.",
+    "Startup-service updates, dependency installation, worker dispatch, and live-job behavior are unchanged.",
+  ]},
   { v: "1.64.0", date: "2026-07-24", items: [
     "Remote now has one clear Machine mode setting: Standalone (orange), Agent (green), or Controller (red), shown in the header and settings.",
     "Controller settings keep the display name, Site ID, Hub ID, visible permanent registration code, visible fleet token, and owner password together.",

@@ -12,7 +12,7 @@ module.exports = {
     {
       when: "{{running('start.js')}}",
       method: "script.stop",
-      params: { uri: "start.js" }
+      params: { uri: "{{path.resolve(cwd, 'start.js')}}" }
     },
     {
       when: "{{exists('.git')}}",

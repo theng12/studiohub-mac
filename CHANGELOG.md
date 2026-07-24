@@ -10,6 +10,25 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.64.1] — 2026-07-24
+
+### Fixed
+
+- Manual-mode updates now pass the canonical absolute `start.js` path to
+  Pinokio's `script.stop` API. Pinokio 8.0.40 no longer receives the invalid
+  relative `start.js` URI that could trigger an unhandled-rejection crash.
+
+### Safety
+
+- Startup-service updates retain their existing service-aware path. Update
+  order, dependency installation, idle checks, worker dispatch, and live jobs
+  are unchanged.
+
+### Verification
+
+- Added a launcher regression assertion that rejects bare relative stop URIs
+  and requires the runtime-resolved app-local path.
+
 ## [1.64.0] — 2026-07-24
 
 ### Added — explicit machine modes
