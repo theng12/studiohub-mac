@@ -265,6 +265,7 @@
   .voice-field input,.voice-field select,.voice-field textarea{width:100%;min-height:var(--control-min-height);margin:0;background:#fffefb;border:1px solid #ced4ca;color:var(--text);border-radius:10px;padding:10px 11px;font:inherit;font-size:var(--font-control);outline:none}.voice-field input:focus,.voice-field select:focus,.voice-field textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px #167a5515}
   .voice-field.wide{grid-column:span 2}.voice-field.full{grid-column:1/-1}.voice-field textarea{min-height:116px;resize:vertical;line-height:1.55}
   .voice-audio-row{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;padding:13px;border:1px solid #d8dfd5;border-radius:14px;background:#f8faf5}.voice-audio-row .voice-field{flex:1;min-width:260px}.voice-audio-row .voice-field.model{min-width:240px}.voice-audio-row .btn{min-height:39px}
+  .voice-status{display:flex;align-items:center;min-height:40px;margin:10px 0 0;padding:9px 11px;border:1px solid #d6ddd2;border-radius:10px;background:#f7f9f4;color:var(--dim);font-size:var(--font-secondary);line-height:1.4}.voice-status[data-state="working"]{border-color:#c7d8cc;background:#edf6ef;color:var(--accent2);font-weight:700}.voice-status[data-state="success"]{border-color:#b8d8c3;background:#eaf6ed;color:var(--accent);font-weight:700}.voice-status[data-state="error"]{border-color:#e2c0b8;background:#fbefeb;color:var(--down);font-weight:700}
   .voice-consent{display:flex;align-items:flex-start;gap:8px;margin:12px 0;color:var(--dim);font-size:var(--font-secondary)}.voice-consent input{margin-top:3px}.voice-help{margin:-2px 0 12px;color:var(--dim);font-size:var(--font-secondary)}
   .voice-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(350px,1fr));gap:14px}.voice-card{display:flex;flex-direction:column;min-width:0}.voice-card .voice-name{font:700 20px/1.1 var(--display);color:var(--accent2)}.voice-card .voice-meta{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.voice-card code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.voice-sync-line{display:flex;align-items:center;gap:8px;margin-top:auto;padding-top:10px;border-top:1px solid #e1e5dc}.voice-sync-line .sub{flex:1}.voice-targets{margin-top:10px}.voice-targets summary{cursor:pointer;color:var(--accent);font-size:var(--font-secondary);font-weight:700}.voice-target{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 10px;padding:8px 0;border-bottom:1px solid #e6e8e1}.voice-target:last-child{border-bottom:0}.voice-target .message{grid-column:1/-1;color:var(--dim);font-size:var(--font-compact);overflow-wrap:anywhere}
   #bell-dropdown{top:37px;right:0;width:370px;padding:8px;border-color:var(--border);border-radius:16px;background:#fffef9;box-shadow:0 22px 55px #18362935}#bell-dropdown .bd-row:hover{background:#eff2ea}
@@ -437,6 +438,7 @@
         <label class="voice-field model"><span>Transcription model</span><select id="sv-model"><option value="">Loading available Whisper models…</option></select></label>
         <button class="btn primary" id="sv-transcribe" onclick="transcribeSharedVoice()">Transcribe in Hub</button>
       </div>
+      <p class="voice-status" id="sv-status" role="status" aria-live="polite">Choose a reference clip, then transcribe it in Hub.</p>
       <div class="voice-form-grid">
         <label class="voice-field wide"><span>Voice name</span><input id="sv-name" maxlength="200" placeholder="e.g. Aiden"></label>
         <label class="voice-field"><span>Language</span><input id="sv-language" maxlength="40" value="en" placeholder="en"></label>
@@ -450,7 +452,6 @@
       <div class="actions">
         <button class="btn primary" id="sv-save" onclick="saveSharedVoice()">Save &amp; sync to all Macs</button>
         <button class="btn" onclick="clearSharedVoiceForm()">Clear form</button>
-        <span class="sub" id="sv-status" role="status" aria-live="polite"></span>
       </div>
     </div>
 
@@ -1052,6 +1053,13 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.63.2", date: "2026-07-23", items: [
+    "Shared-voice previews now have a clear <b>Stop</b> control, and starting another preview stops the first one.",
+  ]},
+  { v: "1.63.1", date: "2026-07-23", items: [
+    "Voice-reference transcription now accepts normal filenames with punctuation, such as commas and parentheses.",
+    "The Voices workspace shows a clear in-place status while Hub sends a clip, completes its transcript, or reports a failure.",
+  ]},
   { v: "1.63.0", date: "2026-07-23", items: [
     "GenStudio qualification and customer jobs now keep a renewable execution lease while Studio Hub runs them, so completed voice, image, transcription, and Chat work remains available for verified collection.",
     "Power-cut recovery stays safely fenced: expired or superseded attempts cannot be revived, and late outputs from an old attempt are never published or charged.",
@@ -1620,11 +1628,13 @@ updatePageHeading("overview");
 
 // ── shared voice library ────────────────────────────────────────────────
 let sharedVoiceModelsLoaded = false;
+let sharedVoicePlayback = null;
 function sharedVoiceStatusPill(status) {
   const cls = status === "synced" || status === "deleted" ? "ok" : (status === "failed" || status === "conflict" || status === "unsupported" ? "err" : "warn");
   return `<span class="pill ${cls}">${esc(status || "pending")}</span>`;
 }
 function renderSharedVoices(voices, deletions = []) {
+  stopSharedVoicePlayback();
   const total = voices.length;
   const synced = voices.reduce((n, v) => n + (v.sync?.synced || 0), 0);
   const targets = voices.reduce((n, v) => n + (v.sync?.total || 0), 0);
@@ -1649,7 +1659,7 @@ function renderSharedVoices(voices, deletions = []) {
       ${v.notes ? `<p class="sub" style="margin-bottom:8px">${esc(v.notes)}</p>` : ""}
       <code title="${esc(v.audio_sha256)}">SHA-256 ${esc((v.audio_sha256 || "").slice(0, 16))}…</code>
       <details class="voice-targets"><summary>Per-machine status (${s.synced || 0}/${s.total || 0})</summary>${targetsHtml || '<div class="sub" style="padding-top:8px">No Voice Studio machines are registered.</div>'}</details>
-      <div class="voice-sync-line"><span class="sub">${esc(headline)}</span><button class="btn compact" onclick="playSharedVoice('${jsq(v.id)}',this)">Play</button><button class="btn compact" onclick="renameSharedVoice('${jsq(v.id)}','${jsq(v.name)}',this)">Rename</button><button class="btn compact" ${s.syncing ? "disabled" : ""} onclick="retrySharedVoice('${jsq(v.id)}',this)">${s.syncing ? "Syncing…" : "Sync again"}</button><button class="btn compact stop" onclick="deleteSharedVoice('${jsq(v.id)}','${jsq(v.name)}',this)">Delete</button></div>
+      <div class="voice-sync-line"><span class="sub">${esc(headline)}</span><button class="btn compact" type="button" aria-pressed="false" onclick="playSharedVoice('${jsq(v.id)}',this)">Play</button><button class="btn compact" onclick="renameSharedVoice('${jsq(v.id)}','${jsq(v.name)}',this)">Rename</button><button class="btn compact" ${s.syncing ? "disabled" : ""} onclick="retrySharedVoice('${jsq(v.id)}',this)">${s.syncing ? "Syncing…" : "Sync again"}</button><button class="btn compact stop" onclick="deleteSharedVoice('${jsq(v.id)}','${jsq(v.name)}',this)">Delete</button></div>
     </article>`;
   }).join("");
   const deletionCards = deletions.map(v => {
@@ -1697,11 +1707,11 @@ async function loadSharedVoices(force = false) {
 }
 async function transcribeSharedVoice() {
   const file = $("#sv-audio").files[0], model = $("#sv-model").value;
-  if (!file) { $("#sv-status").textContent = "Choose a reference audio file first."; return; }
-  if (!model) { $("#sv-status").textContent = "No ready Whisper model is available. Download one in Models first."; return; }
+  if (!file) { setSharedVoiceStatus("Choose a reference audio file first.", "error"); return; }
+  if (!model) { setSharedVoiceStatus("No ready Whisper model is available. Download one in Models first.", "error"); return; }
   const button = $("#sv-transcribe");
   button.disabled = true; button.setAttribute("aria-busy", "true"); button.textContent = "Transcribing…";
-  $("#sv-status").textContent = "Studio Hub is sending the clip to an available Voice Studio…";
+  setSharedVoiceStatus("Studio Hub is sending the clip to an available Voice Studio…", "working");
   const fd = new FormData(); fd.append("audio", file); fd.append("model", model);
   if ($("#sv-language").value.trim()) fd.append("language", $("#sv-language").value.trim());
   try {
@@ -1709,9 +1719,14 @@ async function transcribeSharedVoice() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
     $("#sv-transcript").value = data.transcript || "";
-    $("#sv-status").textContent = "Transcript ready — review and correct it before saving.";
-  } catch (error) { $("#sv-status").textContent = `Transcription failed: ${error.message}`; }
+    setSharedVoiceStatus("Transcript ready — review and correct it before saving.", "success");
+  } catch (error) { setSharedVoiceStatus(`Transcription failed: ${error.message}`, "error"); }
   finally { button.disabled = false; button.removeAttribute("aria-busy"); button.textContent = "Transcribe in Hub"; }
+}
+function setSharedVoiceStatus(message, state = "") {
+  const status = $("#sv-status");
+  status.textContent = message;
+  status.dataset.state = state;
 }
 async function saveSharedVoice() {
   const file = $("#sv-audio").files[0];
@@ -1783,15 +1798,69 @@ async function retrySharedVoiceDelete(id, button) {
   } catch (error) { $("#sv-status").textContent = `Removal could not restart: ${error.message}`; }
   finally { button.disabled = false; button.textContent = "Retry removal"; }
 }
+function stopSharedVoicePlayback() {
+  const playback = sharedVoicePlayback;
+  if (!playback) return false;
+  sharedVoicePlayback = null;
+  playback.audio.onended = null;
+  playback.audio.onerror = null;
+  playback.audio.pause();
+  playback.audio.removeAttribute("src");
+  playback.audio.load();
+  URL.revokeObjectURL(playback.url);
+  if (playback.button?.isConnected) {
+    playback.button.disabled = false;
+    playback.button.textContent = "Play";
+    playback.button.setAttribute("aria-pressed", "false");
+  }
+  return true;
+}
 async function playSharedVoice(id, button) {
-  const original = button.textContent; button.disabled = true; button.textContent = "Loading…";
+  if (sharedVoicePlayback?.button === button) {
+    stopSharedVoicePlayback();
+    setSharedVoiceStatus("Preview stopped.");
+    return;
+  }
+  stopSharedVoicePlayback();
+  button.disabled = true;
+  button.textContent = "Loading…";
+  let playback = null;
   try {
     const response = await api(`/api/hub/shared-voices/${encodeURIComponent(id)}/audio`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const url = URL.createObjectURL(await response.blob());
-    const audio = new Audio(url); audio.onended = () => URL.revokeObjectURL(url); await audio.play();
-  } catch (error) { $("#sv-status").textContent = `Audio could not play: ${error.message}`; }
-  finally { button.disabled = false; button.textContent = original; }
+    const audio = new Audio(url);
+    playback = {audio, url, button};
+    sharedVoicePlayback = playback;
+    audio.onended = () => {
+      if (sharedVoicePlayback === playback) {
+        stopSharedVoicePlayback();
+        setSharedVoiceStatus("Preview finished.");
+      }
+    };
+    audio.onerror = () => {
+      if (sharedVoicePlayback === playback) {
+        stopSharedVoicePlayback();
+        setSharedVoiceStatus("Audio preview could not be played.", "error");
+      }
+    };
+    await audio.play();
+    if (sharedVoicePlayback === playback) {
+      button.disabled = false;
+      button.textContent = "Stop";
+      button.setAttribute("aria-pressed", "true");
+      setSharedVoiceStatus("Playing preview. Click Stop to end it.", "working");
+    }
+  } catch (error) {
+    if (sharedVoicePlayback === playback) stopSharedVoicePlayback();
+    setSharedVoiceStatus(`Audio could not play: ${error.message}`, "error");
+  } finally {
+    if (sharedVoicePlayback !== playback) {
+      button.disabled = false;
+      button.textContent = "Play";
+      button.setAttribute("aria-pressed", "false");
+    }
+  }
 }
 $("#sv-audio").addEventListener("change", () => {
   const file = $("#sv-audio").files[0];

@@ -277,6 +277,12 @@ def test_in_hub_transcription_returns_editable_plain_text(authed, monkeypatch):
     assert response.json()["transcript"] == "Hello there. Fresh voice."
 
 
+def test_single_transcription_normalizes_punctuation_in_its_queue_id():
+    assert main._single_transcription_item_id(
+        "Todd - Clear, Engaging and Educational - 19s.MP3"
+    ) == "Todd - Clear Engaging and Educational - 19s"
+
+
 def test_dashboard_exposes_transcribe_review_and_sync_workflow():
     source = (Path(__file__).parents[1] / "frontend" / "index.html").read_text()
     assert 'data-tab="voices"' in source
@@ -287,4 +293,6 @@ def test_dashboard_exposes_transcribe_review_and_sync_workflow():
     assert "Connection drops retry automatically" in source
     assert "renameSharedVoice" in source
     assert "deleteSharedVoice" in source
+    assert "stopSharedVoicePlayback" in source
+    assert 'textContent = "Stop"' in source
     assert "Offline Macs will catch up automatically" in source

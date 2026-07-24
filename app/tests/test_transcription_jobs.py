@@ -63,6 +63,18 @@ def test_empty_upload_and_mismatched_ids_are_rejected(authed):
     assert mismatch.status_code == 400
 
 
+def test_ordinary_punctuation_in_upload_filename_is_accepted(authed):
+    filename = "Todd - Clear, Engaging and Educational - 19s.MP3"
+    response = authed.post(
+        "/api/hub/transcription/jobs",
+        data={"item_ids": ["todd-reference"], "model": "mlx/whisper"},
+        files=_multipart((filename,), (b"audio",)),
+    )
+    assert response.status_code == 200
+    batch = jobs.get_batch(response.json()["batch_id"])
+    assert batch["items"][0]["filename"] == filename
+
+
 def test_clear_finished_transcription_removes_history_and_local_files(authed):
     created = authed.post(
         "/api/hub/transcription/jobs",

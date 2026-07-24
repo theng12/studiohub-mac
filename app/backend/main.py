@@ -1843,7 +1843,7 @@ async def _run_single_transcription(
     label: str = "single-file-api",
 ) -> dict:
     """Run one file through the durable fleet queue and return its payload."""
-    item_id = Path(file.filename or "audio").stem or "audio"
+    item_id = _single_transcription_item_id(file.filename)
     batch, _ = await transcription_jobs.create_batch(
         [file], [item_id], model, language, word_timestamps,
         label, None, None, deduplicate=False)
@@ -1863,6 +1863,20 @@ async def _run_single_transcription(
         "studio": item.get("studio"),
         "srt": artifact.read_text(encoding="utf-8"),
     }
+
+
+def _single_transcription_item_id(filename: str | None) -> str:
+    """Create a queue-safe ID from a user-facing upload filename.
+
+    Queue item IDs intentionally have a narrow character set, while ordinary
+    audio filenames commonly contain punctuation (for example commas). The
+    original filename remains intact as display metadata; only its internal
+    queue identifier is normalized.
+    """
+    stem = Path(filename or "audio").stem
+    normalized = re.sub(r"[^A-Za-z0-9._ -]+", " ", stem)
+    normalized = re.sub(r"\s+", " ", normalized).strip(" .-")
+    return normalized[:120] or "audio"
 
 
 @app.post("/api/hub/transcribe")

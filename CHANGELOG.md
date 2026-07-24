@@ -10,6 +10,24 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.63.2] — 2026-07-23
+
+### Fixed
+
+- Shared-voice previews now use a Play/Stop toggle. Starting another preview
+  stops the first one, and refreshes also release any active browser audio.
+
+## [1.63.1] — 2026-07-23
+
+### Fixed
+
+- Shared-voice transcription now accepts ordinary audio filenames containing
+  punctuation such as commas and parentheses. Hub creates a safe internal job
+  identifier without changing the visible filename.
+- The Voices workspace now shows a prominent in-place transcription state for
+  sending, success, and failure, rather than leaving a small status message
+  beside the save controls.
+
 ## [1.63.0] — 2026-07-23
 
 ### Added — fenced GenStudio site failover

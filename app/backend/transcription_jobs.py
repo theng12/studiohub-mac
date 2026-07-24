@@ -108,9 +108,21 @@ def _safe_identifier(value: str, field: str, max_length: int = 120) -> str:
 
 def _safe_filename(value: str) -> str:
     value = (value or "").strip()
-    if Path(value).name != value or "/" in value or "\\" in value:
+    if (
+        not value
+        or len(value) > 240
+        or value in {".", ".."}
+        or Path(value).name != value
+        or "/" in value
+        or "\\" in value
+        or "\x00" in value
+        or any(ord(char) < 32 for char in value)
+    ):
         raise HTTPException(400, "invalid filename")
-    return _safe_identifier(value, "filename", 240)
+    # A filename is display metadata only: uploaded bytes are stored under a
+    # generated path below. Keep path traversal protections while accepting
+    # ordinary punctuation such as commas and parentheses from user files.
+    return value
 
 
 def _safe_model(value: str) -> str:
