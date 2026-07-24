@@ -538,9 +538,12 @@ Password sign-in is deliberately accepted only through the Hub's Tailscale
 address, not the ordinary HTTP LAN address. Use the LAN address with the Hub
 token only when necessary for API/recovery access.
 
-The existing Hub token is still required for scripts, API clients, peer Hubs,
-and recovery. It is shown only locally in **Remote**. Replacing the owner
-password signs every remembered browser out immediately.
+The existing Hub token is still required for GenStudio, scripts, API clients,
+peer Hubs, and recovery. It is shown plainly in a Controller's **Remote →
+Machine mode** settings, alongside the Agent registration code and fleet token;
+copy the Hub token into GenStudio when connecting that Controller. A local
+dashboard or an owner-authenticated Tailscale browser can read it. Replacing
+the owner password signs every remembered browser out immediately.
 
 ## Machine modes and fleet setup
 
@@ -553,9 +556,10 @@ and Hub ID remain the stable routing identities.
 
 Set a Controller machine name, Site ID, Site display name, and Hub ID. Saving
 Controller mode automatically creates a permanent registration code and fleet
-token when either is missing. Both values are plainly displayed in the same
-Controller panel as the owner sign-in password. The registration code remains
-reusable until the owner rotates or revokes it.
+token when either is missing. The same Controller panel plainly displays the
+Hub token for GenStudio, the registration code for Agents, the fleet token, and
+the owner sign-in password. The registration code remains reusable until the
+owner rotates or revokes it; it is not a replacement for the Hub token.
 
 ### Agent
 
@@ -884,8 +888,9 @@ call returns immediately — poll `/api/hub/studios` to watch the status change.
   dashboard prompts for the token once and establishes an HttpOnly same-site
   session for its live stream. Tokens in query strings are rejected so they
   cannot leak through browser history or access logs.
-- The token is auto-generated into `.hub_token` (gitignored). See it in the
-  dashboard's **Remote** tab (only shown when viewed on the Hub machine).
+- The token is auto-generated into `.hub_token` (gitignored). See it in a
+  Controller's **Remote → Machine mode** settings on the Hub machine or in an
+  owner-authenticated Tailscale browser.
   Rotate it by deleting the file and restarting the Hub.
 - **Control from anywhere:** install Tailscale on your phone/laptop, then open
   the Tailscale URL shown in the Remote tab. Your Mac stays the server; no

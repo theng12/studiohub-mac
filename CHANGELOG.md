@@ -10,6 +10,22 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.64.2] — 2026-07-24
+
+### Fixed — GenStudio Controller credential is visible again
+
+- Controller settings now show the permanent **Hub token** plainly beside the
+  registration code and fleet token, with a dedicated **GenStudio connection**
+  explanation and Copy control.
+- The registration code remains exclusively for enrolling Agent Hubs. GenStudio
+  continues to use the Hub token for authenticated controller verification,
+  capability reads, and job routing.
+
+### Safety
+
+- No token is rotated and no Agent, Controller, job, routing, or local dispatch
+  behavior changes. Existing GenStudio site credentials remain valid.
+
 ## [1.64.1] — 2026-07-24
 
 ### Fixed

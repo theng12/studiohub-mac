@@ -415,8 +415,11 @@ def test_dashboard_exposes_explicit_machine_modes_and_plain_controller_credentia
     assert 'data-machine-mode="agent"' in dashboard
     assert 'data-machine-mode="controller"' in dashboard
     assert 'id="mode-registration-code">Loading…</code>' in dashboard
+    assert 'id="mode-hub-token">Loading…</code>' in dashboard
     assert 'id="mode-fleet-token">Loading…</code>' in dashboard
     assert 'id="mode-agent-controller-url"' in dashboard
     assert 'id="mode-agent-registration-code"' in dashboard
     assert "function connectMachineAgent()" in dashboard
     assert "function saveMachineMode()" in dashboard
+    assert "function copyMachineHubToken()" in dashboard
+    assert 'visible.textContent = r.token' in dashboard

@@ -790,6 +790,7 @@
           <label>Site display name<input id="mode-controller-site-name" maxlength="120" placeholder="Phnom Penh · Site 1"></label>
           <label>Hub ID<input id="mode-controller-hub-id" maxlength="100" placeholder="controller-0001"></label>
           <div class="machine-secret wide"><b>Registration code</b><span class="sub">Permanent code for enrolling Agents. It is created automatically when this Mac becomes a Controller and stays valid until you rotate or revoke it.</span><code id="mode-registration-code">Loading…</code><div class="actions"><button class="btn" onclick="copyMachineRegistrationCode()">Copy registration code</button><button class="btn" onclick="createEnrollmentCode()">Rotate registration code</button><button class="btn stop" onclick="revokeEnrollmentCode()">Revoke</button></div></div>
+          <div class="machine-secret wide"><b>Hub token · GenStudio connection</b><span class="sub">Paste this permanent Hub credential into GenStudio when connecting this Controller. It authorizes GenStudio to verify this Controller and direct jobs here; it is not the Agent registration code.</span><code id="mode-hub-token">Loading…</code><div class="actions"><button class="btn" onclick="copyMachineHubToken()">Copy Hub token</button></div></div>
           <div class="machine-secret wide"><b>Fleet token</b><span class="sub">Shared credential automatically sent to a successfully enrolled Agent so all fleet jobs and controls can reach it.</span><code id="mode-fleet-token">Loading…</code><div class="actions"><button class="btn" onclick="copyMachineFleetToken()">Copy fleet token</button></div></div>
         </div>
         <div class="mode-owner"><b>Owner sign-in password</b><p class="sub" id="mode-owner-copy" style="margin:4px 0 9px">Loading sign-in settings…</p><div id="mode-owner-local" class="actions"><input id="mode-owner-password" type="password" autocomplete="new-password" placeholder="Choose any password"><input id="mode-owner-password-confirm" type="password" autocomplete="new-password" placeholder="Confirm password"><button class="btn primary" onclick="saveModeOwnerPassword()">Save password</button></div><div id="mode-owner-remote" class="actions hide"><button class="btn" onclick="logoutHubBrowser()">Sign out this browser</button></div><div class="sub" id="mode-owner-result" role="status" aria-live="polite" style="margin-top:8px"></div></div>
@@ -1102,6 +1103,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.64.2", date: "2026-07-24", items: [
+    "Controller settings now show the permanent Hub token plainly beside the registration and fleet credentials, with an explicit GenStudio connection label and Copy control.",
+    "The registration code remains only for enrolling Agents; GenStudio continues to use the Hub token for authenticated controller verification and job routing.",
+  ]},
   { v: "1.64.1", date: "2026-07-24", items: [
     "Manual-mode updates now stop Studio Hub with its canonical app-local script path, avoiding the Pinokio 8.0.40 invalid-URI crash.",
     "Startup-service updates, dependency installation, worker dispatch, and live-job behavior are unchanged.",
@@ -3600,6 +3605,7 @@ function toggleHubToken() {
   button.textContent = reveal ? "Hide" : "Reveal";
 }
 function copyHubToken() { copyPrivateValue(hubAccessToken, $("#acc-copy")); }
+function copyMachineHubToken() { copyPrivateValue(hubAccessToken, null); }
 async function loadFleet() {
   const r = await api("/api/hub/fleet").then(x => x.json()).catch(() => null);
   if (!r) return;
@@ -4575,6 +4581,8 @@ async function loadAccess() {
     <td><button class="btn" onclick="navigator.clipboard.writeText('${jsq(a.url)}')">Copy</button></td></tr>`).join("") || `<tr><td colspan="3" class="empty">No non-loopback interfaces</td></tr>`;
   if (r.token) {
     hubAccessToken = r.token;
+    const visible = $("#mode-hub-token");
+    if (visible) visible.textContent = r.token;
     $("#acc-token-wrap").style.display = "block";
     $("#acc-token").textContent = "••••••••••••••••••••••••";
     $("#acc-token").dataset.revealed = "0";
