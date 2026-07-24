@@ -82,6 +82,28 @@ async def test_refresh_offline_peer_is_graceful(reset):
 
 
 @pytest.mark.asyncio
+async def test_peer_unreachable_and_recovery_alerts_are_debounced(reset):
+    from backend import alerts
+
+    client = FakeGet(exc=httpx.ConnectError("down"))
+    for _ in range(peers.PEER_FAILURES_TO_ALERT):
+        peers._cache.clear()
+        await peers.refresh(REMOTE, client)
+    events = [
+        event for event in alerts.recent(20)
+        if event["kind"] == "agent_unreachable"
+    ]
+    assert len(events) == 1
+
+    peers._cache.clear()
+    await peers.refresh(
+        REMOTE,
+        FakeGet(resp=FakeResp(data={"host": {}, "studios": {}})),
+    )
+    assert alerts.recent(1)[0]["kind"] == "agent_recovered"
+
+
+@pytest.mark.asyncio
 async def test_refresh_success_caches_host(reset):
     resp = FakeResp(data={
         "host": {"total_gb": 64},

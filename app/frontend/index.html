@@ -1053,6 +1053,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.63.3", date: "2026-07-24", items: [
+    "Completed GenStudio image and generation batches stay completed after their execution lease naturally expires; Hub no longer relabels verified terminal work as cancelled.",
+    "The alert center now reports genuine unfinished lease expirations, repeated worker restart rates, and Agent Hubs that remain unreachable, with one recovery notice when service returns.",
+    "These alerts are observability only: they do not restart workers, alter GenStudio ownership, or change local dispatch.",
+  ]},
   { v: "1.63.2", date: "2026-07-23", items: [
     "Shared-voice previews now have a clear <b>Stop</b> control, and starting another preview stops the first one.",
   ]},

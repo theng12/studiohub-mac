@@ -10,6 +10,34 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.63.3] — 2026-07-24
+
+### Fixed
+
+- A completed GenStudio batch no longer becomes cancelled in Hub history merely
+  because its execution lease expires after every item is terminal. Renewable
+  leases still fence queued or running work exactly as before.
+
+### Added
+
+- Added edge-triggered operator alerts for genuine unfinished GenStudio lease
+  expirations, repeated worker restarts reported by Studio health, and peer
+  Agent Hubs that remain unreachable for three consecutive resource checks.
+  Recovery alerts are emitted once when restart health or peer connectivity
+  returns to normal.
+
+### Safety
+
+- Alerts are observability only. They never claim global work, restart a
+  process, alter GenStudio ownership, or change SQLite site-local dispatch.
+- No live worker, queue, or PostgreSQL setting is changed by this update.
+
+### Verification
+
+- Added regression coverage for completed-result preservation, one-shot lease
+  alerts, repeated-restart alert debouncing, and Agent Hub outage/recovery
+  detection.
+
 ## [1.63.2] — 2026-07-23
 
 ### Fixed

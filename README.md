@@ -675,6 +675,18 @@ idempotency keys, or fencing tokens.
 The complete stable field and availability semantics are documented in
 [`CAPABILITY_CONTRACT.md`](CAPABILITY_CONTRACT.md).
 
+### Unattended reliability alerts
+
+The dashboard alert center records Studio outages and recoveries, peer Agent
+Hubs that remain unreachable for three consecutive resource checks, repeated
+worker restart rates reported by a Studio, and genuine GenStudio lease expiry
+while local work is still queued or running. Webhook and desktop delivery use
+the existing optional alert settings. Each condition is edge-triggered so a
+persistent outage does not create an alert storm, and recovery is reported once.
+
+These alerts are read-only operating signals. They do not restart workers,
+claim or transfer GenStudio jobs, or replace SQLite site-local scheduling.
+
 ## Release discipline
 
 Every committed Studio Hub change increments `VERSION` and adds matching

@@ -244,3 +244,50 @@ def test_expired_batch_is_fenced_instead_of_requeued_after_hub_restart(reset):
     assert restored["lease_expired"] is True
     assert restored["items"][0]["state"] == "cancelled"
     assert restored["items"][0]["error"] == "GenStudio execution lease expired"
+
+
+def test_expired_lease_does_not_relabel_completed_batch(reset):
+    _configure_site()
+    submitted = broker.submit_batch(
+        _envelope(
+            lease_expires_at=(
+                datetime.now(UTC) + timedelta(minutes=5)
+            ).isoformat()
+        )
+    )
+    batch = broker.batches[submitted["batch_id"]]
+    batch["items"][0]["state"] = "done"
+    batch["items"][0]["finished_at"] = datetime.now(UTC).timestamp()
+    batch["genstudio_execution"]["lease_expires_at"] = (
+        datetime.now(UTC) - timedelta(seconds=1)
+    ).isoformat()
+
+    assert broker._expire_genstudio_batch(batch) is False
+    assert batch["cancelled"] is False
+    assert batch.get("lease_expired") is not True
+    assert batch["items"][0]["state"] == "done"
+
+
+def test_expired_active_lease_alerts_once(reset):
+    from backend import alerts
+
+    _configure_site()
+    submitted = broker.submit_batch(
+        _envelope(
+            lease_expires_at=(
+                datetime.now(UTC) + timedelta(minutes=5)
+            ).isoformat()
+        )
+    )
+    batch = broker.batches[submitted["batch_id"]]
+    batch["genstudio_execution"]["lease_expires_at"] = (
+        datetime.now(UTC) - timedelta(seconds=1)
+    ).isoformat()
+
+    assert broker._expire_genstudio_batch(batch) is True
+    assert broker._expire_genstudio_batch(batch) is False
+    events = [
+        event for event in alerts.recent(20)
+        if event["kind"] == "genstudio_lease_expired"
+    ]
+    assert len(events) == 1

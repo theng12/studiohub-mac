@@ -51,6 +51,7 @@ def _reset_state():
         except FileNotFoundError:
             pass
     peers._inflight["v"] = False
+    peers._peer_alert_state.clear()
     auth._login_failures.clear()
     # in-memory state
     broker.batches.clear()
@@ -108,6 +109,7 @@ def _reset_state():
     monitor._catalog_cache.clear()
     monitor._transcribe_cache.clear()
     monitor._provider_cache.clear()
+    monitor._restart_alerts.clear()
 
 
 @pytest.fixture

@@ -86,6 +86,7 @@ class StudioMonitor:
         self._catalog_cache: dict[str, tuple[float, dict]] = {}
         self._transcribe_cache: dict[str, tuple[float, dict]] = {}
         self._provider_cache: dict[str, tuple[float, dict]] = {}
+        self._restart_alerts: dict[str, dict] = {}
         self._client = httpx.AsyncClient()
         self._task: asyncio.Task | None = None
 
@@ -120,6 +121,7 @@ class StudioMonitor:
             self._catalog_cache.pop(studio_id, None)
             self._transcribe_cache.pop(studio_id, None)
             self._provider_cache.pop(studio_id, None)
+            self._restart_alerts.pop(studio_id, None)
 
     # ── health ───────────────────────────────────────────────────────────
     async def _poll_loop(self):
@@ -166,6 +168,40 @@ class StudioMonitor:
             alerts.emit("studio_down", f"{label} on {machine} went down",
                         {"studio": studio["id"], "machine": machine})
 
+    def _note_restart_health(self, studio: dict, health: dict) -> None:
+        """Alert once when a worker reports a repeated-restart condition."""
+        snapshot = health.get("restart_health") or health.get("restart_rate")
+        if not isinstance(snapshot, dict):
+            return
+        sid = studio["id"]
+        active = bool(snapshot.get("alert"))
+        previous = self._restart_alerts.get(sid, {})
+        label = studio.get("title", sid)
+        machine = studio.get("machine", "local")
+        if active and not previous.get("active"):
+            from . import alerts
+            alerts.emit(
+                "worker_restart_rate",
+                f"{label} on {machine} is restarting repeatedly",
+                {
+                    "studio": sid,
+                    "machine": machine,
+                    "status": snapshot.get("status"),
+                    "restarts_1h": snapshot.get("restarts_1h"),
+                    "restarts_24h": snapshot.get("restarts_24h"),
+                    "restarts_7d": snapshot.get("restarts_7d"),
+                    "last_restart_at": snapshot.get("last_restart_at"),
+                },
+            )
+        elif not active and previous.get("active"):
+            from . import alerts
+            alerts.emit(
+                "worker_restart_rate_recovered",
+                f"{label} on {machine} restart rate returned to normal",
+                {"studio": sid, "machine": machine},
+            )
+        self._restart_alerts[sid] = {"active": active}
+
     @staticmethod
     def _has_active_lease(studio_id: str) -> bool:
         """A model server may not answer health while synchronous inference is
@@ -185,6 +221,7 @@ class StudioMonitor:
             r = await self._client.get(url, timeout=HEALTH_TIMEOUT_S)
             latency_ms = round((time.monotonic() - started) * 1000)
             health = r.json()
+            self._note_restart_health(studio, health)
             new_status = "up" if health.get("ok") else "degraded"
             previous = self.status.get(sid, {})
             successes = int(previous.get("consecutive_successes") or 0) + 1

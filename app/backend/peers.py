@@ -39,6 +39,8 @@ PEER_TIMEOUT_S = 5.0
 
 # machine -> (ts, {"host": {...}|None, "studios": {modality: stats}, "reachable": bool})
 _cache: dict[str, tuple[float, dict]] = {}
+_peer_alert_state: dict[str, dict] = {}
+PEER_FAILURES_TO_ALERT = 3
 
 
 def fleet_token() -> str | None:
@@ -134,6 +136,35 @@ async def refresh(registry: list[dict], client: httpx.AsyncClient):
 
 async def _refresh_stale(machines, stale, client, now):
 
+    def note_reachability(machine: str, snapshot: dict) -> None:
+        state = _peer_alert_state.setdefault(
+            machine, {"failures": 0, "alerted": False},
+        )
+        if snapshot.get("reachable") and snapshot.get("auth", True):
+            if state["alerted"]:
+                from . import alerts
+                alerts.emit(
+                    "agent_recovered",
+                    f"Agent Hub on {machine} is reachable again",
+                    {"machine": machine, "status": snapshot.get("status")},
+                )
+            state.update(failures=0, alerted=False)
+            return
+        state["failures"] += 1
+        if state["failures"] < PEER_FAILURES_TO_ALERT or state["alerted"]:
+            return
+        state["alerted"] = True
+        from . import alerts
+        alerts.emit(
+            "agent_unreachable",
+            f"Agent Hub on {machine} is unreachable",
+            {
+                "machine": machine,
+                "status": snapshot.get("status"),
+                "consecutive_failures": state["failures"],
+            },
+        )
+
     async def one(machine: str, studios: list[dict]):
         s0 = studios[0]
         url = _peer_url(s0)
@@ -145,33 +176,43 @@ async def _refresh_stale(machines, stale, client, now):
             if r.status_code == 401:
                 # Hub is reachable but rejected the token → clearest possible signal
                 # that the fleet tokens don't match on that machine.
-                _cache[machine] = (now, {"host": None, "studios": {},
-                                        "reachable": True, "auth": False,
-                                        "status": ("no_token" if not token
-                                                   else "token_rejected")})
+                snapshot = {"host": None, "studios": {},
+                            "reachable": True, "auth": False,
+                            "status": ("no_token" if not token
+                                       else "token_rejected")}
+                _cache[machine] = (now, snapshot)
+                note_reachability(machine, snapshot)
                 return
             data = r.json()
-            _cache[machine] = (now, {
+            snapshot = {
                 "host": data.get("host"),
                 "studios": data.get("studios", {}),
                 "proxy": data.get("proxy"),
                 "reachable": True, "auth": True, "status": "connected",
-            })
+            }
+            _cache[machine] = (now, snapshot)
+            note_reachability(machine, snapshot)
         except httpx.ConnectError:
             # TCP refused: nothing is listening on :47873 there — the Studio Hub
             # isn't actually running on that machine (even if its studios are).
-            _cache[machine] = (now, {"host": None, "studios": {},
-                                    "reachable": False, "auth": True,
-                                    "status": "no_hub"})
+            snapshot = {"host": None, "studios": {},
+                        "reachable": False, "auth": True,
+                        "status": "no_hub"}
+            _cache[machine] = (now, snapshot)
+            note_reachability(machine, snapshot)
         except (httpx.TimeoutException, httpx.ConnectTimeout):
             # Packets dropped: a firewall is blocking :47873, or the Mac is asleep/off.
-            _cache[machine] = (now, {"host": None, "studios": {},
-                                    "reachable": False, "auth": True,
-                                    "status": "unreachable"})
+            snapshot = {"host": None, "studios": {},
+                        "reachable": False, "auth": True,
+                        "status": "unreachable"}
+            _cache[machine] = (now, snapshot)
+            note_reachability(machine, snapshot)
         except Exception:
-            _cache[machine] = (now, {"host": None, "studios": {},
-                                    "reachable": False, "auth": True,
-                                    "status": "unreachable"})
+            snapshot = {"host": None, "studios": {},
+                        "reachable": False, "auth": True,
+                        "status": "unreachable"}
+            _cache[machine] = (now, snapshot)
+            note_reachability(machine, snapshot)
 
     await asyncio.gather(*(one(m, machines[m]) for m in stale))
 
@@ -184,6 +225,7 @@ def cached(machine: str) -> dict | None:
 def forget_machine(machine: str) -> None:
     """Drop a removed machine's peer-resource snapshot immediately."""
     _cache.pop(machine, None)
+    _peer_alert_state.pop(machine, None)
 
 
 async def control_remote(client: httpx.AsyncClient, studio: dict, action: str) -> dict:

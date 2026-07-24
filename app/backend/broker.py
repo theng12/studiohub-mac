@@ -396,16 +396,40 @@ def _expire_genstudio_batch(batch: dict) -> bool:
     """Fence unfinished local work after GenStudio's renewable lease expires."""
     if not execution_identity.lease_expired(batch.get("genstudio_execution")):
         return False
+    unfinished = [
+        item for item in batch.get("items") or []
+        if item.get("state") in {"queued", "running"}
+    ]
+    # A lease protects ownership while work is still executing. Once every
+    # item is terminal, expiring that lease must not rewrite a completed batch
+    # as cancelled or make a successfully generated artifact look failed in
+    # operator history.
+    if not unfinished:
+        return False
+    first_expiry = not batch.get("lease_expired")
     batch["cancelled"] = True
     batch["lease_expired"] = True
     batch["governor_note"] = "GenStudio execution lease expired"
     now = time.time()
-    for item in batch.get("items") or []:
-        if item.get("state") in {"queued", "running"}:
-            item["state"] = "cancelled"
-            item["error"] = "GenStudio execution lease expired"
-            item["finished_at"] = now
-            item["retry_at"] = None
+    for item in unfinished:
+        item["state"] = "cancelled"
+        item["error"] = "GenStudio execution lease expired"
+        item["finished_at"] = now
+        item["retry_at"] = None
+    if first_expiry:
+        from . import alerts
+        execution = batch.get("genstudio_execution") or {}
+        alerts.emit(
+            "genstudio_lease_expired",
+            f"GenStudio lease expired with {len(unfinished)} unfinished item(s)",
+            {
+                "batch_id": batch.get("id"),
+                "modality": batch.get("modality"),
+                "genstudio_job_id": execution.get("genstudio_job_id"),
+                "genstudio_attempt_id": execution.get("genstudio_attempt_id"),
+                "unfinished_items": len(unfinished),
+            },
+        )
     return True
 
 

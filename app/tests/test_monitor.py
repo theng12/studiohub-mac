@@ -137,6 +137,29 @@ async def test_down_studio_needs_two_good_probes_to_rejoin(monitor, monkeypatch)
     assert monitor.status["image"]["health_recovering"] is False
 
 
+def test_repeated_worker_restart_alert_is_edge_triggered(reset, monitor):
+    from backend import alerts
+
+    studio = next(row for row in monitor.registry if row["id"] == "voice")
+    unhealthy = {
+        "restart_health": {
+            "alert": True, "status": "critical",
+            "restarts_24h": 12, "restarts_7d": 30,
+        },
+    }
+    monitor._note_restart_health(studio, unhealthy)
+    monitor._note_restart_health(studio, unhealthy)
+    assert len([
+        event for event in alerts.recent(20)
+        if event["kind"] == "worker_restart_rate"
+    ]) == 1
+
+    monitor._note_restart_health(
+        studio, {"restart_health": {"alert": False, "status": "healthy"}},
+    )
+    assert alerts.recent(1)[0]["kind"] == "worker_restart_rate_recovered"
+
+
 @pytest.mark.asyncio
 async def test_models_dedup_and_availability(monitor, seed_catalog):
     from backend import registry as reg
