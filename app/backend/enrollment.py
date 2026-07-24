@@ -23,7 +23,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from . import control_plane, hardware_profiles, peers
+from . import control_plane, hardware_profiles, peers, registry
 from .registry import DATA_DIR
 
 DB_FILE = DATA_DIR / "setup_enrollment.db"
@@ -429,6 +429,7 @@ def _configuration_paths() -> tuple[Path, ...]:
         peers.FLEET_TOKEN_FILE,
         peers.SHARED_STUDIO_TOKEN_FILE,
         hardware_profiles.MACHINE_PROFILES_FILE,
+        registry.LABELS_FILE,
     )
 
 
@@ -447,7 +448,8 @@ def _ensure_setup_is_not_environment_locked() -> None:
 
 
 def configure_new_controller(location_name: str, site_id: str,
-                             hardware_profile_id: str) -> dict:
+                             hardware_profile_id: str,
+                             machine_name: str | None = None) -> dict:
     _ensure_setup_is_not_environment_locked()
     profile = hardware_profiles.hardware_profile(hardware_profile_id)
     if profile is None:
@@ -470,6 +472,11 @@ def configure_new_controller(location_name: str, site_id: str,
         profile = hardware_profiles.set_machine_hardware_profile(
             "local", hardware_profile_id)
         peers.fleet_token()
+        if machine_name is not None:
+            registry.set_label("local", machine_name)
+        status = enrollment_credential_status(include_code=True)
+        if not status.get("active") or not status.get("code"):
+            create_enrollment_code()
     except Exception:
         _restore(snapshot)
         raise
@@ -539,7 +546,7 @@ async def claim_remote(controller_url: str, code: str) -> dict:
 
 
 def configure_joined_agent(controller_url: str, hardware_profile_id: str,
-                           claim: dict) -> dict:
+                           claim: dict, machine_name: str | None = None) -> dict:
     _ensure_setup_is_not_environment_locked()
     profile = hardware_profiles.hardware_profile(hardware_profile_id)
     if profile is None:
@@ -565,6 +572,8 @@ def configure_joined_agent(controller_url: str, hardware_profile_id: str,
         peers.set_fleet_token(values["fleet_token"])
         profile = hardware_profiles.set_machine_hardware_profile(
             "local", hardware_profile_id)
+        if machine_name is not None:
+            registry.set_label("local", machine_name)
     except Exception:
         _restore(snapshot)
         raise

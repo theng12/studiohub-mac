@@ -245,6 +245,13 @@
   .machine-sortbar{display:flex;align-items:end;justify-content:flex-end;gap:9px;margin:0 0 12px}.machine-sortbar label{display:flex;flex-direction:column;gap:6px;color:var(--dim);font:700 var(--font-compact)/1 var(--mono);letter-spacing:.09em;text-transform:uppercase}.machine-sortbar .selctl{min-width:155px;padding:7px 10px;text-transform:none;letter-spacing:0;font-family:var(--sans)}.machine-sortbar .btn{min-width:112px}
   .hardware-profile-hint{min-height:18px;color:var(--dim);font-size:var(--font-secondary)}.hardware-profile-select{min-width:220px;max-width:100%}.machine-hardware{display:grid;gap:5px;min-width:180px}.machine-hardware b{font-size:var(--font-secondary)}.machine-hardware .selctl{width:100%;padding:7px 9px;font-size:var(--font-control)}.hardware-profile-builder{margin-top:12px;padding:11px 13px;border:1px dashed var(--border);border-radius:10px;background:var(--panel2)}.hardware-profile-builder summary{cursor:pointer;font-weight:700;font-size:var(--font-secondary)}.hardware-profile-builder .fields{display:grid;grid-template-columns:1.4fr .7fr .7fr .7fr auto;gap:8px;align-items:end;margin-top:10px}.hardware-profile-builder label{display:grid;gap:5px;color:var(--dim);font-size:var(--font-compact);text-transform:uppercase}.hardware-profile-builder input{width:100%}
   .setup-card{overflow:hidden;background:linear-gradient(140deg,#fffef9,#edf6ee)}.setup-card:before{content:"";position:absolute}.setup-fields{display:grid;grid-template-columns:repeat(3,minmax(170px,1fr));gap:11px;align-items:end;padding:15px;border:1px solid var(--border);border-radius:14px;background:#f8faf5}.setup-fields label{display:flex;flex-direction:column;gap:7px;color:var(--dim);font:700 var(--font-compact)/1 var(--mono);letter-spacing:.09em;text-transform:uppercase}.setup-fields input,.setup-fields select{width:100%;text-transform:none;letter-spacing:0;font-family:var(--sans)}.setup-fields .wide{grid-column:span 2}.setup-fields .full{grid-column:1/-1}.setup-fields .action{display:flex;align-items:flex-end;height:100%}.setup-fields .action button{width:100%;min-height:var(--control-min-height)}.setup-intro{grid-column:1/-1;display:flex;align-items:flex-start;gap:11px;padding:3px 2px 5px;color:var(--dim);font-size:var(--font-secondary)}.setup-step{display:grid;place-items:center;flex:0 0 25px;height:25px;border-radius:8px;background:#dcecdf;color:var(--accent2);font:800 var(--font-secondary)/1 var(--mono)}.setup-connection{grid-column:1/-1;min-height:20px;color:var(--dim);font-size:var(--font-secondary)}.setup-connection.ok{color:var(--accent);font-weight:700}.setup-connection.error{color:var(--down);font-weight:700}.setup-new-location{margin-top:12px;border:1px solid var(--border);border-radius:13px;background:#fff}.setup-new-location>summary{cursor:pointer;padding:13px 15px;color:var(--accent2);font-weight:700}.setup-new-location .setup-fields{border:0;border-top:1px solid var(--border);border-radius:0;background:#fbfbf7}.setup-result{margin-top:12px;padding:13px 14px;border:1px solid #ced8cf;border-radius:13px;background:#fff}.setup-result.error{border-color:#e3c0b8;background:#fbf1ed}.setup-checklist{display:grid;gap:7px;margin-top:9px}.setup-check{display:flex;gap:8px;align-items:flex-start;color:var(--dim);font-size:var(--font-secondary)}.setup-check:before{content:"✓";display:grid;place-items:center;flex:0 0 18px;height:18px;border-radius:50%;background:#e4f3e9;color:var(--accent);font-weight:800}.setup-code{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-top:11px;padding-top:11px;border-top:1px solid var(--border)}.setup-code code{min-width:180px;letter-spacing:.12em}.setup-advanced{padding:0}.setup-advanced>summary{cursor:pointer;padding:17px 19px;color:var(--accent2);font-weight:750;list-style-position:inside}.setup-advanced[open]>summary{border-bottom:1px solid var(--border)}.setup-advanced-body{padding:19px}.setup-secret-mask{letter-spacing:.12em;user-select:none}.secret-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.secret-actions code{overflow-wrap:anywhere}.secret-actions input{min-width:240px;flex:1}
+  /* One explicit, operator-owned working-mode control.  Color is paired with
+     the role name so the state does not depend on color perception alone. */
+  .machine-mode-card{border-top:5px solid var(--warn)}.machine-mode-card.controller{border-top-color:var(--down)}.machine-mode-card.agent{border-top-color:var(--up)}
+  .machine-mode-picker{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}.machine-mode-picker button{display:flex;align-items:center;gap:7px;border:1px solid var(--border);border-radius:10px;background:#fff;padding:9px 13px;color:var(--text);font:750 var(--font-secondary)/1 var(--sans);cursor:pointer}.machine-mode-picker button[aria-pressed="true"]{box-shadow:inset 0 0 0 2px currentColor}.machine-mode-picker .standalone{color:#b46b13}.machine-mode-picker .controller{color:var(--down)}.machine-mode-picker .agent{color:var(--up)}
+  .machine-mode-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;font:800 var(--font-compact)/1 var(--mono);letter-spacing:.05em;text-transform:uppercase}.machine-mode-badge:before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor}.machine-mode-badge.standalone{color:#a55d0d;background:#fff0dc;border:1px solid #e3af73}.machine-mode-badge.controller{color:#b9352d;background:#ffe6e2;border:1px solid #e39a93}.machine-mode-badge.agent{color:#147d46;background:#e5f6ea;border:1px solid #8dcc9d}
+  .machine-mode-panel{display:none;padding:16px;border:1px solid var(--border);border-radius:14px;background:#fbfbf7}.machine-mode-panel.active{display:block}.machine-mode-grid{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px}.machine-mode-grid label{display:flex;flex-direction:column;gap:6px;color:var(--dim);font:750 var(--font-compact)/1 var(--mono);letter-spacing:.08em;text-transform:uppercase}.machine-mode-grid input,.machine-mode-grid select{width:100%;margin:0}.machine-mode-grid .wide{grid-column:1/-1}.machine-secret{display:grid;gap:6px;padding:12px;border:1px solid var(--border);border-radius:11px;background:#fff}.machine-secret b{font-size:var(--font-secondary)}.machine-secret code{display:block;min-height:36px;overflow-wrap:anywhere;background:#edf2eb;padding:9px 10px}.machine-secret .sub{font-size:var(--font-secondary)}.mode-status{margin-top:12px;padding:10px 12px;border-radius:10px;background:#edf7ef;color:#176e42;font-weight:700}.mode-status.waiting{background:#fff4e1;color:#9b650f}.mode-status.error{background:#fce9e5;color:#ad3c32}.mode-owner{margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
+  @media(max-width:700px){.machine-mode-grid{grid-template-columns:1fr}.machine-mode-grid .wide{grid-column:auto}}
   .studio-schedules{display:flex;gap:6px;flex-wrap:wrap;min-width:270px}.studio-schedule-wrap{display:inline-flex;align-items:stretch;border:1px solid #cbd1c8;border-radius:10px;background:#f5f6f1;overflow:hidden}.studio-schedule{display:flex;align-items:center;gap:7px;border:0;background:transparent;color:var(--text);padding:6px 8px;font:700 var(--font-secondary)/1.1 var(--sans);cursor:pointer}.studio-schedule:hover{background:#fff}.studio-schedule small{padding:2px 5px;border-radius:999px;background:#dfeae2;color:#176f50;font:700 var(--font-compact)/1 var(--mono);letter-spacing:.03em;text-transform:uppercase}.studio-schedule.off{background:#fbf1dc;color:#7a611d}.studio-schedule.off small{background:#f1dcae;color:#7a5a0d}.studio-schedule.master-off small{background:#e6e8e2;color:#6d746d}.studio-schedule-remove{display:grid;place-items:center;width:32px;border:0;border-left:1px solid #d8ddd5;background:transparent;color:var(--dim);cursor:pointer}.studio-schedule-remove:hover{background:#f9e8e4;color:var(--down)}
   .rows,.table-wrap{border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:var(--shadow)}.lrow{grid-template-columns:22px minmax(0,1.7fr) minmax(0,1fr) 100px minmax(0,1.15fr) 80px 205px;background:#fffef9;border-color:#e2e3da;padding:12px 15px}.lrow .actions{width:100%;justify-content:flex-end}.lrow:hover:not(.lhead){background:#f8f8f2}.lrow.lhead{background:#edf0e9;color:#6f776f;font:700 var(--font-compact)/1 var(--mono);letter-spacing:.09em}
   table{background:#fffef9;border-radius:14px;overflow:hidden;box-shadow:0 8px 28px #2945350a}th,td{padding:11px 12px;border-color:#e2e3da}th{top:0;background:#edf0e9;color:#68736b;font:700 var(--font-compact)/1.2 var(--mono);letter-spacing:.08em;text-transform:uppercase}tbody tr{transition:background .12s}tbody tr:hover{background:#f5f6ef}td{font-size:var(--font-secondary)}
@@ -281,6 +288,7 @@
 <header>
   <span style="font-size:20px">🛰️</span>
   <h1>Studio Hub KH</h1>
+  <span id="mode-header" class="machine-mode-badge standalone">Standalone</span>
   <div class="spacer"></div>
   <span class="summary" id="hub-summary"></span>
   <span style="position:relative">
@@ -760,7 +768,48 @@
 
   <!-- REMOTE -->
   <section id="tab-remote" class="hide">
-    <div class="card jform section setup-card" id="simple-setup-card">
+    <div class="card jform section machine-mode-card" id="machine-mode-card">
+      <div class="top"><span class="emoji">⚙️</span><h3>Machine mode</h3><span id="machine-mode-badge" class="machine-mode-badge standalone">Standalone</span></div>
+      <p class="muted" style="font-size:13px">Choose what this Mac does. Its machine name is only for your own recognition; Site ID and Hub ID remain the stable technical identities.</p>
+      <div class="machine-mode-picker" role="group" aria-label="Machine working mode">
+        <button class="standalone" data-machine-mode="standalone" aria-pressed="true" onclick="selectMachineMode('standalone')">● Standalone</button>
+        <button class="agent" data-machine-mode="agent" aria-pressed="false" onclick="selectMachineMode('agent')">● Agent</button>
+        <button class="controller" data-machine-mode="controller" aria-pressed="false" onclick="selectMachineMode('controller')">● Controller</button>
+      </div>
+
+      <div id="machine-mode-standalone" class="machine-mode-panel">
+        <div class="machine-mode-grid"><label>Machine name<input id="mode-standalone-name" maxlength="120" placeholder="My Studio Mac"></label></div>
+        <p class="sub" style="margin-top:12px">This Mac works locally and does not connect to a Controller or accept fleet configuration.</p>
+        <div class="actions"><button class="btn primary" onclick="saveMachineMode()">Save Standalone mode</button></div>
+      </div>
+
+      <div id="machine-mode-controller" class="machine-mode-panel">
+        <div class="machine-mode-grid">
+          <label>Controller machine name<input id="mode-controller-name" maxlength="120" placeholder="Controller 0001"></label>
+          <label>Site ID<input id="mode-controller-site-id" maxlength="100" placeholder="phnom-penh-1"></label>
+          <label>Site display name<input id="mode-controller-site-name" maxlength="120" placeholder="Phnom Penh · Site 1"></label>
+          <label>Hub ID<input id="mode-controller-hub-id" maxlength="100" placeholder="controller-0001"></label>
+          <div class="machine-secret wide"><b>Registration code</b><span class="sub">Permanent code for enrolling Agents. It is created automatically when this Mac becomes a Controller and stays valid until you rotate or revoke it.</span><code id="mode-registration-code">Loading…</code><div class="actions"><button class="btn" onclick="copyMachineRegistrationCode()">Copy registration code</button><button class="btn" onclick="createEnrollmentCode()">Rotate registration code</button><button class="btn stop" onclick="revokeEnrollmentCode()">Revoke</button></div></div>
+          <div class="machine-secret wide"><b>Fleet token</b><span class="sub">Shared credential automatically sent to a successfully enrolled Agent so all fleet jobs and controls can reach it.</span><code id="mode-fleet-token">Loading…</code><div class="actions"><button class="btn" onclick="copyMachineFleetToken()">Copy fleet token</button></div></div>
+        </div>
+        <div class="mode-owner"><b>Owner sign-in password</b><p class="sub" id="mode-owner-copy" style="margin:4px 0 9px">Loading sign-in settings…</p><div id="mode-owner-local" class="actions"><input id="mode-owner-password" type="password" autocomplete="new-password" placeholder="Choose any password"><input id="mode-owner-password-confirm" type="password" autocomplete="new-password" placeholder="Confirm password"><button class="btn primary" onclick="saveModeOwnerPassword()">Save password</button></div><div id="mode-owner-remote" class="actions hide"><button class="btn" onclick="logoutHubBrowser()">Sign out this browser</button></div><div class="sub" id="mode-owner-result" role="status" aria-live="polite" style="margin-top:8px"></div></div>
+        <div class="actions"><button class="btn primary" id="mode-controller-save" onclick="saveMachineMode()">Save Controller settings</button><span class="sub" id="mode-controller-result" role="status" aria-live="polite"></span></div>
+      </div>
+
+      <div id="machine-mode-agent" class="machine-mode-panel">
+        <div class="machine-mode-grid">
+          <label>Agent machine name<input id="mode-agent-name" maxlength="120" placeholder="Image Worker 0001"></label>
+          <label>This Mac's hardware<select class="selctl" id="mode-agent-profile"><option value="">Choose this Mac's hardware…</option></select></label>
+          <label class="wide">Controller address<input id="mode-agent-controller-url" inputmode="url" autocomplete="off" placeholder="100.x.y.z:47873"></label>
+          <label class="wide">Registration code<input id="mode-agent-registration-code" autocomplete="off" placeholder="Paste the permanent registration code"></label>
+        </div>
+        <p class="sub" style="margin-top:11px">Enter the Controller’s private LAN or Tailscale address and its registration code. Studio Hub fills this Agent’s site and fleet details automatically.</p>
+        <div class="actions"><button class="btn primary" id="mode-agent-connect" onclick="connectMachineAgent()">Connect this Agent</button></div>
+        <div id="mode-agent-status" class="mode-status waiting" role="status" aria-live="polite">Enter the Controller address and registration code to connect this Mac.</div>
+      </div>
+    </div>
+
+    <div class="card jform section setup-card" id="simple-setup-card" style="display:none">
       <div class="top"><span class="emoji">✨</span><h3 id="setup-title">Add this Mac to your fleet</h3><span id="setup-state" class="pill">Ready to join</span></div>
       <p id="setup-copy" class="muted" style="font-size:13px;margin-bottom:12px">For a normal worker Mac, complete these three fields. Studio Hub chooses the worker role and receives the fleet credential automatically—you do not need Agent mode, Controller mode, or a fleet token.</p>
       <div id="setup-agent-fields" class="setup-fields">
@@ -795,7 +844,7 @@
       </div>
     </div>
 
-    <details class="card section setup-advanced">
+    <details class="card section setup-advanced" style="display:none">
       <summary>Technical recovery settings · rarely needed</summary>
       <div class="setup-advanced-body jform" id="controller-card">
       <div class="top"><span class="emoji">🧠</span><h3>Controller role &amp; site</h3><span id="controller-state" class="pill">Loading</span></div>
@@ -819,7 +868,7 @@
       </div>
     </details>
 
-    <div class="card section">
+    <div class="card section" style="display:none">
       <div class="top"><span class="emoji">🌐</span><h3>Reach this Hub from other devices</h3></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
         Any device on your Tailscale network can use these URLs. Sign in once with your owner password and this
@@ -836,7 +885,7 @@
       </div>
     </div>
 
-    <div class="card jform section" id="owner-password-card">
+    <div class="card jform section" id="owner-password-card" style="display:none">
       <div class="top"><span class="emoji">🔐</span><h3>Owner sign-in</h3></div>
       <p class="muted" id="owner-password-copy" style="font-size:13px;margin-bottom:10px">Loading sign-in settings…</p>
       <div id="owner-password-local" class="hide">
@@ -852,7 +901,7 @@
       </div>
     </div>
 
-    <div class="card jform section">
+    <div class="card jform section" style="display:none">
       <div class="top"><span class="emoji">🧩</span><h3>Fleet security token</h3></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
         This shared credential lets your Hubs and Studios trust requests from your fleet while rejecting other
@@ -1053,6 +1102,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.64.0", date: "2026-07-24", items: [
+    "Remote now has one clear Machine mode setting: Standalone (orange), Agent (green), or Controller (red), shown in the header and settings.",
+    "Controller settings keep the display name, Site ID, Hub ID, visible permanent registration code, visible fleet token, and owner password together.",
+    "Agent setup now asks for the Agent name, Controller address, registration code, and hardware in one place, then confirms it is connected and ready for jobs.",
+  ]},
   { v: "1.63.3", date: "2026-07-24", items: [
     "Completed GenStudio image and generation batches stay completed after their execution lease naturally expires; Hub no longer relabels verified terminal work as cancelled.",
     "The alert center now reports genuine unfinished lease expirations, repeated worker restart rates, and Agent Hubs that remain unreachable, with one recovery notice when service returns.",
@@ -1499,6 +1553,12 @@ function renderOwnerPassword() {
   } else {
     copy.textContent = "An owner password has not been set yet. Open this Hub on its own Mac to create one.";
   }
+  const modeLocal = $("#mode-owner-local"), modeRemote = $("#mode-owner-remote"), modeCopy = $("#mode-owner-copy");
+  if (modeLocal && modeRemote && modeCopy) {
+    modeLocal.classList.toggle("hide", !authInfo.can_configure_here);
+    modeRemote.classList.toggle("hide", authInfo.can_configure_here);
+    modeCopy.textContent = copy.textContent;
+  }
 }
 async function saveOwnerPassword() {
   const password = $("#owner-password").value;
@@ -1513,6 +1573,19 @@ async function saveOwnerPassword() {
   const body = response ? await response.json().catch(() => ({})) : {};
   if (!response?.ok) { result.textContent = body.detail || "Could not save the password."; return; }
   $("#owner-password").value = ""; $("#owner-password-confirm").value = "";
+  result.textContent = body.message || "Password saved.";
+  await loadAuthInfo();
+}
+async function saveModeOwnerPassword() {
+  const password = $("#mode-owner-password").value, confirmation = $("#mode-owner-password-confirm").value;
+  const result = $("#mode-owner-result");
+  if (!password) { result.textContent = "Enter a password."; return; }
+  if (password !== confirmation) { result.textContent = "The two passwords do not match."; return; }
+  result.textContent = "Saving…";
+  const response = await fetch("/api/auth/setup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }) }).catch(() => null);
+  const body = response ? await response.json().catch(() => ({})) : {};
+  if (!response?.ok) { result.textContent = body.detail || "Could not save the password."; return; }
+  $("#mode-owner-password").value = ""; $("#mode-owner-password-confirm").value = "";
   result.textContent = body.message || "Password saved.";
   await loadAuthInfo();
 }
@@ -3276,6 +3349,8 @@ function renderEnrollmentCode(data) {
   reveal.textContent = "Reveal"; reveal.disabled = !activeEnrollmentCode;
   copy.disabled = !activeEnrollmentCode; revoke.disabled = !active;
   create.disabled = false; create.textContent = active ? "Rotate code" : "Generate code";
+  const visible = $("#mode-registration-code");
+  if (visible) visible.textContent = activeEnrollmentCode || (active ? "Code is active but unavailable on this Mac; rotate it to create a new one." : "Created automatically when Controller mode is saved.");
 }
 async function loadEnrollmentCode() {
   const data = await api("/api/hub/enrollment-codes").then(r => r.json()).catch(() => null);
@@ -3291,6 +3366,7 @@ function toggleEnrollmentCode() {
   button.textContent = reveal ? "Hide" : "Reveal";
 }
 function copyEnrollmentCode() { copyPrivateValue(activeEnrollmentCode, $("#setup-code-copy"), "Copy code"); }
+function copyMachineRegistrationCode() { copyPrivateValue(activeEnrollmentCode, null); }
 async function revokeEnrollmentCode() {
   if (!confirm("Revoke the permanent enrollment code?\nNew Macs cannot join until you generate another code. Already joined Macs are unaffected.")) return;
   const revoke = $("#setup-code-revoke"); revoke.disabled = true; revoke.textContent = "Revoking…";
@@ -3316,10 +3392,101 @@ async function setupJoinAgent() {
   codeInput.value = "";
   renderSetupResult(data); renderSetupStatus(data.settings); await loadController(); await loadHardwareProfiles(); await refresh();
 }
+// ── explicit machine working mode ────────────────────────────────────────
+let machineModeDraft = "standalone";
+function modeTitle(role) { return ({ standalone: "Standalone", agent: "Agent", controller: "Controller" })[role] || "Standalone"; }
+function selectMachineMode(role) {
+  machineModeDraft = role;
+  document.querySelectorAll("[data-machine-mode]").forEach(button => {
+    const active = button.dataset.machineMode === role;
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  document.querySelectorAll(".machine-mode-panel").forEach(panel =>
+    panel.classList.toggle("active", panel.id === `machine-mode-${role}`));
+}
+function paintMachineMode(role, settings = {}) {
+  const safe = ["standalone", "agent", "controller"].includes(role) ? role : "standalone";
+  const label = modeTitle(safe);
+  for (const id of ["mode-header", "machine-mode-badge"]) {
+    const badge = $(`#${id}`); if (!badge) continue;
+    badge.className = `machine-mode-badge ${safe}`; badge.textContent = label;
+  }
+  const card = $("#machine-mode-card");
+  if (card) card.className = `card jform section machine-mode-card ${safe}`;
+  const status = $("#mode-agent-status");
+  if (safe === "agent" && status) {
+    const controller = settings.parent_controller_url;
+    status.className = "mode-status";
+    status.textContent = controller
+      ? `Connected to ${controller} · fleet settings received · this Agent is ready for jobs.`
+      : "Agent mode is active. Connect to a Controller to receive fleet settings.";
+  }
+}
+function renderMachineMode(data, hydrate = true) {
+  const settings = data?.settings || {};
+  const role = settings.role || "standalone";
+  if (hydrate) {
+    $("#mode-standalone-name").value = settings.machine_name || "";
+    $("#mode-controller-name").value = settings.machine_name || "";
+    $("#mode-controller-site-id").value = settings.site_id || "";
+    $("#mode-controller-site-name").value = settings.site_name || "";
+    $("#mode-controller-hub-id").value = settings.controller_id || "";
+    $("#mode-agent-name").value = settings.machine_name || "";
+    $("#mode-agent-controller-url").value = settings.parent_controller_url || "";
+    const profile = $("#mode-agent-profile");
+    if (profile && machineHardwareAssignments.local) profile.value = machineHardwareAssignments.local;
+    machineModeDraft = role;
+    selectMachineMode(role);
+  }
+  paintMachineMode(role, settings);
+}
+async function saveMachineMode() {
+  const existing = controllerData?.settings || {};
+  const role = machineModeDraft;
+  if (role === "agent") return connectMachineAgent();
+  if (existing.role === "controller" && role !== "controller" && !confirm("Leave Controller mode? Existing Agents will keep their saved connection, but this Mac will stop acting as their Controller.")) return;
+  const isController = role === "controller";
+  const machineName = (isController ? $("#mode-controller-name") : $("#mode-standalone-name")).value.trim();
+  const siteId = (isController ? $("#mode-controller-site-id").value : (existing.site_id || "local-site")).trim();
+  const siteName = (isController ? $("#mode-controller-site-name").value : (existing.site_name || "Local site")).trim();
+  const hubId = (isController ? $("#mode-controller-hub-id").value : (existing.controller_id || "local-hub")).trim();
+  const result = $("#mode-controller-result");
+  if (!machineName) { if (result) result.textContent = "Enter a display name for this Mac."; return; }
+  if (isController && (!siteId || !siteName || !hubId)) { if (result) result.textContent = "Enter the Site ID, site name, and Hub ID."; return; }
+  const button = isController ? $("#mode-controller-save") : $("#machine-mode-standalone .primary");
+  if (button) { button.disabled = true; button.setAttribute("aria-busy", "true"); }
+  if (result) result.textContent = "Saving machine mode…";
+  const response = await api("/api/hub/controller", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role, site_id: siteId, site_name: siteName, controller_id: hubId, machine_name: machineName, database_mode: "off", database_url: null, clear_database_url: role !== "controller" }) }).catch(() => null);
+  const data = response ? await response.json().catch(() => ({})) : {};
+  if (button) { button.disabled = false; button.removeAttribute("aria-busy"); }
+  if (!response?.ok) { if (result) result.textContent = data.detail || "Machine mode could not be saved."; return; }
+  renderController(data, true);
+  if (result) result.textContent = role === "controller" ? "Controller settings saved. Registration and fleet tokens are ready below." : "Standalone mode saved.";
+  await loadEnrollmentCode(); await loadFleet(); await refresh();
+}
+async function connectMachineAgent() {
+  const name = $("#mode-agent-name").value.trim();
+  const controllerUrl = $("#mode-agent-controller-url").value.trim();
+  const code = $("#mode-agent-registration-code").value.trim();
+  const profile = $("#mode-agent-profile").value;
+  const status = $("#mode-agent-status"), button = $("#mode-agent-connect");
+  if (!name || !controllerUrl || !code || !profile) { status.className = "mode-status error"; status.textContent = "Enter this Agent's name, hardware, Controller address, and registration code."; return; }
+  button.disabled = true; button.setAttribute("aria-busy", "true"); button.textContent = "Connecting…";
+  status.className = "mode-status waiting"; status.textContent = "Contacting the Controller and registering this Agent…";
+  const response = await api("/api/hub/setup/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ controller_url: controllerUrl, enrollment_code: code, hardware_profile_id: profile, machine_name: name }) }).catch(() => null);
+  const data = response ? await response.json().catch(() => ({})) : {};
+  button.disabled = false; button.removeAttribute("aria-busy"); button.textContent = "Connect this Agent";
+  if (!response?.ok) { status.className = "mode-status error"; status.textContent = data.detail || "This Agent could not connect to the Controller."; return; }
+  $("#mode-agent-registration-code").value = "";
+  renderController({ settings: data.settings, runtime: {}, readiness: { ready: true } }, true);
+  status.className = "mode-status"; status.textContent = `Connected to ${data.settings.site_name || data.settings.site_id} · fleet settings received · this Agent is ready for jobs.`;
+  await loadFleet(); await loadHardwareProfiles(); await refresh();
+}
 function renderController(data, hydrate = true) {
   if (!data) return;
   controllerData = data;
   const settings = data.settings || {}, runtime = data.runtime || {}, ready = data.readiness || {};
+  renderMachineMode(data, hydrate);
   renderSetupStatus(settings);
   if (hydrate) {
     $("#controller-role").value = settings.role || "standalone";
@@ -3440,9 +3607,12 @@ async function loadFleet() {
     $("#fleet-reveal").disabled = true;
     $("#fleet-copy").disabled = true;
   }
+  const visible = $("#mode-fleet-token");
+  if (visible) visible.textContent = r.token || "Fleet token is unavailable in this browser. Open this Hub locally or sign in as its owner.";
   $("#fleet-status").dataset.set = r.fleet_token_set ? "1" : "0";
   renderFleetStatus();     // draw the live peer summary (falls back to token-only line)
 }
+function copyMachineFleetToken() { copyPrivateValue($("#mode-fleet-token")?.textContent || "", null); }
 // Live "how many peers are actually connected, and why not" summary — reads the
 // per-machine status the backend computes (connected | no_hub | unreachable |
 // token_rejected). This is what makes a broken fleet setup visible at a glance.
@@ -4423,7 +4593,7 @@ async function loadHardwareProfiles() {
       `<option value="${esc(profile.id)}"${profile.id === selected ? " selected" : ""}>${esc(profile.display_name)} · ${profile.assigned_units}/${profile.planned_units || "—"} assigned</option>`
     ).join("");
   }
-  for (const id of ["setup-controller-profile", "setup-agent-profile"]) {
+  for (const id of ["setup-controller-profile", "setup-agent-profile", "mode-agent-profile"]) {
     const setupSelect = $(`#${id}`); if (!setupSelect) continue;
     const selectedSetup = setupSelect.value || data.assignments?.local || "";
     setupSelect.innerHTML = `<option value="">Choose this Mac's hardware…</option>` + hardwareProfiles.map(profile =>

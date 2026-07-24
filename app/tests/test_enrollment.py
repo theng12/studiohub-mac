@@ -301,6 +301,7 @@ async def test_loopback_join_configures_agent_and_clears_code(app, monkeypatch):
         "controller_url": "http://100.70.0.2:47873",
         "enrollment_code": "one-time-code",
         "hardware_profile_id": "mac-mini-m2-8gb",
+        "machine_name": "Voice Worker 0001",
     })
 
     assert response.status_code == 200
@@ -310,6 +311,24 @@ async def test_loopback_join_configures_agent_and_clears_code(app, monkeypatch):
     assert body["settings"]["parent_controller_url"] == "http://100.70.0.2:47873"
     assert peers.fleet_token() == "new-site-fleet-token"
     assert hardware_profiles.machine_hardware_profile("local")["id"] == "mac-mini-m2-8gb"
+    assert control_plane.public_settings()["machine_name"] == "Voice Worker 0001"
+
+
+def test_controller_mode_creates_credentials_and_keeps_display_name_cosmetic(authed):
+    response = authed.put("/api/hub/controller", json={
+        "role": "controller", "machine_name": "Controller 0001",
+        "site_id": "phnom-penh-1", "site_name": "Phnom Penh · Site 1",
+        "controller_id": "controller-0001", "database_mode": "off",
+    })
+
+    assert response.status_code == 200
+    settings = response.json()["settings"]
+    assert settings["machine_name"] == "Controller 0001"
+    assert settings["site_id"] == "phnom-penh-1"
+    assert settings["controller_id"] == "controller-0001"
+    assert peers.fleet_token()
+    status = enrollment.enrollment_credential_status(include_code=True)
+    assert status["active"] is True and status["permanent"] is True and status["code"]
 
 
 def test_join_failure_rolls_back_every_local_setting(reset, monkeypatch):
@@ -385,3 +404,19 @@ def test_dashboard_exposes_simple_setup_and_masks_secrets():
     assert "enrollmentCodeExpiryTimer" not in dashboard
     assert "expires after 10 minutes" not in dashboard
     assert "localStorage.setItem" not in dashboard[dashboard.index("function createEnrollmentCode"):dashboard.index("function renderController")]
+
+
+def test_dashboard_exposes_explicit_machine_modes_and_plain_controller_credentials():
+    dashboard = (Path(__file__).parents[1] / "frontend" / "index.html").read_text()
+
+    assert 'id="machine-mode-card"' in dashboard
+    assert 'id="mode-header" class="machine-mode-badge standalone"' in dashboard
+    assert 'data-machine-mode="standalone"' in dashboard
+    assert 'data-machine-mode="agent"' in dashboard
+    assert 'data-machine-mode="controller"' in dashboard
+    assert 'id="mode-registration-code">Loading…</code>' in dashboard
+    assert 'id="mode-fleet-token">Loading…</code>' in dashboard
+    assert 'id="mode-agent-controller-url"' in dashboard
+    assert 'id="mode-agent-registration-code"' in dashboard
+    assert "function connectMachineAgent()" in dashboard
+    assert "function saveMachineMode()" in dashboard

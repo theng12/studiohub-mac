@@ -10,6 +10,37 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.64.0] — 2026-07-24
+
+### Added — explicit machine modes
+
+- Remote now begins with one clear **Machine mode** setting: **Standalone**
+  (orange), **Agent** (green), or **Controller** (red). The selected role and
+  its color are shown in both the page header and the settings card.
+- Every Hub can now have a friendly display-only machine name. Renaming it
+  never changes the stable Site ID, Hub ID, enrollment identity, or routing.
+- Saving Controller mode automatically ensures a reusable permanent
+  registration code and fleet token exist. Both are shown plainly with copy
+  controls beside the Controller name, Site ID, Hub ID, and owner password.
+- Agent mode now presents the operator's actual enrollment inputs together:
+  Agent name, local hardware, Controller address, and registration code. A
+  successful join reports that fleet settings were received and the Agent is
+  ready for jobs.
+
+### Upgrade behavior
+
+- Existing Controller and Agent identities, fleet credentials, and joined
+  machines are retained. Reachable Agent Hubs can use the normal remote update;
+  offline or older Macs need a local update before they receive this screen.
+- Switching away from Controller mode asks for confirmation and never silently
+  deletes existing Agent configuration.
+
+### Verification
+
+- Added API and enrollment coverage for automatic Controller credentials,
+  display-only machine names, and Agent registration. Backend, control-plane,
+  and dashboard regression tests pass.
+
 ## [1.63.3] — 2026-07-24
 
 ### Fixed

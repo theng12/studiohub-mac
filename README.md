@@ -542,29 +542,39 @@ The existing Hub token is still required for scripts, API clients, peer Hubs,
 and recovery. It is shown only locally in **Remote**. Replacing the owner
 password signs every remembered browser out immediately.
 
-## Simple fleet setup
+## Machine modes and fleet setup
 
-Open **Remote → Add this Mac to your fleet**. On a normal worker Mac there are
-only three fields:
+Open **Remote → Machine mode** and choose the role this Mac should perform. The
+mode is always visible: **Standalone** is orange, **Agent** is green, and
+**Controller** is red. The machine name is a friendly display name only; Site ID
+and Hub ID remain the stable routing identities.
 
-1. Copy the main controller's address from **Remote → Reach this Hub from other
-   devices**. Paste an HTTP/HTTPS URL, Tailscale IP, or MagicDNS hostname and use
-   **Check connection**. If a direct HTTP address omits its port, Studio Hub uses
+### Controller
+
+Set a Controller machine name, Site ID, Site display name, and Hub ID. Saving
+Controller mode automatically creates a permanent registration code and fleet
+token when either is missing. Both values are plainly displayed in the same
+Controller panel as the owner sign-in password. The registration code remains
+reusable until the owner rotates or revokes it.
+
+### Agent
+
+On each worker Mac, choose **Agent** and enter:
+
+1. A friendly Agent machine name and this Mac's hardware profile.
+2. The Controller's private LAN/Tailscale address. Paste an HTTP/HTTPS URL,
+   Tailscale IP, or MagicDNS hostname; direct HTTP addresses without a port use
    47873 automatically.
-2. On the controller, click **Generate code**, then **Reveal** or **Copy code**.
-   Paste that permanent enrollment code on the new Mac. Do not paste the Hub
-   token or fleet token.
-3. Choose the new Mac's hardware and click **Add this Mac to the location**.
+3. The Controller's permanent registration code.
 
-Studio Hub selects the worker/Agent role, receives and stores the site fleet
-credential, assigns the hardware profile, and keeps PostgreSQL off. Users do not
-need to choose a role or manually copy the fleet token. **Check connection** is
-read-only and sends no enrollment code.
+The Agent receives its site identity and fleet token automatically, retains them
+locally, and then reports that it is connected and ready for jobs. Do not paste
+the fleet token manually during normal Agent enrollment.
 
-For the first Mac at a brand-new physical location, expand **Starting the first
-Mac at a brand-new location?**, enter the location name and hardware once, and
-create it. The raw role and PostgreSQL fields are retained only under
-**Technical recovery settings · rarely needed**.
+### Standalone
+
+Choose **Standalone** for a local-only Hub. It keeps the same local Studio
+controls and does not require a Controller address or fleet enrollment.
 
 The enrollment code contains at least 256 bits of entropy and remains reusable
 until an owner explicitly rotates or revokes it. The controller's claim database

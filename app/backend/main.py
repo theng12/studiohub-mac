@@ -117,6 +117,7 @@ class ControllerSettingsBody(BaseModel):
     site_id: str
     site_name: str
     controller_id: str
+    machine_name: str | None = Field(default=None, max_length=120)
     database_mode: str = "off"
     database_url: str | None = Field(default=None, max_length=4096)
     clear_database_url: bool = False
@@ -140,6 +141,7 @@ class AgentJoinBody(BaseModel):
     controller_url: str = Field(min_length=1, max_length=500)
     enrollment_code: str = Field(min_length=1, max_length=256)
     hardware_profile_id: str = Field(min_length=3, max_length=64)
+    machine_name: str | None = Field(default=None, max_length=120)
 
 
 class HardwareProfileBody(BaseModel):
@@ -469,10 +471,21 @@ def controller_status():
 async def controller_save_settings(body: ControllerSettingsBody):
     try:
         control_plane.save_settings(
-            body.model_dump(exclude={"database_url", "clear_database_url"}),
+            body.model_dump(exclude={"database_url", "clear_database_url", "machine_name"}),
             new_database_url=body.database_url,
             clear_database_url=body.clear_database_url,
         )
+        if body.machine_name is not None:
+            from .registry import set_label
+            set_label("local", body.machine_name)
+        # Controller mode is immediately usable: both credentials exist as
+        # soon as the role is saved.  Existing permanent codes are retained;
+        # a code is created only for a newly promoted controller or recovery.
+        if control_plane.load_settings()["role"] == "controller":
+            peers.fleet_token()
+            code = enrollment.enrollment_credential_status(include_code=True)
+            if not code.get("active") or not code.get("code"):
+                enrollment.create_enrollment_code()
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     # Return an immediate, truthful database/schema result rather than making
@@ -583,6 +596,7 @@ async def join_existing_location(request: Request, body: AgentJoinBody):
         claim = await enrollment.claim_remote(body.controller_url, body.enrollment_code)
         return enrollment.configure_joined_agent(
             body.controller_url, body.hardware_profile_id, claim,
+            machine_name=body.machine_name,
         )
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc

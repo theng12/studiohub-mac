@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .registry import DATA_DIR, machine_enabled, studio_enabled
+from .registry import DATA_DIR, label_for, machine_enabled, studio_enabled
 from .resources import host_stats
 
 SETTINGS_FILE = DATA_DIR / "controller_settings.json"
@@ -121,6 +121,10 @@ def public_settings() -> dict:
     url = database_url()
     return {
         **settings,
+        # The local machine key is deliberately stable ("local").  Its label
+        # is the operator-facing name only, so renaming a Controller or Agent
+        # never changes any routing, enrollment, or fleet identity.
+        "machine_name": label_for("local"),
         "database_configured": bool(url),
         "database_endpoint": _database_endpoint(url),
         "database_source": (
