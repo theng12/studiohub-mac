@@ -35,8 +35,8 @@ class _VoiceClient:
         self.content = content
         self.calls = []
 
-    async def get(self, url, headers=None, **_kwargs):
-        self.calls.append((url, headers))
+    async def get(self, url, headers=None, **kwargs):
+        self.calls.append((url, headers, kwargs))
         return _ArtifactResponse(self.content)
 
 
@@ -166,6 +166,7 @@ async def test_voice_metadata_uses_peer_auth_and_never_records_local_path(reset,
 
     assert calls == [("voice@remote", "/api/generate/jobs/x/audio")]
     assert client.calls[0][1] == {"X-Hub-Token": "test-fleet-token"}
+    assert client.calls[0][2]["timeout"] == 600.0
     assert "artifact_path" not in item and item["media_type"] == "audio/wav"
 
 

@@ -10,6 +10,29 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.64.3] — 2026-07-27
+
+### Fixed — long-form voice artifacts have time to verify
+
+- Studio Hub now allows up to ten minutes to download and independently verify
+  a completed Voice Studio WAV. A 40,000-character narration can produce a
+  100–160 MB PCM file, which could exceed the former 60-second transfer window
+  on a slower fleet link even though generation had completed successfully.
+
+### Safety
+
+- Studio Hub still receives one text item and one final artifact. VoiceStudio
+  alone owns private model sections; GenStudio retains job, customer, billing,
+  and publication authority.
+- The existing renewable execution lease still fences stale work. Routing,
+  worker selection, concurrency, checksums, media validation, and final
+  artifact URLs are unchanged.
+
+### Verification
+
+- Added authenticated peer-transfer coverage for the long-form verification
+  window and reran the complete Studio Hub suite.
+
 ## [1.64.2] — 2026-07-24
 
 ### Fixed — GenStudio Controller credential is visible again

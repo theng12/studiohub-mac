@@ -968,7 +968,10 @@ async def _cache_voice_artifact_metadata(client: httpx.AsyncClient, item: dict,
     """
     try:
         url, headers = studio_request(studio, worker_url)
-        response = await client.get(url, headers=headers, timeout=60.0)
+        # Long-form 40k narration can produce a 100–160 MB PCM WAV. Give an
+        # authenticated fleet transfer enough time on slower Tailscale links;
+        # generation remains protected by the renewable GenStudio lease.
+        response = await client.get(url, headers=headers, timeout=600.0)
         response.raise_for_status()
         metadata = artifact_metadata.wav_metadata(response.content)
         if expected_bytes is not None and int(expected_bytes) != metadata["bytes"]:

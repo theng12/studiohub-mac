@@ -1103,6 +1103,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.64.3", date: "2026-07-27", items: [
+    "Long-form Voice Studio WAVs now have up to ten minutes to transfer and pass Studio Hub's independent checksum, duration, sample-rate, channel, and media verification.",
+    "VoiceStudio still owns all private model sections; Studio Hub receives and exposes only the one verified final artifact.",
+  ]},
   { v: "1.64.2", date: "2026-07-24", items: [
     "Controller settings now show the permanent Hub token plainly beside the registration and fleet credentials, with an explicit GenStudio connection label and Copy control.",
     "The registration code remains only for enrolling Agents; GenStudio continues to use the Hub token for authenticated controller verification and job routing.",
