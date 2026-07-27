@@ -10,6 +10,34 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.65.0] — 2026-07-27
+
+### Added — persistent required Voice Studio models
+
+- The site-local model baseline now keeps Whisper Tiny, Kokoro v1.0 82M, and
+  VibeVoice Realtime 0.5B 4-bit cached on every registered Voice Studio.
+- Each machine/model pair has an independent ready, pending, offline, or error
+  state. Offline Macs remain pending and automatically download missing models
+  after reconnecting instead of requiring another manual fleet broadcast.
+
+### Changed
+
+- The Models dashboard now presents the three required voice models together
+  and reports the combined fleet-ready count without sending them to unrelated
+  Image, Chat, Music, Video, or Render workers.
+- Existing Whisper-only baseline state migrates automatically and remains
+  compatible with older API clients that read the original top-level repo.
+
+### Safety
+
+- Model reconciliation remains site-local, authenticated, non-blocking, and
+  independent from GenStudio routing, customer jobs, billing, and ownership.
+
+### Verification
+
+- Added coverage for all three model downloads, cached-model idempotency, and
+  persistent offline retry state.
+
 ## [1.64.3] — 2026-07-27
 
 ### Fixed — long-form voice artifacts have time to verify

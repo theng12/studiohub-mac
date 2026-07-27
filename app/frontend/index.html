@@ -349,9 +349,9 @@
       have each downloaded — a model can live on your media server but not this Mac.
     </p>
     <div class="card jform section">
-      <div class="top"><span class="emoji">🪶</span><h3>Lightweight transcription baseline</h3><span id="baseline-state" class="pill">Loading</span></div>
+      <div class="top"><span class="emoji">🪶</span><h3>Required Voice Studio model baseline</h3><span id="baseline-state" class="pill">Loading</span></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        Keeps <b>Whisper Tiny (~70 MB)</b> cached on every registered Voice Studio transcription worker. Offline Macs are never treated as failures: each site controller retries when they return. Image, Chat, and Render workers do not receive an irrelevant speech model.
+        Keeps <b>Whisper Tiny</b>, <b>Kokoro 82M</b>, and <b>VibeVoice Realtime 0.5B 4-bit</b> cached on every registered Voice Studio. Offline Macs stay pending and each site controller installs anything missing when they return. Image, Chat, and Render workers do not receive these voice models.
       </p>
       <div class="actions" style="align-items:center">
         <label class="wd"><input id="baseline-enabled" type="checkbox" onchange="saveModelBaseline()"> keep installed automatically</label>
@@ -1103,6 +1103,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.65.0", date: "2026-07-27", items: [
+    "The persistent Voice Studio model baseline now keeps Whisper Tiny, Kokoro 82M, and VibeVoice Realtime 0.5B 4-bit installed across every registered Voice Mac.",
+    "Offline Macs remain pending and automatically download anything missing after they reconnect; each model and machine has its own truthful state.",
+  ]},
   { v: "1.64.3", date: "2026-07-27", items: [
     "Long-form Voice Studio WAVs now have up to ten minutes to transfer and pass Studio Hub's independent checksum, duration, sample-rate, channel, and media verification.",
     "VoiceStudio still owns all private model sections; Studio Hub receives and exposes only the one verified final artifact.",
@@ -2183,10 +2187,10 @@ async function loadModelBaseline() {
   $("#baseline-enabled").checked = !!data.enabled;
   const summary = data.summary || {};
   $("#baseline-state").textContent = data.enabled ? "Automatic" : "Paused";
-  $("#baseline-summary").textContent = `${summary.cached || 0}/${summary.total || 0} ready · ${summary.pending || 0} downloading · ${summary.failed || 0} need retry`;
+  $("#baseline-summary").textContent = `${summary.cached || 0}/${summary.total || 0} ready · ${summary.pending || 0} pending · ${summary.failed || 0} need retry`;
   const rows = data.targets || [];
   $("#baseline-targets").innerHTML = rows.length
-    ? `<table><thead><tr><th>Voice Studio</th><th>Machine</th><th>Status</th><th>Detail</th></tr></thead><tbody>${rows.map(row => `<tr><td>${esc(row.studio_id)}</td><td>${esc(mlabel(row.machine || "local"))}</td><td><span class="pill ${row.state === "cached" ? "ok" : row.state === "error" ? "err" : ""}">${esc(row.state)}</span></td><td>${esc(row.detail || "Waiting for the next check")}</td></tr>`).join("")}</tbody></table>`
+    ? `<table><thead><tr><th>Model</th><th>Machine</th><th>Status</th><th>Detail</th></tr></thead><tbody>${rows.map(row => `<tr><td><strong>${esc(row.model_label || row.model_repo)}</strong><span class="sub">${esc(row.studio_id)}</span></td><td>${esc(mlabel(row.machine || "local"))}</td><td><span class="pill ${row.state === "cached" ? "ok" : row.state === "error" ? "err" : ""}">${esc(row.state)}</span></td><td>${esc(row.detail || "Waiting for the next check")}</td></tr>`).join("")}</tbody></table>`
     : '<span class="sub">No Voice Studio workers are registered at this site.</span>';
 }
 
@@ -2204,7 +2208,7 @@ async function saveModelBaseline() {
 async function reconcileModelBaseline() {
   const button = $("#baseline-reconcile");
   button.disabled = true;
-  $("#baseline-summary").textContent = "Checking every Voice Studio…";
+  $("#baseline-summary").textContent = "Checking every required model on every Voice Studio…";
   const result = await api("/api/hub/model-baselines/reconcile", { method: "POST" })
     .then(r => r.json()).catch(e => ({ error: String(e) }));
   button.disabled = false;

@@ -20,6 +20,31 @@ from . import peers
 
 
 WHISPER_TINY_REPO = "mlx-community/whisper-tiny"
+KOKORO_REPO = "mlx-community/Kokoro-82M-bf16"
+VIBEVOICE_REPO = "mlx-community/VibeVoice-Realtime-0.5B-4bit"
+REQUIRED_MODELS = (
+    {
+        "repo": WHISPER_TINY_REPO,
+        "label": "Whisper Tiny",
+        "size_gb": 0.07,
+        "purpose": "transcription",
+        "inventory": "transcription",
+    },
+    {
+        "repo": KOKORO_REPO,
+        "label": "Kokoro v1.0 82M",
+        "size_gb": 0.34,
+        "purpose": "fast fixed-voice TTS",
+        "inventory": "catalog",
+    },
+    {
+        "repo": VIBEVOICE_REPO,
+        "label": "VibeVoice Realtime 0.5B 4-bit",
+        "size_gb": 0.9,
+        "purpose": "long-form streaming TTS",
+        "inventory": "catalog",
+    },
+)
 DEFAULT_RECONCILE_SECONDS = 15 * 60
 
 
@@ -47,17 +72,23 @@ class FleetModelBaselines:
             self.last_reconciled_at = float(value) if isinstance(value, (int, float)) else None
             rows = payload.get("targets")
             if isinstance(rows, dict):
-                self.targets = {
-                    str(key): dict(value) for key, value in rows.items()
-                    if isinstance(value, dict)
-                }
+                migrated = {}
+                for key, value in rows.items():
+                    if not isinstance(value, dict):
+                        continue
+                    normalized = str(key)
+                    if "::" not in normalized:
+                        normalized = self._target_key(
+                            normalized, WHISPER_TINY_REPO)
+                    migrated[normalized] = dict(value)
+                self.targets = migrated
 
     def _save(self) -> None:
         try:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
             temporary = self.state_path.with_suffix(self.state_path.suffix + ".tmp")
             temporary.write_text(json.dumps({
-                "schema_version": 1,
+                "schema_version": 2,
                 "enabled": self.enabled,
                 "last_reconciled_at": self.last_reconciled_at,
                 "targets": self.targets,
@@ -103,6 +134,10 @@ class FleetModelBaselines:
         self._save()
         return self.snapshot()
 
+    @staticmethod
+    def _target_key(studio_id: str, repo: str) -> str:
+        return f"{studio_id}::{repo}"
+
     def snapshot(self) -> dict[str, Any]:
         voice_targets = [
             studio for studio in self.monitor.registry
@@ -110,28 +145,41 @@ class FleetModelBaselines:
         ]
         rows = []
         for studio in voice_targets:
-            row = dict(self.targets.get(studio["id"]) or {})
-            row.update({
-                "studio_id": studio["id"],
-                "machine": studio.get("machine", "local"),
-                "reachable": self.monitor.status.get(studio["id"], {}).get("status") == "up",
-            })
-            row.setdefault("state", "unknown")
-            rows.append(row)
+            for model in REQUIRED_MODELS:
+                key = self._target_key(studio["id"], model["repo"])
+                row = dict(self.targets.get(key) or {})
+                row.update({
+                    "studio_id": studio["id"],
+                    "machine": studio.get("machine", "local"),
+                    "reachable": self.monitor.status.get(
+                        studio["id"], {}).get("status") == "up",
+                    "model_repo": model["repo"],
+                    "model_label": model["label"],
+                })
+                row.setdefault("state", "unknown")
+                rows.append(row)
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "enabled": self.enabled,
+            # Kept for older clients that only knew about the original
+            # transcription baseline.
             "repo": WHISPER_TINY_REPO,
-            "label": "Whisper Tiny",
-            "size_gb": 0.07,
-            "scope": "voice-studio transcription workers only",
+            "label": "Required Voice Studio models",
+            "scope": "all registered Voice Studio workers",
+            "models": [
+                {key: value for key, value in model.items()
+                 if key != "inventory"}
+                for model in REQUIRED_MODELS
+            ],
             "last_reconciled_at": self.last_reconciled_at,
             "reconcile_seconds": self.reconcile_seconds,
             "targets": rows,
             "summary": {
                 "total": len(rows),
                 "cached": sum(row.get("state") == "cached" for row in rows),
-                "pending": sum(row.get("state") in {"queued", "running"} for row in rows),
+                "pending": sum(row.get("state") in {
+                    "unknown", "offline", "queued", "running"
+                } for row in rows),
                 "failed": sum(row.get("state") == "error" for row in rows),
             },
         }
@@ -154,39 +202,74 @@ class FleetModelBaselines:
         studio_id = studio["id"]
         status = self.monitor.status.get(studio_id, {}).get("status")
         if status != "up":
-            self.targets[studio_id] = {
-                "state": "offline",
-                "detail": "Voice Studio is not reachable; retrying automatically",
-                "checked_at": time.time(),
-            }
-            return
-        try:
-            availability = await self.monitor.get_transcription(studio, force=True)
-            model = next((row for row in (availability or {}).get("models", [])
-                          if row.get("repo") == WHISPER_TINY_REPO), None)
-            if isinstance(model, dict) and model.get("cached"):
-                self.targets[studio_id] = {
-                    "state": "cached", "detail": "Whisper Tiny is ready",
+            for model in REQUIRED_MODELS:
+                self.targets[self._target_key(studio_id, model["repo"])] = {
+                    "state": "offline",
+                    "detail": "Voice Studio is not reachable; retrying automatically",
                     "checked_at": time.time(),
                 }
-                return
-            url, headers = peers.studio_request(studio, "/api/downloads")
-            async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=8.0)) as client:
-                response = await client.post(
-                    url, headers=headers, json={"repo": WHISPER_TINY_REPO})
-                response.raise_for_status()
-                payload = response.json()
-            job = payload.get("job") if isinstance(payload, dict) else None
-            state = str((job or {}).get("state") or "queued")
-            self.targets[studio_id] = {
-                "state": state,
-                "detail": "Whisper Tiny download accepted",
-                "job_id": (job or {}).get("id"),
-                "checked_at": time.time(),
-            }
+            return
+
+        try:
+            transcription, catalog = await asyncio.gather(
+                self.monitor.get_transcription(studio, force=True),
+                self.monitor.get_catalog(studio, force=True),
+            )
         except (httpx.HTTPError, ValueError, TypeError, OSError) as exc:
-            self.targets[studio_id] = {
-                "state": "error",
-                "detail": (str(exc).strip() or type(exc).__name__)[:220],
-                "checked_at": time.time(),
-            }
+            for model in REQUIRED_MODELS:
+                self.targets[self._target_key(studio_id, model["repo"])] = {
+                    "state": "error",
+                    "detail": (str(exc).strip() or type(exc).__name__)[:220],
+                    "checked_at": time.time(),
+                }
+            return
+
+        inventories = {
+            "transcription": (transcription or {}).get("models", []),
+            "catalog": (catalog or {}).get("models", []),
+        }
+        for required in REQUIRED_MODELS:
+            repo = required["repo"]
+            key = self._target_key(studio_id, repo)
+            model = next((
+                row for row in inventories[required["inventory"]]
+                if row.get("repo") == repo
+            ), None)
+            cached = bool(model.get("cached")) if (
+                required["inventory"] == "transcription"
+                and isinstance(model, dict)
+            ) else (
+                isinstance(model, dict)
+                and isinstance(model.get("cache"), dict)
+                and model["cache"].get("state") == "cached"
+            )
+            if cached:
+                self.targets[key] = {
+                    "state": "cached",
+                    "detail": f"{required['label']} is ready",
+                    "checked_at": time.time(),
+                }
+                continue
+            try:
+                url, headers = peers.studio_request(studio, "/api/downloads")
+                async with httpx.AsyncClient(
+                    timeout=httpx.Timeout(20.0, connect=8.0)
+                ) as client:
+                    response = await client.post(
+                        url, headers=headers, json={"repo": repo})
+                    response.raise_for_status()
+                    payload = response.json()
+                job = payload.get("job") if isinstance(payload, dict) else None
+                state = str((job or {}).get("state") or "queued")
+                self.targets[key] = {
+                    "state": state,
+                    "detail": f"{required['label']} download accepted",
+                    "job_id": (job or {}).get("id"),
+                    "checked_at": time.time(),
+                }
+            except (httpx.HTTPError, ValueError, TypeError, OSError) as exc:
+                self.targets[key] = {
+                    "state": "error",
+                    "detail": (str(exc).strip() or type(exc).__name__)[:220],
+                    "checked_at": time.time(),
+                }
