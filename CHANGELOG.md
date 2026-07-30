@@ -10,6 +10,17 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.67.1] — 2026-07-30
+
+### Fixed — truthful completed model-baseline state
+
+- When Voice Studio safely repairs a stale Hugging Face partial and reports
+  `already_cached`, the Hub now records that worker/model pair as **ready**
+  immediately. It no longer presents a fake queued/running download or creates
+  another terminal history row during the next baseline reconciliation.
+- Active partial downloads remain resumable and untouched; this only consumes a
+  completed-cache response from Voice Studio.
+
 ## [1.67.0] — 2026-07-30
 
 ### Added

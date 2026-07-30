@@ -1114,6 +1114,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.67.1", date: "2026-07-30", items: [
+    "Required Voice Studio models that safely repair stale Hugging Face partial files now immediately show as ready, rather than appearing as another queued download.",
+    "Active partial model downloads remain resumable and are never removed or interrupted by the baseline check.",
+  ]},
   { v: "1.67.0", date: "2026-07-30", items: [
     "Added one-click Reinstall generation everywhere for all registered sibling Studios.",
     "Generation installs run through each Mac's own Hub, drain active work, verify GEN_VERIFY_OK, and report offline or failed targets honestly.",

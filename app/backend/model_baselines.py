@@ -267,6 +267,13 @@ class FleetModelBaselines:
                         url, headers=headers, json={"repo": repo})
                     response.raise_for_status()
                     payload = response.json()
+                if isinstance(payload, dict) and payload.get("already_cached"):
+                    self.targets[key] = {
+                        "state": "cached",
+                        "detail": f"{required['label']} is ready",
+                        "checked_at": time.time(),
+                    }
+                    continue
                 job = payload.get("job") if isinstance(payload, dict) else None
                 state = str((job or {}).get("state") or "queued")
                 self.targets[key] = {

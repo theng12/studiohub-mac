@@ -119,6 +119,50 @@ async def test_reconcile_does_not_redownload_cached_models(monkeypatch, authed):
 
 
 @pytest.mark.asyncio
+async def test_reconcile_records_a_safely_repaired_cache_as_ready(monkeypatch, authed):
+    monitor.registry = [_voice("voice")]
+    monitor.status = {"voice": {"status": "up"}}
+
+    async def transcription(studio, force=False):
+        return {"models": [{"repo": model_baselines.WHISPER_TINY_REPO,
+                             "cached": True}]}
+
+    async def catalog(studio, force=False):
+        return {"models": [
+            {"repo": model_baselines.KOKORO_REPO, "cache": {"state": "cached"}},
+            # The worker may repair a stale HF partial during the POST.
+            {"repo": model_baselines.VIBEVOICE_REPO, "cache": {"state": "partial"}},
+            {"repo": model_baselines.FISH_AUDIO_REPO, "cache": {"state": "cached"}},
+        ]}
+
+    class Response:
+        def raise_for_status(self): return None
+        def json(self): return {"job": None, "already_cached": True}
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def post(self, *args, **kwargs):
+            assert kwargs["json"] == {"repo": model_baselines.VIBEVOICE_REPO}
+            return Response()
+
+    monkeypatch.setattr(monitor, "get_transcription", transcription)
+    monkeypatch.setattr(monitor, "get_catalog", catalog)
+    monkeypatch.setattr(model_baselines.httpx, "AsyncClient", lambda **kwargs: Client())
+    monkeypatch.setattr(model_baselines.peers, "studio_request",
+                        lambda studio, path: ("http://voice/api/downloads", {}))
+
+    response = authed.post("/api/hub/model-baselines/reconcile")
+
+    assert response.status_code == 200
+    rows = response.json()["targets"]
+    vibe = next(row for row in rows if row["model_repo"] == model_baselines.VIBEVOICE_REPO)
+    assert vibe["state"] == "cached"
+    assert vibe["detail"] == "VibeVoice Realtime 0.5B 4-bit is ready"
+    assert "job_id" not in vibe
+
+
+@pytest.mark.asyncio
 async def test_offline_voice_retains_every_required_model_for_retry(authed):
     monitor.registry = [_voice("voice@offline", machine="offline")]
     monitor.status = {"voice@offline": {"status": "down"}}
