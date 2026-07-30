@@ -328,6 +328,40 @@ async def install_remote_startup_service(
         return {"ok": False, "error": f"can't reach the remote Hub ({exc})"}
 
 
+async def install_remote_generation(
+    client: httpx.AsyncClient, studio: dict,
+) -> dict:
+    """Ask a peer Hub to reinstall one Studio's generation environment.
+
+    The peer Hub remains the only process that executes its local Pinokio
+    installer.  The response is a durable peer job reference; callers poll it
+    rather than assuming that a request accepted by the peer means success.
+    """
+    token = _peer_token(studio)
+    if not token:
+        return {"ok": False, "error": "no fleet token set"}
+    try:
+        response = await client.post(
+            f"{_peer_url(studio)}/api/hub/maintenance/generation-installs",
+            headers={"X-Hub-Token": token},
+            json={"studio_ids": [studio.get("modality")], "local_only": True},
+            timeout=30.0,
+        )
+        payload = (response.json()
+                   if response.headers.get("content-type", "").startswith("application/json")
+                   else {})
+        if response.status_code in {401, 403}:
+            return {"ok": False, "error": "remote Hub rejected the fleet credential"}
+        if response.status_code == 404:
+            return {"ok": False, "error": "update the remote Studio Hub before installing generation"}
+        if response.status_code >= 400:
+            return {"ok": False, "error": str(payload.get("detail") or
+                                                f"remote Hub returned HTTP {response.status_code}")}
+        return {"ok": True, "job": payload}
+    except httpx.HTTPError as exc:
+        return {"ok": False, "error": f"can't reach the remote Hub ({exc})"}
+
+
 async def sync_fleet_token(
     registry: list[dict], client: httpx.AsyncClient, new_token: str,
 ) -> dict:

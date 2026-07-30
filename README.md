@@ -182,6 +182,14 @@ The agent-Hub table also reports each Mac's Apple chip and unified RAM and can
 be sorted by availability, machine name, chip generation, or RAM in either
 direction. The selected order is remembered in that browser.
 
+The Remote tab also has **Reinstall generation everywhere**. It is separate
+from normal updates because it may download large dependencies and restart a
+Studio. Each Mac's own Hub runs its trusted sibling `install_generation.js`
+script; installs are serial per Mac, parallel across independent Macs, active
+Hub work drains first, and the `GEN_VERIFY_OK` marker is required before a row
+is reported successful. GenStudio can invoke the same site-owned action across
+all connected locations.
+
 Every app independently enforces its expected GitHub origin and `main`, a clean
 fast-forward, free disk, dependency/import checks, healthy restart, and exact
 running version. Dirty, detached, divergent, or rewritten repositories are
@@ -277,6 +285,9 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET` / `POST /api/hub/maintenance/studio-versions` | Read saved or rescan running/latest Studio versions and reachability |
 | `POST /api/hub/maintenance/updates` | Start a drained, sequential rolling update |
 | `GET /api/hub/maintenance/updates/{id}` | Follow rolling-update progress and health verification |
+| `GET /api/hub/maintenance/generation-installs` | List explicit fleet generation-install jobs |
+| `POST /api/hub/maintenance/generation-installs` | Start generation installation for all registered sibling Studios, or `{"studio_ids": [...], "local_only": true}` for a peer-local request |
+| `GET /api/hub/maintenance/generation-installs/{id}` | Follow dependency installation and verification progress |
 | `POST /api/hub/studios/{id}/stop` | Stop a local studio |
 | `GET /api/hub/access` | Shareable LAN/Tailscale URLs (+ the token, loopback only) |
 | `ANY /studio/{id}/{path}` | **Gateway** — proxies to that studio's API (streams/SSE included) |

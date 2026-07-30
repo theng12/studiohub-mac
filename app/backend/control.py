@@ -177,7 +177,7 @@ def restart_hub_service(*, delay_seconds: float = 1.5) -> dict:
 
 def run_studio_script(studio: dict, script: str) -> dict:
     """Launch an allowed maintenance script through the Studio's Pinokio app."""
-    if script not in {"update.js"}:
+    if script not in {"update.js", "install_generation.js"}:
         return {"ok": False, "error": "unsupported maintenance script"}
     error = _is_controllable(studio)
     if error:
@@ -199,3 +199,52 @@ def run_studio_script(studio: dict, script: str) -> dict:
     except OSError as e:
         return {"ok": False, "error": f"failed to spawn pterm: {e}"}
     return {"ok": True, "script": script, "studio": studio["id"], "ref": ref}
+
+
+def run_studio_script_sync(studio: dict, script: str, *, timeout: float = 45 * 60) -> dict:
+    """Run a finite Studio maintenance script and retain its result.
+
+    Generation installation is deliberately different from an update: the
+    caller must know whether dependency installation and the script's own
+    import verification completed.  Pinokio's client exits after the script
+    settles, so this bounded foreground wrapper gives the Hub an honest job
+    result while the Studio's server/service restart happens inside the
+    launcher script.
+    """
+    if script != "install_generation.js":
+        return {"ok": False, "error": "unsupported synchronous maintenance script"}
+    error = _is_controllable(studio)
+    if error:
+        return {"ok": False, "error": error}
+    app_dir = resolve_app_dir(studio)
+    script_path = app_dir / script
+    try:
+        resolved_root = app_dir.resolve(strict=True)
+        resolved_script = script_path.resolve(strict=True)
+    except OSError:
+        return {"ok": False, "error": f"{script} is unavailable for {studio['id']}"}
+    if script_path.is_symlink() or not script_path.is_file() or resolved_script.parent != resolved_root:
+        return {"ok": False, "error": f"untrusted {script} for {studio['id']}"}
+    pterm = find_pterm()
+    if pterm is None:
+        return {"ok": False, "error": "pterm CLI not found"}
+    try:
+        result = subprocess.run(
+            pterm_command(pterm, "start", script, f"{KERNEL}/api/{app_dir.name}"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": f"{script} timed out after {int(timeout // 60)} minutes"}
+    except OSError as exc:
+        return {"ok": False, "error": f"failed to run {script}: {exc}"}
+    output = (result.stdout or "").strip()
+    if result.returncode != 0:
+        return {"ok": False, "error": (output or f"{script} failed")[-500:]}
+    if "GEN_VERIFY_OK" not in output:
+        return {"ok": False, "error": f"{script} finished without generation verification"}
+    return {"ok": True, "script": script, "studio": studio["id"], "verified": True}

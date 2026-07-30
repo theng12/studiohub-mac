@@ -143,3 +143,20 @@ def test_dashboard_exposes_fleet_startup_controls():
     assert "function loadStartupServices()" in dashboard
     assert "function installStartupService(" in dashboard
     assert "function installMissingStartupServices()" in dashboard
+
+
+def test_generation_install_api_is_a_separate_explicit_fleet_job(authed, monkeypatch):
+    called = []
+
+    def start_generation(monitor, studio_ids, *, local_only=False):
+        called.append((studio_ids, local_only))
+        return {"id": "generation-1", "status": "queued", "items": []}
+
+    monkeypatch.setattr(fleet_ops, "start_generation_installs", start_generation)
+    response = authed.post("/api/hub/maintenance/generation-installs", json={})
+    assert response.status_code == 200
+    assert called == [(None, False)]
+
+    dashboard = (Path(__file__).parents[1] / "frontend" / "index.html").read_text()
+    assert 'id="generation-install-all"' in dashboard
+    assert "startGenerationInstall()" in dashboard

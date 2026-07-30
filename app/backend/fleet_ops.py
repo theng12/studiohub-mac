@@ -14,7 +14,7 @@ import json
 
 from . import broker, peers
 from .control import (PINOKIO_HOME, control_studio, resolve_app_dir,
-                      run_hub_script, run_studio_script)
+                      run_hub_script, run_studio_script, run_studio_script_sync)
 from .registry import DATA_DIR, base_url
 from .resources import host_stats
 
@@ -27,6 +27,8 @@ UPDATE_TIMEOUT = 20 * 60
 UPDATE_START_TIMEOUT = 3 * 60
 REMOTE_STATUS_SILENCE_TIMEOUT = 3 * 60
 DRAIN_TIMEOUT = 30 * 60
+GENERATION_INSTALL_TIMEOUT = 45 * 60
+GENERATION_MODALITIES = {"voice", "image", "music", "chat", "video"}
 
 # Studio Hub watches the repositories itself instead of waiting for each
 # Studio's scheduled updater. Branch-named raw URLs can be stale after a push,
@@ -53,6 +55,7 @@ _preflight = {"ran_at": None, "status": "never", "studios": []}
 _studio_versions = {"checked_at": None, "studios": []}
 _updates: dict[str, dict] = {}
 _hub_updates: dict[str, dict] = {}
+_generation_installs: dict[str, dict] = {}
 # machine -> {version, checked_at, host, reachable, chip, total_memory_gb}:
 # last-known peer Hub versions and hardware identity.
 _hub_versions: dict[str, dict] = {}
@@ -64,13 +67,14 @@ def _save_state() -> None:
             {"studio_versions": _studio_versions,
              "hub_versions": _hub_versions,
              "updates": _updates,
-             "hub_updates": _hub_updates}, indent=2) + "\n")
+             "hub_updates": _hub_updates,
+             "generation_installs": _generation_installs}, indent=2) + "\n")
     except OSError:
         pass
 
 
 def _load_state() -> None:
-    global _preflight, _studio_versions, _hub_versions, _updates, _hub_updates
+    global _preflight, _studio_versions, _hub_versions, _updates, _hub_updates, _generation_installs
     try:
         d = json.loads(_STATE_FILE.read_text())
         if isinstance(d.get("studio_versions"), dict):
@@ -95,9 +99,11 @@ def _load_state() -> None:
             _updates = d["updates"]
         if isinstance(d.get("hub_updates"), dict):
             _hub_updates = d["hub_updates"]
+        if isinstance(d.get("generation_installs"), dict):
+            _generation_installs = d["generation_installs"]
         # Preserve interrupted operations for diagnosis instead of letting them
         # vanish or remain falsely "running" forever after a Hub restart.
-        for job in [*_updates.values(), *_hub_updates.values()]:
+        for job in [*_updates.values(), *_hub_updates.values(), *_generation_installs.values()]:
             if job.get("status") not in {"queued", "running"}:
                 continue
             job.update(status="failed", finished_at=time.time(),
@@ -838,6 +844,160 @@ def update_snapshot(job_id: str | None = None):
     return sorted(_updates.values(), key=lambda j: j["created_at"], reverse=True)[:20]
 
 
+# ── Generation dependency installs ─────────────────────────────────────────
+# This is intentionally a separate operation from normal Studio updates. A
+# generation reinstall can download several gigabytes and restart a Studio;
+# users must opt into it explicitly, while the Hub still drains active work.
+
+def start_generation_installs(monitor, studio_ids: list[str] | None = None,
+                              *, local_only: bool = False) -> dict:
+    active = next((j for j in _generation_installs.values()
+                   if j["status"] in {"queued", "running"}), None)
+    if active:
+        raise ValueError(f"generation install {active['id']} is already running")
+    known = {s["id"] for s in monitor.registry}
+    ids = list(dict.fromkeys(studio_ids or []))
+    if ids:
+        missing = [sid for sid in ids if sid not in known]
+        if missing:
+            raise ValueError(f"unknown studios: {', '.join(missing)}")
+    targets = [s for s in monitor.registry
+               if s.get("modality") in GENERATION_MODALITIES
+               and (not local_only or s.get("machine", "local") == "local")
+               and (not ids or s["id"] in ids)]
+    if not targets:
+        raise ValueError("no sibling Studios with generation installers are registered")
+    if len(_generation_installs) >= 50:
+        for old in sorted(
+            (j for j in _generation_installs.values()
+             if j["status"] not in {"queued", "running"}),
+            key=lambda j: j["created_at"],
+        )[:max(1, len(_generation_installs) - 49)]:
+            _generation_installs.pop(old["id"], None)
+    job = {
+        "id": uuid.uuid4().hex[:10],
+        "kind": "generation",
+        "status": "queued",
+        "created_at": time.time(),
+        "finished_at": None,
+        "local_only": local_only,
+        "items": [{
+            "studio": s["id"], "machine": s.get("machine", "local"),
+            "modality": s.get("modality"), "status": "queued",
+            "detail": "waiting",
+        } for s in targets],
+    }
+    _generation_installs[job["id"]] = job
+    _save_state()
+    asyncio.create_task(_run_generation_installs(monitor, job))
+    return job
+
+
+async def _run_generation_installs(monitor, job: dict) -> None:
+    job["status"] = "running"
+    _save_state()
+    # One install at a time on each Mac, while independent Macs can proceed in
+    # parallel. This avoids competing ML/PyTorch package writes locally while
+    # still making a fleet-wide action fast.
+    groups: dict[str, list[dict]] = {}
+    for item in job["items"]:
+        groups.setdefault(str(item.get("machine") or "local"), []).append(item)
+
+    async def run_group(items: list[dict]) -> None:
+        for item in items:
+            studio = next((s for s in monitor.registry
+                           if s["id"] == item["studio"]), None)
+            if studio is None:
+                item.update(status="failed", detail="Studio was removed from the registry",
+                            finished_at=time.time())
+                _save_state()
+                continue
+            try:
+                await _generation_one(studio, item)
+            except Exception as exc:
+                item.update(status="failed", detail=str(exc)[:240], finished_at=time.time())
+            _save_state()
+
+    await asyncio.gather(*(run_group(items) for items in groups.values()))
+    job["status"] = "failed" if any(i["status"] == "failed" for i in job["items"]) else "complete"
+    job["finished_at"] = time.time()
+    _save_state()
+
+
+async def _generation_one(studio: dict, item: dict) -> None:
+    sid = studio["id"]
+    item.update(status="draining", detail="waiting for active work to finish",
+                started_at=time.time())
+    broker.set_maintenance(sid, True)
+    try:
+        deadline = time.monotonic() + DRAIN_TIMEOUT
+        while studio_has_active_work(sid):
+            if time.monotonic() >= deadline:
+                raise RuntimeError("drain timed out; generation install was not started")
+            await asyncio.sleep(2)
+        if studio.get("machine", "local") == "local":
+            item.update(status="installing", detail="running Install/Reinstall Generation")
+            result = await asyncio.to_thread(
+                run_studio_script_sync, studio, "install_generation.js",
+                timeout=GENERATION_INSTALL_TIMEOUT,
+            )
+            if not result.get("ok"):
+                raise RuntimeError(result.get("error", "generation install failed"))
+            item.update(status="complete", detail="generation dependencies verified and Studio restarted",
+                        finished_at=time.time())
+            return
+        item.update(status="installing", detail="asking the machine's Hub to install generation")
+        async with _client_for_generation() as client:
+            result = await peers.install_remote_generation(client, studio)
+        if not result.get("ok"):
+            raise RuntimeError(result.get("error", "remote generation install could not start"))
+        remote_job = result.get("job") or {}
+        remote_id = remote_job.get("id")
+        if not remote_id:
+            raise RuntimeError("remote Hub did not return a generation job id")
+        item["remote_job_id"] = remote_id
+        await _wait_remote_generation(studio, item, remote_id)
+    finally:
+        broker.set_maintenance(sid, False)
+
+
+def _client_for_generation():
+    """Small client factory kept separate so tests can replace peer calls."""
+    return httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=8.0))
+
+
+async def _wait_remote_generation(studio: dict, item: dict, remote_id: str) -> None:
+    url = f"http://{studio['host']}:{studio.get('hub_port', peers.DEFAULT_HUB_PORT)}"
+    token = peers._peer_token(studio)
+    deadline = time.monotonic() + GENERATION_INSTALL_TIMEOUT
+    async with _client_for_generation() as client:
+        while time.monotonic() < deadline:
+            await asyncio.sleep(4)
+            response = await client.get(
+                f"{url}/api/hub/maintenance/generation-installs/{remote_id}",
+                headers={"X-Hub-Token": token or ""},
+            )
+            if response.status_code >= 400:
+                raise RuntimeError(f"remote generation status returned HTTP {response.status_code}")
+            data = response.json()
+            remote_item = (data.get("items") or [{}])[0]
+            item.update(status=remote_item.get("status", "checking"),
+                        detail=remote_item.get("detail", "checking remote generation install"))
+            if data.get("status") == "complete":
+                item.update(status="complete", detail="remote generation dependencies verified and Studio restarted",
+                            finished_at=time.time())
+                return
+            if data.get("status") == "failed":
+                raise RuntimeError(remote_item.get("detail", "remote generation install failed"))
+    raise RuntimeError("remote generation install timed out")
+
+
+def generation_install_snapshot(job_id: str | None = None):
+    if job_id:
+        return _generation_installs.get(job_id)
+    return sorted(_generation_installs.values(), key=lambda j: j["created_at"], reverse=True)[:20]
+
+
 # ── Fleet Hub self-update ───────────────────────────────────────────────────
 # The studio updates above cover studios (registry entries). The HUB itself is
 # not a studio, so to update the Studio Hub on the agent Macs the primary tells
@@ -1011,6 +1171,8 @@ def hub_update_blockers() -> list[str]:
         reasons.append("a rolling Studio update is active")
     if any(job["status"] in {"queued", "running"} for job in _hub_updates.values()):
         reasons.append("an agent Hub update is active")
+    if any(job["status"] in {"queued", "running"} for job in _generation_installs.values()):
+        reasons.append("a generation dependency install is active")
     if _active_studio_leases():
         reasons.append("a fleet worker owns an active lease")
     generation_active = any(

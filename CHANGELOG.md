@@ -10,6 +10,25 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.67.0] — 2026-07-30
+
+### Added
+
+- Added a durable **Reinstall generation everywhere** Hub action for the five
+  sibling Studios that provide generation installers.
+- Remote Hubs now execute their own trusted installer and return a job that the
+  requesting Hub can monitor; package installation never runs on the wrong Mac
+  or through GenStudio.
+
+### Safety
+
+- Installs drain active Hub work first, run serially per Mac, run in parallel
+  across independent Macs, verify the installer’s `GEN_VERIFY_OK` result, and
+  report unreachable or failed targets instead of claiming success.
+- Normal Studio and Hub updates remain unchanged; generation reinstall is an
+  explicit action because it may download large dependencies and restart a
+  Studio.
+
 ## [1.66.0] — 2026-07-30
 
 ### Added — durable Fish Audio S2 Pro fleet distribution

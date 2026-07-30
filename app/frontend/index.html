@@ -942,6 +942,17 @@
     </div>
 
     <div class="card section">
+      <div class="top"><span class="emoji">🧰</span><h3>Generation dependencies across the fleet</h3>
+        <span style="margin-left:auto"></span>
+        <button class="btn primary" id="generation-install-all" onclick="startGenerationInstall()">Reinstall generation everywhere</button>
+      </div>
+      <p class="muted" style="font-size:13px;margin-bottom:10px">
+        Runs each sibling Studio's trusted <b>Install/Reinstall Generation</b> action on every registered Mac through that Mac's own Hub. Installs are serial per Mac, parallel across independent Macs, drain active Hub work first, and report offline or failed machines without claiming success.
+      </p>
+      <div id="generation-install-status" class="update-progress" role="status" aria-live="polite"><div class="update-progress-detail">No fleet generation install has been started.</div></div>
+    </div>
+
+    <div class="card section">
       <div class="top"><span class="emoji">🔄</span><h3>Studio updates</h3>
         <span style="margin-left:auto"></span>
         <button class="btn" id="su-rescan" onclick="rescanStudioVersions()">↻&nbsp; Rescan versions</button>
@@ -1103,6 +1114,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.67.0", date: "2026-07-30", items: [
+    "Added one-click Reinstall generation everywhere for all registered sibling Studios.",
+    "Generation installs run through each Mac's own Hub, drain active work, verify GEN_VERIFY_OK, and report offline or failed targets honestly.",
+  ]},
   { v: "1.66.0", date: "2026-07-30", items: [
     "The persistent Voice Studio model baseline now includes Fish Audio S2 Pro 8-bit alongside Whisper Tiny, Kokoro 82M, and VibeVoice Realtime 0.5B 4-bit.",
     "GenStudio maintenance distributes Fish to reachable Voice Studios and leaves offline machines in the site controller's automatic retry queue.",
@@ -4180,6 +4195,8 @@ let maintenanceBusy = false;
 let lastStudioVersionData = null;
 let studioUpdateJob = null;
 let maintenancePollTimer = null;
+let generationInstallJob = null;
+let generationInstallBusy = false;
 let studioUpdateApp = localStorage.getItem("studio_update_app") || "all";
 function studioAppKey(row) { return row.modality || String(row.id || "").split("@")[0]; }
 function filterStudioApp(rows) { return studioUpdateApp === "all" ? rows : rows.filter(r => studioAppKey(r) === studioUpdateApp); }
@@ -4209,6 +4226,49 @@ function _updateItemName(item, kind) {
   if (kind === "hub") return mlabel(item.machine);
   const row = studioVersionRows.find(r => r.id === item.studio);
   return row ? `${row.title} on ${mlabel(row.machine)}` : item.studio;
+}
+function renderGenerationInstall(job) {
+  const status = $("#generation-install-status"), button = $("#generation-install-all");
+  if (!status || !button) return;
+  generationInstallJob = job || null;
+  if (!job || !Array.isArray(job.items) || !job.items.length) {
+    generationInstallBusy = false; button.disabled = false; button.removeAttribute("aria-busy");
+    status.className = "update-progress";
+    status.innerHTML = `<div class="update-progress-detail">No fleet generation install has been started.</div>`;
+    return;
+  }
+  generationInstallBusy = ["queued", "running"].includes(job.status);
+  button.disabled = generationInstallBusy;
+  button.setAttribute("aria-busy", generationInstallBusy ? "true" : "false");
+  button.textContent = generationInstallBusy ? "Installing generation…" : "Reinstall generation everywhere";
+  const done = job.items.filter(item => ["complete", "failed"].includes(item.status)).length;
+  const failed = job.items.filter(item => item.status === "failed").length;
+  const active = job.items.find(item => !["complete", "failed"].includes(item.status));
+  const title = generationInstallBusy ? "Installing generation dependencies" :
+    failed ? `Generation install finished with ${failed} failure${failed === 1 ? "" : "s"}` : "Generation dependencies verified";
+  const detail = active && generationInstallBusy
+    ? `${_updateItemName(active, "generation")} · ${active.detail || active.status || "waiting"}`
+    : failed ? `${done - failed} succeeded · ${failed} failed. Offline or failed Macs can be retried after they are reachable.`
+    : `All ${job.items.length} selected Studio environments finished successfully.`;
+  status.className = `update-progress${generationInstallBusy ? "" : failed ? " error" : " success"}`;
+  status.innerHTML = `<div class="update-progress-head"><span class="update-progress-title">${generationInstallBusy ? "↻ " : failed ? "! " : "✓ "}${esc(title)}</span><span class="update-progress-count">${done}/${job.items.length} finished</span></div><div class="bar"><i style="width:${Math.round(done / job.items.length * 100)}%"></i></div><div class="update-progress-detail">${esc(detail)}</div>`;
+}
+async function startGenerationInstall() {
+  if (generationInstallBusy || !confirm("Reinstall generation dependencies for every registered sibling Studio?\nEach Mac runs its own trusted installer. Active Hub work drains first; Studios may restart and large downloads may begin.")) return;
+  const button = $("#generation-install-all"), status = $("#generation-install-status");
+  button.disabled = true; button.setAttribute("aria-busy", "true"); button.textContent = "Starting generation install…";
+  status.className = "update-progress";
+  status.innerHTML = `<div class="update-progress-title">↻ Starting fleet generation installation…</div><div class="update-progress-detail">The Hub will install one Studio at a time per Mac.</div>`;
+  const response = await api("/api/hub/maintenance/generation-installs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }).catch(() => null);
+  const data = response ? await response.json().catch(() => ({})) : {};
+  if (!response?.ok) {
+    generationInstallBusy = false; button.disabled = false; button.removeAttribute("aria-busy"); button.textContent = "Reinstall generation everywhere";
+    status.className = "update-progress error";
+    status.innerHTML = `<div class="update-progress-title">! Generation install could not start</div><div class="update-progress-detail">${esc(data.detail || "Try again.")}</div>`;
+    return;
+  }
+  renderGenerationInstall(data);
+  scheduleMaintenancePoll();
 }
 function renderUpdateProgress(el, job, kind) {
   if (!el || !job || !Array.isArray(job.items) || !job.items.length) { if (el) el.classList.add("hide"); return; }
@@ -4285,11 +4345,12 @@ function renderStudioUpdates(data) {
   }
 }
 async function loadMaintenance() {
-  const [studioVersions, jobs, hubJobs, hubVers] = await Promise.all([
+  const [studioVersions, jobs, hubJobs, hubVers, generationJobs] = await Promise.all([
     api("/api/hub/maintenance/studio-versions").then(r => r.json()).catch(() => null),
     api("/api/hub/maintenance/updates").then(r => r.json()).catch(() => null),
     api("/api/hub/maintenance/hub-updates").then(r => r.json()).catch(() => null),
-    api("/api/hub/maintenance/hub-versions").then(r => r.json()).catch(() => null)
+    api("/api/hub/maintenance/hub-versions").then(r => r.json()).catch(() => null),
+    api("/api/hub/maintenance/generation-installs").then(r => r.json()).catch(() => null)
   ]);
   const latest = jobs && jobs.updates && jobs.updates[0];
   studioUpdateJob = latest || studioUpdateJob;
@@ -4303,7 +4364,10 @@ async function loadMaintenance() {
     const hubRun = $("#hubupd-run"); if (hubRun) { hubRun.removeAttribute("aria-busy"); hubRun.textContent = "Update ready Hubs"; }
     if (hubVers) renderHubVersions(hubVers, hubLatest);      // persistent version table + last result
   }
-  if (maintenanceBusy || hubJobRunning) scheduleMaintenancePoll();
+  const generationLatest = generationJobs && generationJobs.installs && generationJobs.installs[0];
+  const generationJobRunning = generationLatest && ["queued", "running"].includes(generationLatest.status);
+  if (generationLatest) renderGenerationInstall(generationLatest);
+  if (maintenanceBusy || hubJobRunning || generationJobRunning) scheduleMaintenancePoll();
 }
 async function rescanStudioVersions() {
   if (maintenanceBusy) return;

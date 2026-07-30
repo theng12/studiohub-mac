@@ -50,6 +50,11 @@ class UpdateRequest(BaseModel):
     studio_ids: list[str] = Field(min_length=1, max_length=100)
 
 
+class GenerationInstallRequest(BaseModel):
+    studio_ids: list[str] | None = Field(default=None, max_length=100)
+    local_only: bool = False
+
+
 class AutoUpdateSettingsBody(BaseModel):
     mode: str
     frequency: str
@@ -2387,6 +2392,35 @@ def get_fleet_update(job_id: str):
     job = fleet_ops.update_snapshot(job_id)
     if not job:
         raise HTTPException(404, "unknown update")
+    return job
+
+
+@app.get("/api/hub/maintenance/generation-installs")
+def list_generation_installs():
+    return {"installs": fleet_ops.generation_install_snapshot()}
+
+
+@app.post("/api/hub/maintenance/generation-installs")
+async def start_generation_installs_route(body: GenerationInstallRequest):
+    """Explicitly reinstall generation dependencies across sibling Studios.
+
+    The Hub starts one trusted ``install_generation.js`` per machine and
+    reports a durable job.  ``local_only`` is used by a peer Hub request so a
+    primary Hub never causes recursive fleet fan-out.
+    """
+    try:
+        return fleet_ops.start_generation_installs(
+            monitor, body.studio_ids, local_only=body.local_only,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.get("/api/hub/maintenance/generation-installs/{job_id}")
+def get_generation_install(job_id: str):
+    job = fleet_ops.generation_install_snapshot(job_id)
+    if not job:
+        raise HTTPException(404, "unknown generation install")
     return job
 
 
