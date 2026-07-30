@@ -351,7 +351,7 @@
     <div class="card jform section">
       <div class="top"><span class="emoji">🪶</span><h3>Required Voice Studio model baseline</h3><span id="baseline-state" class="pill">Loading</span></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        Keeps <b>Whisper Tiny</b>, <b>Kokoro 82M</b>, and <b>VibeVoice Realtime 0.5B 4-bit</b> cached on every registered Voice Studio. Offline Macs stay pending and each site controller installs anything missing when they return. Image, Chat, and Render workers do not receive these voice models.
+        Keeps <b>Whisper Tiny</b>, <b>Kokoro 82M</b>, <b>VibeVoice Realtime 0.5B 4-bit</b>, and <b>Fish Audio S2 Pro 8-bit</b> cached on every registered Voice Studio. Offline Macs stay pending and each site controller installs anything missing when they return. Image, Chat, and Render workers do not receive these voice models.
       </p>
       <div class="actions" style="align-items:center">
         <label class="wd"><input id="baseline-enabled" type="checkbox" onchange="saveModelBaseline()"> keep installed automatically</label>
@@ -1103,8 +1103,12 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.66.0", date: "2026-07-30", items: [
+    "The persistent Voice Studio model baseline now includes Fish Audio S2 Pro 8-bit alongside Whisper Tiny, Kokoro 82M, and VibeVoice Realtime 0.5B 4-bit.",
+    "GenStudio maintenance distributes Fish to reachable Voice Studios and leaves offline machines in the site controller's automatic retry queue.",
+  ]},
   { v: "1.65.0", date: "2026-07-27", items: [
-    "The persistent Voice Studio model baseline now keeps Whisper Tiny, Kokoro 82M, and VibeVoice Realtime 0.5B 4-bit installed across every registered Voice Mac.",
+    "The persistent Voice Studio model baseline now keeps Whisper Tiny, Kokoro 82M, VibeVoice Realtime 0.5B 4-bit, and Fish Audio S2 Pro 8-bit installed across every registered Voice Mac.",
     "Offline Macs remain pending and automatically download anything missing after they reconnect; each model and machine has its own truthful state.",
   ]},
   { v: "1.64.3", date: "2026-07-27", items: [

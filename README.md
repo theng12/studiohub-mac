@@ -284,7 +284,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/metrics?minutes=60` | Time-series (host memory/CPU + per-studio RSS, 15s samples, 24h) |
 | `GET /api/hub/watchdog` · `POST /api/hub/studios/{id}/watchdog` | Auto-restart-if-down per studio (`{"enabled": true}`; 2-min cooldown, auto-off after 5 failed revives) |
 | `POST /api/hub/broadcast/download` | `{repo, studios?}` — start the same model download on many studios |
-| `GET` / `POST /api/hub/model-baselines` | Read or enable the site-local required-model baseline for Voice Studio workers: Whisper Tiny, Kokoro 82M, and VibeVoice Realtime 0.5B 4-bit |
+| `GET` / `POST /api/hub/model-baselines` | Read or enable the site-local required-model baseline for Voice Studio workers: Whisper Tiny, Kokoro 82M, VibeVoice Realtime 0.5B 4-bit, and Fish Audio S2 Pro 8-bit |
 | `POST /api/hub/model-baselines/reconcile` | Recheck every required model on every registered Voice Studio now; cache anything missing and retain offline model targets for automatic retry |
 | `POST /api/hub/broadcast/env` | `{key, value, studios?}` — set an env var in studios' ENVIRONMENT files (restart to apply) |
 | `POST /api/hub/jobs` | **Swarm Batch** — submit a batch (envelope below) |

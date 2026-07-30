@@ -22,6 +22,7 @@ from . import peers
 WHISPER_TINY_REPO = "mlx-community/whisper-tiny"
 KOKORO_REPO = "mlx-community/Kokoro-82M-bf16"
 VIBEVOICE_REPO = "mlx-community/VibeVoice-Realtime-0.5B-4bit"
+FISH_AUDIO_REPO = "mlx-community/fish-audio-s2-pro-8bit"
 REQUIRED_MODELS = (
     {
         "repo": WHISPER_TINY_REPO,
@@ -42,6 +43,13 @@ REQUIRED_MODELS = (
         "label": "VibeVoice Realtime 0.5B 4-bit",
         "size_gb": 0.9,
         "purpose": "long-form streaming TTS",
+        "inventory": "catalog",
+    },
+    {
+        "repo": FISH_AUDIO_REPO,
+        "label": "Fish Audio S2 Pro 8-bit",
+        "size_gb": 6.73,
+        "purpose": "high-fidelity voice cloning TTS",
         "inventory": "catalog",
     },
 )

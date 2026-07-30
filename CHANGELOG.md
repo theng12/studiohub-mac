@@ -10,6 +10,32 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.66.0] — 2026-07-30
+
+### Added — durable Fish Audio S2 Pro fleet distribution
+
+- The site-local Voice Studio model baseline now includes the 8-bit Fish Audio
+  S2 Pro model (`mlx-community/fish-audio-s2-pro-8bit`).
+- GenStudio's existing per-location maintenance path now causes each Hub to
+  reconcile Fish on every registered Voice Studio: reachable workers start a
+  download immediately, while offline workers remain recorded for automatic
+  retry after reconnecting.
+- Fish is kept out of Image, Chat, Music, Video, and Render workers.
+
+### Safety
+
+- This change distributes and queues the model only; it does not change
+  GenStudio routing, billing, customer accounts, job ownership, or Studio Hub
+  authority.
+- Fish Audio S2 Pro 8-bit is a large model with a 24 GB runtime-memory floor;
+  machines below that floor may cache the files but remain ineligible for
+  generation.
+
+### Verification
+
+- Extended baseline endpoint, missing-model, cached-model, and offline-retry
+  coverage to four required models.
+
 ## [1.65.0] — 2026-07-27
 
 ### Added — persistent required Voice Studio models
