@@ -1114,6 +1114,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.68.0", date: "2026-08-01", items: [
+    "Added Whisper Large v3 Turbo, Chatterbox 4-bit, and the supported OmniVoice bf16 checkpoint to the Voice Studio stock baseline.",
+    "Each worker/model target now shows its memory requirement and marks known low-memory machines ineligible instead of retrying forever.",
+    "Live memory telemetry takes precedence over a stale hardware profile; existing Hugging Face partial downloads remain reusable.",
+  ]},
   { v: "1.67.1", date: "2026-07-30", items: [
     "Required Voice Studio models that safely repair stale Hugging Face partial files now immediately show as ready, rather than appearing as another queued download.",
     "Active partial model downloads remain resumable and are never removed or interrupted by the baseline check.",

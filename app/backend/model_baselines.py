@@ -16,13 +16,16 @@ from typing import Any
 
 import httpx
 
-from . import peers
+from . import hardware_profiles, peers
 
 
 WHISPER_TINY_REPO = "mlx-community/whisper-tiny"
+WHISPER_LARGE_REPO = "mlx-community/whisper-large-v3-turbo"
 KOKORO_REPO = "mlx-community/Kokoro-82M-bf16"
 VIBEVOICE_REPO = "mlx-community/VibeVoice-Realtime-0.5B-4bit"
 FISH_AUDIO_REPO = "mlx-community/fish-audio-s2-pro-8bit"
+CHATTERBOX_REPO = "mlx-community/chatterbox-4bit"
+OMNIVOICE_REPO = "mlx-community/OmniVoice-bfloat16"
 REQUIRED_MODELS = (
     {
         "repo": WHISPER_TINY_REPO,
@@ -30,6 +33,15 @@ REQUIRED_MODELS = (
         "size_gb": 0.07,
         "purpose": "transcription",
         "inventory": "transcription",
+        "min_unified_memory_gb": 8,
+    },
+    {
+        "repo": WHISPER_LARGE_REPO,
+        "label": "Whisper Large v3 Turbo",
+        "size_gb": 1.6,
+        "purpose": "higher-accuracy transcription",
+        "inventory": "transcription",
+        "min_unified_memory_gb": 8,
     },
     {
         "repo": KOKORO_REPO,
@@ -37,6 +49,7 @@ REQUIRED_MODELS = (
         "size_gb": 0.34,
         "purpose": "fast fixed-voice TTS",
         "inventory": "catalog",
+        "min_unified_memory_gb": 8,
     },
     {
         "repo": VIBEVOICE_REPO,
@@ -44,6 +57,7 @@ REQUIRED_MODELS = (
         "size_gb": 0.9,
         "purpose": "long-form streaming TTS",
         "inventory": "catalog",
+        "min_unified_memory_gb": 8,
     },
     {
         "repo": FISH_AUDIO_REPO,
@@ -51,6 +65,23 @@ REQUIRED_MODELS = (
         "size_gb": 6.73,
         "purpose": "high-fidelity voice cloning TTS",
         "inventory": "catalog",
+        "min_unified_memory_gb": 24,
+    },
+    {
+        "repo": CHATTERBOX_REPO,
+        "label": "Chatterbox 4-bit",
+        "size_gb": 0.6,
+        "purpose": "expressive voice-cloning TTS test",
+        "inventory": "catalog",
+        "min_unified_memory_gb": 8,
+    },
+    {
+        "repo": OMNIVOICE_REPO,
+        "label": "OmniVoice 0.6B bf16",
+        "size_gb": 2.0,
+        "purpose": "multilingual voice-cloning TTS test",
+        "inventory": "catalog",
+        "min_unified_memory_gb": 16,
     },
 )
 DEFAULT_RECONCILE_SECONDS = 15 * 60
@@ -146,6 +177,36 @@ class FleetModelBaselines:
     def _target_key(studio_id: str, repo: str) -> str:
         return f"{studio_id}::{repo}"
 
+    def _machine_memory(self, studio: dict[str, Any]) -> tuple[float | None, str]:
+        """Return the best known memory figure without inventing one.
+
+        Live worker telemetry wins over the reusable profile because a profile
+        can be stale after a machine replacement.  The profile remains the
+        fallback for workers that are offline or have not published health.
+        """
+        status = self.monitor.status.get(studio.get("id"), {})
+        health_memory = ((status.get("health") or {}).get("memory") or {})
+        observed = health_memory.get("total_gb")
+        if isinstance(observed, (int, float)) and observed > 0:
+            return float(observed), "live"
+        profile = hardware_profiles.machine_hardware_profile(
+            studio.get("machine", "local"))
+        configured = (profile or {}).get("memory_gb")
+        if isinstance(configured, (int, float)) and configured > 0:
+            return float(configured), "profile"
+        return None, "unknown"
+
+    def _eligibility(self, studio: dict[str, Any], model: dict[str, Any]) -> dict[str, Any]:
+        actual, source = self._machine_memory(studio)
+        required = float(model.get("min_unified_memory_gb") or 0)
+        eligible = actual is None or actual >= required
+        return {
+            "eligible": eligible,
+            "required_memory_gb": required or None,
+            "observed_memory_gb": actual,
+            "memory_source": source,
+        }
+
     def snapshot(self) -> dict[str, Any]:
         voice_targets = [
             studio for studio in self.monitor.registry
@@ -164,6 +225,13 @@ class FleetModelBaselines:
                     "model_repo": model["repo"],
                     "model_label": model["label"],
                 })
+                row.update(self._eligibility(studio, model))
+                if not row["eligible"]:
+                    row["state"] = "ineligible"
+                    row["detail"] = (
+                        f"Requires {model['min_unified_memory_gb']} GB unified memory; "
+                        f"machine reports {row['observed_memory_gb']:g} GB"
+                    )
                 row.setdefault("state", "unknown")
                 rows.append(row)
         return {
@@ -185,9 +253,11 @@ class FleetModelBaselines:
             "summary": {
                 "total": len(rows),
                 "cached": sum(row.get("state") == "cached" for row in rows),
+                "eligible_total": sum(bool(row.get("eligible", True)) for row in rows),
+                "ineligible": sum(row.get("state") == "ineligible" for row in rows),
                 "pending": sum(row.get("state") in {
                     "unknown", "offline", "queued", "running"
-                } for row in rows),
+                } and row.get("eligible", True) for row in rows),
                 "failed": sum(row.get("state") == "error" for row in rows),
             },
         }
@@ -211,9 +281,16 @@ class FleetModelBaselines:
         status = self.monitor.status.get(studio_id, {}).get("status")
         if status != "up":
             for model in REQUIRED_MODELS:
+                eligibility = self._eligibility(studio, model)
                 self.targets[self._target_key(studio_id, model["repo"])] = {
-                    "state": "offline",
-                    "detail": "Voice Studio is not reachable; retrying automatically",
+                    **eligibility,
+                    "state": "ineligible" if not eligibility["eligible"] else "offline",
+                    "detail": (
+                        f"Requires {model['min_unified_memory_gb']} GB unified memory; "
+                        f"machine reports {eligibility['observed_memory_gb']:g} GB"
+                        if not eligibility["eligible"] else
+                        "Voice Studio is not reachable; retrying automatically"
+                    ),
                     "checked_at": time.time(),
                 }
             return
@@ -239,6 +316,18 @@ class FleetModelBaselines:
         for required in REQUIRED_MODELS:
             repo = required["repo"]
             key = self._target_key(studio_id, repo)
+            eligibility = self._eligibility(studio, required)
+            if not eligibility["eligible"]:
+                self.targets[key] = {
+                    **eligibility,
+                    "state": "ineligible",
+                    "detail": (
+                        f"Requires {required['min_unified_memory_gb']} GB unified memory; "
+                        f"machine reports {eligibility['observed_memory_gb']:g} GB"
+                    ),
+                    "checked_at": time.time(),
+                }
+                continue
             model = next((
                 row for row in inventories[required["inventory"]]
                 if row.get("repo") == repo
@@ -253,6 +342,7 @@ class FleetModelBaselines:
             )
             if cached:
                 self.targets[key] = {
+                    **eligibility,
                     "state": "cached",
                     "detail": f"{required['label']} is ready",
                     "checked_at": time.time(),
@@ -269,6 +359,7 @@ class FleetModelBaselines:
                     payload = response.json()
                 if isinstance(payload, dict) and payload.get("already_cached"):
                     self.targets[key] = {
+                        **eligibility,
                         "state": "cached",
                         "detail": f"{required['label']} is ready",
                         "checked_at": time.time(),
@@ -277,6 +368,7 @@ class FleetModelBaselines:
                 job = payload.get("job") if isinstance(payload, dict) else None
                 state = str((job or {}).get("state") or "queued")
                 self.targets[key] = {
+                    **eligibility,
                     "state": state,
                     "detail": f"{required['label']} download accepted",
                     "job_id": (job or {}).get("id"),
@@ -284,6 +376,7 @@ class FleetModelBaselines:
                 }
             except (httpx.HTTPError, ValueError, TypeError, OSError) as exc:
                 self.targets[key] = {
+                    **eligibility,
                     "state": "error",
                     "detail": (str(exc).strip() or type(exc).__name__)[:220],
                     "checked_at": time.time(),

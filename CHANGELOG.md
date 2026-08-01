@@ -10,6 +10,29 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.68.0] — 2026-08-01
+
+### Added — complete Voice Studio test baseline
+
+- Added Whisper Large v3 Turbo alongside Whisper Tiny, plus the requested
+  Kokoro, VibeVoice Realtime, Fish Audio S2 Pro 8-bit, Chatterbox 4-bit, and
+  supported OmniVoice bf16 checkpoints to the site-local Voice Studio stock
+  list.
+- Each worker/model target now records its memory requirement and eligibility.
+  Known workers below a model's unified-memory floor are shown as
+  **ineligible** instead of being placed into an endless download queue; all
+  eligible targets continue to retry automatically.
+- Live worker memory telemetry takes precedence over a stale configured
+  hardware profile, with the profile retained as the offline fallback.
+
+### Notes
+
+- OmniVoice uses the supported `OmniVoice-bfloat16` checkpoint. The published
+  compact row-wise 4-bit/8-bit conversions still require upstream MLX-Audio
+  loader support; adding a Python package alone would not make them runnable.
+- Existing Hugging Face partials remain untouched and are reused by Voice
+  Studio 1.23.3 when a target is retried.
+
 ## [1.67.1] — 2026-07-30
 
 ### Fixed — truthful completed model-baseline state

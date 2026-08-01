@@ -12,10 +12,12 @@ def test_model_baseline_runtime_state_is_ignored_by_git() -> None:
     assert "model_baselines.json" in ignored
 
 
-def _voice(studio_id: str, machine: str = "local") -> dict:
+def _voice(studio_id: str, machine: str = "test-machine") -> dict:
     return {
         "id": studio_id,
         "modality": "voice",
+        # Keep the fixture unassigned so model eligibility is determined as
+        # unknown/eligible; production workers publish a profile or live RAM.
         "machine": machine,
         "host": "127.0.0.1",
         "port": 47870,
@@ -31,9 +33,12 @@ def test_model_baseline_endpoint_is_authenticated_and_scoped(authed, client):
     assert payload["scope"] == "all registered Voice Studio workers"
     assert [row["repo"] for row in payload["models"]] == [
         model_baselines.WHISPER_TINY_REPO,
+        model_baselines.WHISPER_LARGE_REPO,
         model_baselines.KOKORO_REPO,
         model_baselines.VIBEVOICE_REPO,
         model_baselines.FISH_AUDIO_REPO,
+        model_baselines.CHATTERBOX_REPO,
+        model_baselines.OMNIVOICE_REPO,
     ]
 
 
@@ -44,14 +49,18 @@ async def test_reconcile_skips_non_voice_and_accepts_all_missing_models(monkeypa
     monitor.status = {"voice": {"status": "up"}, "image": {"status": "up"}}
 
     async def transcription(studio, force=False):
-        return {"models": [{"repo": model_baselines.WHISPER_TINY_REPO,
-                             "cached": False}]}
+        return {"models": [
+            {"repo": model_baselines.WHISPER_TINY_REPO, "cached": False},
+            {"repo": model_baselines.WHISPER_LARGE_REPO, "cached": False},
+        ]}
 
     async def catalog(studio, force=False):
         return {"models": [
             {"repo": model_baselines.KOKORO_REPO, "cache": {"state": "absent"}},
             {"repo": model_baselines.VIBEVOICE_REPO, "cache": {"state": "absent"}},
             {"repo": model_baselines.FISH_AUDIO_REPO, "cache": {"state": "absent"}},
+            {"repo": model_baselines.CHATTERBOX_REPO, "cache": {"state": "absent"}},
+            {"repo": model_baselines.OMNIVOICE_REPO, "cache": {"state": "absent"}},
         ]}
 
     class Response:
@@ -67,9 +76,12 @@ async def test_reconcile_skips_non_voice_and_accepts_all_missing_models(monkeypa
         async def post(self, *args, **kwargs):
             assert kwargs["json"]["repo"] in {
                 model_baselines.WHISPER_TINY_REPO,
+                model_baselines.WHISPER_LARGE_REPO,
                 model_baselines.KOKORO_REPO,
                 model_baselines.VIBEVOICE_REPO,
                 model_baselines.FISH_AUDIO_REPO,
+                model_baselines.CHATTERBOX_REPO,
+                model_baselines.OMNIVOICE_REPO,
             }
             return Response(kwargs["json"]["repo"])
 
@@ -82,12 +94,18 @@ async def test_reconcile_skips_non_voice_and_accepts_all_missing_models(monkeypa
     response = authed.post("/api/hub/model-baselines/reconcile")
     assert response.status_code == 200
     payload = response.json()
-    assert payload["summary"] == {"total": 4, "cached": 0, "pending": 4, "failed": 0}
+    assert payload["summary"] == {
+        "total": 7, "cached": 0, "eligible_total": 7, "ineligible": 0,
+        "pending": 7, "failed": 0,
+    }
     assert {row["model_repo"] for row in payload["targets"]} == {
         model_baselines.WHISPER_TINY_REPO,
+        model_baselines.WHISPER_LARGE_REPO,
         model_baselines.KOKORO_REPO,
         model_baselines.VIBEVOICE_REPO,
         model_baselines.FISH_AUDIO_REPO,
+        model_baselines.CHATTERBOX_REPO,
+        model_baselines.OMNIVOICE_REPO,
     }
     assert all(row["job_id"].startswith("download-") for row in payload["targets"])
 
@@ -98,14 +116,18 @@ async def test_reconcile_does_not_redownload_cached_models(monkeypatch, authed):
     monitor.status = {"voice": {"status": "up"}}
 
     async def transcription(studio, force=False):
-        return {"models": [{"repo": model_baselines.WHISPER_TINY_REPO,
-                             "cached": True}]}
+        return {"models": [
+            {"repo": model_baselines.WHISPER_TINY_REPO, "cached": True},
+            {"repo": model_baselines.WHISPER_LARGE_REPO, "cached": True},
+        ]}
 
     async def catalog(studio, force=False):
         return {"models": [
             {"repo": model_baselines.KOKORO_REPO, "cache": {"state": "cached"}},
             {"repo": model_baselines.VIBEVOICE_REPO, "cache": {"state": "cached"}},
             {"repo": model_baselines.FISH_AUDIO_REPO, "cache": {"state": "cached"}},
+            {"repo": model_baselines.CHATTERBOX_REPO, "cache": {"state": "cached"}},
+            {"repo": model_baselines.OMNIVOICE_REPO, "cache": {"state": "cached"}},
         ]}
 
     monkeypatch.setattr(monitor, "get_transcription", transcription)
@@ -115,7 +137,7 @@ async def test_reconcile_does_not_redownload_cached_models(monkeypatch, authed):
 
     response = authed.post("/api/hub/model-baselines/reconcile")
     assert response.status_code == 200
-    assert response.json()["summary"]["cached"] == 4
+    assert response.json()["summary"]["cached"] == 7
 
 
 @pytest.mark.asyncio
@@ -124,8 +146,10 @@ async def test_reconcile_records_a_safely_repaired_cache_as_ready(monkeypatch, a
     monitor.status = {"voice": {"status": "up"}}
 
     async def transcription(studio, force=False):
-        return {"models": [{"repo": model_baselines.WHISPER_TINY_REPO,
-                             "cached": True}]}
+        return {"models": [
+            {"repo": model_baselines.WHISPER_TINY_REPO, "cached": True},
+            {"repo": model_baselines.WHISPER_LARGE_REPO, "cached": True},
+        ]}
 
     async def catalog(studio, force=False):
         return {"models": [
@@ -133,6 +157,8 @@ async def test_reconcile_records_a_safely_repaired_cache_as_ready(monkeypatch, a
             # The worker may repair a stale HF partial during the POST.
             {"repo": model_baselines.VIBEVOICE_REPO, "cache": {"state": "partial"}},
             {"repo": model_baselines.FISH_AUDIO_REPO, "cache": {"state": "cached"}},
+            {"repo": model_baselines.CHATTERBOX_REPO, "cache": {"state": "cached"}},
+            {"repo": model_baselines.OMNIVOICE_REPO, "cache": {"state": "cached"}},
         ]}
 
     class Response:
@@ -163,6 +189,46 @@ async def test_reconcile_records_a_safely_repaired_cache_as_ready(monkeypatch, a
 
 
 @pytest.mark.asyncio
+async def test_reconcile_marks_high_memory_models_ineligible(monkeypatch, authed):
+    monitor.registry = [_voice("voice")]
+    monitor.status = {"voice": {"status": "up"}}
+
+    async def transcription(studio, force=False):
+        return {"models": []}
+
+    async def catalog(studio, force=False):
+        return {"models": []}
+
+    class Response:
+        def raise_for_status(self): return None
+        def json(self): return {"job": {"id": "download", "state": "queued"}}
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def post(self, *args, **kwargs): return Response()
+
+    monkeypatch.setattr(monitor, "get_transcription", transcription)
+    monkeypatch.setattr(monitor, "get_catalog", catalog)
+    monkeypatch.setattr(model_baselines.hardware_profiles,
+                        "machine_hardware_profile",
+                        lambda machine: {"memory_gb": 16})
+    monkeypatch.setattr(model_baselines.httpx, "AsyncClient", lambda **kwargs: Client())
+    monkeypatch.setattr(model_baselines.peers, "studio_request",
+                        lambda studio, path: ("http://voice/api/downloads", {}))
+
+    response = authed.post("/api/hub/model-baselines/reconcile")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["ineligible"] == 1
+    assert payload["summary"]["pending"] == 6
+    fish = next(row for row in payload["targets"]
+                if row["model_repo"] == model_baselines.FISH_AUDIO_REPO)
+    assert fish["state"] == "ineligible"
+    assert "24 GB" in fish["detail"]
+
+
+@pytest.mark.asyncio
 async def test_offline_voice_retains_every_required_model_for_retry(authed):
     monitor.registry = [_voice("voice@offline", machine="offline")]
     monitor.status = {"voice@offline": {"status": "down"}}
@@ -171,7 +237,10 @@ async def test_offline_voice_retains_every_required_model_for_retry(authed):
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["summary"] == {"total": 4, "cached": 0, "pending": 4, "failed": 0}
+    assert payload["summary"] == {
+        "total": 7, "cached": 0, "eligible_total": 7, "ineligible": 0,
+        "pending": 7, "failed": 0,
+    }
     assert {row["state"] for row in payload["targets"]} == {"offline"}
     assert all("retrying automatically" in row["detail"]
                for row in payload["targets"])
