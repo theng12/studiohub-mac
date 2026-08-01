@@ -477,6 +477,31 @@ async def test_local_update_accepts_null_monitor_health(monkeypatch, monitor, tm
 
 
 @pytest.mark.asyncio
+async def test_local_update_skips_when_running_release_is_already_current(
+        monkeypatch, monitor, tmp_path):
+    studio = dict(monitor.registry[0])
+    monitor.status[studio["id"]] = {
+        "app_version": "1.68.1",
+        "health": {"app_version": "1.68.1"},
+    }
+    (tmp_path / "VERSION").write_text("1.68.1\n")
+    calls = []
+
+    monkeypatch.setattr(fleet_ops, "resolve_app_dir", lambda value: tmp_path)
+    monkeypatch.setattr(
+        fleet_ops, "run_studio_script",
+        lambda *args: calls.append(args) or {"ok": True},
+    )
+
+    item = {"studio": studio["id"], "status": "queued", "detail": "waiting"}
+    await fleet_ops._update_one(monitor, studio, item)
+
+    assert calls == []
+    assert item["status"] == "complete"
+    assert item["detail"] == "already current on v1.68.1"
+
+
+@pytest.mark.asyncio
 async def test_remote_update_surfaces_peer_conflict_detail(monkeypatch):
     studio = {"id": "render@mac-a", "modality": "render", "machine": "mac-a",
               "host": "10.0.0.8", "hub_port": 47873}

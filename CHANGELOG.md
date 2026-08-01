@@ -10,6 +10,16 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.68.2] — 2026-08-01
+
+### Fixed — current workers are not re-downloaded
+
+- Skip a maintenance update when the running Studio already matches the
+  checked-out release, preventing stale coordinator snapshots from starting
+  a no-op restart and reporting a false timeout.
+- Keep resumable model download state untouched while the maintenance check
+  reconciles the worker's actual version.
+
 ## [1.68.1] — 2026-08-01
 
 ### Fixed — slow Studio updates no longer become false failures
