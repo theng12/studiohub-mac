@@ -480,6 +480,7 @@ async def test_local_update_accepts_null_monitor_health(monkeypatch, monitor, tm
 async def test_local_update_skips_when_running_release_is_already_current(
         monkeypatch, monitor, tmp_path):
     studio = dict(monitor.registry[0])
+    studio["modality"] = "voice"
     monitor.status[studio["id"]] = {
         "app_version": "1.68.1",
         "health": {"app_version": "1.68.1"},
@@ -488,6 +489,7 @@ async def test_local_update_skips_when_running_release_is_already_current(
     calls = []
 
     monkeypatch.setattr(fleet_ops, "resolve_app_dir", lambda value: tmp_path)
+    monkeypatch.setattr(fleet_ops, "_published_versions", {"voice": "1.68.1"})
     monkeypatch.setattr(
         fleet_ops, "run_studio_script",
         lambda *args: calls.append(args) or {"ok": True},
@@ -499,6 +501,36 @@ async def test_local_update_skips_when_running_release_is_already_current(
     assert calls == []
     assert item["status"] == "complete"
     assert item["detail"] == "already current on v1.68.1"
+
+
+@pytest.mark.asyncio
+async def test_local_update_does_not_skip_stale_checked_out_release(
+        monkeypatch, monitor, tmp_path):
+    studio = dict(monitor.registry[0])
+    studio["modality"] = "voice"
+    monitor.status[studio["id"]] = {
+        "app_version": "1.68.1",
+        "health": {"app_version": "1.68.1"},
+    }
+    (tmp_path / "VERSION").write_text("1.68.1\n")
+    calls = []
+
+    monkeypatch.setattr(fleet_ops, "resolve_app_dir", lambda value: tmp_path)
+    monkeypatch.setattr(fleet_ops, "_published_versions", {"voice": "1.68.2"})
+    monkeypatch.setattr(
+        fleet_ops, "run_studio_script",
+        lambda *args: calls.append(args) or {"ok": True},
+    )
+
+    async def healthy(value, item):
+        item.update(status="complete", detail="healthy")
+
+    monkeypatch.setattr(fleet_ops, "_wait_for_healthy", healthy)
+    item = {"studio": studio["id"], "status": "queued", "detail": "waiting"}
+    await fleet_ops._update_one(monitor, studio, item)
+
+    assert calls
+    assert item["status"] == "complete"
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,15 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.68.3] — 2026-08-01
+
+### Fixed — stale checkouts are still updated
+
+- A no-op maintenance skip is now allowed only when the running release, the
+  checked-out release, and the published family release all match.
+- Machines whose checkout is behind the published release continue through
+  the normal update flow instead of being incorrectly marked current.
+
 ## [1.68.2] — 2026-08-01
 
 ### Fixed — current workers are not re-downloaded

@@ -739,8 +739,10 @@ async def _update_one(monitor, studio: dict, item: dict):
         # machine already updated. Do not run update.js again when the running
         # service and checked-out release already match; this also prevents a
         # false restart failure for a no-op update.
+        latest_published = _published_versions.get(studio.get("modality", ""))
         if (item.get("from_version") and item.get("expected_version")
-                and item["from_version"] == item["expected_version"]):
+                and item["from_version"] == item["expected_version"]
+                and latest_published == item["expected_version"]):
             item.update(
                 status="complete",
                 detail=f"already current on v{item['from_version']}",

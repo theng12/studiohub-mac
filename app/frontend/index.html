@@ -1114,6 +1114,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.68.3", date: "2026-08-01", items: [
+    "The current-release shortcut now checks the published family version too, so stale checkouts still update normally.",
+    "Already-current Studios continue to skip duplicate restarts safely."
+  ]},
   { v: "1.68.2", date: "2026-08-01", items: [
     "Already-current Studios are reconciled without starting a duplicate update or false restart timeout.",
     "Resumable model download state stays intact while maintenance verifies the worker's actual release."
