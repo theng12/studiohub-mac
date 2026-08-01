@@ -448,7 +448,7 @@ async def test_remote_update_stops_blocking_queue_after_prolonged_silence(monkey
     async def no_sleep(seconds): return None
     monkeypatch.setattr(fleet_ops.asyncio, "sleep", no_sleep)
 
-    with pytest.raises(RuntimeError, match="unreachable for 3 minutes"):
+    with pytest.raises(RuntimeError, match="maintenance grace period"):
         await fleet_ops._update_remote(studio, {"studio": studio["id"]})
 
 

@@ -10,6 +10,15 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.68.1] — 2026-08-01
+
+### Fixed — slow Studio updates no longer become false failures
+
+- Extended the Studio restart grace period to ten minutes so dependency refreshes
+  on cold MLX machines can finish before the Hub records a failure.
+- Kept the existing update job and remote job IDs intact while a restart is in
+  progress, preventing duplicate updates and stale partial download records.
+
 ## [1.68.0] — 2026-08-01
 
 ### Added — complete Voice Studio test baseline

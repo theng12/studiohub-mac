@@ -24,8 +24,11 @@ _STATE_FILE = DATA_DIR / "fleet_versions.json"
 
 PREFLIGHT_TIMEOUT = 12.0
 UPDATE_TIMEOUT = 20 * 60
-UPDATE_START_TIMEOUT = 3 * 60
-REMOTE_STATUS_SILENCE_TIMEOUT = 3 * 60
+# Dependency refreshes run before the Studio service is restarted. Three
+# minutes was too short for a cold MLX environment, so the Hub could record a
+# false failure while the same update was still applying on the machine.
+UPDATE_START_TIMEOUT = 10 * 60
+REMOTE_STATUS_SILENCE_TIMEOUT = 10 * 60
 DRAIN_TIMEOUT = 30 * 60
 GENERATION_INSTALL_TIMEOUT = 45 * 60
 GENERATION_MODALITIES = {"voice", "image", "music", "chat", "video"}
@@ -772,8 +775,8 @@ async def _wait_for_healthy(studio: dict, item: dict):
                     return
                 if not saw_unavailable and time.monotonic() >= restart_deadline:
                     raise RuntimeError(
-                        "update command did not restart the Studio within 3 minutes; "
-                        "check its update status/log instead of waiting indefinitely"
+                        "update command did not restart the Studio before the maintenance "
+                        "grace period; check its update status/log"
                     )
             except (httpx.HTTPError, ValueError):
                 saw_unavailable = True
@@ -812,8 +815,8 @@ async def _update_remote(studio: dict, item: dict):
                 item.update(status="checking", detail=f"connection dropped; reconnecting ({type(exc).__name__})")
                 if time.monotonic() - last_status_at >= REMOTE_STATUS_SILENCE_TIMEOUT:
                     raise RuntimeError(
-                        "remote Hub was unreachable for 3 minutes; its update may still finish "
-                        "independently, so rescan before retrying"
+                        "remote Hub was unreachable during the maintenance grace period; "
+                        "its update may still finish independently, so rescan before retrying"
                     )
                 continue
             last_status_at = time.monotonic()
@@ -827,8 +830,8 @@ async def _update_remote(studio: dict, item: dict):
             if (remote_item.get("status") == "updating" and remote_started
                     and time.time() - remote_started >= UPDATE_START_TIMEOUT):
                 raise RuntimeError(
-                    "remote update command did not restart the Studio within 3 minutes; "
-                    "check that Mac's updater status/log"
+                    "remote update command did not restart the Studio before the maintenance "
+                    "grace period; check that Mac's updater status/log"
                 )
             if data["status"] in {"complete", "failed"}:
                 if data["status"] == "failed":
@@ -1144,7 +1147,8 @@ async def _update_hub_one(item: dict, latest: str | None):
                     item.update(
                         status="failed",
                         detail=(f"still on v{ver or frm or '?'} — update command did not "
-                                "restart the Hub within 3 minutes; check its updater status/log"),
+                                "restart the Hub before the maintenance grace period; "
+                                "check its updater status/log"),
                         finished_at=time.time(),
                     )
                     _save_state()
