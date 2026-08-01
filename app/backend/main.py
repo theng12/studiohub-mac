@@ -27,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, control_plane, enrollment, execution_identity, fleet_ops, fleet_storage, gateway, hardware_profiles, job_storage, memory_admission,
+from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, control_plane, enrollment, execution_identity, fleet_ops, fleet_storage, gateway, hardware_profiles, hf_credentials, job_storage, memory_admission,
                ledger, metrics, peers, recipes, shared_voices, startup_services, transcription_jobs)
 from .auto_update import UpdateError
 from .auto_update_config import create_updater
@@ -1201,18 +1201,74 @@ async def reconcile_hub_model_baselines():
     return await model_baselines.reconcile()
 
 
-@app.post("/api/hub/broadcast/hf-token")
-async def hub_broadcast_hf_token(body: dict):
-    """Set one Hugging Face token on every studio (partial settings update).
-    The token is passed through to each studio and never stored in the Hub."""
-    token = (body.get("token") or "").strip()
+def _hf_studios(ids: list | None) -> list[dict]:
+    """Return every registered Studio that can hold a Hugging Face token."""
+    return [studio for studio in _pick_studios(ids)
+            if studio.get("modality") != "render"]
+
+
+async def _validate_hf_token(token: str) -> dict:
+    """Validate a token without storing or returning it."""
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            response = await client.get(
+                "https://huggingface.co/api/whoami-v2",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, "Could not reach Hugging Face to validate the token.") from exc
+    if response.status_code != 200:
+        raise HTTPException(400, "Hugging Face rejected this token.")
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    return {"name": payload.get("name") or payload.get("fullname")}
+
+
+async def _broadcast_saved_hf_token(studios: list[dict]) -> dict:
+    token = hf_credentials.get_token()
+    if not token:
+        raise HTTPException(409, "No Hugging Face credential is saved on this Hub.")
+    async with httpx.AsyncClient() as client:
+        results = await broadcast.broadcast_hf_token(client, studios, token)
+    credential = hf_credentials.record_delivery(results)
+    return {"credential": credential, "results": results}
+
+
+@app.get("/api/hub/credentials/huggingface")
+def get_huggingface_credential():
+    """Return non-secret Hugging Face credential and delivery status."""
+    return hf_credentials.status()
+
+
+@app.post("/api/hub/credentials/huggingface")
+async def save_huggingface_credential(body: dict):
+    """Validate, store in Keychain, and fan out a Hugging Face token."""
+    token = str(body.get("token") or "").strip()
     if not token:
         raise HTTPException(400, "token is required")
-    import httpx
-    async with httpx.AsyncClient() as client:
-        results = await broadcast.broadcast_hf_token(
-            client, _pick_studios(body.get("studios")), token)
-    return {"results": results}  # NB: never echo the token back
+    await _validate_hf_token(token)
+    try:
+        hf_credentials.save_token(token)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return await _broadcast_saved_hf_token(_hf_studios(body.get("studios")))
+
+
+@app.post("/api/hub/credentials/huggingface/retry")
+async def retry_huggingface_credential(body: dict | None = None):
+    """Retry delivery to all registered or explicitly selected Studios."""
+    body = body or {}
+    return await _broadcast_saved_hf_token(_hf_studios(body.get("studios")))
+
+
+@app.post("/api/hub/broadcast/hf-token")
+async def hub_broadcast_hf_token(body: dict):
+    """Compatibility alias for the durable credential endpoint."""
+    return await save_huggingface_credential(body)
 
 
 @app.post("/api/hub/broadcast/env")

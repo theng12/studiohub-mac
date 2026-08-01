@@ -10,6 +10,26 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.68.4] — 2026-08-01
+
+### Added — durable Hugging Face credential delivery
+
+- Added a Hub-side Hugging Face credential workflow that validates a replacement
+  token, stores it in the macOS Keychain, and never writes the secret to Hub
+  state JSON, browser storage, or delivery responses.
+- Added durable per-Studio delivery metadata with retryable states, so offline
+  or temporarily unreachable Studios can be caught up from one **Retry pending**
+  action instead of being updated manually.
+- Updated the Models tab to show whether the credential is saved and how many
+  target deliveries remain pending. The existing broadcast endpoint remains a
+  compatibility alias for the durable flow.
+
+### Verification
+
+- Full Studio Hub test suite passes.
+- Focused credential and broadcast tests verify that secrets never appear in
+  persisted metadata or API responses.
+
 ## [1.68.3] — 2026-08-01
 
 ### Fixed — stale checkouts are still updated

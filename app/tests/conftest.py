@@ -21,7 +21,7 @@ from starlette.testclient import TestClient
 
 
 def _reset_state():
-    from backend import (alerts, auth, broker, chat_jobs, control_plane, enrollment, execution_identity, fleet_ops, fleet_storage, hardware_profiles, job_storage, memory_admission,
+    from backend import (alerts, auth, broker, chat_jobs, control_plane, enrollment, execution_identity, fleet_ops, fleet_storage, hardware_profiles, hf_credentials, job_storage, memory_admission,
                          ledger, metrics, peers, shared_voices, transcription_jobs)
     from backend import main
     from backend import registry as reg
@@ -41,6 +41,7 @@ def _reset_state():
               hardware_profiles.CUSTOM_PROFILES_FILE,
               hardware_profiles.MACHINE_PROFILES_FILE,
               memory_admission.SETTINGS_FILE,
+              hf_credentials.STATE_FILE,
               main.model_baselines.state_path,
               execution_identity.DB_FILE,
               fleet_ops._STATE_FILE, control_plane.SETTINGS_FILE,

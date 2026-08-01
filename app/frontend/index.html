@@ -378,13 +378,14 @@
       <div id="bc-results" style="margin-top:6px"></div>
     </div>
     <div class="card jform section">
-      <div class="top"><span class="emoji">🔑</span><h3>Set Hugging Face token on all studios</h3></div>
+      <div class="top"><span class="emoji">🔑</span><h3>Hugging Face credential</h3><span id="hft-state" class="pill">Checking</span></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        Push one token to every online studio's Settings — for <b>gated models</b> and <b>higher download rate limits</b>. It's sent straight to each studio over your Tailscale network and is <b>never stored in the Hub</b>. Offline studios get it next time you run this while they're up.
+        Save one read-capable token in this Hub's <b>macOS Keychain</b>, then deliver it to every registered Image, LLM, Voice, and Video Studio. The token is never written to Hub JSON, shown again, or included in delivery results. Offline machines remain pending for a later retry.
       </p>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-        <input id="hft-token" type="password" autocomplete="off" placeholder="hf_… paste your Hugging Face token" style="flex:1;min-width:300px">
-        <button class="go" onclick="broadcastHfToken()">Set on all studios</button>
+        <input id="hft-token" type="password" autocomplete="off" placeholder="hf_… paste a replacement token when ready" style="flex:1;min-width:300px">
+        <button class="go" onclick="saveHfCredential()">Save &amp; broadcast</button>
+        <button class="btn" onclick="retryHfCredential()">Retry pending</button>
       </div>
       <div class="sub" id="hft-status" style="margin-top:10px"></div>
       <div id="hft-results" style="margin-top:6px"></div>
@@ -1114,6 +1115,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.68.4", date: "2026-08-01", items: [
+    "Hugging Face credentials can now be validated and saved in the Hub's macOS Keychain, then delivered to every registered Image, LLM, Voice, and Video Studio without storing the token in Hub JSON or browser state.",
+    "Offline or temporarily unreachable Studios remain visible as retryable delivery targets, with one-click Retry pending when they return.",
+  ]},
   { v: "1.68.3", date: "2026-08-01", items: [
     "The current-release shortcut now checks the published family version too, so stale checkouts still update normally.",
     "Already-current Studios continue to skip duplicate restarts safely."
@@ -2215,6 +2220,7 @@ async function loadModels() {
   fillBroadcastRepos();
   fillRamAdmissionModels();
   loadModelBaseline();
+  loadHfCredential();
 }
 
 async function loadModelBaseline() {
@@ -2288,33 +2294,63 @@ async function broadcastModelDownload() {
       ? `<span class="pill ok">started${v.job ? " · job " + esc(v.job) : ""}</span>`
       : `<span class="pill err">${esc(v.detail || v.error || ("HTTP " + v.status))}</span>`}</td></tr>`).join("") + `</tbody></table>`;
 }
-// Push one Hugging Face token to every online studio's Settings (partial update
-// — only the token; other keys are preserved). Pass-through; not stored here.
-async function broadcastHfToken() {
+function renderHfCredential(data) {
+  const state = $("#hft-state"), status = $("#hft-status");
+  if (!state || !status || !data) return;
+  const configured = !!data.configured;
+  state.textContent = configured ? "Saved in Keychain" : "Not configured";
+  state.className = "pill " + (configured ? "ok" : "warn");
+  const pending = Number(data.pending_count || 0);
+  status.textContent = configured
+    ? `${pending ? pending + " delivery target(s) pending retry." : "Credential delivered to all attempted targets."} Credential ID: ${data.credential_id || "—"}.`
+    : "No Hub credential is saved. Paste the replacement token when you are home.";
+}
+
+async function loadHfCredential() {
+  const data = await api("/api/hub/credentials/huggingface")
+    .then(r => r.json()).catch(() => null);
+  if (data) renderHfCredential(data);
+}
+
+function renderHfResults(data) {
+  const results = data?.results || {};
+  const rows = Object.entries(results).map(([id, v]) => {
+    const label = v.ok ? "delivered ✓" : (v.status === 404 || v.status === 405 ? "unsupported" : "pending retry");
+    const cls = v.ok ? "ok" : (v.status === 404 || v.status === 405 ? "warn" : "err");
+    return `<tr><td>${esc(id)}</td><td><span class="pill ${cls}">${label}</span></td></tr>`;
+  }).join("");
+  $("#hft-results").innerHTML = rows
+    ? `<table><thead><tr><th>Studio</th><th>Delivery</th></tr></thead><tbody>${rows}</tbody></table>`
+    : '<span class="sub">No registered target Studios were found on this Hub.</span>';
+}
+
+// Save the token in the Hub Keychain, then fan it out to every registered
+// non-Render Studio. The backend validates it and never returns the secret.
+async function saveHfCredential() {
   const token = $("#hft-token").value.trim();
   const status = $("#hft-status");
   if (!token) { status.textContent = "paste a Hugging Face token (starts with hf_)"; return; }
-  // every online studio that can hold a token — Render has no settings endpoint
-  const targets = ((lastSummary || {}).studios || []).filter(s => s.status === "up" && s.modality !== "render");
-  if (!targets.length) { status.textContent = "No studios are online right now."; return; }
-  if (!confirm(`Set this Hugging Face token on ${targets.length} online studio(s)?\nIt's sent to each studio over Tailscale and is not stored in the Hub.`)) return;
-  status.textContent = `Setting on ${targets.length} studio(s)…`;
+  const targets = ((lastSummary || {}).studios || []).filter(s => s.modality !== "render");
+  if (!confirm(`Validate and save this token in the Hub Keychain, then deliver it to ${targets.length || "all registered"} Studio target(s)?`)) return;
+  status.textContent = "Validating, saving securely, and delivering…";
   $("#hft-results").innerHTML = "";
-  const r = await api("/api/hub/broadcast/hf-token", {
+  const r = await api("/api/hub/credentials/huggingface", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token, studios: targets.map(s => s.id) })
+    body: JSON.stringify({ token })
   }).then(x => x.json()).catch(e => ({ error: String(e) }));
   if (r.error) { status.textContent = "failed: " + r.error; return; }
-  const res = r.results || {};
-  const ok = Object.values(res).filter(v => v.ok).length;
-  status.innerHTML = `Set on <b>${ok}/${Object.keys(res).length}</b> studio(s). Gated-model downloads and rate limits will use it right away.`;
-  const rows = Object.entries(res).map(([id, v]) => {
-    const cell = v.ok
-      ? '<span class="pill ok">set ✓</span>'
-      : `<span class="pill err">${esc(v.detail || v.error || ("HTTP " + v.status))}</span>`;
-    return `<tr><td>${esc(id)}</td><td>${cell}</td></tr>`;
-  }).join("");
-  $("#hft-results").innerHTML = `<table><thead><tr><th>Studio</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table>`;
+  $("#hft-token").value = "";
+  renderHfResults(r); renderHfCredential(r.credential);
+}
+
+async function retryHfCredential() {
+  const status = $("#hft-status");
+  status.textContent = "Retrying pending deliveries…";
+  const r = await api("/api/hub/credentials/huggingface/retry", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: "{}"
+  }).then(x => x.json()).catch(e => ({ error: String(e) }));
+  if (r.error) { status.textContent = "failed: " + r.error; return; }
+  renderHfResults(r); renderHfCredential(r.credential);
 }
 function ramPolicyModel() {
   return (modelsData || []).find(m => m.repo === ramAdmissionModel) || null;

@@ -73,8 +73,17 @@ async def test_broadcast_hf_token_reports_missing_settings():
     assert out["render"]["ok"] is False and out["render"]["status"] == 404
 
 
-def test_broadcast_hf_token_endpoint_requires_token(authed):
+def test_broadcast_hf_token_endpoint_requires_token(authed, monkeypatch):
+    from backend import hf_credentials, main
+
     assert authed.post("/api/hub/broadcast/hf-token", json={}).status_code == 400
+    async def valid(_token):
+        return {}
+    monkeypatch.setattr(main, "_validate_hf_token", valid)
+    monkeypatch.setattr(hf_credentials, "save_token", lambda _token: {})
+    monkeypatch.setattr(hf_credentials, "get_token", lambda: "hf_x")
+    monkeypatch.setattr(hf_credentials, "record_delivery", lambda results: {"results": results})
     # never echoes the token back
     r = authed.post("/api/hub/broadcast/hf-token", json={"token": "hf_x", "studios": []})
+    assert r.status_code == 200
     assert "token" not in r.json()
