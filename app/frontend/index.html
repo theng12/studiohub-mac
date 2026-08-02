@@ -1129,6 +1129,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.72.1", date: "2026-08-02", items: [
+    "Added a controller-reviewed Claude Desktop work queue for isolated implementation tasks, verification, and sanitized reports.",
+    "Every task now records path boundaries and separate authority for commits, pushes, paid provider calls, production data, credentials, migrations, restarts, deployments, and live fleet changes.",
+    "Queue-only coordination commits no longer create application releases; all Studio Hub source, contract, configuration, and runtime documentation changes still do.",
+  ]},
   { v: "1.72.0", date: "2026-08-02", items: [
     "Studio Hub now receives one global Approved Fleet Model Catalog from GenStudio and automatically caches each exact audited model on every RAM-eligible sibling worker.",
     "The previous seven-model hardcoded Voice baseline is gone. Research models are never downloaded merely because a new machine joins the fleet.",

@@ -10,6 +10,34 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.72.1] — 2026-08-02
+
+### Added — Claude Desktop work queue
+
+- Added a repository-local `.claude-work` foundation for controller-reviewed
+  batches, focused tasks, isolated implementation worktrees, versioned shared
+  contracts, per-task reports, and final batch summaries.
+- Every task records disjoint path boundaries, dependencies, verification
+  commands, commit and push permissions, provider-spending policy, and
+  production, credential, migration, restart, deployment, and live-fleet
+  authority independently.
+- The worker prompt preserves Studio Hub's controller boundary, keeps sibling
+  repositories isolated, and requires controller review before merge, push,
+  deployment, service restart, or live configuration changes.
+
+### Changed
+
+- Commits confined entirely to `.claude-work/**` are now treated as internal
+  orchestration state and do not create an application release. Any commit
+  touching Studio Hub code, tests, launchers, configuration, contracts, or
+  runtime documentation still follows the full release discipline.
+
+### Verification
+
+- Validated every required template, queue-state directory, permission field,
+  architectural safeguard, and report path. No application code, migration,
+  credential, service, deployment, or live fleet state was changed.
+
 ## [1.72.0] — 2026-08-02
 
 ### Added — GenStudio-owned approved fleet model catalog
