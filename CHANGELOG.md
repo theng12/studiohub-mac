@@ -10,6 +10,18 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.70.1] — 2026-08-02
+
+### Fixed — catalogue evidence no longer blocks updates
+
+- Marked the per-machine `catalog_observations.json` last-good catalogue cache
+  as runtime state. The cache remains preserved across restarts and updates,
+  but Git no longer treats it as an operator code change that blocks the safe
+  updater.
+- This completes the same runtime-state protection already applied to Hugging
+  Face credential delivery metadata. No model approval, routing, or customer
+  work is changed by this patch.
+
 ## [1.70.0] — 2026-08-02
 
 ### Added — private voice-reference transport

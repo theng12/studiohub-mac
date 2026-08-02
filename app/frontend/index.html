@@ -1129,6 +1129,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.70.1", date: "2026-08-02", items: [
+    "Studio Hub's persisted last-good catalogue cache is now treated as per-machine runtime state, so it remains available across restarts without blocking future safe updates.",
+    "This patch does not change model approvals, routing, credentials, or customer jobs.",
+  ]},
   { v: "1.70.0", date: "2026-08-02", items: [
     "GenStudio can now stage a private customer voice reference once, send only its temporary execution ID with a voice job, and remove it when the job is finished.",
     "Studio Hub verifies the exact checksum and securely forwards the audio to one assigned Voice Studio without exposing local paths, arbitrary URLs, or customer audio in the normal job payload.",

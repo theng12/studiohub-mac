@@ -30,6 +30,7 @@ hub_state.json
 # Hugging Face credential delivery state (per-machine; the token itself lives in
 # the macOS Keychain, this file is only the retry/delivery metadata)
 hf_credentials.json
+catalog_observations.json
 
 machine_labels.json
 machine_flags.json

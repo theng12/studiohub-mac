@@ -1,6 +1,14 @@
+from pathlib import Path
+
 import pytest
 
 from backend import monitor as mon
+
+
+def test_catalog_observation_runtime_state_is_ignored_by_git() -> None:
+    root = Path(__file__).parents[2]
+    ignored = (root / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert "catalog_observations.json" in ignored
 
 
 def test_is_cached_semantics():
