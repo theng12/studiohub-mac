@@ -1129,6 +1129,9 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.72.3", date: "2026-08-03", items: [
+    "Approved audited models now include their sanitized hardware requirement in the private capability contract used by GenStudio.",
+  ]},
   { v: "1.72.2", date: "2026-08-03", items: [
     "Auto-update now works from legitimate linked Git worktrees.",
     "Update safety still rejects symlinked checkout roots, malformed Git metadata, and missing Git targets before making any changes.",

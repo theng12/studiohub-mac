@@ -320,6 +320,7 @@ def _model_capability(model: dict, studio: dict, worker: dict, monitor) -> dict:
         ),
         "adapter": candidate.get("adapter", {}) if candidate else {},
         "capacity": candidate.get("capacity", {}) if candidate else {},
+        "hardware": candidate.get("hardware", {}) if candidate else {},
         "catalog_observation": {
             "observed_at": (
                 _rfc3339(model["hub_catalog_observed_at"])

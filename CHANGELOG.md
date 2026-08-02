@@ -10,6 +10,15 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.72.3] — 2026-08-03
+
+### Fixed
+
+- Published the already-sanitized audited candidate hardware requirement in
+  every approved worker model capability, so private GenStudio clients receive
+  the contract field promised by capability schema v2 without exposing tokens
+  or local paths.
+
 ## [1.72.2] — 2026-08-03
 
 ### Fixed

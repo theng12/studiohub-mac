@@ -8,7 +8,7 @@ from backend import (auth, broker, capabilities, control_plane,
 
 
 def _candidate(model_id, revision, operation, *, controls=None,
-               input_limits=None, output_limits=None):
+               input_limits=None, output_limits=None, hardware=None):
     value = {
         "schema": "studio.model-audit",
         "schema_version": 1,
@@ -23,7 +23,10 @@ def _candidate(model_id, revision, operation, *, controls=None,
         "controls": controls or {},
         "input_limits": input_limits or {},
         "output_limits": output_limits or {},
-        "hardware": {"min_unified_memory_gb": 8},
+        "hardware": (
+            {"min_unified_memory_gb": 8}
+            if hardware is None else hardware
+        ),
     }
     return value
 
@@ -190,6 +193,7 @@ def test_private_capability_snapshot_contract_is_versioned_and_truthful(
     assert model["runtime_revision"] == "a" * 40
     assert model["revision_status"] == "verified_immutable"
     assert model["input_limits"] == {"max_prompt_characters": 15_000}
+    assert model["hardware"] == {"min_unified_memory_gb": 8}
     assert model["controls"]["aspect_ratios"] == ["16:9", "1:1"]
     assert model["controls"]["generation_controls"] == {
         "steps": True, "seed": True,
@@ -208,6 +212,33 @@ def test_private_capability_snapshot_contract_is_versioned_and_truthful(
     assert tts["controls"]["languages"] == ["en", "km"]
     assert tts["output_limits"] == {"sample_rate_hz": 24_000}
     assert transcription["availability"]["available_now"] is True
+
+
+def test_candidate_hardware_is_sanitized_before_capability_publication(
+        authed, monitor):
+    _seed_capability_site(monitor)
+    raw_candidate = monitor._catalog_cache["image"][1]["models"][0][
+        "genstudio_candidate"
+    ]
+    raw_candidate["hardware"] = {
+        "min_unified_memory_gb": 8,
+        "accelerator": "Apple GPU",
+        "token": "must-not-leak",
+        "cache_path": "/private/cache",
+        "nested": {"credential": "must-not-leak", "safe": "published"},
+    }
+
+    payload = authed.get("/api/hub/capabilities").json()
+    model = _model(_worker(payload, "image"), "image.text_to_image")
+
+    assert model["hardware"] == {
+        "min_unified_memory_gb": 8,
+        "accelerator": "Apple GPU",
+        "nested": {"safe": "published"},
+    }
+    serialized = json.dumps(model["hardware"])
+    assert "must-not-leak" not in serialized
+    assert "/private/cache" not in serialized
 
 
 def test_capability_snapshot_uses_stale_caches_without_worker_network(
