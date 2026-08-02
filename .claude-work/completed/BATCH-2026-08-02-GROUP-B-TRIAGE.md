@@ -3,7 +3,7 @@ kind: studiohub.claude-batch
 schema_version: 1
 batch_id: BATCH-2026-08-02-GROUP-B-TRIAGE
 title: Establish the truthful Group B voice-model qualification backlog
-state: queue
+state: completed
 execution_strategy: mixed
 controller: Codex
 human_owner: owner
@@ -134,3 +134,4 @@ rg -n "Chatterbox|OmniVoice|Qwen3-TTS|VoxCPM2|VibeVoice|Fish Audio" .claude-work
 ## State history
 
 - `2026-08-02T17:01:03Z` — created in `queue/` and approved for read-only execution by Codex.
+- `2026-08-02T17:26:02Z` — executed by Claude worker and moved from `queue/` to `completed/`. TASK-001 and TASK-002 are `blocked` with bounded findings; TASK-003 `completed`. The batch file was not staged through `active/` during execution; it moved directly to `completed/` on termination.

@@ -4,7 +4,7 @@ schema_version: 1
 task_id: TASK-001
 batch_id: BATCH-2026-08-02-GROUP-B-TRIAGE
 title: Audit existing Voice Studio evidence for Group B models
-state: queue
+state: blocked
 priority: high
 execution: parallel
 dependencies: []
@@ -88,7 +88,7 @@ provider_call_policy:
   stop_condition: Provider calls, network model access, downloads, and generation are denied.
 created_by: controller
 created_at: 2026-08-02T17:01:03Z
-updated_at: 2026-08-02T17:01:03Z
+updated_at: 2026-08-02T17:11:37Z
 ---
 
 # Objective
@@ -249,3 +249,5 @@ continue only with conclusions that remain independently supportable.
 ## State history
 
 - `2026-08-02T17:01:03Z` — created in `queue/` by controller.
+- `2026-08-02T17:11:37Z` — moved to `active/` by Claude worker; isolated worktree created from the pinned base commit.
+- `2026-08-02T17:19:41Z` — moved to `blocked/` by Claude worker. Evidence matrix delivered in full; mandated pytest suite could not execute in the pinned worktree (single root cause, sanitized in the report). Root-cause file is outside `allowed_paths`; controller decision required.

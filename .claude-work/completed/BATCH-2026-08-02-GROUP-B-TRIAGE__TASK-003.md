@@ -4,7 +4,7 @@ schema_version: 1
 task_id: TASK-003
 batch_id: BATCH-2026-08-02-GROUP-B-TRIAGE
 title: Convert Group B findings into exact next batches
-state: queue
+state: completed
 priority: high
 execution: sequential
 dependencies:
@@ -201,3 +201,5 @@ blocker into the plan; never invent the missing evidence.
 ## State history
 
 - `2026-08-02T17:01:03Z` — created in `queue/` by controller.
+- `2026-08-02T17:23:50Z` — moved to `active/` by Claude worker. Both dependency reports exist (each blocked with bounded findings), satisfying the batch Phase 2 gate.
+- `2026-08-02T17:26:02Z` — moved to `completed/` by Claude worker. All four verification commands passed; synthesis delivered from both bounded dependency reports.

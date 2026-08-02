@@ -4,7 +4,7 @@ schema_version: 1
 task_id: TASK-002
 batch_id: BATCH-2026-08-02-GROUP-B-TRIAGE
 title: Audit Studio Hub readiness to ingest audited Group B candidates
-state: queue
+state: blocked
 priority: high
 execution: parallel
 dependencies: []
@@ -84,7 +84,7 @@ provider_call_policy:
   stop_condition: Provider calls, worker network calls, and live controller calls are denied.
 created_by: controller
 created_at: 2026-08-02T17:01:03Z
-updated_at: 2026-08-02T17:01:03Z
+updated_at: 2026-08-02T17:11:37Z
 ---
 
 # Objective
@@ -228,3 +228,5 @@ unmade authority decision. Report bounded gaps without guessing.
 ## State history
 
 - `2026-08-02T17:01:03Z` — created in `queue/` by controller.
+- `2026-08-02T17:11:37Z` — moved to `active/` by Claude worker; isolated worktree created from the pinned base commit.
+- `2026-08-02T17:23:50Z` — moved to `blocked/` by Claude worker. Readiness assessment delivered in full; zero of four required test files could execute in the pinned worktree (same systemic root cause as TASK-001). Root-cause file outside `allowed_paths`; controller decision required.
