@@ -90,6 +90,14 @@ async def test_voice_terminal_wav_metadata_separates_runtime_from_audio(reset):
         "reference_duration_s": 9.5,
         "long_form_strategy": "adapter_managed_long_form",
         "chunk_total": 12,
+        "resource_usage": {
+            "schema": "voicestudio.resource-telemetry",
+            "schema_version": 1,
+            "host": {"minimum_available_gb": 1.75, "private_path": "/secret"},
+            "worker": {"peak_rss_gb": 2.5},
+            "outcome": {"state": "done", "memory_failure": False},
+            "unexpected": {"environment": "secret"},
+        },
     }, {"voice_library_id": "074743daa991"}, 0.0)
 
     assert item["media_type"] == "audio/wav"
@@ -113,12 +121,28 @@ async def test_voice_terminal_wav_metadata_separates_runtime_from_audio(reset):
     assert terminal["reference_duration_s"] == 9.5
     assert terminal["long_form_strategy"] == "adapter_managed_long_form"
     assert terminal["chunk_total"] == 12
+    assert terminal["resource_usage"]["host"] == {"minimum_available_gb": 1.75}
+    assert terminal["resource_usage"]["worker"] == {"peak_rss_gb": 2.5}
+    assert "unexpected" not in terminal["resource_usage"]
+    assert "/secret" not in str(terminal["resource_usage"])
     assert ledger.get_asset(item["asset_id"])["runtime_s"] == 7.6208
 
     asset_id = item["asset_id"]
     await broker._record_worker_success(client, batch, item, studio, {
         "id": "worker-1", "output_url": "/api/generate/jobs/worker-1/audio"}, {}, 0.0)
     assert item["asset_id"] == asset_id and len(client.calls) == 1
+
+
+def test_worker_resource_evidence_rejects_unknown_contracts() -> None:
+    item = {}
+    broker._record_worker_resource_usage(item, {
+        "resource_usage": {
+            "schema": "another-worker.private-data",
+            "schema_version": 1,
+            "host": {"minimum_available_gb": 1.0},
+        }
+    })
+    assert "resource_usage" not in item
 
 
 @pytest.mark.asyncio

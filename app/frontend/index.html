@@ -1129,6 +1129,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.71.0", date: "2026-08-02", items: [
+    "Voice generation jobs now retain the exact worker's per-attempt unified-memory, pressure, swap, process-tree, and MLX evidence.",
+    "Open a Voice batch's per-item status to see peak worker RSS, lowest free memory, pressure, swap, and MLX peak while active or after completion.",
+    "Studio Hub accepts only the versioned Voice Studio telemetry contract and discards unexpected worker fields before storing or displaying it.",
+  ]},
   { v: "1.70.1", date: "2026-08-02", items: [
     "Studio Hub's persisted last-good catalogue cache is now treated as per-machine runtime state, so it remains available across restarts without blocking future safe updates.",
     "This patch does not change model approvals, routing, credentials, or customer jobs.",
@@ -2808,6 +2813,17 @@ function fmtBytes(bytes) {
   if (n < 1024 ** 3) return (n / 1024 ** 2).toFixed(1) + " MB";
   return (n / 1024 ** 3).toFixed(2) + " GB";
 }
+function resourceUsageHTML(resource) {
+  if (!resource || resource.schema !== "voicestudio.resource-telemetry") return "—";
+  const host = resource.host || {}, worker = resource.worker || {}, mlx = resource.mlx || {};
+  const values = [];
+  if (worker.peak_rss_gb != null) values.push(`worker peak ${Number(worker.peak_rss_gb).toFixed(2)} GB`);
+  if (host.minimum_available_gb != null) values.push(`lowest free ${Number(host.minimum_available_gb).toFixed(2)} GB`);
+  if (host.peak_pressure_level && host.peak_pressure_level !== "unavailable") values.push(`pressure ${esc(host.peak_pressure_level)}`);
+  if (host.maximum_swap_used_gb != null) values.push(`swap ${Number(host.maximum_swap_used_gb).toFixed(2)} GB`);
+  if (mlx.reported_peak_gb != null) values.push(`MLX peak ${Number(mlx.reported_peak_gb).toFixed(2)} GB`);
+  return values.length ? values.join("<br>") : "Sampling…";
+}
 // render the Jobs tab from a list of batch summaries (used by both the fetch
 // path and the live SSE summary, so the tab updates without switching away)
 // ── jobs list: sort + pagination + collapse-preservation (shared) ──────────
@@ -2934,16 +2950,21 @@ async function loadGenerationItems(details, batchId) {
   const data = await api(`/api/hub/jobs/${encodeURIComponent(batchId)}`).then(r => r.json()).catch(() => null);
   if (!data || !data.items) { body.innerHTML = `<div class="tx-error">Could not load worker statuses.</div>`; return; }
   const html = `<div style="max-height:60vh;overflow:auto"><table><thead><tr>
-    <th>#</th><th>Prompt</th><th>State</th><th>Attempts</th><th>Worker / Mac</th><th>Time</th><th>Failure</th>
+    <th>#</th><th>Prompt</th><th>State</th><th>Attempts</th><th>Worker / Mac</th><th>Time</th><th>Resources</th><th>Failure</th>
   </tr></thead><tbody>${data.items.map(i => {
     const machine = i.studio && i.studio.includes("@") ? i.studio.split("@")[1] : (i.studio || "—");
     const retrying = i.state === "queued" && i.retry_at && i.retry_at > Date.now() / 1000;
     return `<tr><td>${i.index + 1}</td><td>${esc(i.prompt || "")}</td>
       <td>${txStatePill(retrying ? "retrying" : i.state)}${retrying ? `<br><span class="sub">in ${fmtDur(i.retry_at - Date.now() / 1000)}</span>` : ""}</td><td class="num">${i.tries || 0}/3</td>
       <td>${esc(mlabel(machine))}</td><td class="num">${fmtDur(i.duration_s)}</td>
+      <td class="sub">${resourceUsageHTML(i.resource_usage)}</td>
       <td class="tx-error">${esc(i.error || "—")}</td></tr>`;
   }).join("")}</tbody></table></div>`;
-  generationItemCache.set(batchId, html);
+  if (data.items.every(i => ["done", "error", "cancelled"].includes(i.state))) {
+    generationItemCache.set(batchId, html);
+  } else {
+    generationItemCache.delete(batchId);
+  }
   // The card may have been redrawn while the request was in flight. Only
   // write into the current element when it is still the same open detail.
   if (details.open) body.innerHTML = html;

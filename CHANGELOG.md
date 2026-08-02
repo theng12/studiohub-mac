@@ -10,6 +10,26 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.71.0] — 2026-08-02
+
+### Added — worker-owned generation resource evidence
+
+- Studio Hub now retains Voice Studio's versioned per-job unified-memory,
+  pressure, swap, process-tree, and MLX telemetry throughout polling and in the
+  durable terminal job record.
+- The Jobs detail table shows compact resource evidence next to the exact worker
+  attempt, including peak worker RSS, lowest free memory, peak pressure, swap,
+  and MLX peak allocation. Active rows continue refreshing instead of freezing
+  behind the terminal-result cache.
+- Only an explicit whitelist from the
+  `voicestudio.resource-telemetry` v1 contract may cross the worker boundary;
+  unknown fields and unknown schemas are discarded.
+
+### Verification
+
+- Focused tests cover terminal retention, public-result propagation, unknown
+  contract rejection, private-field filtering, and dashboard rendering.
+
 ## [1.70.1] — 2026-08-02
 
 ### Fixed — catalogue evidence no longer blocks updates

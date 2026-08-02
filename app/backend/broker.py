@@ -954,6 +954,7 @@ def terminal_result(b: dict, item: dict) -> dict | None:
         "reference_duration_s": item.get("reference_duration_s"),
         "long_form_strategy": item.get("long_form_strategy"),
         "chunk_total": item.get("chunk_total"),
+        "resource_usage": item.get("resource_usage"),
     }
 
 
@@ -1008,6 +1009,7 @@ async def _record_worker_success(client: httpx.AsyncClient, b: dict, item: dict,
         return
     if item.get("state") == "done" and item.get("asset_id"):
         return  # terminal polling/recovery is idempotent
+    _record_worker_resource_usage(item, job)
     item["artifact_path"] = job.get("output_path")
     worker_url = (
         f"{base_url(studio)}{job['output_url']}" if job.get("output_url") else None)
@@ -1083,6 +1085,7 @@ async def _recover_worker_job(client, b: dict, item: dict, studio: dict,
             if jr.status_code >= 400:
                 return False  # 404/4xx means the worker no longer has the job
             job = jr.json().get("job") or {}
+            _record_worker_resource_usage(item, job)
             state = job.get("state")
             if state in ("queued", "running"):
                 _record_worker_progress(item, job.get("progress"))
@@ -1395,6 +1398,62 @@ def _record_worker_progress(item: dict, progress) -> None:
         item["last_progress_at"] = time.time()
 
 
+_RESOURCE_USAGE_FIELDS = {
+    "sampling": {
+        "interval_seconds", "samples", "started_at", "finished_at",
+    },
+    "host": {
+        "total_gb", "available_gb_start", "minimum_available_gb",
+        "available_gb_end", "maximum_used_gb", "maximum_used_percent",
+        "pressure_level_start", "peak_pressure_level", "peak_pressure_raw",
+        "pressure_level_end", "swap_used_gb_start", "maximum_swap_used_gb",
+        "swap_used_gb_end", "swap_used_delta_gb", "swap_in_delta_bytes",
+        "swap_out_delta_bytes",
+    },
+    "worker": {
+        "rss_gb_start", "peak_rss_gb", "rss_gb_end", "peak_process_count",
+    },
+    "mlx": {
+        "supported", "active_gb_start", "peak_active_gb", "peak_cache_gb",
+        "reported_peak_gb", "active_gb_end", "cache_gb_end",
+    },
+    "outcome": {
+        "state", "memory_failure", "restart_scheduled", "model_retained",
+    },
+}
+
+
+def _record_worker_resource_usage(item: dict, job: dict) -> None:
+    """Retain only the versioned, worker-produced telemetry contract.
+
+    Worker payloads are authenticated but still cross a service boundary.  A
+    small whitelist prevents an accidental future worker field (paths, command
+    lines, environment values) from becoming customer-visible through the Hub.
+    """
+    raw = job.get("resource_usage")
+    if not isinstance(raw, dict):
+        return
+    if raw.get("schema") != "voicestudio.resource-telemetry":
+        return
+    if raw.get("schema_version") != 1:
+        return
+    clean = {
+        "schema": "voicestudio.resource-telemetry",
+        "schema_version": 1,
+    }
+    for section, fields in _RESOURCE_USAGE_FIELDS.items():
+        values = raw.get(section)
+        if not isinstance(values, dict):
+            continue
+        clean[section] = {
+            key: value for key, value in values.items()
+            if key in fields and (
+                value is None or isinstance(value, (str, int, float, bool))
+            )
+        }
+    item["resource_usage"] = clean
+
+
 async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict):
     endpoint, prompt_field, artifact_kind = MODALITY[b["modality"]]
     t_start = time.time()  # wall-clock fallback for generation duration
@@ -1520,6 +1579,7 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
         if r.status_code >= 400:
             raise _worker_http_error(r)
         job = r.json()["job"]
+        _record_worker_resource_usage(item, job)
         item["studio_job_id"] = job["id"]
         if _expire_genstudio_batch(b) or b["cancelled"]:
             await _signal_worker_cancel(client, item)
@@ -1548,6 +1608,7 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             if jr.status_code >= 400:
                 raise _worker_http_error(jr)
             j = jr.json()["job"]
+            _record_worker_resource_usage(item, j)
             state = j.get("state")
             if state in ("queued", "running"):
                 _record_worker_progress(item, j.get("progress"))

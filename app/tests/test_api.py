@@ -47,6 +47,9 @@ def test_dashboard_includes_render_studio():
     assert 'data-job-kind="chat"' in dashboard
     assert 'per: 10' in dashboard
     assert 'generationDetailToggle(this' in dashboard
+    assert 'function resourceUsageHTML(resource)' in dashboard
+    assert '<th>Resources</th><th>Failure</th>' in dashboard
+    assert 'worker peak ${Number(worker.peak_rss_gb).toFixed(2)} GB' in dashboard
     assert 'function toggleStudio(id, enabled)' in dashboard
     assert 'new jobs for only that app' in dashboard
     assert 'id="hau-restart"' in dashboard

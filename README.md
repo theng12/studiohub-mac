@@ -383,6 +383,13 @@ validated WAV voice result it contains `asset_id`, Hub-relative `artifact_url`,
 separate from decoded audio duration. `duration_s` remains temporarily as a
 backward-compatible alias for `runtime_s` only.
 
+Voice Studio local jobs also include `resource_usage` using the versioned
+`voicestudio.resource-telemetry` v1 schema. Studio Hub retains the worker's
+observed host-memory, pressure, swap, process-tree RSS, and MLX peak evidence in
+the durable batch and displays it on the exact per-item Jobs row. The Hub does
+not calculate a second value or infer a model RAM minimum from one attempt; it
+whitelists and relays the worker-owned measurement for fleet qualification.
+
 The evidence maps to the Audio Job Result v1 contract as follows: `asset_id`,
 `artifact_url`, and the media facts map to `audio`; `runtime_s * 1000` maps to
 `execution.runtime_ms`. Hub batch IDs and worker IDs remain site-local execution
@@ -518,7 +525,8 @@ await fetch(`${HUB}/api/hub/jobs`, {
   showing exactly which machines have each one downloaded. "Downloaded" means *cached on at
   least one machine* — a model can be on your media server but not this Mac.
 - **Resources** — this Mac's unified-memory bar + hour sparkline, per-studio process memory.
-- **Jobs / Assets** — Swarm Batch submit + progress; searchable asset ledger.
+- **Jobs / Assets** — Swarm Batch submit + progress, per-attempt local resource
+  evidence for Voice jobs, and a searchable asset ledger.
 - **Remote** — reachable URLs + token, **Discover & Add** a machine, and a permanent
   **Registered machines** list. Registration starts with a reusable hardware
   profile and suggested stable ID; profiles remain editable later. Each Studio
