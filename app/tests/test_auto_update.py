@@ -37,6 +37,10 @@ def updater(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AutoUpdater:
         "supported": True, "label": item.agent_label,
     })
     monkeypatch.setattr(item, "_notify", lambda *args: None)
+    # AutoUpdater is a macOS component, but its state-machine tests also run on
+    # Linux CI. Tests that need a specific launch mode override this explicitly;
+    # the shared fixture must not probe /bin/launchctl on a non-Mac runner.
+    monkeypatch.setattr(item, "active_mode", lambda: "stopped")
     return item
 
 

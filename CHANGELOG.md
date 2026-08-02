@@ -10,6 +10,22 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.69.1] — 2026-08-02
+
+### Fixed — portable release verification
+
+- Studio Hub's updater unit tests now use an explicit stopped-service fixture
+  instead of probing macOS `launchctl` on Linux GitHub runners.
+- The Pinokio sibling-folder integration assertion now runs when the complete
+  local Studio family is present and skips honestly in a standalone repository
+  checkout. Runtime registry behavior remains fully tested on every platform.
+
+### Verification
+
+- The complete 445-test Mac suite passes locally.
+- The GitHub workflow can now distinguish portable unit coverage from the two
+  Mac/Pinokio installation checks instead of reporting false release failures.
+
 ## [1.69.0] — 2026-08-02
 
 ### Added — deliberate audited-model discovery for GenStudio

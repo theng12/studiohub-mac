@@ -1129,6 +1129,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.69.1", date: "2026-08-02", items: [
+    "Release verification now handles standalone Linux test runners correctly while preserving the real Mac and Pinokio installation checks on Studio machines.",
+    "This patch changes test infrastructure only; model discovery, routing, credentials, and running Studio behavior are unchanged.",
+  ]},
   { v: "1.69.0", date: "2026-08-02", items: [
     "Audited sibling models now enter one deliberate Studio Hub review flow and remain hidden from GenStudio until you approve their exact operation, runtime revision, and contract.",
     "The Models workspace now shows fleet supply and lets you refresh, approve, or stop offering a model without losing its audit history.",
