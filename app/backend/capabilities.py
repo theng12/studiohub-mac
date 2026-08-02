@@ -318,7 +318,7 @@ async def build_snapshot(monitor, *, app_version: str, settings: dict,
                          readiness: dict, base_capacity: dict) -> dict:
     """Build schema v1 without mutating or refreshing live worker state."""
     observed = time.time()
-    aggregate = await monitor.aggregate_catalog(force=False)
+    aggregate = monitor.cached_aggregate_catalog()
     models_by_studio: dict[str, list[dict]] = {}
     for model in aggregate.get("models") or []:
         studio_id = model.get("hub_studio")

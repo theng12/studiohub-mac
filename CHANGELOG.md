@@ -10,6 +10,22 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.68.5] — 2026-08-02
+
+### Fixed — capability reads stay independent of worker latency
+
+- The private GenStudio capability snapshot now assembles model and
+  transcription evidence strictly from Studio Hub's last-observed caches.
+- Expired cache entries remain visible as last-known capability evidence while
+  worker health and readiness continue to report their current state separately.
+- Capability reads never refresh a worker catalog or transcription endpoint, so
+  a slow or unreachable Studio cannot delay the control-plane contract.
+
+### Verification
+
+- Focused capability and monitor tests prove cached image, voice, and
+  transcription models survive stale caches without any worker network call.
+
 ## [1.68.4] — 2026-08-01
 
 ### Added — durable Hugging Face credential delivery

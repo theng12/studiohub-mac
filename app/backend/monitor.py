@@ -374,12 +374,16 @@ class StudioMonitor:
         cached = self._provider_cache.get(studio_id)
         return cached[1] if cached else {"supported": False, "providers": []}
 
-    async def aggregate_catalog(self, force: bool = False) -> dict:
-        """Merge all studios' catalogs. Models pass through verbatim, annotated
-        with hub_studio / hub_modality / hub_machine so clients know the source."""
-        results = await asyncio.gather(
-            *(self._catalog_for_aggregate(s, force) for s in self.registry)
-        )
+    def _assemble_aggregate_catalog(
+            self, results: list[dict | None],
+            transcription: list[dict | None]) -> dict:
+        """Assemble catalog and transcription observations already in memory.
+
+        This helper is deliberately pure: it annotates supplied snapshots but
+        never decides whether a cache should be refreshed and never performs a
+        worker request. Callers choose either the live-refresh or cached-only
+        path before reaching this point.
+        """
         models, per_studio = [], {}
         for studio, catalog in zip(self.registry, results):
             sid = studio["id"]
@@ -400,9 +404,6 @@ class StudioMonitor:
         # present in /api/catalog. Fold it into the fleet catalog as its own
         # modality so clients never need direct Voice Studio URLs for discovery.
         voice_studios = [s for s in self.registry if s.get("modality") == "voice"]
-        transcription = await asyncio.gather(
-            *(self.get_transcription(s, force=force) for s in voice_studios)
-        )
         for studio, availability in zip(voice_studios, transcription):
             if not availability:
                 continue
@@ -424,6 +425,40 @@ class StudioMonitor:
                 "transcription_models": len(entries),
             })
         return {"models": models, "per_studio": per_studio, "total": len(models)}
+
+    def cached_aggregate_catalog(self) -> dict:
+        """Merge the last observed catalog and transcription caches only.
+
+        Capability publication uses this path so a GenStudio read can never
+        trigger worker HTTP calls or inherit worker timeouts. Expired cache
+        entries remain useful as last-known capability evidence; worker health
+        and readiness are reported separately by the capability contract.
+        """
+        results = [
+            self._catalog_cache.get(studio["id"], (0.0, None))[1]
+            for studio in self.registry
+        ]
+        voice_studios = [
+            studio for studio in self.registry
+            if studio.get("modality") == "voice"
+        ]
+        transcription = [
+            self._transcribe_cache.get(studio["id"], (0.0, None))[1]
+            for studio in voice_studios
+        ]
+        return self._assemble_aggregate_catalog(results, transcription)
+
+    async def aggregate_catalog(self, force: bool = False) -> dict:
+        """Merge all studios' catalogs. Models pass through verbatim, annotated
+        with hub_studio / hub_modality / hub_machine so clients know the source."""
+        results = await asyncio.gather(
+            *(self._catalog_for_aggregate(s, force) for s in self.registry)
+        )
+        voice_studios = [s for s in self.registry if s.get("modality") == "voice"]
+        transcription = await asyncio.gather(
+            *(self.get_transcription(s, force=force) for s in voice_studios)
+        )
+        return self._assemble_aggregate_catalog(results, transcription)
 
     async def models_by_repo(self, force: bool = False) -> list[dict]:
         """Deduped by repo across all machines, with per-machine availability.

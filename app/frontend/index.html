@@ -1115,6 +1115,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.68.5", date: "2026-08-02", items: [
+    "GenStudio capability reads now use Studio Hub's last-observed model and transcription caches without waiting for worker network calls.",
+    "Slow or offline Studios keep their last-known capability evidence while current health and readiness remain reported separately.",
+  ]},
   { v: "1.68.4", date: "2026-08-01", items: [
     "Hugging Face credentials can now be validated and saved in the Hub's macOS Keychain, then delivered to every registered Image, LLM, Voice, and Video Studio without storing the token in Hub JSON or browser state.",
     "Offline or temporarily unreachable Studios remain visible as retryable delivery targets, with one-click Retry pending when they return.",

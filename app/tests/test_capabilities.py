@@ -150,6 +150,38 @@ def test_private_capability_snapshot_contract_is_versioned_and_truthful(
     assert transcription["availability"]["available_now"] is True
 
 
+def test_capability_snapshot_uses_stale_caches_without_worker_network(
+        authed, monitor, monkeypatch):
+    _seed_capability_site(monitor)
+    stale = time.time() - 3600
+    monitor._catalog_cache["image"] = (stale, monitor._catalog_cache["image"][1])
+    monitor._catalog_cache["voice"] = (stale, monitor._catalog_cache["voice"][1])
+    monitor._transcribe_cache["voice"] = (
+        stale, monitor._transcribe_cache["voice"][1],
+    )
+
+    async def unexpected_network(*args, **kwargs):
+        raise AssertionError("capability snapshot must not contact a worker")
+
+    monkeypatch.setattr(monitor._client, "get", unexpected_network)
+    monkeypatch.setattr(monitor, "get_catalog", unexpected_network)
+    monkeypatch.setattr(monitor, "get_transcription", unexpected_network)
+    monkeypatch.setattr(monitor, "aggregate_catalog", unexpected_network)
+
+    response = authed.get("/api/hub/capabilities")
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert _model(_worker(payload, "image"), "image.generation")[
+        "internal_model_id"
+    ] == "org/image-model"
+    voice = _worker(payload, "voice")
+    assert _model(voice, "voice.tts")["internal_model_id"] == "org/voice-model"
+    assert _model(voice, "audio.transcription")[
+        "internal_model_id"
+    ] == "org/whisper"
+
+
 def test_chat_capability_reports_verified_usage_revision_and_output_limit(
         authed, monitor):
     _seed_capability_site(monitor)
