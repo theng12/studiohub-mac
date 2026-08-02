@@ -11,16 +11,17 @@ import re
 import time
 from datetime import datetime, timezone
 
-from . import broker, chat_jobs, hardware_profiles, memory_admission, peers, transcription_jobs
+from . import (broker, chat_jobs, hardware_profiles, memory_admission,
+               model_exposure, peers, transcription_jobs)
 from .monitor import is_cloud_lane
 from .registry import machine_enabled, studio_enabled
 from .resources import host_stats
 
 SCHEMA_NAME = "studiohub.site-capabilities"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 OPERATION_BY_MODALITY = {
-    "image": "image.generation",
+    "image": "image.text_to_image",
     "music": "music.generation",
     "voice": "voice.tts",
     "transcription": "audio.transcription",
@@ -197,7 +198,10 @@ def _provider_health(monitor, studio: dict, provider: str | None) -> bool | None
 
 def _model_capability(model: dict, studio: dict, worker: dict, monitor) -> dict:
     modality = str(model.get("hub_modality") or studio.get("modality") or "unknown")
-    operation = OPERATION_BY_MODALITY.get(modality, f"{modality}.operation")
+    operation = str(model.get("hub_operation") or OPERATION_BY_MODALITY.get(
+        modality, f"{modality}.operation"))
+    candidate = model.get("hub_candidate")
+    candidate = candidate if isinstance(candidate, dict) else None
     repo = str(model.get("repo") or model.get("model_id") or "unknown")[:500]
     cloud = (
         is_cloud_lane(model.get("is_cloud"), modality)
@@ -241,7 +245,8 @@ def _model_capability(model: dict, studio: dict, worker: dict, monitor) -> dict:
             admission = {**admission, "observed_total_memory_gb": None,
                          "observed_available_memory_gb": None,
                          "eligible_now": None}
-    model_ready = runtime_compatible and subsystem_ready and (
+    catalog_stale = bool(model.get("hub_catalog_stale"))
+    model_ready = runtime_compatible and subsystem_ready and not catalog_stale and (
         provider_ready is True if cloud else installed is True
     ) and memory_ready is not False
     available_now = bool(worker["available_capacity"]["slots"] and model_ready)
@@ -257,6 +262,8 @@ def _model_capability(model: dict, studio: dict, worker: dict, monitor) -> dict:
         reason = "physical_machine_busy"
     elif not worker["ready"]:
         reason = "worker_not_ready"
+    elif catalog_stale:
+        reason = "catalog_stale"
     elif not runtime_compatible:
         reason = "runtime_incompatible"
     elif not subsystem_ready:
@@ -274,7 +281,12 @@ def _model_capability(model: dict, studio: dict, worker: dict, monitor) -> dict:
     else:
         reason = None
 
-    revision, revision_source, revision_status = _immutable_runtime_revision(model)
+    if candidate:
+        revision = candidate.get("runtime_revision")
+        revision_source = "genstudio_candidate.runtime_revision"
+        revision_status = "verified_immutable"
+    else:
+        revision, revision_source, revision_status = _immutable_runtime_revision(model)
     internal_id = (
         model.get("model_id") or model.get("cloud_model_id")
         or model.get("provider_model") or model.get("repo") or "unknown"
@@ -287,12 +299,40 @@ def _model_capability(model: dict, studio: dict, worker: dict, monitor) -> dict:
         "revision_status": revision_status,
         "provider": provider or ("local" if not cloud else None),
         "execution_lane": "cloud" if cloud else "local",
-        "input_limits": _selected(model, _INPUT_LIMIT_FIELDS),
-        "output_limits": _selected(model, _OUTPUT_LIMIT_FIELDS),
-        "controls": _controls(model, modality, cloud),
+        "audit": ({
+            "audit_id": candidate.get("audit_id"),
+            "audit_status": candidate.get("audit_status"),
+            "contract_hash": candidate.get("contract_hash"),
+            "audited_at": candidate.get("audited_at"),
+        } if candidate else None),
+        "exposure": model.get("hub_exposure"),
+        "input_limits": (
+            candidate.get("input_limits", {}) if candidate
+            else _selected(model, _INPUT_LIMIT_FIELDS)
+        ),
+        "output_limits": (
+            candidate.get("output_limits", {}) if candidate
+            else _selected(model, _OUTPUT_LIMIT_FIELDS)
+        ),
+        "controls": (
+            candidate.get("controls", {}) if candidate
+            else _controls(model, modality, cloud)
+        ),
+        "adapter": candidate.get("adapter", {}) if candidate else {},
+        "capacity": candidate.get("capacity", {}) if candidate else {},
+        "catalog_observation": {
+            "observed_at": (
+                _rfc3339(model["hub_catalog_observed_at"])
+                if isinstance(model.get("hub_catalog_observed_at"), (int, float))
+                else None
+            ),
+            "age_seconds": model.get("hub_catalog_age_seconds"),
+            "stale": catalog_stale,
+        },
         "memory_admission": admission,
         "availability": {
             "supported": True,
+            "approved_for_genstudio": True,
             "installed": installed,
             "runtime_compatible": runtime_compatible,
             "revision_pinning_ready": revision is not None,
@@ -302,6 +342,95 @@ def _model_capability(model: dict, studio: dict, worker: dict, monitor) -> dict:
             "reason": reason,
         },
     }
+
+
+def _model_supply(workers: list[dict]) -> list[dict]:
+    """Aggregate approved supply strictly from detailed worker evidence."""
+    grouped: dict[tuple[str, str, str | None, str | None], dict] = {}
+    for worker in workers:
+        for model in worker.get("models") or []:
+            audit = model.get("audit") or {}
+            key = (
+                model["internal_model_id"], model["operation"],
+                model.get("runtime_revision"), audit.get("contract_hash"),
+            )
+            row = grouped.setdefault(key, {
+                "internal_model_id": model["internal_model_id"],
+                "operation": model["operation"],
+                "runtime_revision": model.get("runtime_revision"),
+                "contract_hash": audit.get("contract_hash"),
+                "audit_id": audit.get("audit_id"),
+                "machines": [],
+            })
+            availability = model["availability"]
+            busy = bool(worker["busy"] or worker["physical_machine_busy"])
+            row["machines"].append({
+                "physical_machine_id": worker["physical_machine_id"],
+                "service_id": worker["service_id"],
+                "hardware_profile": worker.get("hardware_profile"),
+                "online": worker["online"],
+                "ready": bool(availability.get("available_now")),
+                "busy": busy,
+                "quarantined": worker["machine_quarantined"],
+                "installed": availability.get("installed"),
+                "availability_reason": availability.get("reason"),
+                "available_slots": worker["available_capacity"]["slots"],
+                "catalog_observation": model.get("catalog_observation"),
+                "memory_admission": model.get("memory_admission"),
+            })
+    result = []
+    for row in grouped.values():
+        machines = row["machines"]
+        unique = {machine["physical_machine_id"] for machine in machines}
+        row["installed_machine_count"] = len({
+            machine["physical_machine_id"] for machine in machines
+            if machine["installed"] is True
+        })
+        row["online_machine_count"] = len({
+            machine["physical_machine_id"] for machine in machines
+            if machine["online"]
+        })
+        row["ready_machine_count"] = len({
+            machine["physical_machine_id"] for machine in machines
+            if machine["ready"]
+        })
+        row["busy_machine_count"] = len({
+            machine["physical_machine_id"] for machine in machines
+            if machine["busy"]
+        })
+        row["offline_machine_count"] = len({
+            machine["physical_machine_id"] for machine in machines
+            if not machine["online"]
+        })
+        row["quarantined_machine_count"] = len({
+            machine["physical_machine_id"] for machine in machines
+            if machine["quarantined"]
+        })
+        row["offline_or_quarantined_machine_count"] = len({
+            machine["physical_machine_id"] for machine in machines
+            if not machine["online"] or machine["quarantined"]
+        })
+        row["available_physical_slots"] = len({
+            machine["physical_machine_id"] for machine in machines
+            if machine["ready"] and machine["available_slots"] > 0
+        })
+        row["machine_ids"] = sorted(unique)
+        observed = [
+            machine["catalog_observation"].get("observed_at")
+            for machine in machines
+            if isinstance(machine.get("catalog_observation"), dict)
+            and machine["catalog_observation"].get("observed_at")
+        ]
+        row["last_catalog_refresh"] = max(observed) if observed else None
+        row["stale"] = any(
+            bool((machine.get("catalog_observation") or {}).get("stale"))
+            for machine in machines
+        )
+        result.append(row)
+    return sorted(result, key=lambda row: (
+        row["operation"], row["internal_model_id"],
+        row.get("runtime_revision") or "", row.get("contract_hash") or "",
+    ))
 
 
 def _machine_host(machine: str) -> tuple[bool, dict | None]:
@@ -316,14 +445,27 @@ def _machine_host(machine: str) -> tuple[bool, dict | None]:
 
 async def build_snapshot(monitor, *, app_version: str, settings: dict,
                          readiness: dict, base_capacity: dict) -> dict:
-    """Build schema v1 without mutating or refreshing live worker state."""
+    """Build schema v2 without mutating or refreshing live worker state."""
     observed = time.time()
     aggregate = monitor.cached_aggregate_catalog()
     models_by_studio: dict[str, list[dict]] = {}
     for model in aggregate.get("models") or []:
+        candidate = model_exposure.candidate_summary(model)
+        if candidate is None:
+            continue
         studio_id = model.get("hub_studio")
-        if studio_id:
-            models_by_studio.setdefault(str(studio_id), []).append(model)
+        if not studio_id:
+            continue
+        for operation in candidate["approved_operations"]:
+            exposure = model_exposure.state_for(candidate, operation)
+            if exposure.get("state") != "approved":
+                continue
+            models_by_studio.setdefault(str(studio_id), []).append({
+                **model,
+                "hub_operation": operation,
+                "hub_candidate": candidate,
+                "hub_exposure": exposure,
+            })
 
     busy = set(broker.busy_studios()) | set(chat_jobs.busy_studios) \
         | set(transcription_jobs.busy_studios)
@@ -379,8 +521,7 @@ async def build_snapshot(monitor, *, app_version: str, settings: dict,
             worker["available_capacity"]["slots"] = 0
         worker["supported_operations"] = sorted({
             model["operation"] for model in worker["models"]
-        } or {OPERATION_BY_MODALITY.get(
-            studio.get("modality"), f"{studio.get('modality', 'unknown')}.operation")})
+        })
         workers.append(worker)
 
     machines = []
@@ -457,6 +598,7 @@ async def build_snapshot(monitor, *, app_version: str, settings: dict,
             "shared_physical_machine_slots": True,
             "by_operation": by_operation,
         },
+        "model_supply": _model_supply(workers),
         "machines": machines,
         "workers": workers,
     }

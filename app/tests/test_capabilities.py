@@ -3,7 +3,42 @@ import time
 
 from starlette.testclient import TestClient
 
-from backend import auth, broker, capabilities, control_plane, hardware_profiles, peers, registry
+from backend import (auth, broker, capabilities, control_plane,
+                     hardware_profiles, model_exposure, peers, registry)
+
+
+def _candidate(model_id, revision, operation, *, controls=None,
+               input_limits=None, output_limits=None):
+    value = {
+        "schema": "studio.model-audit",
+        "schema_version": 1,
+        "audit_id": f"audit-{model_id}",
+        "audit_status": "passed",
+        "candidate_for_genstudio": True,
+        "contract_hash": "sha256:" + "b" * 64,
+        "runtime_revision": revision,
+        "approved_operations": [operation],
+        "audited_at": "2026-08-02T00:00:00Z",
+        "adapter": {"id": "test-adapter", "version": "1"},
+        "controls": controls or {},
+        "input_limits": input_limits or {},
+        "output_limits": output_limits or {},
+        "hardware": {"min_unified_memory_gb": 8},
+    }
+    return value
+
+
+def _approve(model_id, candidate, operation):
+    model_exposure.approve({
+        "internal_model_id": model_id,
+        "display_name": model_id,
+        "audit_id": candidate["audit_id"],
+        "audit_status": candidate["audit_status"],
+        "candidate_for_genstudio": True,
+        "contract_hash": candidate["contract_hash"],
+        "runtime_revision": candidate["runtime_revision"],
+        "approved_operations": [operation],
+    }, operation)
 
 
 def _seed_capability_site(monitor):
@@ -21,6 +56,15 @@ def _seed_capability_site(monitor):
             "health": {"ok": True},
         },
     }
+    image_candidate = _candidate(
+        "org/image-model", "a" * 40, "image.text_to_image",
+        controls={
+            "aspect_ratios": ["16:9", "1:1"],
+            "generation_controls": {"steps": True, "seed": True},
+            "defaults": {"steps": 4},
+        },
+        input_limits={"max_prompt_characters": 15_000},
+    )
     monitor._catalog_cache["image"] = (now, {"models": [{
         "repo": "org/image-model",
         "revision": "a" * 40,
@@ -45,7 +89,15 @@ def _seed_capability_site(monitor):
         "max_prompt_characters": 15_000,
         "prompt": "customer prompt must never leak",
         "api_key": "secret-must-never-leak",
+        "genstudio_candidate": image_candidate,
     }]})
+    voice_candidate = _candidate(
+        "org/voice-model", "c" * 40, "voice.tts",
+        controls={"voice_modes": ["reference_audio_clone"],
+                  "languages": ["en", "km"]},
+        input_limits={"max_text_characters": 15_000},
+        output_limits={"sample_rate_hz": 24_000},
+    )
     monitor._catalog_cache["voice"] = (now, {"models": [{
         "repo": "org/voice-model",
         "revision": "main",
@@ -54,13 +106,21 @@ def _seed_capability_site(monitor):
         "languages": ["en", "km"],
         "sample_rate_hz": 24_000,
         "max_text_characters": 15_000,
+        "genstudio_candidate": voice_candidate,
     }]})
+    whisper_candidate = _candidate(
+        "org/whisper", "d" * 40, "audio.transcription",
+    )
     monitor._transcribe_cache["voice"] = (now, {
         "available": True,
         "default_model": "org/whisper",
         "models": [{"repo": "org/whisper", "label": "Whisper",
-                    "cached": True}],
+                    "cached": True,
+                    "genstudio_candidate": whisper_candidate}],
     })
+    _approve("org/image-model", image_candidate, "image.text_to_image")
+    _approve("org/voice-model", voice_candidate, "voice.tts")
+    _approve("org/whisper", whisper_candidate, "audio.transcription")
     hardware_profiles.set_machine_hardware_profile("local", "mac-mini-m4-16gb")
     control_plane.save_settings({
         "role": "controller", "site_id": "site-a", "site_name": "Site A",
@@ -95,7 +155,7 @@ def test_private_capability_snapshot_contract_is_versioned_and_truthful(
 
     assert response.status_code == 200
     assert payload["schema"] == "studiohub.site-capabilities"
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["observed_at"].endswith("Z")
     assert payload["site_id"] == "site-a"
     assert payload["controller"] == {
@@ -125,7 +185,7 @@ def test_private_capability_snapshot_contract_is_versioned_and_truthful(
     assert image["studio_version"] == "1.22.1"
     assert image["physical_machine_id"] == "local"
     assert image["online"] and image["ready"] and not image["busy"]
-    model = _model(image, "image.generation")
+    model = _model(image, "image.text_to_image")
     assert model["internal_model_id"] == "org/image-model"
     assert model["runtime_revision"] == "a" * 40
     assert model["revision_status"] == "verified_immutable"
@@ -141,9 +201,9 @@ def test_private_capability_snapshot_contract_is_versioned_and_truthful(
     voice = _worker(payload, "voice")
     tts = _model(voice, "voice.tts")
     transcription = _model(voice, "audio.transcription")
-    assert tts["runtime_revision"] is None
-    assert tts["revision_status"] == "reported_but_not_immutable"
-    assert tts["availability"]["revision_pinning_ready"] is False
+    assert tts["runtime_revision"] == "c" * 40
+    assert tts["revision_status"] == "verified_immutable"
+    assert tts["availability"]["revision_pinning_ready"] is True
     assert tts["controls"]["voice_modes"] == ["reference_audio_clone"]
     assert tts["controls"]["languages"] == ["en", "km"]
     assert tts["output_limits"] == {"sample_rate_hz": 24_000}
@@ -172,7 +232,7 @@ def test_capability_snapshot_uses_stale_caches_without_worker_network(
     payload = response.json()
 
     assert response.status_code == 200
-    assert _model(_worker(payload, "image"), "image.generation")[
+    assert _model(_worker(payload, "image"), "image.text_to_image")[
         "internal_model_id"
     ] == "org/image-model"
     voice = _worker(payload, "voice")
@@ -180,6 +240,36 @@ def test_capability_snapshot_uses_stale_caches_without_worker_network(
     assert _model(voice, "audio.transcription")[
         "internal_model_id"
     ] == "org/whisper"
+
+
+def test_unapproved_or_revoked_model_is_not_advertised(authed, monitor):
+    _seed_capability_site(monitor)
+    image_candidate = model_exposure.candidate_summary(
+        monitor._catalog_cache["image"][1]["models"][0]
+    )
+    key = model_exposure.candidate_key(
+        image_candidate, "image.text_to_image",
+    )
+    model_exposure.revoke_key(key)
+
+    payload = authed.get("/api/hub/capabilities").json()
+    image = _worker(payload, "image")
+    assert image["models"] == []
+    assert "image.text_to_image" not in image["supported_operations"]
+    assert not any(
+        row["internal_model_id"] == "org/image-model"
+        for row in payload["model_supply"]
+    )
+
+
+def test_candidate_without_hub_approval_is_not_advertised(authed, monitor):
+    _seed_capability_site(monitor)
+    model_exposure.STATE_FILE.unlink()
+
+    payload = authed.get("/api/hub/capabilities").json()
+    assert all(worker["models"] == [] for worker in payload["workers"])
+    assert payload["model_supply"] == []
+    assert payload["capacity"]["by_operation"] == {}
 
 
 def test_chat_capability_reports_verified_usage_revision_and_output_limit(
@@ -196,13 +286,22 @@ def test_chat_capability_reports_verified_usage_revision_and_output_limit(
         "health": {"ok": True},
     }
     revision = "7f0dc925e0d0afb0322d96f9255cfddf2ba5636e"
+    chat_candidate = _candidate(
+        "mlx-community/Llama-3.2-3B-Instruct-4bit", revision,
+        "chat.completion",
+        controls={"verified_token_usage": True},
+        output_limits={"max_output_tokens": 32768},
+    )
     monitor._catalog_cache["chat"] = (time.time(), {"models": [{
         "repo": "mlx-community/Llama-3.2-3B-Instruct-4bit",
         "runtime_revision": revision,
         "cache": {"state": "cached"},
         "max_output_tokens": 32768,
         "verified_token_usage": True,
+        "genstudio_candidate": chat_candidate,
     }]})
+    _approve("mlx-community/Llama-3.2-3B-Instruct-4bit",
+             chat_candidate, "chat.completion")
 
     payload = authed.get("/api/hub/capabilities").json()
     model = _model(_worker(payload, "chat"), "chat.completion")
@@ -271,7 +370,7 @@ def test_busy_physical_machine_has_zero_available_capacity(authed, monitor):
 
     assert image["busy"] is True
     assert image["available_capacity"]["slots"] == 0
-    assert _model(image, "image.generation")["availability"]["reason"] == "worker_busy"
+    assert _model(image, "image.text_to_image")["availability"]["reason"] == "worker_busy"
     assert voice["busy"] is False
     assert voice["physical_machine_busy"] is True
     assert voice["available_capacity"]["slots"] == 0
@@ -313,18 +412,25 @@ def test_agent_reports_drained_and_never_claims_global_work(authed, monitor):
 def test_capability_snapshot_uses_effective_flux_ram_policy(
         authed, monitor, monkeypatch):
     _seed_capability_site(monitor)
+    flux_candidate = _candidate(
+        "AITRADER/FLUX2-klein-4B-mlx-4bit", "e" * 40,
+        "image.text_to_image",
+    )
     monitor._catalog_cache["image"] = (time.time(), {"models": [{
         "repo": "AITRADER/FLUX2-klein-4B-mlx-4bit",
         "min_unified_memory_gb": 16,
         "cache": {"state": "cached"},
         "capabilities": ["txt2img"],
+        "genstudio_candidate": flux_candidate,
     }]})
+    _approve("AITRADER/FLUX2-klein-4B-mlx-4bit", flux_candidate,
+             "image.text_to_image")
     monkeypatch.setattr(capabilities, "host_stats", lambda: {
         "total_gb": 8.59, "available_gb": 2.4,
     })
 
     payload = authed.get("/api/hub/capabilities").json()
-    model = _model(_worker(payload, "image"), "image.generation")
+    model = _model(_worker(payload, "image"), "image.text_to_image")
 
     assert model["memory_admission"]["catalog_min_total_memory_gb"] == 16
     assert model["memory_admission"]["effective_min_total_memory_gb"] == 8

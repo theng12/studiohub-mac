@@ -1,9 +1,8 @@
 # GenStudio KH handoff: consume Studio Hub site capabilities
 
 Use this file as the implementation brief for a GenStudio KH coding session.
-The Studio Hub capability contract is available in Studio Hub KH `v1.56.0`
-and later. Version `v1.57.0` adds effective site-local RAM-admission facts;
-version `v1.61.0` adds the site-local Whisper Tiny baseline contract.
+The approved-model discovery contract is available in Studio Hub KH `v1.69.0`
+and later as capability schema version 2.
 
 The canonical response contract is documented in
 [`CAPABILITY_CONTRACT.md`](CAPABILITY_CONTRACT.md). If this handoff and that
@@ -45,12 +44,12 @@ Expected identity:
 ```json
 {
   "schema": "studiohub.site-capabilities",
-  "schema_version": 1
+  "schema_version": 2
 }
 ```
 
 GenStudio must reject an unknown schema name or unsupported major schema
-version and should ignore unknown additive fields within version 1.
+version and should ignore unknown additive fields within version 2.
 
 ## Multi-controller maintenance composition
 
@@ -116,8 +115,8 @@ Recommended initial behavior:
 
 - Poll each configured site every 15 seconds with small random jitter.
 - Allow only one in-flight capability request per site.
-- Use a bounded request timeout of about 30 seconds because Hub may refresh
-  read-only Studio catalogs while composing the response.
+- Use a bounded request timeout of about 5 seconds. Capability reads are
+  cache-only and never contact sibling workers.
 - Preserve the last valid snapshot for diagnostics, but do not route new work
   from a stale snapshot.
 - Treat a snapshot as stale when `observed_at` is older than 60 seconds, its
@@ -139,15 +138,18 @@ A site is eligible for a new assignment only when all of these are true:
 6. `authority.global_job_claiming` is false.
 7. At least one worker/model pair for the requested operation reports
    `availability.available_now == true`.
-8. The model's controls and input/output limits accept the request.
-9. If GenStudio requires revision pinning,
+8. `availability.approved_for_genstudio == true`, with a passed audit and exact
+   Studio Hub exposure evidence.
+9. The model's controls and input/output limits accept the request.
+10. If GenStudio requires revision pinning,
    `availability.revision_pinning_ready == true` and `runtime_revision` matches
    the selected immutable revision.
 
 Use `internal_model_id` when addressing the selected Studio runtime. Stable
 operation names currently include:
 
-- `image.generation`
+- `image.text_to_image`
+- `image.image_to_image`
 - `voice.tts`
 - `audio.transcription`
 - `chat.completion`
@@ -188,6 +190,11 @@ them or turn them into global ownership state.
 - Cloud models are available only when Hub has verified their provider state.
 - Maintenance, drains, quarantines, worker busy state, and shared-machine busy
   state are already reflected in `available_now`.
+- `catalog_observation.stale=true` makes that model unavailable. Preserve the
+  evidence for diagnostics, but never route new work from it.
+- `model_supply` is a convenience aggregate derived from the detailed workers.
+  Use the detailed worker evidence for final routing and do not treat the
+  aggregate as a separate authority.
 
 ## Failure behavior
 
@@ -234,7 +241,7 @@ Add tests proving:
 
 1. Bearer authentication is sent and never logged.
 2. Schema name/version and site/controller identity are validated.
-3. Unknown additive v1 fields are ignored.
+3. Unknown additive v2 fields are ignored.
 4. Stale, malformed, unauthorized, and unreachable sites are ineligible.
 5. Drained or unready controllers are ineligible.
 6. Busy, drained, maintained, quarantined, offline, or incompatible workers are
@@ -247,6 +254,8 @@ Add tests proving:
 10. A capability failure cannot charge/refund, claim/retry a customer job,
     issue a fencing token, or change an accepted attempt.
 11. PostgreSQL and Studio Hub never become global routing authorities.
+12. Unapproved, revoked, changed-contract, and stale-catalogue models are not
+    eligible, while last-good evidence remains inspectable.
 
 Use a mocked Studio Hub response for contract tests. A guarded local smoke test
 may call a running Hub with a configured secret, but it must perform only the
@@ -255,7 +264,7 @@ GET above and must not submit, drain, restart, or alter workers or jobs.
 ## Definition of done
 
 - GenStudio can configure and authenticate one or more Studio Hub sites.
-- It periodically obtains and validates schema v1 snapshots.
+- It periodically obtains and validates schema v2 snapshots.
 - Its router can filter sites by freshness, controller state, physical
   capacity, operation, model, revision, voice mode, limits, and controls.
 - Site unavailability reduces routing capacity without changing global job

@@ -7,20 +7,26 @@ the source studio.
 """
 
 import asyncio
+import contextlib
+import json
 import logging
+import os
 import time
+from pathlib import Path
 
 import httpx
 
 log = logging.getLogger("studiohub.monitor")
 
-from .registry import base_url, load_registry, prune_machine_metadata
+from .registry import DATA_DIR, base_url, load_registry, prune_machine_metadata
 from .peers import studio_request
 
 POLL_INTERVAL_S = 5.0
 HEALTH_TIMEOUT_S = 3.0
 CATALOG_TIMEOUT_S = 10.0
 CATALOG_TTL_S = 60.0
+CATALOG_REFRESH_INTERVAL_S = 60.0
+CATALOG_STALE_S = 5 * 60.0
 PROVIDER_TIMEOUT_S = 3.0
 PROVIDER_TTL_S = 30.0
 HEALTH_FAILURES_TO_DOWN = 3
@@ -75,7 +81,7 @@ def _provider_of(model: dict) -> str:
 
 
 class StudioMonitor:
-    def __init__(self):
+    def __init__(self, *, catalog_state_path: Path | None = None):
         self.registry: list[dict] = load_registry()
         prune_machine_metadata({studio.get("machine", "local")
                                 for studio in self.registry})
@@ -85,18 +91,33 @@ class StudioMonitor:
         }
         self._catalog_cache: dict[str, tuple[float, dict]] = {}
         self._transcribe_cache: dict[str, tuple[float, dict]] = {}
+        self._catalog_meta: dict[str, dict] = {}
+        self.catalog_state_path = (
+            catalog_state_path or DATA_DIR / "catalog_observations.json"
+        )
         self._provider_cache: dict[str, tuple[float, dict]] = {}
         self._restart_alerts: dict[str, dict] = {}
         self._client = httpx.AsyncClient()
         self._task: asyncio.Task | None = None
+        self._catalog_task: asyncio.Task | None = None
+        self._catalog_refresh_lock: asyncio.Lock | None = None
+        self._load_catalog_state()
 
     # ── lifecycle ────────────────────────────────────────────────────────
     def start(self):
         self._task = asyncio.create_task(self._poll_loop())
+        self._catalog_task = asyncio.create_task(self._catalog_refresh_loop())
 
     async def stop(self):
-        if self._task:
-            self._task.cancel()
+        for task in (self._task, self._catalog_task):
+            if task:
+                task.cancel()
+        for task in (self._task, self._catalog_task):
+            if task:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+        self._task = None
+        self._catalog_task = None
         await self._client.aclose()
 
     def reload_registry(self):
@@ -120,8 +141,157 @@ class StudioMonitor:
             self.status.pop(studio_id, None)
             self._catalog_cache.pop(studio_id, None)
             self._transcribe_cache.pop(studio_id, None)
+            self._catalog_meta.pop(studio_id, None)
             self._provider_cache.pop(studio_id, None)
             self._restart_alerts.pop(studio_id, None)
+        self._save_catalog_state()
+
+    # ── durable catalogue observations ───────────────────────────────────
+    def _load_catalog_state(self) -> None:
+        try:
+            value = json.loads(self.catalog_state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            return
+        if not isinstance(value, dict):
+            return
+        for sid, row in (value.get("studios") or {}).items():
+            if not isinstance(sid, str) or not isinstance(row, dict):
+                continue
+            catalog = row.get("catalog")
+            transcription = row.get("transcription")
+            catalog_at = row.get("catalog_observed_at")
+            transcription_at = row.get("transcription_observed_at")
+            if isinstance(catalog, dict) and isinstance(catalog_at, (int, float)):
+                self._catalog_cache[sid] = (float(catalog_at), catalog)
+            if (isinstance(transcription, dict)
+                    and isinstance(transcription_at, (int, float))):
+                self._transcribe_cache[sid] = (
+                    float(transcription_at), transcription,
+                )
+            self._catalog_meta[sid] = {
+                "last_attempt_at": row.get("last_attempt_at"),
+                "last_success_at": row.get("last_success_at"),
+                "last_error": row.get("last_error"),
+            }
+
+    def _save_catalog_state(self) -> None:
+        studios = {}
+        studio_ids = set(self._catalog_cache) | set(self._transcribe_cache) \
+            | set(self._catalog_meta)
+        for sid in sorted(studio_ids):
+            catalog = self._catalog_cache.get(sid)
+            transcription = self._transcribe_cache.get(sid)
+            meta = self._catalog_meta.get(sid, {})
+            studios[sid] = {
+                "catalog_observed_at": catalog[0] if catalog else None,
+                "catalog": catalog[1] if catalog else None,
+                "transcription_observed_at": (
+                    transcription[0] if transcription else None
+                ),
+                "transcription": transcription[1] if transcription else None,
+                "last_attempt_at": meta.get("last_attempt_at"),
+                "last_success_at": meta.get("last_success_at"),
+                "last_error": meta.get("last_error"),
+            }
+        payload = {"schema_version": 1, "studios": studios}
+        self.catalog_state_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.catalog_state_path.with_name(
+            f".{self.catalog_state_path.name}.{os.getpid()}.tmp"
+        )
+        try:
+            descriptor = os.open(
+                temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600,
+            )
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.catalog_state_path)
+            os.chmod(self.catalog_state_path, 0o600)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                temporary.unlink()
+
+    @staticmethod
+    def _safe_error(exc: Exception) -> str:
+        return (str(exc).strip() or type(exc).__name__)[:240]
+
+    def catalog_observation(self, studio_id: str, *, transcription=False) -> dict:
+        cache = (
+            self._transcribe_cache if transcription else self._catalog_cache
+        ).get(studio_id)
+        observed_at = cache[0] if cache else None
+        age = max(0.0, time.time() - observed_at) if observed_at else None
+        meta = self._catalog_meta.get(studio_id, {})
+        return {
+            "observed_at": observed_at,
+            "age_seconds": round(age, 3) if age is not None else None,
+            "stale": age is None or age > CATALOG_STALE_S,
+            "last_attempt_at": meta.get("last_attempt_at"),
+            "last_success_at": meta.get("last_success_at"),
+            "last_error": meta.get("last_error"),
+            "source": "persisted_last_good" if cache else "none",
+        }
+
+    async def _catalog_refresh_loop(self) -> None:
+        try:
+            # Let the quick health loop establish reachability first.
+            await asyncio.sleep(POLL_INTERVAL_S)
+            while True:
+                try:
+                    await self.refresh_catalogs()
+                except Exception:
+                    log.warning("catalog refresh cycle failed (continuing)",
+                                exc_info=True)
+                await asyncio.sleep(CATALOG_REFRESH_INTERVAL_S)
+        except asyncio.CancelledError:
+            pass
+
+    async def refresh_catalogs(self, *, force: bool = True) -> dict:
+        """Refresh every reachable sibling independently of health polling.
+
+        One global lock prevents overlapping cycles. Per-worker calls remain
+        concurrent and individually bounded by CATALOG_TIMEOUT_S.
+        """
+        if self._catalog_refresh_lock is None:
+            self._catalog_refresh_lock = asyncio.Lock()
+        if self._catalog_refresh_lock.locked():
+            return {"started": False, "reason": "refresh_in_progress"}
+        async with self._catalog_refresh_lock:
+            results = await asyncio.gather(*(
+                self._refresh_studio_catalog(studio, force=force)
+                for studio in list(self.registry)
+            ))
+            self._save_catalog_state()
+            return {"started": True, "studios": results}
+
+    async def _refresh_studio_catalog(self, studio: dict, *, force: bool) -> dict:
+        sid = studio["id"]
+        now = time.time()
+        meta = self._catalog_meta.setdefault(sid, {})
+        meta["last_attempt_at"] = now
+        if self.status.get(sid, {}).get("status") != "up":
+            meta["last_error"] = "worker_unreachable"
+            return {"studio_id": sid, "refreshed": False,
+                    "reason": "worker_unreachable"}
+        try:
+            catalog = await self.get_catalog(studio, force=force)
+            if catalog is None:
+                raise RuntimeError("catalog_unavailable")
+            if studio.get("modality") == "voice":
+                transcription = await self.get_transcription(studio, force=force)
+                if transcription is None:
+                    raise RuntimeError("transcription_catalog_unavailable")
+            if meta.get("last_error"):
+                return {"studio_id": sid, "refreshed": False,
+                        "reason": meta["last_error"]}
+            meta.update(last_success_at=time.time(), last_error=None)
+            return {"studio_id": sid, "refreshed": True}
+        except Exception as exc:
+            meta["last_error"] = self._safe_error(exc)
+            return {"studio_id": sid, "refreshed": False,
+                    "reason": meta["last_error"]}
 
     # ── health ───────────────────────────────────────────────────────────
     async def _poll_loop(self):
@@ -288,8 +458,13 @@ class StudioMonitor:
             r.raise_for_status()
             data = r.json()
             self._catalog_cache[sid] = (time.time(), data)
+            self._catalog_meta.setdefault(sid, {}).update(
+                last_success_at=time.time(), last_error=None,
+            )
             return data
-        except Exception:
+        except Exception as exc:
+            self._catalog_meta.setdefault(sid, {})["last_error"] = \
+                self._safe_error(exc)
             # Serve stale on failure rather than nothing.
             return cached[1] if cached else None
 
@@ -320,8 +495,13 @@ class StudioMonitor:
             r.raise_for_status()
             data = r.json()
             self._transcribe_cache[sid] = (time.time(), data)
+            self._catalog_meta.setdefault(sid, {}).update(
+                last_success_at=time.time(), last_error=None,
+            )
             return data
-        except Exception:
+        except Exception as exc:
+            self._catalog_meta.setdefault(sid, {})["last_error"] = \
+                self._safe_error(exc)
             return cached[1] if cached else None
 
     async def get_provider_health(self, studio: dict, force: bool = False) -> dict:
@@ -397,8 +577,16 @@ class StudioMonitor:
                 annotated["hub_modality"] = studio["modality"]
                 annotated["hub_machine"] = studio.get("machine", "local")
                 annotated["hub_cached"] = is_cached(m)  # correct download state
+                observation = self.catalog_observation(sid)
+                annotated["hub_catalog_observed_at"] = observation["observed_at"]
+                annotated["hub_catalog_age_seconds"] = observation["age_seconds"]
+                annotated["hub_catalog_stale"] = observation["stale"]
+                annotated["hub_catalog_error"] = observation["last_error"]
                 models.append(annotated)
-            per_studio[sid] = {"ok": True, "models": len(entries)}
+            per_studio[sid] = {
+                "ok": True, "models": len(entries),
+                "catalog": self.catalog_observation(sid),
+            }
 
         # Whisper/STT is a separate Voice Studio subsystem and therefore is not
         # present in /api/catalog. Fold it into the fleet catalog as its own
@@ -419,6 +607,11 @@ class StudioMonitor:
                 annotated["hub_cached"] = bool(model.get("cached"))
                 annotated["hub_ready"] = ready
                 annotated["default"] = model.get("repo") == default_repo
+                observation = self.catalog_observation(sid, transcription=True)
+                annotated["hub_catalog_observed_at"] = observation["observed_at"]
+                annotated["hub_catalog_age_seconds"] = observation["age_seconds"]
+                annotated["hub_catalog_stale"] = observation["stale"]
+                annotated["hub_catalog_error"] = observation["last_error"]
                 models.append(annotated)
             per_studio.setdefault(sid, {}).update({
                 "transcription_ok": ready,
@@ -458,14 +651,187 @@ class StudioMonitor:
         transcription = await asyncio.gather(
             *(self.get_transcription(s, force=force) for s in voice_studios)
         )
-        return self._assemble_aggregate_catalog(results, transcription)
+        assembled = self._assemble_aggregate_catalog(results, transcription)
+        if force:
+            self._save_catalog_state()
+        return assembled
+
+    def candidate_models(self) -> list[dict]:
+        """Cache-only audited candidate inventory grouped by exact contract.
+
+        This is the operator review surface. It intentionally includes
+        unexposed candidates; GenStudio's capability contract does not.
+        """
+        from . import (broker, chat_jobs, hardware_profiles, memory_admission,
+                       model_exposure, transcription_jobs)
+        from .registry import machine_enabled, studio_enabled
+
+        aggregate = self.cached_aggregate_catalog()
+        studios = {studio["id"]: studio for studio in self.registry}
+        protections = broker.machine_protection_snapshot()
+        busy_studios = set(broker.busy_studios()) | set(chat_jobs.busy_studios) \
+            | set(transcription_jobs.busy_studios)
+        busy_machines = broker.busy_machines()
+        grouped: dict[str, dict] = {}
+
+        for model in aggregate.get("models") or []:
+            candidate = model_exposure.candidate_summary(model)
+            if candidate is None:
+                continue
+            studio_id = str(model.get("hub_studio") or "")
+            studio = studios.get(studio_id, {})
+            machine = str(model.get("hub_machine") or "local")
+            status = self.status.get(studio_id, {})
+            online = status.get("status") == "up"
+            quarantined = bool((protections.get(machine) or {}).get("quarantined"))
+            busy = studio_id in busy_studios or machine in busy_machines
+            drained = (
+                not machine_enabled(machine)
+                or not studio_enabled(machine, studio_id)
+                or broker.in_maintenance(studio_id)
+            )
+            catalog_stale = bool(model.get("hub_catalog_stale"))
+            installed = bool(model.get("hub_cached"))
+            runtime_compatible = model.get("runtime_compatible") is not False
+            subsystem_ready = model.get("hub_ready") is not False
+            hardware_profile = hardware_profiles.machine_hardware_profile(machine)
+            admission = None
+            hardware_eligible = True
+            if memory_admission.applies_to(
+                    model.get("hub_modality"),
+                    is_cloud=is_cloud_lane(model.get("is_cloud"),
+                                           model.get("hub_modality"))):
+                admission = memory_admission.describe(
+                    candidate["internal_model_id"], model,
+                )
+                health_memory = ((status.get("health") or {}).get("memory") or {})
+                observed_total = health_memory.get("total_gb")
+                if not isinstance(observed_total, (int, float)):
+                    observed_total = (hardware_profile or {}).get("memory_gb")
+                floor = admission.get("effective_min_total_memory_gb")
+                if isinstance(observed_total, (int, float)) and isinstance(floor, (int, float)):
+                    hardware_eligible = float(observed_total) >= float(floor)
+                admission = {
+                    **admission,
+                    "observed_total_memory_gb": observed_total,
+                    "eligible": hardware_eligible,
+                }
+
+            if not online:
+                reason = "worker_offline"
+            elif quarantined:
+                reason = "machine_quarantined"
+            elif drained:
+                reason = "worker_drained"
+            elif catalog_stale:
+                reason = "catalog_stale"
+            elif not installed:
+                reason = "model_not_installed"
+            elif not runtime_compatible:
+                reason = "runtime_incompatible"
+            elif not subsystem_ready:
+                reason = "subsystem_unavailable"
+            elif not hardware_eligible:
+                reason = "insufficient_total_memory"
+            elif busy:
+                reason = "machine_busy"
+            else:
+                reason = None
+            ready = reason is None
+
+            for operation in candidate["approved_operations"]:
+                key = model_exposure.candidate_key(candidate, operation)
+                row = grouped.setdefault(key, {
+                    "candidate_key": key,
+                    "internal_model_id": candidate["internal_model_id"],
+                    "display_name": candidate["display_name"],
+                    "modality": model.get("hub_modality"),
+                    "operation": operation,
+                    "runtime_revision": candidate["runtime_revision"],
+                    "contract_hash": candidate["contract_hash"],
+                    "audit_id": candidate.get("audit_id"),
+                    "audit_status": candidate["audit_status"],
+                    "candidate_for_genstudio": candidate["candidate_for_genstudio"],
+                    "audited_at": candidate.get("audited_at"),
+                    "adapter": candidate.get("adapter", {}),
+                    "controls": candidate.get("controls", {}),
+                    "input_limits": candidate.get("input_limits", {}),
+                    "output_limits": candidate.get("output_limits", {}),
+                    "capacity": candidate.get("capacity", {}),
+                    "hardware": candidate.get("hardware", {}),
+                    "exposure": model_exposure.state_for(candidate, operation),
+                    "machines": [],
+                })
+                row["machines"].append({
+                    "studio_id": studio_id,
+                    "machine_id": machine,
+                    "installed": installed,
+                    "online": online,
+                    "ready": ready,
+                    "busy": busy,
+                    "quarantined": quarantined,
+                    "drained": drained,
+                    "hardware_profile": hardware_profile,
+                    "memory_admission": admission,
+                    "availability_reason": reason,
+                    "catalog_observed_at": model.get("hub_catalog_observed_at"),
+                    "catalog_age_seconds": model.get("hub_catalog_age_seconds"),
+                    "catalog_stale": catalog_stale,
+                    "reported_available_slots": candidate.get(
+                        "capacity", {},
+                    ).get("available_slots", 1),
+                })
+
+        rows = list(grouped.values())
+        variants: dict[tuple[str, str], set[tuple[str, str]]] = {}
+        for row in rows:
+            variants.setdefault(
+                (row["internal_model_id"], row["operation"]), set(),
+            ).add((row["runtime_revision"], row["contract_hash"]))
+        for row in rows:
+            machines = row["machines"]
+            row["contract_conflict"] = len(variants[
+                (row["internal_model_id"], row["operation"])
+            ]) > 1
+            row["supply"] = {
+                "installed_machine_count": len({m["machine_id"] for m in machines
+                                                if m["installed"]}),
+                "online_machine_count": len({m["machine_id"] for m in machines
+                                             if m["online"]}),
+                "ready_machine_count": len({m["machine_id"] for m in machines
+                                            if m["ready"]}),
+                "busy_machine_count": len({m["machine_id"] for m in machines
+                                           if m["busy"]}),
+                "offline_machine_count": len({m["machine_id"] for m in machines
+                                               if not m["online"]}),
+                "quarantined_machine_count": len({
+                    m["machine_id"] for m in machines if m["quarantined"]
+                }),
+                "offline_or_quarantined_machine_count": len({
+                    m["machine_id"] for m in machines
+                    if not m["online"] or m["quarantined"]
+                }),
+                # Hub schedules one heavy job per physical Mac even when a
+                # sibling reports greater service-level concurrency.
+                "available_physical_slots": len({
+                    m["machine_id"] for m in machines if m["ready"]
+                    and m["reported_available_slots"] > 0
+                }),
+            }
+        return sorted(rows, key=lambda row: (
+            row["modality"] or "", row["display_name"], row["operation"],
+            row["runtime_revision"],
+        ))
 
     async def models_by_repo(self, force: bool = False) -> list[dict]:
         """Deduped by repo across all machines, with per-machine availability.
         This is what the Models tab needs: one row per model, showing WHICH
         machines have it downloaded (so 'downloaded on the media server but not
         this Mac' reads correctly instead of a blanket 'downloaded')."""
-        agg = await self.aggregate_catalog(force=force)
+        agg = (
+            await self.aggregate_catalog(force=True)
+            if force else self.cached_aggregate_catalog()
+        )
         by_repo: dict[str, dict] = {}
         for m in agg["models"]:
             repo = m.get("repo")
@@ -497,11 +863,31 @@ class StudioMonitor:
                     "machines": [],       # every studio that lists it
                     "cached_on": [],      # machine names where it's downloaded
                     "available_on": [],   # machines whose runtime is ready
+                    "catalog_observations": [],
+                    "genstudio_candidates": [],
                 }
             machine = m.get("hub_machine", "local")
             row["machines"].append({"studio": m.get("hub_studio"),
                                     "machine": machine, "cached": m.get("hub_cached"),
-                                    "ready": m.get("hub_ready")})
+                                    "ready": m.get("hub_ready"),
+                                    "catalog_stale": m.get("hub_catalog_stale"),
+                                    "catalog_age_seconds": m.get("hub_catalog_age_seconds")})
+            row["catalog_observations"].append({
+                "studio": m.get("hub_studio"), "machine": machine,
+                "observed_at": m.get("hub_catalog_observed_at"),
+                "age_seconds": m.get("hub_catalog_age_seconds"),
+                "stale": m.get("hub_catalog_stale"),
+                "error": m.get("hub_catalog_error"),
+            })
+            from . import model_exposure
+            candidate = model_exposure.candidate_summary(m)
+            if candidate:
+                for operation in candidate["approved_operations"]:
+                    row["genstudio_candidates"].append({
+                        **candidate,
+                        "operation": operation,
+                        "exposure": model_exposure.state_for(candidate, operation),
+                    })
             if m.get("hub_cached") and machine not in row["cached_on"]:
                 row["cached_on"].append(machine)
             if m.get("hub_ready") and m.get("hub_cached") and machine not in row["available_on"]:

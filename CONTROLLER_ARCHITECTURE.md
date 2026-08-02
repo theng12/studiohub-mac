@@ -33,6 +33,8 @@ Studio Hub owns only its site-local execution:
   and returning verified execution results to GenStudio.
 - Continuing an already accepted local execution through a short GenStudio
   connection interruption. GenStudio later reconciles the same Hub batch.
+- Persisting last-good sibling catalogues, validating sibling audit evidence,
+  and requiring owner approval before an exact model contract is exposed.
 
 Local SQLite is permanently authoritative for Studio Hub scheduling. There is
 no PostgreSQL-authoritative or cross-controller-claiming stage in Studio Hub.
@@ -151,6 +153,12 @@ requests without the new metadata retain their current behavior.
 - `GET /api/hub/capabilities` — private, schema-versioned routing capability
   snapshot. It requires a Hub/fleet token header even on loopback and reports
   only allowlisted operational facts; no customer content or ownership IDs.
+- `GET /api/hub/model-exposures` — cache-only audited candidates, exact
+  exposure history, and per-machine supply evidence for the owner workspace.
+- `POST /api/hub/model-exposures/approve` and `/revoke` — owner-only exposure
+  decisions pinned to the exact model, operation, revision, and contract hash.
+- `POST /api/hub/catalog/refresh` — owner-triggered bounded concurrent refresh;
+  failed workers retain their persisted last-good inventory.
 - `GET /api/hub/controller` — authenticated role/site/shadow status.
 - `PUT /api/hub/controller` — save role, site, and optional shadow settings.
 - `POST /api/hub/controller/check` — verify the optional shadow schema and send
@@ -169,6 +177,20 @@ the worker catalog supplies a full immutable hash. A missing or mutable
 revision is returned as `null` and marked unqualified for revision pinning.
 Studio Hub does not synthesize revisions, GenStudio IDs, idempotency keys, or
 fencing tokens.
+
+## Approved-model discovery
+
+Each sibling Studio owns runtime research, local qualification, and its audit
+record. A passed sibling audit creates only an unexposed candidate. Studio Hub
+collects those candidates in a background catalogue loop, keeps last-good
+observations across restarts, derives fleet supply from worker evidence, and
+lets the location owner approve an exact contract deliberately. Only then is
+the model present in `/api/hub/capabilities` for GenStudio.
+
+Temporary machine outages retain inventory as stale evidence. Removing a
+sibling's candidate or revoking Hub exposure stops new publication without
+deleting history. A new model revision or changed capability contract never
+inherits an older approval.
 
 ## Configuration
 

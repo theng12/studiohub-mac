@@ -10,6 +10,38 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.69.0] — 2026-08-02
+
+### Added — deliberate audited-model discovery for GenStudio
+
+- Added a durable, independent sibling catalogue refresher with non-overlapping
+  cycles, concurrent bounded worker requests, persisted last-good observations,
+  and explicit catalogue age, stale state, and failure evidence.
+- Added an owner-controlled exposure registry pinned to the exact internal model
+  ID, operation, immutable runtime revision, and audited contract hash. Sibling
+  Studios can submit candidates, but cannot make themselves sellable.
+- Added the guided **Models offered to GenStudio** workflow for refreshing audit
+  evidence, reviewing exact contracts and fleet supply, approving a candidate,
+  and revoking new routing without losing history.
+- Added cache-only exposure and refresh APIs plus capability schema v2. GenStudio
+  now sees only owner-approved audited models and a per-model supply view derived
+  from detailed machine evidence.
+
+### Changed
+
+- Ordinary Models-page reads no longer make live sibling catalogue requests.
+  Offline workers remain visible from last-good inventory without blocking the
+  operator experience.
+- A changed revision or contract never inherits an older approval. Stale
+  catalogue evidence remains inspectable but is unavailable for new routing.
+
+### Verification
+
+- Focused tests cover deliberate approval, revocation after candidate removal,
+  contract-change suspension, automatic candidate discovery, distinct fleet
+  states, low-memory reasons, stale last-good retention, persisted restart
+  recovery, cache-only capability reads, and the guided owner controls.
+
 ## [1.68.5] — 2026-08-02
 
 ### Fixed — capability reads stay independent of worker latency

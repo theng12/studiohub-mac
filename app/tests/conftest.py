@@ -21,7 +21,7 @@ from starlette.testclient import TestClient
 
 
 def _reset_state():
-    from backend import (alerts, auth, broker, chat_jobs, control_plane, enrollment, execution_identity, fleet_ops, fleet_storage, hardware_profiles, hf_credentials, job_storage, memory_admission,
+    from backend import (alerts, auth, broker, chat_jobs, control_plane, enrollment, execution_identity, fleet_ops, fleet_storage, hardware_profiles, hf_credentials, job_storage, memory_admission, model_exposure,
                          ledger, metrics, peers, shared_voices, transcription_jobs)
     from backend import main
     from backend import registry as reg
@@ -42,6 +42,8 @@ def _reset_state():
               hardware_profiles.MACHINE_PROFILES_FILE,
               memory_admission.SETTINGS_FILE,
               hf_credentials.STATE_FILE,
+              model_exposure.STATE_FILE,
+              main.monitor.catalog_state_path,
               main.model_baselines.state_path,
               execution_identity.DB_FILE,
               fleet_ops._STATE_FILE, control_plane.SETTINGS_FILE,
@@ -109,6 +111,8 @@ def _reset_state():
                                 "last_checked": None} for s in monitor.registry}
     monitor._catalog_cache.clear()
     monitor._transcribe_cache.clear()
+    monitor._catalog_meta.clear()
+    monitor._catalog_refresh_lock = None
     monitor._provider_cache.clear()
     monitor._restart_alerts.clear()
 

@@ -349,6 +349,20 @@
       have each downloaded — a model can live on your media server but not this Mac.
     </p>
     <div class="card jform section">
+      <div class="top"><span class="emoji">✅</span><h3>Models offered to GenStudio</h3><span id="exposure-state" class="pill">Loading</span></div>
+      <p class="muted" style="font-size:13px;margin-bottom:10px">
+        A sibling Studio can submit a tested model as an <b>audited candidate</b>, but it is never sellable automatically. Review its exact operation, immutable runtime revision, contract, and fleet supply here. Only models you approve are included in Studio Hub’s GenStudio capability document.
+      </p>
+      <div class="actions" style="align-items:center">
+        <button class="btn primary" id="exposure-refresh" onclick="refreshModelExposure()">Refresh audited models</button>
+        <span class="sub" id="exposure-status" role="status" aria-live="polite">Reads the last-good fleet catalogue without blocking on workers.</span>
+      </div>
+      <div style="max-height:48vh;overflow:auto;margin-top:10px">
+        <table><thead><tr><th>Candidate</th><th>Audited operation</th><th>Exact contract</th><th>Fleet supply</th><th>Exposure</th></tr></thead><tbody id="exposure-body"></tbody></table>
+      </div>
+      <div id="exposure-history" class="sub" style="margin-top:8px"></div>
+    </div>
+    <div class="card jform section">
       <div class="top"><span class="emoji">🪶</span><h3>Required Voice Studio model baseline</h3><span id="baseline-state" class="pill">Loading</span></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
         Keeps <b>Whisper Tiny</b>, <b>Kokoro 82M</b>, <b>VibeVoice Realtime 0.5B 4-bit</b>, and <b>Fish Audio S2 Pro 8-bit</b> cached on every registered Voice Studio. Offline Macs stay pending and each site controller installs anything missing when they return. Image, Chat, and Render workers do not receive these voice models.
@@ -1115,6 +1129,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.69.0", date: "2026-08-02", items: [
+    "Audited sibling models now enter one deliberate Studio Hub review flow and remain hidden from GenStudio until you approve their exact operation, runtime revision, and contract.",
+    "The Models workspace now shows fleet supply and lets you refresh, approve, or stop offering a model without losing its audit history.",
+    "Sibling catalogues refresh independently in the background, survive Hub restarts, and never make Models or GenStudio capability reads wait on an offline worker.",
+  ]},
   { v: "1.68.5", date: "2026-08-02", items: [
     "GenStudio capability reads now use Studio Hub's last-observed model and transcription caches without waiting for worker network calls.",
     "Slow or offline Studios keep their last-known capability evidence while current health and readiness remain reported separately.",
@@ -2209,6 +2228,7 @@ function renderOverview(sum) {
 
 // ── models ────────────────────────────────────────────────────────────────
 let modelsData = [];
+let modelExposureData = null;
 let mMachine = localStorage.getItem("m_machine") || "";
 let mSort = localStorage.getItem("m_sort") || "modality";
 let mLane = localStorage.getItem("m_lane") || "all";  // all | local | cloud
@@ -2218,13 +2238,99 @@ async function loadModels() {
   const q = $("#m-search").value.trim(); if (q) p.set("q", q);
   const mod = $("#m-modality").value; if (mod) p.set("modality", mod);
   const dl = $("#m-dl").value; if (dl) p.set("downloaded", dl);
-  const res = await api("/api/hub/models?" + p).then(r => r.json()).catch(() => null);
+  const [res, exposure] = await Promise.all([
+    api("/api/hub/models?" + p).then(async r => r.ok ? r.json() : null).catch(() => null),
+    api("/api/hub/model-exposures").then(async r => r.ok ? r.json() : null).catch(() => null),
+  ]);
   modelsData = res ? res.models : null;
+  modelExposureData = exposure;
   renderModels();
+  renderModelExposures();
   fillBroadcastRepos();
   fillRamAdmissionModels();
   loadModelBaseline();
   loadHfCredential();
+}
+
+function renderModelExposures() {
+  const body = $("#exposure-body"), state = $("#exposure-state"), history = $("#exposure-history");
+  if (!modelExposureData) {
+    state.textContent = "Unavailable";
+    state.className = "pill err";
+    body.innerHTML = `<tr><td colspan="5" class="empty">The last-good audited model inventory could not be read. The ordinary model library remains available.</td></tr>`;
+    history.textContent = "";
+    return;
+  }
+  const rows = modelExposureData.candidates || [];
+  const approved = rows.filter(row => row.exposure?.state === "approved").length;
+  state.textContent = `${approved} approved · ${rows.length} candidates`;
+  state.className = approved ? "pill ok" : "pill";
+  const stateLabel = value => ({
+    candidate: "Awaiting approval", approved: "Approved", revoked: "Revoked",
+    suspended: "Changed — review again", blocked: "Blocked", unverified: "Not audited",
+  }[value] || value || "Unknown");
+  const action = row => {
+    const exposure = row.exposure || {}, conflict = !!row.contract_conflict;
+    if (!modelExposureData.can_expose) return `<span class="sub">Set this Hub to Controller mode to manage GenStudio exposure.</span>`;
+    if (conflict) return `<span class="pill err">Contract conflict</span>`;
+    if (exposure.state === "approved") return `<button class="btn" onclick="setModelExposure('${row.candidate_key}','revoke')">Stop offering</button>`;
+    if (["candidate", "revoked", "suspended"].includes(exposure.state)) return `<button class="go" onclick="setModelExposure('${row.candidate_key}','approve')">Approve for GenStudio</button>`;
+    return `<span class="sub">${esc(exposure.reason || "Audit is incomplete")}</span>`;
+  };
+  body.innerHTML = rows.length ? rows.map(row => {
+    const supply = row.supply || {}, exposure = row.exposure || {};
+    const stale = (row.machines || []).some(machine => machine.catalog_stale);
+    const shortRevision = String(row.runtime_revision || "").replace(/^sha256:/, "").slice(0, 12);
+    const shortContract = String(row.contract_hash || "").replace(/^sha256:/, "").slice(0, 12);
+    return `<tr>
+      <td><b>${esc(row.display_name || row.internal_model_id)}</b><span class="sub">${esc(row.internal_model_id)}</span><span class="sub">${esc(row.modality || "")}</span></td>
+      <td><b>${esc(row.operation)}</b><span class="sub">Audit ${esc(row.audit_id || "—")}</span></td>
+      <td><code>${esc(shortRevision)}</code><span class="sub">contract ${esc(shortContract)}</span>${row.contract_conflict ? `<span class="pill err">conflicting workers</span>` : ""}</td>
+      <td><b>${supply.ready_machine_count || 0} ready</b> · ${supply.online_machine_count || 0} online<span class="sub">${supply.available_physical_slots || 0} slots · ${supply.busy_machine_count || 0} busy · ${supply.offline_machine_count || 0} offline · ${supply.quarantined_machine_count || 0} quarantined</span>${stale ? `<span class="pill warn">stale inventory</span>` : ""}</td>
+      <td><span class="pill ${exposure.state === "approved" ? "ok" : exposure.state === "blocked" ? "err" : exposure.state === "suspended" ? "warn" : ""}">${esc(stateLabel(exposure.state))}</span><div style="margin-top:7px">${action(row)}</div></td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="5" class="empty">No sibling Studio has submitted a passed Group A audit candidate yet. Refresh after its Studio update lands.</td></tr>`;
+  const current = new Set(rows.map(row => row.candidate_key));
+  const historical = (modelExposureData.history || []).filter(row => !current.has(row.exposure_key));
+  history.textContent = historical.length
+    ? `${historical.length} historical exact exposure record${historical.length === 1 ? "" : "s"} retained for audit; removed models are not advertised.`
+    : "Exact approval and revocation history is retained even when a model or machine disappears.";
+}
+
+async function setModelExposure(candidateKey, action) {
+  const verb = action === "approve" ? "offer this exact audited model to GenStudio" : "stop offering this exact model for new GenStudio work";
+  if (!confirm(`Do you want to ${verb}?`)) return;
+  $("#exposure-status").textContent = action === "approve" ? "Saving exact approval…" : "Revoking new routing…";
+  const response = await api(`/api/hub/model-exposures/${action}`, {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({candidate_key: candidateKey, reason: action === "approve" ? "Owner approved in the Models workspace" : "Owner revoked in the Models workspace"}),
+  }).catch(() => null);
+  const result = response ? await response.json().catch(() => ({})) : {};
+  if (!response?.ok) {
+    $("#exposure-status").textContent = result.detail || "The exposure change could not be saved. Sign in with the owner password and try again.";
+    return;
+  }
+  $("#exposure-status").textContent = action === "approve" ? "Approved. GenStudio’s next capability read will see it." : "Revoked. New GenStudio routing has stopped.";
+  modelExposureData = await api("/api/hub/model-exposures").then(r => r.json()).catch(() => null);
+  renderModelExposures();
+}
+
+async function refreshModelExposure() {
+  const button = $("#exposure-refresh"), status = $("#exposure-status");
+  button.disabled = true;
+  status.textContent = "Refreshing sibling audit catalogues concurrently…";
+  const response = await api("/api/hub/catalog/refresh", {method: "POST"}).catch(() => null);
+  const result = response ? await response.json().catch(() => ({})) : {};
+  button.disabled = false;
+  if (!response?.ok) {
+    status.textContent = result.detail || "The refresh could not be started. Existing last-good inventory remains usable.";
+    return;
+  }
+  const failures = (result.studios || []).filter(row => !row.refreshed).length;
+  status.textContent = failures
+    ? `Refresh finished with ${failures} unavailable Studio${failures === 1 ? "" : "s"}; their last-good inventory was retained.`
+    : "Refresh finished. All reachable sibling catalogues were updated.";
+  await loadModels();
 }
 
 async function loadModelBaseline() {

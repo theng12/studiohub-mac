@@ -4,7 +4,7 @@ Endpoint: `GET /api/hub/capabilities`
 
 Schema: `studiohub.site-capabilities`
 
-Schema version: `1`
+Schema version: `2`
 
 This is a private, read-only machine-to-machine contract from a Studio Hub
 location controller to GenStudio KH. It is routing input only. It does not
@@ -33,7 +33,7 @@ authenticate this endpoint.
 ## Versioning
 
 Clients must check both `schema` and `schema_version` and ignore unknown fields.
-Additive optional fields may be introduced within schema version 1. Removing a
+Additive optional fields may be introduced within schema version 2. Removing a
 field, changing a field's type, or changing its meaning requires a new schema
 version. The Studio Hub application version is reported separately as
 `controller.studiohub_version`.
@@ -43,7 +43,7 @@ version. The Studio Hub application version is reported separately as
 ```json
 {
   "schema": "studiohub.site-capabilities",
-  "schema_version": 1,
+  "schema_version": 2,
   "observed_at": "2026-07-20T15:30:00Z",
   "site_id": "phnom-penh-1",
   "controller": {
@@ -68,7 +68,8 @@ version. The Studio Hub application version is reported separately as
     "by_operation": {}
   },
   "machines": [],
-  "workers": []
+  "workers": [],
+  "model_supply": []
 }
 ```
 
@@ -89,7 +90,8 @@ Each worker reports:
 
 Operations use stable names such as:
 
-- `image.generation`
+- `image.text_to_image`
+- `image.image_to_image`
 - `voice.tts`
 - `audio.transcription`
 - `chat.completion`
@@ -109,6 +111,49 @@ policy source, current observed memory, and whether the machine is eligible
 now. Operator overrides are site-local scheduling policy; they do not modify
 the worker catalog or transfer global authority from GenStudio.
 `availability.available_now` reflects the effective policy.
+
+## Audited candidate and exposure gate
+
+Schema version 2 advertises only models that pass both independent gates:
+
+1. The sibling Studio publishes a valid `studio.model-audit` version 1
+   `genstudio_candidate` for an exact internal model ID, immutable runtime
+   revision, contract hash, and operation. The sibling's audit must be passed
+   and `candidate_for_genstudio` must be true.
+2. The location owner approves that exact candidate in Studio Hub's Models
+   workspace. Approval is pinned to model ID + operation + revision + contract
+   hash. A changed runtime or contract returns to review automatically.
+
+A sibling never publishes `approved_for_genstudio`; final exposure authority
+belongs to Studio Hub. Removing sibling approval or revoking Hub approval stops
+new capability publication without deleting historical evidence. An outage
+retains the last-good inventory but makes stale supply unavailable.
+
+The sibling audit candidate may report `adapter`, `controls`, `input_limits`,
+`output_limits`, `capacity`, and `hardware`. Studio Hub bounds and sanitizes
+these fields before publication. Each published model includes its audit and
+exact exposure evidence, and `availability.approved_for_genstudio` is true.
+
+`model_supply` groups the detailed worker evidence by exact model ID,
+operation, immutable revision, and contract hash. It reports installed,
+online, ready, busy, offline, and quarantined machine counts; available
+physical slots; machine IDs; hardware and memory evidence; per-machine
+availability reasons; last catalogue refresh; and stale state. The aggregate
+is derived from `workers[].models[]` and is never a second authority.
+
+## Catalogue freshness
+
+Studio Hub refreshes every registered sibling catalogue in a dedicated
+background loop, independently of the quick health loop. Refreshes are
+non-overlapping, concurrent across workers, and individually bounded. The
+last-good inventory is stored with owner-only file permissions and survives a
+Hub restart. Worker failure marks its observation stale/unavailable without
+erasing its last-known inventory.
+
+`GET /api/hub/capabilities` is strictly cache-only: it never performs a worker
+request. Each model includes `catalog_observation` with observation time, age,
+and stale state. A stale catalogue forces `availability.available_now=false`
+with reason `catalog_stale`.
 
 ## Runtime revisions
 
@@ -141,6 +186,8 @@ GenStudio decides whether its routing policy requires an immutable revision.
 - The worker and machine are not drained, in maintenance, quarantined, or busy.
 - A local model is installed, or a cloud provider is currently verified ready.
 - The runtime and subsystem report compatibility/readiness.
+- The audited catalogue observation is not stale.
+- The exact model contract remains approved by Studio Hub.
 
 An unavailable model includes a stable reason such as `worker_offline`,
 `physical_machine_busy`, `worker_maintenance`, `model_not_installed`, or

@@ -27,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, control_plane, enrollment, execution_identity, fleet_ops, fleet_storage, gateway, hardware_profiles, hf_credentials, job_storage, memory_admission,
+from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, control_plane, enrollment, execution_identity, fleet_ops, fleet_storage, gateway, hardware_profiles, hf_credentials, job_storage, memory_admission, model_exposure,
                ledger, metrics, peers, recipes, shared_voices, startup_services, transcription_jobs)
 from .auto_update import UpdateError
 from .auto_update_config import create_updater
@@ -95,6 +95,12 @@ class MemoryAdmissionBody(BaseModel):
     model: str = Field(min_length=1, max_length=500)
     min_total_memory_gb: float = Field(ge=4, le=512)
     min_free_memory_gb: float = Field(ge=0.5, le=128)
+
+
+class ModelExposureActionBody(BaseModel):
+    candidate_key: str = Field(min_length=64, max_length=64,
+                               pattern=r"^[0-9a-f]{64}$")
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class SharedVoiceUpdateBody(BaseModel):
@@ -1484,6 +1490,98 @@ async def hub_models(modality: str | None = None, q: str | None = None,
     if cloud is not None:
         rows = [r for r in rows if r["is_cloud"] == cloud]
     return {"models": rows, "count": len(rows), "lanes": lanes, "providers": providers}
+
+
+def _require_exposure_owner(request: Request) -> None:
+    if is_loopback(request):
+        return
+    if auth.valid_browser_session(request.cookies.get(auth.SESSION_COOKIE_NAME)):
+        return
+    raise HTTPException(
+        403,
+        "Model exposure changes require the owner browser session or the Hub Mac.",
+    )
+
+
+def _candidate_by_key(candidate_key: str) -> dict:
+    row = next((item for item in monitor.candidate_models()
+                if item.get("candidate_key") == candidate_key), None)
+    if row is None:
+        raise HTTPException(
+            404,
+            "This exact audited model candidate is not present in the last-good catalogue.",
+        )
+    if row.get("contract_conflict"):
+        raise HTTPException(
+            409,
+            "Different contracts or revisions are reported for this model and operation.",
+        )
+    return row
+
+
+@app.get("/api/hub/model-exposures")
+def hub_model_exposures():
+    """Cache-only candidate and historical exposure inventory for the owner."""
+    candidates = monitor.candidate_models()
+    controller_role = control_plane.public_settings().get("role")
+    return {
+        "schema": model_exposure.SCHEMA_NAME,
+        "schema_version": model_exposure.SCHEMA_VERSION,
+        "candidates": candidates,
+        "candidate_count": len(candidates),
+        "approved_count": sum(
+            item.get("exposure", {}).get("state") == "approved"
+            for item in candidates
+        ),
+        "controller_role": controller_role,
+        "can_expose": controller_role == "controller",
+        "history": model_exposure.records(),
+    }
+
+
+@app.post("/api/hub/model-exposures/approve")
+def approve_hub_model_exposure(request: Request, body: ModelExposureActionBody):
+    _require_exposure_owner(request)
+    if control_plane.public_settings().get("role") != "controller":
+        raise HTTPException(409, "Only a location controller can expose models.")
+    row = _candidate_by_key(body.candidate_key)
+    candidate = {
+        "internal_model_id": row["internal_model_id"],
+        "display_name": row["display_name"],
+        "audit_id": row.get("audit_id"),
+        "audit_status": row.get("audit_status"),
+        "candidate_for_genstudio": row.get("candidate_for_genstudio"),
+        "runtime_revision": row["runtime_revision"],
+        "contract_hash": row["contract_hash"],
+        "approved_operations": [row["operation"]],
+    }
+    try:
+        exposure = model_exposure.approve(
+            candidate, row["operation"], reason=body.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"ok": True, "exposure": exposure}
+
+
+@app.post("/api/hub/model-exposures/revoke")
+def revoke_hub_model_exposure(request: Request, body: ModelExposureActionBody):
+    _require_exposure_owner(request)
+    if control_plane.public_settings().get("role") != "controller":
+        raise HTTPException(409, "Only a location controller can revoke models.")
+    try:
+        exposure = model_exposure.revoke_key(
+            body.candidate_key, reason=body.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"ok": True, "exposure": exposure}
+
+
+@app.post("/api/hub/catalog/refresh")
+async def refresh_hub_catalog(request: Request):
+    _require_exposure_owner(request)
+    return await monitor.refresh_catalogs(force=True)
 
 
 async def _local_model_for_admission(model: str) -> dict:

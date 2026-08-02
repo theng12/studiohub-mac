@@ -228,7 +228,11 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/auto-updates/jobs/{id}/retry` | Retry only the failed apps from a saved automatic fleet update |
 | `GET /api/hub/studios` | Registry + live status per studio |
 | `GET /health/live` · `GET /health/ready` · `GET /health/capacity` | Controller liveness, site-execution readiness, and non-secret routing capacity; optional telemetry never gates readiness |
-| `GET /api/hub/capabilities` | Private schema-versioned GenStudio capability snapshot; requires a Hub/fleet token header even on loopback |
+| `GET /api/hub/capabilities` | Private cache-only GenStudio capability snapshot (schema v2); only exact owner-approved audited models are advertised |
+| `GET /api/hub/model-exposures` | Cache-only audited candidate, fleet supply, and historical exposure inventory |
+| `POST /api/hub/model-exposures/approve` | Owner-only approval of an exact model + operation + revision + contract hash |
+| `POST /api/hub/model-exposures/revoke` | Owner-only stop for an exact exposure, including historical candidates no longer online |
+| `POST /api/hub/catalog/refresh` | Owner-triggered bounded concurrent sibling catalogue refresh; retains last-good failures |
 | `GET /api/hub/controller` · `PUT /api/hub/controller` | Read or configure this Hub's `standalone`, `controller`, or `agent` role, site identity, and optional evidence-shadow mode |
 | `POST /api/hub/controller/check` | Verify the optional PostgreSQL evidence schema and publish an immediate heartbeat |
 | `POST /api/hub/setup/controller` | Local simple setup for the first Mac at a new location; assigns identity and local hardware while forcing PostgreSQL off |
@@ -685,7 +689,7 @@ token may be used. Unlike the normal operator API, this machine-to-machine
 contract requires a header token even from loopback; browser sessions and
 cookies are not accepted.
 
-Schema `studiohub.site-capabilities`, version `1`, includes controller/site
+Schema `studiohub.site-capabilities`, version `2`, includes controller/site
 identity, machine hardware profiles, worker readiness and shared physical-Mac
 capacity, supported operations, and sanitized model controls. A model's
 `runtime_revision` is populated only when the Studio catalog reports a full
