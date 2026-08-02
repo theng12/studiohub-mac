@@ -70,6 +70,7 @@ def test_linked_worktree_gitfile_is_accepted(tmp_path: Path):
     "not a gitfile\n",
     "gitdir:\n",
     "gitdir: target\nextra\n",
+    "gitdir: \x00invalid\n",
     "gitdir: missing-target\n",
 ])
 def test_malformed_or_missing_linked_worktree_gitfile_is_rejected(tmp_path: Path, gitfile: str):

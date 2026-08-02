@@ -159,10 +159,13 @@ class AutoUpdater:
         match = re.fullmatch(r"gitdir: ([^\r\n]+)\r?\n?", contents)
         if not match:
             return False
-        gitdir = Path(match.group(1))
-        if not gitdir.is_absolute():
-            gitdir = git_metadata.parent / gitdir
-        return gitdir.is_dir()
+        try:
+            gitdir = Path(match.group(1))
+            if not gitdir.is_absolute():
+                gitdir = git_metadata.parent / gitdir
+            return gitdir.is_dir()
+        except (OSError, ValueError):
+            return False
 
     def _make_logger(self) -> logging.Logger:
         self.log_dir.mkdir(parents=True, exist_ok=True)
