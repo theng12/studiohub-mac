@@ -10,6 +10,14 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.72.2] — 2026-08-03
+
+### Fixed
+
+- Auto-update validation now accepts legitimate linked Git worktrees while
+  continuing to reject symlinked checkout roots, malformed gitfiles, and
+  missing Git metadata targets before any update operation runs.
+
 ## [1.72.1] — 2026-08-02
 
 ### Added — Claude Desktop work queue

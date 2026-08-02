@@ -44,6 +44,71 @@ def updater(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AutoUpdater:
     return item
 
 
+def _spec(root: Path) -> dict:
+    return {
+        "root": str(root), "title": "Studio Hub KH", "slug": "studiohub-test",
+        "expected_remote": "https://github.com/theng12/studiohub-mac.git",
+        "branch": "main", "port": 47873, "default_hour": 1,
+        "server_label": "com.kh.studiohub.server",
+        "watchdog_label": "com.kh.studiohub.watchdog",
+    }
+
+
+def test_linked_worktree_gitfile_is_accepted(tmp_path: Path):
+    root = tmp_path / "linked-worktree"
+    root.mkdir()
+    gitdir = tmp_path / "main-checkout" / ".git" / "worktrees" / "linked-worktree"
+    gitdir.mkdir(parents=True)
+    (root / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+
+    updater = AutoUpdater(_spec(root))
+
+    assert updater.root == root.resolve()
+
+
+@pytest.mark.parametrize("gitfile", [
+    "not a gitfile\n",
+    "gitdir:\n",
+    "gitdir: target\nextra\n",
+    "gitdir: missing-target\n",
+])
+def test_malformed_or_missing_linked_worktree_gitfile_is_rejected(tmp_path: Path, gitfile: str):
+    root = tmp_path / "linked-worktree"
+    root.mkdir()
+    (root / ".git").write_text(gitfile, encoding="utf-8")
+
+    with pytest.raises(UpdateError, match="real Git checkout"):
+        AutoUpdater(_spec(root))
+
+
+def test_symlinked_root_and_gitfile_are_rejected(tmp_path: Path):
+    checkout = tmp_path / "checkout"
+    (checkout / ".git").mkdir(parents=True)
+    linked_root = tmp_path / "linked-root"
+    linked_root.symlink_to(checkout, target_is_directory=True)
+
+    with pytest.raises(UpdateError, match="real Git checkout"):
+        AutoUpdater(_spec(linked_root))
+
+    linked_gitdir = tmp_path / "linked-gitdir"
+    linked_gitdir.symlink_to(checkout / ".git", target_is_directory=True)
+    root_with_symlinked_gitdir = tmp_path / "symlinked-gitdir"
+    root_with_symlinked_gitdir.mkdir()
+    (root_with_symlinked_gitdir / ".git").symlink_to(linked_gitdir, target_is_directory=True)
+
+    with pytest.raises(UpdateError, match="real Git checkout"):
+        AutoUpdater(_spec(root_with_symlinked_gitdir))
+
+    root = tmp_path / "symlinked-gitfile"
+    root.mkdir()
+    gitfile = tmp_path / "gitfile"
+    gitfile.write_text(f"gitdir: {checkout / '.git'}\n", encoding="utf-8")
+    (root / ".git").symlink_to(gitfile)
+
+    with pytest.raises(UpdateError, match="real Git checkout"):
+        AutoUpdater(_spec(root))
+
+
 def _save(updater: AutoUpdater, mode: str) -> dict:
     return updater.save_settings({
         "mode": mode, "frequency": "daily", "maintenance_hour": 1,

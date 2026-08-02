@@ -113,7 +113,9 @@ class AutoUpdater:
                  *, runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
                  now: Callable[[], dt.datetime] = _utc_now) -> None:
         self.spec = dict(spec)
-        self.root = Path(self.spec["root"]).resolve()
+        requested_root = Path(self.spec["root"])
+        self._root_is_symlink = requested_root.is_symlink()
+        self.root = requested_root.resolve()
         self.readiness = readiness
         self.runner = runner
         self.now = now
@@ -129,7 +131,8 @@ class AutoUpdater:
         self.log = self._make_logger()
 
     def _validate_spec(self) -> None:
-        if self.root.is_symlink() or not (self.root / ".git").is_dir():
+        git_metadata = self.root / ".git"
+        if self._root_is_symlink or not self._is_git_checkout(git_metadata):
             raise UpdateError("Updater root must be a real Git checkout.")
         branch = self.spec.get("branch", "main")
         if not BRANCH_RE.fullmatch(branch) or branch.startswith("-") or ".." in branch:
@@ -140,6 +143,26 @@ class AutoUpdater:
         port = int(self.spec["port"])
         if not 1024 <= port <= 65535:
             raise UpdateError("Unsafe app port.")
+
+    @staticmethod
+    def _is_git_checkout(git_metadata: Path) -> bool:
+        if git_metadata.is_symlink():
+            return False
+        if git_metadata.is_dir():
+            return True
+        if not git_metadata.is_file():
+            return False
+        try:
+            contents = git_metadata.read_text(encoding="utf-8")
+        except OSError:
+            return False
+        match = re.fullmatch(r"gitdir: ([^\r\n]+)\r?\n?", contents)
+        if not match:
+            return False
+        gitdir = Path(match.group(1))
+        if not gitdir.is_absolute():
+            gitdir = git_metadata.parent / gitdir
+        return gitdir.is_dir()
 
     def _make_logger(self) -> logging.Logger:
         self.log_dir.mkdir(parents=True, exist_ok=True)
