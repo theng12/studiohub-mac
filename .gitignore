@@ -26,6 +26,11 @@ ENVIRONMENT
 hub.db
 hub_state.json
 .fleet_token
+
+# Hugging Face credential delivery state (per-machine; the token itself lives in
+# the macOS Keychain, this file is only the retry/delivery metadata)
+hf_credentials.json
+
 machine_labels.json
 machine_flags.json
 hardware_profiles.json
