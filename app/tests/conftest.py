@@ -21,7 +21,7 @@ from starlette.testclient import TestClient
 
 
 def _reset_state():
-    from backend import (alerts, auth, broker, chat_jobs, control_plane, enrollment, execution_identity, fleet_ops, fleet_storage, hardware_profiles, hf_credentials, job_storage, memory_admission, model_exposure,
+    from backend import (alerts, auth, broker, chat_jobs, control_plane, enrollment, execution_assets, execution_identity, fleet_ops, fleet_storage, hardware_profiles, hf_credentials, job_storage, memory_admission, model_exposure,
                          ledger, metrics, peers, shared_voices, transcription_jobs)
     from backend import main
     from backend import registry as reg
@@ -68,6 +68,7 @@ def _reset_state():
     import shutil
     shutil.rmtree(transcription_jobs.ROOT, ignore_errors=True)
     shutil.rmtree(shared_voices.ROOT, ignore_errors=True)
+    shutil.rmtree(execution_assets.ROOT, ignore_errors=True)
     shared_voices._tasks.clear()
     shared_voices._delete_tasks.clear()
     shared_voices._resync_requested.clear()

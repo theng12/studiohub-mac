@@ -1129,6 +1129,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.70.0", date: "2026-08-02", items: [
+    "GenStudio can now stage a private customer voice reference once, send only its temporary execution ID with a voice job, and remove it when the job is finished.",
+    "Studio Hub verifies the exact checksum and securely forwards the audio to one assigned Voice Studio without exposing local paths, arbitrary URLs, or customer audio in the normal job payload.",
+    "Voice Studio remains responsible for model-specific reference preparation and long-form chunking; Studio Hub now relays the resulting checksums, strategy, and chunk progress back to GenStudio.",
+  ]},
   { v: "1.69.1", date: "2026-08-02", items: [
     "Release verification now handles standalone Linux test runners correctly while preserving the real Mac and Pinokio installation checks on Studio machines.",
     "This patch changes test infrastructure only; model discovery, routing, credentials, and running Studio behavior are unchanged.",

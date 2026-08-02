@@ -160,6 +160,36 @@ operation names currently include:
 For voice work, also match a supported `controls.voice_modes` value. Do not
 infer voice-cloning support from the model name.
 
+### Private customer voice references
+
+GenStudio owns the original upload, consent, retention, and deletion state.
+Do not create a Studio Hub Shared Voice for customer execution and do not send
+local paths, arbitrary public URLs, or inline base64 in a job envelope.
+
+1. Upload the exact source bytes to
+   `POST /api/hub/execution-assets/voice-references` as authenticated
+   multipart with `audio`, GenStudio's opaque `source_asset_id`, and the full
+   lowercase `source_sha256`. Optional reviewed `transcript`, ordered
+   `transcript_segments_json`, `language`, and bounded `ttl_seconds` may be
+   supplied.
+2. Retain the returned short-lived Hub `asset.id` only for execution/retry.
+3. Submit the normal voice batch with
+   `sharedParams.voice_reference_asset_id=<asset.id>`. Do not also send
+   `voice_library_id`.
+4. Poll/cancel the ordinary Hub batch. One GenStudio request remains one Hub
+   attempt even when Voice Studio reports several internal chunks.
+5. Verify terminal `reference_source_sha256` against the original asset and
+   retain `reference_audio_sha256` plus `reference_preparation_revision` as the
+   exact derived voice evidence.
+6. Delete the staged reference after the attempt when convenient; otherwise
+   Hub expiry removes it automatically. A retry after expiry must upload it
+   again rather than falling back to a different voice mode.
+
+The customer-facing request limit can remain 40,000 characters when the
+selected audit reports `adapter_managed_long_form`. Native one-pass capacity is
+not a sellability requirement. GenStudio must never split or stitch the text;
+those model-specific operations belong to Voice Studio.
+
 Capacity is shared by physical Mac. `eligible_worker_services` counts routing
 choices, not independent concurrent slots. Use
 `capacity.available_physical_machine_slots` and each machine's
@@ -208,6 +238,10 @@ them or turn them into global ownership state.
   eligible site or keep the GenStudio job pending according to GenStudio policy.
 - An assignment rejected after a successful snapshot remains a GenStudio-owned
   routing decision. Studio Hub must not be asked to claim another global job.
+- `VOICE_REFERENCE_ASSET_MISSING`, `VOICE_REFERENCE_ASSET_EXPIRED`, or
+  `VOICE_REFERENCE_ASSET_INACCESSIBLE`: re-stage the same GenStudio source
+  asset and retry under GenStudio's normal attempt/fencing policy. Never fall
+  back from reference cloning to a default or text-designed voice.
 
 Do not cancel or reassign an accepted attempt solely because a later capability
 poll fails. Attempt leases, fencing, reconciliation, and cross-location retry

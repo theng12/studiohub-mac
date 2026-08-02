@@ -12,6 +12,7 @@ studios, so the Hub itself is monitorable by the same convention.
 
 import asyncio
 import hashlib
+import json
 import re
 import secrets
 import time
@@ -27,7 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, control_plane, enrollment, execution_identity, fleet_ops, fleet_storage, gateway, hardware_profiles, hf_credentials, job_storage, memory_admission, model_exposure,
+from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, control_plane, enrollment, execution_assets, execution_identity, fleet_ops, fleet_storage, gateway, hardware_profiles, hf_credentials, job_storage, memory_admission, model_exposure,
                ledger, metrics, peers, recipes, shared_voices, startup_services, transcription_jobs)
 from .auto_update import UpdateError
 from .auto_update_config import create_updater
@@ -222,6 +223,9 @@ model_baselines = FleetModelBaselines(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    removed_execution_assets = execution_assets.cleanup_expired()
+    if removed_execution_assets:
+        print(f"[hub] removed {removed_execution_assets} expired execution asset(s)")
     monitor.start()
     await control_plane.runtime.start(monitor, _app_version())
     fleet_ops.start_published_version_monitor()
@@ -1289,6 +1293,63 @@ def hub_broadcast_env(body: dict):
 
 
 # ── job broker / Swarm Batch ───────────────────────────────────────────────
+@app.post("/api/hub/execution-assets/voice-references")
+async def hub_stage_voice_reference(
+    audio: UploadFile = File(...),
+    source_asset_id: str = Form(...),
+    source_sha256: str = Form(...),
+    transcript: str = Form(""),
+    transcript_segments_json: str = Form(""),
+    language: str = Form(""),
+    ttl_seconds: int = Form(execution_assets.DEFAULT_TTL_SECONDS),
+):
+    """Stage one checksum-bound GenStudio reference for a site attempt.
+
+    This is temporary execution storage, not a second customer voice library.
+    The source asset remains owned and retained by GenStudio.
+    """
+    if not control_plane.accepts_customer_jobs():
+        raise HTTPException(409, "Stage customer assets on a controller Hub.")
+    data = await audio.read(execution_assets.MAX_BYTES + 1)
+    segments = None
+    if transcript_segments_json.strip():
+        try:
+            segments = json.loads(transcript_segments_json)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(400, {
+                "code": "REFERENCE_TRANSCRIPT_SEGMENTS_INVALID",
+                "detail": "Reference transcript segments are not valid JSON.",
+            }) from exc
+    try:
+        asset = execution_assets.stage_voice_reference(
+            audio_bytes=data,
+            filename=audio.filename or "reference.wav",
+            source_asset_id=source_asset_id,
+            declared_sha256=source_sha256,
+            transcript=transcript,
+            transcript_segments=segments,
+            language=language,
+            ttl_seconds=ttl_seconds,
+        )
+    except execution_assets.ExecutionAssetError as exc:
+        raise HTTPException(422, {"code": exc.code, "detail": exc.detail}) from exc
+    return {"asset": execution_assets.public(asset)}
+
+
+@app.delete("/api/hub/execution-assets/voice-references/{asset_id}")
+def hub_delete_voice_reference(asset_id: str):
+    try:
+        deleted = execution_assets.delete(asset_id)
+    except execution_assets.ExecutionAssetError as exc:
+        raise HTTPException(404, {"code": exc.code, "detail": exc.detail}) from exc
+    if not deleted:
+        raise HTTPException(404, {
+            "code": "VOICE_REFERENCE_ASSET_MISSING",
+            "detail": "The private voice reference is already unavailable.",
+        })
+    return {"deleted": True, "asset_id": asset_id}
+
+
 @app.post("/api/hub/jobs")
 def hub_submit_jobs(envelope: dict):
     if not control_plane.accepts_customer_jobs():

@@ -30,7 +30,8 @@ from pathlib import Path
 
 import httpx
 
-from . import artifact_metadata, execution_identity, ledger, peers, shared_voices
+from . import (artifact_metadata, execution_assets, execution_identity, ledger,
+               peers, shared_voices)
 from .peers import studio_request
 from .monitor import is_cached, is_cloud_lane
 from .registry import base_url, machine_enabled, studio_enabled
@@ -737,6 +738,8 @@ def batch_summary(b: dict) -> dict:
             "studio": sid,                 # e.g. "image@macmini-m1-01" or "image"
             "machine": machine,            # "macmini-m1-01" or "local"
             "progress": i.get("progress"),  # 0..1 or None
+            "chunk_index": i.get("chunk_index"),
+            "chunk_total": i.get("chunk_total"),
             "elapsed_s": elapsed,
         })
     retrying = [i for i in items if i["state"] == "queued"
@@ -945,6 +948,12 @@ def terminal_result(b: dict, item: dict) -> dict | None:
         "voice_revision": item.get("voice_revision"),
         "voice_library_id": item.get("voice_library_id"),
         "preset_speaker": item.get("preset_speaker"),
+        "reference_audio_sha256": item.get("reference_audio_sha256"),
+        "reference_source_sha256": item.get("reference_source_sha256"),
+        "reference_preparation_revision": item.get("reference_preparation_revision"),
+        "reference_duration_s": item.get("reference_duration_s"),
+        "long_form_strategy": item.get("long_form_strategy"),
+        "chunk_total": item.get("chunk_total"),
     }
 
 
@@ -1012,6 +1021,12 @@ async def _record_worker_success(client: httpx.AsyncClient, b: dict, item: dict,
     if b["modality"] == "voice":
         item["voice_library_id"] = body.get("voice_library_id")
         item["preset_speaker"] = body.get("preset_speaker")
+        for field in (
+            "reference_audio_sha256", "reference_source_sha256",
+            "reference_preparation_revision", "reference_duration_s",
+            "long_form_strategy", "chunk_total",
+        ):
+            item[field] = job.get(field)
     runtime = job.get("runtime_s", job.get("generation_seconds", job.get("duration_seconds")))
     try:
         runtime = float(runtime) if runtime is not None else round(time.time() - t_start, 2)
@@ -1398,6 +1413,10 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
     # img2img/edit; Video Studio accepts ``file`` on video2video with
     # mode=img2video. One exact source image is used per stable scene id.
     refs = body.pop("reference_images", None) if b["modality"] in ("image", "video") else None
+    voice_reference_asset_id = (
+        str(body.pop("voice_reference_asset_id", "") or "").strip()
+        if b["modality"] == "voice" else ""
+    )
     ref_mode = body.pop("ref_mode", None)
     body.pop("reference_images", None)  # never forward references as JSON
     try:
@@ -1405,7 +1424,49 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             item["state"] = "cancelled"
             item["error"] = "GenStudio execution lease expired"
             return
-        if refs:
+        if voice_reference_asset_id:
+            if body.get("voice_library_id"):
+                item["state"] = "error"
+                item["error_code"] = "VOICE_REFERENCE_CONFLICT"
+                item["error"] = "Use either voice_library_id or voice_reference_asset_id, not both."
+                return
+            try:
+                reference, reference_path = execution_assets.resolve_voice_reference(
+                    voice_reference_asset_id
+                )
+            except execution_assets.ExecutionAssetError as exc:
+                item["state"] = "error"
+                item["error_code"] = exc.code
+                item["error"] = exc.detail
+                return
+            if reference.get("transcript"):
+                body["ref_transcript"] = reference["transcript"]
+            url, headers = studio_request(
+                studio, "/api/generate/txt2speech/reference"
+            )
+            r = await client.post(
+                url,
+                data={
+                    "request_json": json.dumps(body, separators=(",", ":")),
+                    "transcript_segments_json": json.dumps(
+                        reference.get("transcript_segments") or [],
+                        separators=(",", ":"),
+                    ),
+                    "source_sha256": reference["sha256"],
+                    "reference_expires_at": str(reference["expires_at"]),
+                },
+                files={
+                    "audio": (
+                        f"reference{reference['audio_extension']}",
+                        reference_path.read_bytes(),
+                        reference["media_type"],
+                    )
+                },
+                headers=headers,
+                timeout=120.0,
+            )
+            item["voice_reference_asset_id"] = voice_reference_asset_id
+        elif refs:
             entry = await _catalog_entry(studio, b["model"])
             caps = (entry or {}).get("capabilities") or []
             if b["modality"] == "video":
@@ -1444,6 +1505,18 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
         else:
             url, headers = studio_request(studio, endpoint)
             r = await client.post(url, json=body, headers=headers)
+        if r.status_code >= 400 and voice_reference_asset_id:
+            try:
+                worker_detail = r.json().get("detail")
+            except (ValueError, AttributeError):
+                worker_detail = None
+            if isinstance(worker_detail, dict) and worker_detail.get("code"):
+                item["state"] = "error"
+                item["error_code"] = str(worker_detail["code"])
+                item["error"] = str(
+                    worker_detail.get("detail") or "Voice reference preparation failed."
+                )
+                return
         if r.status_code >= 400:
             raise _worker_http_error(r)
         job = r.json()["job"]
@@ -1478,6 +1551,8 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             state = j.get("state")
             if state in ("queued", "running"):
                 _record_worker_progress(item, j.get("progress"))
+                item["chunk_index"] = j.get("chunk_index")
+                item["chunk_total"] = j.get("chunk_total")
                 continue
             if j.get("error") or state in ("error", "cancelled"):
                 raise _worker_terminal_error(

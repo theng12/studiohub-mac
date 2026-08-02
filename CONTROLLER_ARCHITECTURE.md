@@ -23,6 +23,7 @@ GenStudio owns:
 - Customer job IDs, global idempotency, execution attempts, cross-location
   routing, retries, reconciliation, leases, and fencing-token issuance.
 - Final customer assets and signed/downloadable customer grants.
+- Original customer voice references, consent, retention, and deletion state.
 
 Studio Hub owns only its site-local execution:
 
@@ -31,6 +32,8 @@ Studio Hub owns only its site-local execution:
   retries, and physical-machine concurrency protection.
 - Worker progress, artifact retrieval, immutable revision/checksum evidence,
   and returning verified execution results to GenStudio.
+- Short-lived authenticated staging of customer input bytes for one assigned
+  site attempt. Model-specific audio preparation remains inside Voice Studio.
 - Continuing an already accepted local execution through a short GenStudio
   connection interruption. GenStudio later reconciles the same Hub batch.
 - Persisting last-good sibling catalogues, validating sibling audit evidence,

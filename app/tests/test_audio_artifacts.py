@@ -84,6 +84,12 @@ async def test_voice_terminal_wav_metadata_separates_runtime_from_audio(reset):
         "duration_seconds": 7.6208,
         "model_revision": "1" * 40,
         "voice_revision": "a" * 64,
+        "reference_audio_sha256": "b" * 64,
+        "reference_source_sha256": "c" * 64,
+        "reference_preparation_revision": "voicestudio.reference-audio.v1",
+        "reference_duration_s": 9.5,
+        "long_form_strategy": "adapter_managed_long_form",
+        "chunk_total": 12,
     }, {"voice_library_id": "074743daa991"}, 0.0)
 
     assert item["media_type"] == "audio/wav"
@@ -101,6 +107,12 @@ async def test_voice_terminal_wav_metadata_separates_runtime_from_audio(reset):
     terminal = broker.terminal_result(batch, item)
     assert terminal["model_revision"] == "1" * 40
     assert terminal["voice_revision"] == "a" * 64
+    assert terminal["reference_audio_sha256"] == "b" * 64
+    assert terminal["reference_source_sha256"] == "c" * 64
+    assert terminal["reference_preparation_revision"] == "voicestudio.reference-audio.v1"
+    assert terminal["reference_duration_s"] == 9.5
+    assert terminal["long_form_strategy"] == "adapter_managed_long_form"
+    assert terminal["chunk_total"] == 12
     assert ledger.get_asset(item["asset_id"])["runtime_s"] == 7.6208
 
     asset_id = item["asset_id"]

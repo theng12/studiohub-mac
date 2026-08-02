@@ -303,6 +303,8 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/model-baselines/reconcile` | Recheck every required model on every registered Voice Studio now; cache anything missing and retain offline model targets for automatic retry |
 | `POST /api/hub/broadcast/env` | `{key, value, studios?}` — set an env var in studios' ENVIRONMENT files (restart to apply) |
 | `POST /api/hub/jobs` | **Swarm Batch** — submit a batch (envelope below) |
+| `POST /api/hub/execution-assets/voice-references` | Temporarily stage one checksum-bound GenStudio customer voice reference for a site attempt |
+| `DELETE /api/hub/execution-assets/voice-references/{asset_id}` | Remove a staged private reference early; automatic expiry remains the fallback |
 | `GET /api/hub/jobs` · `GET /api/hub/jobs/{batch}` · `DELETE /api/hub/jobs/{batch}` | Track / cancel batches |
 | `POST /api/hub/jobs/clear` · `POST /api/hub/jobs/{batch}/clear` | Clear terminal generation history and Hub-owned ledger/files only; remote worker output is never removed |
 | `GET /api/hub/assets` · `POST /api/hub/assets/scan` | Asset ledger (query: `q`, `modality`, `studio`, `batch_id`) |

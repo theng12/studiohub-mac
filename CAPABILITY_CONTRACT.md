@@ -105,6 +105,14 @@ availability. Voice models may report `preset_voice`,
 `reference_audio_clone`, `voice_design`, or `provider_voice_id` modes when the
 worker catalog provides enough evidence.
 
+For `reference_audio_clone`, the audit-bound `input_limits` may additionally
+report `text_max_characters`, `long_form_strategy`,
+`private_section_max_characters`, and a `reference_audio` object containing the
+model's minimum/recommended/maximum usable duration, sample rate, channel
+count, transcript requirement, and accepted formats. These are worker-owned
+execution facts. Studio Hub sanitizes and relays them; it does not invent or
+normalize model limits.
+
 Locally brokered Image, Voice, Music, and Video generation models also report
 `memory_admission`: catalog, Hub-default, and effective minimum total/free RAM,
 policy source, current observed memory, and whether the machine is eligible
@@ -208,3 +216,34 @@ leases, fencing, customer status, and assets. Studio Hub may report local
 capacity or reject an assigned attempt, but it does not select, claim, reclaim,
 or transfer global work. SQLite remains authoritative for site-local dispatch;
 PostgreSQL remains optional non-authoritative evidence only.
+
+## Private voice-reference execution
+
+Customer voice uploads remain GenStudio assets. They are not added to Studio
+Hub's operator-owned Shared Voices library and are never broadcast across the
+fleet. For one assigned site attempt, GenStudio stages the exact bytes through
+`POST /api/hub/execution-assets/voice-references` using authenticated multipart
+fields `audio`, `source_asset_id`, `source_sha256`, and optional `transcript`,
+`transcript_segments_json`, `language`, and `ttl_seconds`.
+
+The response contains a short-lived `asset.id`, checksum, byte count, media
+type, and expiry. It excludes the source asset ID, transcript, storage path,
+and customer metadata. GenStudio then submits the ordinary `/api/hub/jobs`
+voice envelope with `sharedParams.voice_reference_asset_id` and a
+`voice_modes`-compatible audited model. The Hub forwards the bytes only to the
+selected Voice Studio using its authenticated multipart reference endpoint.
+
+Voice Studio owns decoding, silence-aware selection, resampling, loudness
+normalization, transcript slicing, private text sections, stitching, and one
+final speed adjustment. Studio Hub treats the request as one execution attempt,
+pins it to one physical worker, relays `chunk_index` / `chunk_total` progress,
+and forwards cancellation to that worker. It never schedules private chunks as
+independent jobs.
+
+Stable staging failures include `VOICE_REFERENCE_ASSET_MISSING`,
+`VOICE_REFERENCE_ASSET_EXPIRED`, and `VOICE_REFERENCE_ASSET_INACCESSIBLE`.
+Preparation errors reported by Voice Studio remain machine-readable and are
+not retried as infrastructure failures. Successful terminal evidence may
+include `reference_source_sha256`, `reference_audio_sha256`,
+`reference_preparation_revision`, `reference_duration_s`,
+`long_form_strategy`, and `chunk_total`.

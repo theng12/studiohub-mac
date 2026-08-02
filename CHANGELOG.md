@@ -10,6 +10,40 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.70.0] — 2026-08-02
+
+### Added — private voice-reference transport
+
+- Added an authenticated, controller-only execution-asset endpoint for staging
+  a customer's voice reference by durable GenStudio asset identity and exact
+  checksum. Audio and metadata are stored privately with a bounded expiry and
+  can be explicitly deleted after the assigned job.
+- Voice jobs can now reference the staged execution asset. Studio Hub verifies
+  it, selects one eligible Voice Studio worker, and sends the audio through the
+  worker's private multipart generation endpoint without exposing local paths,
+  arbitrary URLs, or base64 audio in the normal job contract.
+- Structured missing, expired, inaccessible, checksum, size, and format errors
+  let GenStudio safely re-stage the original asset without silently falling
+  back to a different voice.
+
+### Changed — transport and scheduling remain separate from audio processing
+
+- Studio Hub now relays Voice Studio's model-specific reference checksums,
+  preprocessing revision, prepared duration, long-form strategy, and chunk
+  progress while leaving segment selection, normalization, chunking, stitching,
+  and final speed control inside Voice Studio.
+- Capability and architecture documentation now define GenStudio as the owner
+  of the original customer upload and consent record, Studio Hub as short-lived
+  secure transport, and Voice Studio as the model-aware execution authority.
+
+### Verification
+
+- Focused tests cover private and idempotent staging, checksum binding, expiry,
+  authentication, safe API responses, multipart worker forwarding, structured
+  failure behavior, progress relay, and terminal audio evidence.
+- The complete Studio Hub suite passes without contacting a sibling Studio or
+  paid provider.
+
 ## [1.69.1] — 2026-08-02
 
 ### Fixed — portable release verification
