@@ -128,13 +128,16 @@ Schema version 2 advertises only models that pass both independent gates:
    `genstudio_candidate` for an exact internal model ID, immutable runtime
    revision, contract hash, and operation. The sibling's audit must be passed
    and `candidate_for_genstudio` must be true.
-2. The location owner approves that exact candidate in Studio Hub's Models
-   workspace. Approval is pinned to model ID + operation + revision + contract
-   hash. A changed runtime or contract returns to review automatically.
+2. The owner approves that exact candidate once in GenStudio's global Approved
+   Fleet Model Catalog. Approval is pinned to model ID + operation + revision +
+   contract hash. GenStudio pushes the versioned desired state to every
+   controller, which persists its last-good copy and enforces it locally.
 
 A sibling never publishes `approved_for_genstudio`; final exposure authority
-belongs to Studio Hub. Removing sibling approval or revoking Hub approval stops
-new capability publication without deleting historical evidence. An outage
+belongs to GenStudio. Studio Hub validates and consumes that authority; it does
+not create an independent site approval. Removing sibling candidacy or global
+approval stops new capability publication and automatic caching without
+deleting cached files, partial downloads, or historical evidence. An outage
 retains the last-good inventory but makes stale supply unavailable.
 
 The sibling audit candidate may report `adapter`, `controls`, `input_limits`,
@@ -195,7 +198,8 @@ GenStudio decides whether its routing policy requires an immutable revision.
 - A local model is installed, or a cloud provider is currently verified ready.
 - The runtime and subsystem report compatibility/readiness.
 - The audited catalogue observation is not stale.
-- The exact model contract remains approved by Studio Hub.
+- The exact model contract remains present in the last-good GenStudio fleet
+  catalog accepted by this controller.
 
 An unavailable model includes a stable reason such as `worker_offline`,
 `physical_machine_busy`, `worker_maintenance`, `model_not_installed`, or

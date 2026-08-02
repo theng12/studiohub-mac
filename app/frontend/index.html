@@ -349,9 +349,9 @@
       have each downloaded — a model can live on your media server but not this Mac.
     </p>
     <div class="card jform section">
-      <div class="top"><span class="emoji">✅</span><h3>Models offered to GenStudio</h3><span id="exposure-state" class="pill">Loading</span></div>
+      <div class="top"><span class="emoji">✅</span><h3>Audited model candidates</h3><span id="exposure-state" class="pill">Loading</span></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        A sibling Studio can submit a tested model as an <b>audited candidate</b>, but it is never sellable automatically. Review its exact operation, immutable runtime revision, contract, and fleet supply here. Only models you approve are included in Studio Hub’s GenStudio capability document.
+        Sibling Studios submit tested models here as evidence. Fleet approval is managed once in <b>GenStudio Studio Control</b>; this controller receives that approved catalog and caches each exact model only on compatible machines.
       </p>
       <div class="actions" style="align-items:center">
         <button class="btn primary" id="exposure-refresh" onclick="refreshModelExposure()">Refresh audited models</button>
@@ -363,12 +363,12 @@
       <div id="exposure-history" class="sub" style="margin-top:8px"></div>
     </div>
     <div class="card jform section">
-      <div class="top"><span class="emoji">🪶</span><h3>Required Voice Studio model baseline</h3><span id="baseline-state" class="pill">Loading</span></div>
+      <div class="top"><span class="emoji">🪶</span><h3>Approved fleet model caching</h3><span id="baseline-state" class="pill">Loading</span></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        Keeps <b>Whisper Tiny</b>, <b>Kokoro 82M</b>, <b>VibeVoice Realtime 0.5B 4-bit</b>, and <b>Fish Audio S2 Pro 8-bit</b> cached on every registered Voice Studio. Offline Macs stay pending and each site controller installs anything missing when they return. Image, Chat, and Render workers do not receive these voice models.
+        Enforces the global catalog received from GenStudio. Each approved model is cached on every eligible registered sibling Studio according to its audited memory requirement. Offline machines remain pending and resume safely when they return; removing approval never deletes existing or partial files.
       </p>
       <div class="actions" style="align-items:center">
-        <label class="wd"><input id="baseline-enabled" type="checkbox" onchange="saveModelBaseline()"> keep installed automatically</label>
+        <label class="wd"><input id="baseline-enabled" type="checkbox" onchange="saveModelBaseline()"> cache approved models automatically</label>
         <button class="btn primary" id="baseline-reconcile" onclick="reconcileModelBaseline()">Check & install now</button>
         <span class="sub" id="baseline-summary" role="status" aria-live="polite"></span>
       </div>
@@ -1129,6 +1129,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.72.0", date: "2026-08-02", items: [
+    "Studio Hub now receives one global Approved Fleet Model Catalog from GenStudio and automatically caches each exact audited model on every RAM-eligible sibling worker.",
+    "The previous seven-model hardcoded Voice baseline is gone. Research models are never downloaded merely because a new machine joins the fleet.",
+    "Removing global approval stops new caching and routing while preserving cached files, partial downloads, jobs, and historical evidence.",
+  ]},
   { v: "1.71.0", date: "2026-08-02", items: [
     "Voice generation jobs now retain the exact worker's per-attempt unified-memory, pressure, swap, process-tree, and MLX evidence.",
     "Open a Voice batch's per-item status to see peak worker RSS, lowest free memory, pressure, swap, and MLX peak while active or after completion.",
@@ -2289,7 +2294,8 @@ function renderModelExposures() {
   }[value] || value || "Unknown");
   const action = row => {
     const exposure = row.exposure || {}, conflict = !!row.contract_conflict;
-    if (!modelExposureData.can_expose) return `<span class="sub">Set this Hub to Controller mode to manage GenStudio exposure.</span>`;
+    if (modelExposureData.managed_by === "genstudio") return `<span class="sub">Managed globally in GenStudio Studio Control.</span>`;
+    if (!modelExposureData.can_expose) return `<span class="sub">Set this Hub to Controller mode to manage legacy exposure.</span>`;
     if (conflict) return `<span class="pill err">Contract conflict</span>`;
     if (exposure.state === "approved") return `<button class="btn" onclick="setModelExposure('${row.candidate_key}','revoke')">Stop offering</button>`;
     if (["candidate", "revoked", "suspended"].includes(exposure.state)) return `<button class="go" onclick="setModelExposure('${row.candidate_key}','approve')">Approve for GenStudio</button>`;
@@ -2312,7 +2318,9 @@ function renderModelExposures() {
   const historical = (modelExposureData.history || []).filter(row => !current.has(row.exposure_key));
   history.textContent = historical.length
     ? `${historical.length} historical exact exposure record${historical.length === 1 ? "" : "s"} retained for audit; removed models are not advertised.`
-    : "Exact approval and revocation history is retained even when a model or machine disappears.";
+    : modelExposureData.managed_by === "genstudio"
+      ? "Exact approval is managed globally in GenStudio; this Hub retains the received policy and local evidence."
+      : "Exact approval and revocation history is retained even when a model or machine disappears.";
 }
 
 async function setModelExposure(candidateKey, action) {
@@ -2360,12 +2368,12 @@ async function loadModelBaseline() {
   }
   $("#baseline-enabled").checked = !!data.enabled;
   const summary = data.summary || {};
-  $("#baseline-state").textContent = data.enabled ? "Automatic" : "Paused";
-  $("#baseline-summary").textContent = `${summary.cached || 0}/${summary.total || 0} ready · ${summary.pending || 0} pending · ${summary.failed || 0} need retry`;
+  $("#baseline-state").textContent = data.authority === "genstudio" ? (data.enabled ? "Synced" : "Paused") : "Awaiting GenStudio";
+  $("#baseline-summary").textContent = `${summary.approved_models || 0} approved · ${summary.cached || 0}/${summary.total || 0} ready · ${summary.pending || 0} pending · ${summary.ineligible || 0} ineligible · ${summary.failed || 0} need attention`;
   const rows = data.targets || [];
   $("#baseline-targets").innerHTML = rows.length
     ? `<table><thead><tr><th>Model</th><th>Machine</th><th>Status</th><th>Detail</th></tr></thead><tbody>${rows.map(row => `<tr><td><strong>${esc(row.model_label || row.model_repo)}</strong><span class="sub">${esc(row.studio_id)}</span></td><td>${esc(mlabel(row.machine || "local"))}</td><td><span class="pill ${row.state === "cached" ? "ok" : row.state === "error" ? "err" : ""}">${esc(row.state)}</span></td><td>${esc(row.detail || "Waiting for the next check")}</td></tr>`).join("")}</tbody></table>`
-    : '<span class="sub">No Voice Studio workers are registered at this site.</span>';
+    : `<span class="sub">${data.authority === "genstudio" ? "No eligible caching targets at this site." : "Waiting for GenStudio to deliver the approved fleet model catalog."}</span>`;
 }
 
 async function saveModelBaseline() {
@@ -2382,7 +2390,7 @@ async function saveModelBaseline() {
 async function reconcileModelBaseline() {
   const button = $("#baseline-reconcile");
   button.disabled = true;
-  $("#baseline-summary").textContent = "Checking every required model on every Voice Studio…";
+  $("#baseline-summary").textContent = "Checking every approved model on every eligible sibling Studio…";
   const result = await api("/api/hub/model-baselines/reconcile", { method: "POST" })
     .then(r => r.json()).catch(e => ({ error: String(e) }));
   button.disabled = false;

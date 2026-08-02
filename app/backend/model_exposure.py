@@ -50,6 +50,18 @@ def _read() -> dict[str, Any]:
         "schema": SCHEMA_NAME,
         "schema_version": SCHEMA_VERSION,
         "records": records if isinstance(records, dict) else {},
+        "global_catalog_revision": (
+            value.get("global_catalog_revision")
+            if isinstance(value, dict)
+            and isinstance(value.get("global_catalog_revision"), str)
+            else None
+        ),
+        "global_catalog_synced_at": (
+            value.get("global_catalog_synced_at")
+            if isinstance(value, dict)
+            and isinstance(value.get("global_catalog_synced_at"), str)
+            else None
+        ),
     }
 
 
@@ -180,6 +192,70 @@ def records() -> list[dict[str, Any]]:
         key=lambda row: (row.get("internal_model_id", ""),
                          row.get("operation", ""), row.get("approved_at", "")),
     )
+
+
+def global_authority_active() -> bool:
+    return bool(_read().get("global_catalog_revision"))
+
+
+def sync_global_catalog(models: list[dict[str, Any]], *, revision: str) -> None:
+    """Replace site-local exposure authority with GenStudio desired state.
+
+    Cached files and historical records are preserved.  Omitting an exact
+    contract stops new publication by revoking it; it never deletes a model.
+    """
+
+    state = _read()
+    desired: set[str] = set()
+    for model in models:
+        key = _clean_text(model.get("candidate_key"), 64).lower()
+        model_id = _clean_text(
+            model.get("internal_model_id") or model.get("repo"), 500
+        )
+        expected = exposure_key(
+            model_id,
+            _clean_text(model.get("operation"), 120),
+            _clean_text(model.get("runtime_revision"), 80).lower(),
+            _clean_text(model.get("contract_hash"), 80).lower(),
+        )
+        if key != expected:
+            raise ValueError("GenStudio fleet catalog contains an invalid exact model key.")
+        desired.add(key)
+        previous = state["records"].get(key)
+        approved_at = (
+            previous.get("approved_at") if isinstance(previous, dict) else None
+        ) or _now()
+        state["records"][key] = {
+            "state": "approved",
+            "authority": "genstudio",
+            "authority_revision": revision,
+            "internal_model_id": model_id,
+            "display_name": _clean_text(
+                model.get("display_name") or model.get("label"), 256
+            ),
+            "operation": _clean_text(model.get("operation"), 120),
+            "runtime_revision": _clean_text(model.get("runtime_revision"), 80).lower(),
+            "contract_hash": _clean_text(model.get("contract_hash"), 80).lower(),
+            "approved_at": approved_at,
+            "updated_at": _now(),
+            "reason": "Approved in GenStudio fleet catalog",
+            "revoked_at": None,
+        }
+    for key, previous in list(state["records"].items()):
+        if not isinstance(previous, dict) or key in desired:
+            continue
+        if previous.get("state") == "approved":
+            state["records"][key] = {
+                **previous,
+                "state": "revoked",
+                "authority": previous.get("authority") or "legacy_site",
+                "updated_at": _now(),
+                "revoked_at": _now(),
+                "reason": "Not present in the current GenStudio fleet catalog",
+            }
+    state["global_catalog_revision"] = revision
+    state["global_catalog_synced_at"] = _now()
+    _write(state)
 
 
 def state_for(candidate: dict | None, operation: str) -> dict[str, Any]:

@@ -10,6 +10,33 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.72.0] — 2026-08-02
+
+### Added — GenStudio-owned approved fleet model catalog
+
+- Added an authenticated controller desired-state endpoint for one global,
+  exact approved-model catalog managed in GenStudio.
+- Controllers persist the last-good catalog and automatically ask each audited
+  hardware-eligible sibling Studio to cache its approved models.
+- The Models workspace now explains the global authority and reports approved,
+  eligible, ineligible, pending, cached, and failed targets.
+
+### Changed
+
+- Removed the hardcoded seven-model Voice Studio baseline. New machines no
+  longer download research models merely because they joined a controller.
+- Site-local exposure controls become read-only after the first GenStudio
+  catalog arrives, preventing different locations from drifting into separate
+  sellable catalogs.
+- Revocation stops new downloads and routing without deleting cached files,
+  resumable partial downloads, jobs, or historical evidence.
+
+### Verification
+
+- Focused tests cover authenticated desired-state delivery, exact-contract
+  validation, RAM eligibility, partial-download reuse, last-good persistence,
+  global authority, revocation preservation, and cache-only capabilities.
+
 ## [1.71.0] — 2026-08-02
 
 ### Added — worker-owned generation resource evidence

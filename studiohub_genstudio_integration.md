@@ -1,8 +1,9 @@
 # GenStudio KH handoff: consume Studio Hub site capabilities
 
 Use this file as the implementation brief for a GenStudio KH coding session.
-The approved-model discovery contract is available in Studio Hub KH `v1.69.0`
-and later as capability schema version 2.
+The approved-model discovery contract is available as capability schema
+version 2. Global desired-state delivery is available in Studio Hub KH
+`v1.72.0` and later.
 
 The canonical response contract is documented in
 [`CAPABILITY_CONTRACT.md`](CAPABILITY_CONTRACT.md). If this handoff and that
@@ -66,7 +67,7 @@ site's stored authenticated transport and compose these existing contracts:
    `POST /api/hub/maintenance/updates`; poll the returned site-owned job.
 4. Update agent Hubs with `POST /api/hub/maintenance/hub-updates` and poll the
    returned site-owned job.
-5. Reconcile the lightweight transcription baseline with
+5. Reconcile the current approved fleet catalog with
    `POST /api/hub/model-baselines/reconcile`.
 6. Update the location controller itself last through
    `POST /api/hub/maintenance/self-update`, then verify its version and
@@ -79,7 +80,7 @@ poll response was lost. These are operator maintenance operations, not customer
 jobs; they must not mint GenStudio job IDs, attempts, idempotency keys, leases,
 or fencing tokens.
 
-The Whisper baseline endpoints contain no customer material:
+The approved fleet-catalog status endpoints contain no customer material:
 
 ```http
 GET  /api/hub/model-baselines
@@ -87,9 +88,34 @@ POST /api/hub/model-baselines              {"enabled": true}
 POST /api/hub/model-baselines/reconcile
 ```
 
-They apply only to registered Voice Studio transcription workers. Offline
-targets remain retryable and baseline failures never replace or block the
+They apply the last-good GenStudio desired state to every compatible registered
+sibling worker. Offline targets remain retryable, hardware-ineligible targets
+remain explicit, and reconciliation failures never replace or block the
 site-local SQLite scheduler.
+
+## Global approved fleet model catalog
+
+GenStudio is the single approval authority across every location. After each
+ordinary inventory sync it sends the same exact desired-state document to all
+enabled controllers:
+
+```http
+POST {studio_hub_base_url}/api/hub/fleet-model-catalog
+Authorization: Bearer {studio_hub_or_fleet_token}
+Content-Type: application/json
+```
+
+The document uses schema `genstudio.fleet-model-catalog`, version 1, and
+contains exact audited model ID, operation, immutable runtime revision,
+contract hash, sibling Studio, inventory source, and the audited minimum RAM.
+The only initial deployment mode is `all_eligible`.
+
+Controllers persist the last-good document, acknowledge quickly, and reconcile
+in the background. Sibling `/api/downloads` remains the download authority and
+must resume existing partial caches. Omission from a newer desired state stops
+new caching and routing but never deletes local caches, partial files, jobs, or
+historical evidence. GenStudio customer products, prices, and publication are
+separate records and are never created by this contract.
 
 ## Configuration and secret handling
 

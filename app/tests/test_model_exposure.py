@@ -120,10 +120,61 @@ def test_owner_can_approve_then_revoke_after_candidate_disappears(client, monito
 
 def test_models_workspace_contains_guided_exposure_controls(client):
     html = client.get("/").text
-    assert "Models offered to GenStudio" in html
+    assert "Audited model candidates" in html
     assert "Refresh audited models" in html
     assert "Approve for GenStudio" in html
     assert "/api/hub/model-exposures/${action}" in html
+
+
+def test_global_catalog_replaces_site_approval_without_deleting_history(reset):
+    first = model_exposure.candidate_summary(_model("org/first"))
+    second = model_exposure.candidate_summary(_model("org/second"))
+    first_key = model_exposure.candidate_key(first, "image.text_to_image")
+    second_key = model_exposure.candidate_key(second, "image.text_to_image")
+
+    def desired(candidate, key):
+        return {
+            "candidate_key": key,
+            "internal_model_id": candidate["internal_model_id"],
+            "display_name": candidate["display_name"],
+            "operation": "image.text_to_image",
+            "runtime_revision": candidate["runtime_revision"],
+            "contract_hash": candidate["contract_hash"],
+        }
+
+    model_exposure.sync_global_catalog(
+        [desired(first, first_key), desired(second, second_key)], revision="a" * 64
+    )
+    assert model_exposure.global_authority_active()
+    assert {row["state"] for row in model_exposure.records()} == {"approved"}
+
+    model_exposure.sync_global_catalog([desired(first, first_key)], revision="b" * 64)
+    records = {row["internal_model_id"]: row for row in model_exposure.records()}
+    assert records["org/first"]["state"] == "approved"
+    assert records["org/second"]["state"] == "revoked"
+
+
+def test_site_owner_cannot_override_global_catalog(client, monitor):
+    studio = next(row for row in monitor.registry if row["id"] == "image")
+    monitor.registry = [studio]
+    monitor.status = {"image": {"status": "up"}}
+    monitor._catalog_cache["image"] = (time.time(), {"models": [_model()]})
+    control_plane.save_settings(
+        {"role": "controller", "site_id": "site-a", "controller_id": "hub-a"}
+    )
+    client.cookies.set(auth.SESSION_COOKIE_NAME, auth.create_browser_session())
+    candidate = model_exposure.candidate_summary(_model())
+    key = model_exposure.candidate_key(candidate, "image.text_to_image")
+    model_exposure.sync_global_catalog([], revision="a" * 64)
+
+    inventory = client.get("/api/hub/model-exposures").json()
+    assert inventory["managed_by"] == "genstudio"
+    assert inventory["can_expose"] is False
+    response = client.post(
+        "/api/hub/model-exposures/approve", json={"candidate_key": key}
+    )
+    assert response.status_code == 409
+    assert "Approved Fleet Model Catalog" in response.json()["detail"]
 
 
 def test_models_read_is_cache_only(authed, monitor, monkeypatch):

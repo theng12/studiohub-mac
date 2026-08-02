@@ -103,6 +103,10 @@ def _reset_state():
     hardware_profiles._assignment_cache = None
     memory_admission.reset_for_tests()
     main.model_baselines.enabled = True
+    main.model_baselines.catalog_revision = None
+    main.model_baselines.catalog_generated_at = None
+    main.model_baselines.catalog_synced_at = None
+    main.model_baselines.models.clear()
     main.model_baselines.last_reconciled_at = None
     main.model_baselines.targets.clear()
     main.model_baselines._lock = None

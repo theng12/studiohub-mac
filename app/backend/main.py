@@ -19,6 +19,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -1196,7 +1197,7 @@ async def hub_broadcast_download(body: dict):
 
 @app.get("/api/hub/model-baselines")
 def hub_model_baselines():
-    """Site-local lightweight model policy; contains no customer data."""
+    """Cache-only status for the GenStudio-approved fleet model catalog."""
     return model_baselines.snapshot()
 
 
@@ -1207,8 +1208,34 @@ def save_hub_model_baselines(body: ModelBaselineSettingsBody):
 
 @app.post("/api/hub/model-baselines/reconcile")
 async def reconcile_hub_model_baselines():
-    """Check every Voice Studio now; missing/offline targets retry safely."""
+    """Check every eligible sibling Studio; missing targets retry safely."""
     return await model_baselines.reconcile()
+
+
+@app.post("/api/hub/fleet-model-catalog")
+async def receive_fleet_model_catalog(request: Request, body: dict[str, Any]):
+    """Persist GenStudio desired state and reconcile it without blocking sync."""
+    if not auth.valid_machine_token(request, HUB_TOKEN):
+        raise HTTPException(
+            401,
+            "Hub or fleet token required for the private fleet model catalog.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if control_plane.public_settings().get("role") != "controller":
+        raise HTTPException(409, "Only a location controller accepts fleet desired state.")
+    try:
+        changed, snapshot = model_baselines.replace_catalog(body)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    scheduled = model_baselines.trigger_reconcile() if changed else False
+    return {
+        "ok": True,
+        "accepted": True,
+        "changed": changed,
+        "reconcile_scheduled": scheduled,
+        "revision": snapshot["catalog_revision"],
+        "approved_models": snapshot["summary"]["approved_models"],
+    }
 
 
 def _hf_studios(ids: list | None) -> list[dict]:
@@ -1595,7 +1622,13 @@ def hub_model_exposures():
             for item in candidates
         ),
         "controller_role": controller_role,
-        "can_expose": controller_role == "controller",
+        "can_expose": (
+            controller_role == "controller"
+            and not model_exposure.global_authority_active()
+        ),
+        "managed_by": (
+            "genstudio" if model_exposure.global_authority_active() else "studiohub"
+        ),
         "history": model_exposure.records(),
     }
 
@@ -1603,6 +1636,11 @@ def hub_model_exposures():
 @app.post("/api/hub/model-exposures/approve")
 def approve_hub_model_exposure(request: Request, body: ModelExposureActionBody):
     _require_exposure_owner(request)
+    if model_exposure.global_authority_active():
+        raise HTTPException(
+            409,
+            "This controller is managed by GenStudio's Approved Fleet Model Catalog.",
+        )
     if control_plane.public_settings().get("role") != "controller":
         raise HTTPException(409, "Only a location controller can expose models.")
     row = _candidate_by_key(body.candidate_key)
@@ -1628,6 +1666,11 @@ def approve_hub_model_exposure(request: Request, body: ModelExposureActionBody):
 @app.post("/api/hub/model-exposures/revoke")
 def revoke_hub_model_exposure(request: Request, body: ModelExposureActionBody):
     _require_exposure_owner(request)
+    if model_exposure.global_authority_active():
+        raise HTTPException(
+            409,
+            "This controller is managed by GenStudio's Approved Fleet Model Catalog.",
+        )
     if control_plane.public_settings().get("role") != "controller":
         raise HTTPException(409, "Only a location controller can revoke models.")
     try:
