@@ -10,6 +10,23 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.76.1] — 2026-08-03
+
+### Fixed — approved catalog no longer blocks controller updates
+
+- The owner-controlled approved-model catalogue is now treated as mutable
+  per-controller runtime state, alongside the other machine-local Hub state
+  files. Creating or changing an approval no longer makes the Git checkout
+  appear dirty to the safe updater.
+- Existing `model_exposures.json` files remain in place and are preserved
+  during updates; no approval, revocation, audit evidence, or desired-state
+  revision is deleted or rewritten by this patch.
+
+### Verification
+
+- A focused regression test requires the exposure state file to remain
+  ignored by Git so future catalogue changes cannot regress fleet updates.
+
 ## [1.76.0] — 2026-08-03
 
 ### Added — Group B Wave 2 qualification controls

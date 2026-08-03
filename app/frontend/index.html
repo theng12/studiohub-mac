@@ -1137,6 +1137,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.76.1", date: "2026-08-03", items: [
+    "Approved-model catalogue changes are now recognized as controller-local runtime state and no longer block safe Hub updates.",
+    "Existing approvals and audit evidence stay in place while the controller updates; nothing is deleted or rewritten.",
+  ]},
   { v: "1.76.0", date: "2026-08-03", items: [
     "Wave 2 qualification now covers VoxCPM2, VibeVoice Realtime, and the supported OmniVoice bfloat16 checkpoint with model-specific operation and memory fences.",
     "Completed qualification audio can be downloaded through the controller for durable owner listening review without exposing worker addresses.",

@@ -1,11 +1,18 @@
 import asyncio
 import stat
 import time
+from pathlib import Path
 
 import pytest
 
 from backend import auth, broker, control_plane, hardware_profiles, model_exposure
 from backend.monitor import StudioMonitor
+
+
+def test_model_exposure_runtime_state_is_ignored_by_git() -> None:
+    root = Path(__file__).parents[2]
+    ignored = (root / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert "model_exposures.json" in ignored
 
 
 def _audit(model_id="org/model", *, operation="image.text_to_image",
