@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import sqlite3
 import threading
@@ -36,6 +37,19 @@ PEER_MEMORY_MAX_AGE_S = 30.0
 CLIENT_REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{8,160}")
 MACHINE_ID = re.compile(r"[A-Za-z0-9._:-]{1,120}")
 IMMUTABLE_REVISION = re.compile(r"^(?:sha256:)?[0-9a-fA-F]{40,64}$")
+FISH_AUDIO_S2_PRO = "mlx-community/fish-audio-s2-pro-8bit"
+FISH_DURATION_TARGETS_S = {
+    "short": 30,
+    "medium": 300,
+    "long_form": 900,
+}
+FISH_ALLOWED_MACHINE_TIERS_GB = frozenset({16, 24})
+FISH_MIN_FREE_MEMORY_GB = 8.0
+FISH_DURATION_TOLERANCE_FRACTION = 0.15
+FISH_SECTION_MAX_CHARACTERS = 300
+SUBMIT_RECONCILIATION_GRACE_S = 180.0
+FISH_AIDEN_SOURCE_SHA256 = "64376dc02320c0fa31fd2ce6373c3c1ebbd08b9449e78f49c3ac2e5b90b82151"
+FISH_AIDEN_TRANSCRIPT_SHA256 = "dd70528ce13023373b83926ef40086ca3e2754259d88b59f685897336d7eaed1"
 ALLOWED_MODELS = frozenset({
     "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit",
     "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
@@ -43,8 +57,9 @@ ALLOWED_MODELS = frozenset({
     "mlx-community/VoxCPM2-4bit",
     "mlx-community/VibeVoice-Realtime-0.5B-4bit",
     "mlx-community/OmniVoice-bfloat16",
+    FISH_AUDIO_S2_PRO,
 })
-ALLOWED_CASES = frozenset({"short", "long_form", "cancellation"})
+ALLOWED_CASES = frozenset({"short", "medium", "long_form", "cancellation"})
 MODEL_OPERATIONS = {
     "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit": frozenset({"preset_tts"}),
     "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit": frozenset({"voice_clone"}),
@@ -57,6 +72,9 @@ MODEL_OPERATIONS = {
     # Auto voice and voice design remain research features in the sibling and
     # must not enter Studio Hub qualification, approval, or publication.
     "mlx-community/OmniVoice-bfloat16": frozenset({"voice_clone"}),
+    # Fish remains internal research only; this admission is evidence
+    # collection for the local 8-bit checkpoint, never product approval.
+    FISH_AUDIO_S2_PRO: frozenset({"voice_clone"}),
 }
 DEFAULT_OPERATIONS = {
     model: next(iter(operations)) if len(operations) == 1 else None
@@ -71,13 +89,14 @@ LONG_FORM_READY_MODELS = frozenset({
     "mlx-community/VoxCPM2-4bit",
     "mlx-community/VibeVoice-Realtime-0.5B-4bit",
     "mlx-community/OmniVoice-bfloat16",
+    FISH_AUDIO_S2_PRO,
 })
 WAVE_2_MODELS = frozenset({
     "mlx-community/VoxCPM2-4bit",
     "mlx-community/VibeVoice-Realtime-0.5B-4bit",
     "mlx-community/OmniVoice-bfloat16",
 })
-TERMINAL_STATES = frozenset({"succeeded", "failed", "cancelled", "uncertain"})
+FINAL_STATES = frozenset({"succeeded", "failed", "cancelled"})
 QWEN_CUSTOMVOICE_SPEAKERS = frozenset({
     "Ryan", "Aiden", "Serena", "Vivian", "Uncle_Fu", "Dylan", "Eric",
     "Ono_Anna", "Sohee",
@@ -127,6 +146,23 @@ _RESOURCE_USAGE_FIELDS = {
             "reported_peak_gb", "active_gb_end", "cache_gb_end"},
     "outcome": {"state", "memory_failure", "restart_scheduled", "model_retained"},
 }
+_RESOURCE_TEXT_FIELDS = {
+    "host": {
+        "pressure_level_start", "peak_pressure_level", "pressure_level_end",
+    },
+    "outcome": {"state"},
+}
+_RESOURCE_BOOL_FIELDS = {
+    "mlx": {"supported"},
+    "outcome": {"memory_failure", "restart_scheduled", "model_retained"},
+}
+_RESOURCE_INTEGER_FIELDS = {
+    "sampling": {"samples"},
+    "worker": {"peak_process_count"},
+    "host": {"peak_pressure_raw", "swap_in_delta_bytes", "swap_out_delta_bytes"},
+}
+_PRESSURE_LEVELS = frozenset({"normal", "warning", "urgent", "critical", "unknown", "unavailable"})
+_OUTCOME_STATES = frozenset({"done", "error", "cancelled"})
 
 
 class QualificationError(ValueError):
@@ -209,11 +245,13 @@ def _immutable_revision(entry: dict[str, Any]) -> str | None:
 
 
 def _safe_number(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
     try:
         numeric = float(value)
     except (TypeError, ValueError):
         return None
-    return numeric if numeric >= 0 else None
+    return numeric if math.isfinite(numeric) and numeric >= 0 else None
 
 
 def _peer_age(machine: str) -> float | None:
@@ -243,8 +281,25 @@ def _tier_matches(total_gb: float, tier_gb: int) -> bool:
 
 def _active_attempt_on_machine(machine: str) -> bool:
     return any(
-        item.get("state") in {"prepared", "submitting", "running", "cancel_requested"}
+        item.get("state") in {"prepared", "submitting", "running", "cancel_requested", "uncertain"}
         and (item.get("target") or {}).get("machine_id") == machine
+        for item in list_attempts(500)
+    )
+
+
+def _fish_gate_passed(
+    *, machine: str, tier_gb: int, case_type: str, revision: str,
+) -> bool:
+    return any(
+        item.get("state") == "succeeded"
+        and item.get("model") == FISH_AUDIO_S2_PRO
+        and item.get("case_type") == case_type
+        and (item.get("target") or {}).get("machine_id") == machine
+        and (item.get("target") or {}).get("machine_tier_gb") == tier_gb
+        and (item.get("target") or {}).get("runtime_revision") == revision
+        and ((item.get("terminal_evidence") or {}).get("artifact") or {}).get(
+            "reference_source_sha256"
+        ) == FISH_AIDEN_SOURCE_SHA256
         for item in list_attempts(500)
     )
 
@@ -394,7 +449,12 @@ async def _preflight(monitor, request: dict[str, Any], client: httpx.AsyncClient
     text = str(request.get("text") or "")
     if not text.strip() or len(text) > 40_000:
         raise QualificationError("QUALIFICATION_TEXT_INVALID", "Qualification text must contain 1 to 40,000 characters.")
-    if case_type == "long_form" and len(text) != 40_000:
+    if case_type == "medium" and model_id != FISH_AUDIO_S2_PRO:
+        raise QualificationError(
+            "QUALIFICATION_CASE_INVALID",
+            "The medium duration case is currently limited to Fish qualification.",
+        )
+    if case_type == "long_form" and model_id != FISH_AUDIO_S2_PRO and len(text) != 40_000:
         raise QualificationError("LONG_FORM_TEXT_REQUIRED", "Long-form qualification requires exactly 40,000 characters.")
     if case_type == "long_form" and model_id not in LONG_FORM_READY_MODELS:
         raise QualificationError(
@@ -440,6 +500,11 @@ async def _preflight(monitor, request: dict[str, Any], client: httpx.AsyncClient
             "VOICE_STUDIO_VERSION_TOO_OLD",
             "Voice Studio 1.27.9 or newer is required for Wave 2 qualification.",
         )
+    if model_id == FISH_AUDIO_S2_PRO and version < (1, 27, 15):
+        raise QualificationError(
+            "VOICE_STUDIO_VERSION_TOO_OLD",
+            "Voice Studio 1.27.15 or newer is required for Fish Audio S2 Pro qualification.",
+        )
 
     entry = _catalog_entry(monitor, studio_id, model_id)
     if not entry or not entry.get("hub_cached"):
@@ -461,11 +526,41 @@ async def _preflight(monitor, request: dict[str, Any], client: httpx.AsyncClient
             raise QualificationError("REMOTE_MEMORY_STALE", "The remote machine lacks a fresh authenticated memory snapshot.")
     total_gb, available_gb = _safe_number(host.get("total_gb")), _safe_number(host.get("available_gb"))
     requested_tier = int(request.get("machine_tier_gb") or 0)
-    if requested_tier not in {8, 16, 24} or total_gb is None or not _tier_matches(total_gb, requested_tier):
-        raise QualificationError("MACHINE_TIER_MISMATCH", "The selected worker does not match the requested 8, 16, or 24 GB tier.")
-    min_total = _safe_number(entry.get("min_unified_memory_gb")) or 0.0
-    min_free = _safe_number(entry.get("min_free_memory_gb")) or 2.0
-    if total_gb < min_total or available_gb is None or available_gb < min_free:
+    allowed_tiers = FISH_ALLOWED_MACHINE_TIERS_GB if model_id == FISH_AUDIO_S2_PRO else frozenset({8, 16, 24})
+    if requested_tier not in allowed_tiers or total_gb is None or not _tier_matches(total_gb, requested_tier):
+        tiers = "16 or 24 GB" if model_id == FISH_AUDIO_S2_PRO else "8, 16, or 24 GB"
+        raise QualificationError(
+            "MACHINE_TIER_MISMATCH",
+            f"The selected worker does not match an allowed {tiers} qualification tier.",
+        )
+    if model_id == FISH_AUDIO_S2_PRO:
+        prerequisite_cases = {
+            "medium": ("short",),
+            "long_form": ("short", "medium"),
+        }.get(case_type, ())
+        if not all(_fish_gate_passed(
+            machine=physical_machine, tier_gb=requested_tier,
+            case_type=required, revision=revision,
+        ) for required in prerequisite_cases):
+            raise QualificationError(
+                "FISH_QUALIFICATION_GATE_REQUIRED",
+                "Fish qualification must pass 30 seconds, then 5 minutes, then 15 minutes on the same worker tier and checkpoint.",
+            )
+    reported_min_total = _safe_number(entry.get("min_unified_memory_gb"))
+    # Fish's catalog floor is the claim under test. Do not let that unverified
+    # number prevent controlled 16/24 GB evidence collection; the independent
+    # live free-memory guard remains mandatory.
+    min_total = None if model_id == FISH_AUDIO_S2_PRO else (reported_min_total or 0.0)
+    min_free = (
+        FISH_MIN_FREE_MEMORY_GB
+        if model_id == FISH_AUDIO_S2_PRO
+        else (_safe_number(entry.get("min_free_memory_gb")) or 2.0)
+    )
+    if (
+        (min_total is not None and total_gb < min_total)
+        or available_gb is None
+        or available_gb < min_free
+    ):
         raise QualificationError("INSUFFICIENT_LIVE_MEMORY", "The selected worker does not meet the model's live memory admission floor.")
 
     params = request.get("params") if isinstance(request.get("params"), dict) else {}
@@ -492,6 +587,18 @@ async def _preflight(monitor, request: dict[str, Any], client: httpx.AsyncClient
                 "REFERENCE_TRANSCRIPT_REQUIRED",
                 "Clone qualification requires the exact transcript for its private reference clip.",
             )
+        if model_id == FISH_AUDIO_S2_PRO:
+            transcript_sha256 = hashlib.sha256(
+                str(reference.get("transcript") or "").strip().encode()
+            ).hexdigest()
+            if (
+                str(reference.get("sha256") or "").lower() != FISH_AIDEN_SOURCE_SHA256
+                or transcript_sha256 != FISH_AIDEN_TRANSCRIPT_SHA256
+            ):
+                raise QualificationError(
+                    "FISH_AIDEN_REFERENCE_REQUIRED",
+                    "Fish qualification requires the checksum-verified Voice Studio Aiden reference and transcript.",
+                )
 
     # The Hub's own queue is not the only possible source of activity. Verify
     # the selected sibling has no live generation jobs using the same
@@ -520,11 +627,18 @@ async def _preflight(monitor, request: dict[str, Any], client: httpx.AsyncClient
         "observed_available_memory_gb": available_gb,
         "memory_snapshot_age_seconds": round(age, 3),
         "minimum_total_memory_gb": min_total,
+        "reported_catalog_minimum_total_memory_gb": reported_min_total,
         "minimum_free_memory_gb": min_free,
         "voice_studio_version": ".".join(map(str, version)),
         "model_id": model_id,
         "operation": operation,
         "runtime_revision": revision,
+        "reference_source_sha256": (
+            FISH_AIDEN_SOURCE_SHA256 if model_id == FISH_AUDIO_S2_PRO else None
+        ),
+        "reference_transcript_sha256": (
+            FISH_AIDEN_TRANSCRIPT_SHA256 if model_id == FISH_AUDIO_S2_PRO else None
+        ),
     }, reference=reference, reference_audio=reference_audio)
 
 
@@ -550,20 +664,51 @@ def _public(attempt: dict[str, Any]) -> dict[str, Any]:
         key: attempt.get(key) for key in (
             "id", "client_request_id", "created_at", "updated_at", "state", "case_type",
             "model", "operation", "target", "worker_job_id", "progress", "cancel_requested_at",
-            "terminal_evidence", "review_reason",
+            "terminal_evidence", "review_reason", "target_audio_duration_seconds",
+            "accepted_at", "worker_started_at", "stop_reason", "input_text_characters",
         )
     }
 
 
 def _sanitize_resource_usage(raw: object) -> dict[str, Any] | None:
-    if not isinstance(raw, dict) or raw.get("schema") != "voicestudio.resource-telemetry" or raw.get("schema_version") != 1:
+    if (
+        not isinstance(raw, dict)
+        or raw.get("schema") != "voicestudio.resource-telemetry"
+        or type(raw.get("schema_version")) is not int
+        or raw.get("schema_version") != 1
+    ):
         return None
     clean: dict[str, Any] = {"schema": raw["schema"], "schema_version": 1}
     for section, allowed in _RESOURCE_USAGE_FIELDS.items():
         values = raw.get(section)
         if isinstance(values, dict):
-            clean[section] = {key: value for key, value in values.items()
-                              if key in allowed and (value is None or isinstance(value, (str, int, float, bool)))}
+            sanitized = {}
+            for key, value in values.items():
+                if key not in allowed:
+                    continue
+                if value is None:
+                    sanitized[key] = None
+                elif key in _RESOURCE_BOOL_FIELDS.get(section, set()):
+                    if isinstance(value, bool):
+                        sanitized[key] = value
+                elif key in _RESOURCE_INTEGER_FIELDS.get(section, set()):
+                    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                        sanitized[key] = value
+                elif key in _RESOURCE_TEXT_FIELDS.get(section, set()):
+                    if isinstance(value, str) and (
+                        (section == "host" and value in _PRESSURE_LEVELS)
+                        or (section == "outcome" and value in _OUTCOME_STATES)
+                    ):
+                        sanitized[key] = value
+                else:
+                    if not isinstance(value, (int, float)) or isinstance(value, bool):
+                        continue
+                    numeric = float(value)
+                    if math.isfinite(numeric) and (
+                        numeric >= 0 or key == "swap_used_delta_gb"
+                    ):
+                        sanitized[key] = value
+            clean[section] = sanitized
     return clean
 
 
@@ -590,6 +735,61 @@ def _mark_uncertain(attempt: dict[str, Any], code: str) -> dict[str, Any]:
     return _public(attempt)
 
 
+async def _reconcile_submit(
+    monitor, attempt: dict[str, Any], client: httpx.AsyncClient,
+) -> dict[str, Any]:
+    """Bind a response-lost submit to Voice Studio's durable request ID.
+
+    Reconciliation can only observe the original request. It never posts a
+    replacement job, so a crash between remote acceptance and local job-ID
+    persistence cannot duplicate generation.
+    """
+    studio = next((item for item in monitor.registry
+                   if item.get("id") == (attempt.get("target") or {}).get("studio_id")), None)
+    if not studio:
+        return _mark_uncertain(attempt, "SUBMIT_RECONCILIATION_WORKER_UNAVAILABLE")
+    try:
+        url, headers = studio_request(studio, "/api/generate/jobs")
+        response = await client.get(url, headers=headers, timeout=30.0)
+        jobs = response.json().get("jobs") if response.status_code < 400 else None
+    except (httpx.HTTPError, ValueError, AttributeError):
+        jobs = None
+    if not isinstance(jobs, list):
+        return _mark_uncertain(attempt, "SUBMIT_RECONCILIATION_RESPONSE_UNKNOWN")
+    matches = [
+        job for job in jobs
+        if isinstance(job, dict)
+        and str((job.get("params") or {}).get("client_request_id") or "")
+        == attempt.get("client_request_id")
+    ]
+    if len(matches) != 1:
+        if not matches and time.time() - float(attempt.get("created_at") or 0) >= SUBMIT_RECONCILIATION_GRACE_S:
+            attempt.update(
+                state="failed",
+                review_reason="SUBMIT_NOT_ACCEPTED_AFTER_RECONCILIATION",
+            )
+            _save(attempt)
+            return _public(attempt)
+        return _mark_uncertain(
+            attempt,
+            "SUBMIT_RECONCILIATION_NOT_FOUND" if not matches
+            else "SUBMIT_RECONCILIATION_AMBIGUOUS",
+        )
+    worker_job_id = str(matches[0].get("id") or "").strip()
+    if not worker_job_id:
+        return _mark_uncertain(attempt, "SUBMIT_RECONCILIATION_MALFORMED")
+    attempt.update(
+        state="running",
+        worker_job_id=worker_job_id,
+        accepted_at=attempt.get("accepted_at") or time.time(),
+        worker_started_at=_safe_number(matches[0].get("started_at")),
+        review_reason=None,
+    )
+    _save(attempt)
+    broker.mark_external_machine_success(studio)
+    return _public(attempt)
+
+
 async def submit(monitor, request: dict[str, Any], client: httpx.AsyncClient) -> dict[str, Any]:
     client_request_id = str(request.get("client_request_id") or "")
     if not CLIENT_REQUEST_ID.fullmatch(client_request_id):
@@ -600,7 +800,15 @@ async def submit(monitor, request: dict[str, Any], client: httpx.AsyncClient) ->
         if existing:
             if existing.get("request_fingerprint") != fingerprint:
                 raise QualificationError("CLIENT_REQUEST_ID_CONFLICT", "client_request_id was already used for a different qualification request.")
-            return {**_public(existing), "replayed": True}
+    if existing:
+        if (
+            not existing.get("worker_job_id")
+            and existing.get("state") in {"submitting", "uncertain"}
+        ):
+            existing = get(existing["id"]) or existing
+            reconciled = await _reconcile_submit(monitor, existing, client)
+            return {**reconciled, "replayed": True}
+        return {**_public(existing), "replayed": True}
 
     preflight = await _preflight(monitor, request, client)
     with _CREATION_LOCK:
@@ -619,7 +827,13 @@ async def submit(monitor, request: dict[str, Any], client: httpx.AsyncClient) ->
             "case_type": request["case_type"], "model": request["model"],
             "operation": preflight.target["operation"], "target": preflight.target,
             "worker_job_id": None, "progress": None, "terminal_evidence": None,
-            "review_reason": None,
+            "review_reason": None, "stop_reason": None,
+            "target_audio_duration_seconds": (
+                FISH_DURATION_TARGETS_S.get(request["case_type"])
+                if request["model"] == FISH_AUDIO_S2_PRO else None
+            ),
+            "accepted_at": None, "worker_started_at": None,
+            "input_text_characters": len(str(request.get("text") or "")),
         }
         _save(attempt)  # Durable before the remote worker can possibly accept.
         attempt["state"] = "submitting"
@@ -660,7 +874,10 @@ async def submit(monitor, request: dict[str, Any], client: httpx.AsyncClient) ->
         worker_job_id = ""
     if not worker_job_id:
         return _mark_uncertain(attempt, "SUBMIT_RESPONSE_MALFORMED")
-    attempt.update(state="running", worker_job_id=worker_job_id)
+    attempt.update(
+        state="running", worker_job_id=worker_job_id, accepted_at=time.time(),
+        worker_started_at=_safe_number(worker_job.get("started_at")),
+    )
     _save(attempt)
     broker.mark_external_machine_success(preflight.studio)
     return _public(attempt)
@@ -670,11 +887,16 @@ async def poll(monitor, attempt_id: str, client: httpx.AsyncClient) -> dict[str,
     attempt = get(attempt_id)
     if attempt is None:
         raise QualificationError("ATTEMPT_NOT_FOUND", "Unknown qualification attempt.")
-    if attempt.get("state") in TERMINAL_STATES:
+    if attempt.get("state") in FINAL_STATES:
         return _public(attempt)
     studio = next((item for item in monitor.registry if item.get("id") == attempt.get("target", {}).get("studio_id")), None)
-    if not studio or not attempt.get("worker_job_id"):
+    if not studio:
         return _mark_uncertain(attempt, "WORKER_IDENTITY_UNAVAILABLE")
+    if not attempt.get("worker_job_id"):
+        reconciled = await _reconcile_submit(monitor, attempt, client)
+        attempt = get(attempt_id) or attempt
+        if not attempt.get("worker_job_id"):
+            return reconciled
     try:
         url, headers = studio_request(studio, f"/api/generate/jobs/{attempt['worker_job_id']}")
         response = await client.get(url, headers=headers, timeout=30.0)
@@ -693,17 +915,112 @@ async def poll(monitor, attempt_id: str, client: httpx.AsyncClient) -> dict[str,
     progress = job.get("progress")
     if isinstance(progress, (int, float)):
         attempt["progress"] = max(0.0, min(1.0, float(progress)))
+    worker_started_at = _safe_number(job.get("started_at"))
+    if worker_started_at is not None:
+        attempt["worker_started_at"] = worker_started_at
     if state in {"queued", "running"}:
+        target_seconds = _safe_number(attempt.get("target_audio_duration_seconds"))
+        execution_started_at = _safe_number(attempt.get("worker_started_at"))
+        if execution_started_at is None and state == "running":
+            # Running without a worker timestamp is malformed, but must fail
+            # closed: acceptance time is a conservative upper bound on runtime.
+            execution_started_at = _safe_number(attempt.get("accepted_at"))
+        if (
+            target_seconds
+            and execution_started_at
+            and not attempt.get("cancel_requested_at")
+            and time.time() - execution_started_at > target_seconds * 10.0
+        ):
+            attempt["stop_reason"] = "SLOWDOWN_RATIO_STOP"
+            attempt["review_reason"] = "SLOWDOWN_RATIO_STOP"
+            _save(attempt)
+            return await cancel(monitor, attempt_id, client)
         attempt["state"] = "cancel_requested" if attempt.get("cancel_requested_at") else "running"
         _save(attempt)
         return _public(attempt)
     if state == "done":
         reported_revision = str(job.get("model_revision") or "").removeprefix("sha256:").lower()
-        if reported_revision and reported_revision != attempt["target"]["runtime_revision"]:
+        if not reported_revision or reported_revision != attempt["target"]["runtime_revision"]:
             return _mark_uncertain(attempt, "MODEL_REVISION_CHANGED")
-        attempt.update(state="succeeded", terminal_evidence=_terminal_evidence(job), review_reason=None)
+        evidence = _terminal_evidence(job)
+        if attempt.get("model") == FISH_AUDIO_S2_PRO:
+            artifact = evidence.get("artifact") or {}
+            runtime_s = _safe_number(artifact.get("runtime_s"))
+            audio_s = _safe_number(artifact.get("audio_duration_s"))
+            target_s = _safe_number(attempt.get("target_audio_duration_seconds"))
+            required_artifact = (
+                str(artifact.get("integration_name") or "")
+                == "voicestudio_genstudio_integration"
+                and str(artifact.get("integration_version") or "") == "1.1"
+                and str(artifact.get("internal_model_id") or "") == FISH_AUDIO_S2_PRO
+                and str(artifact.get("runtime_revision") or "").removeprefix("sha256:").lower()
+                == attempt["target"]["runtime_revision"]
+                and re.fullmatch(r"[0-9a-f]{64}", str(artifact.get("sha256") or "").lower())
+                and (_safe_number(artifact.get("bytes")) or 0) > 0
+                and artifact.get("media_type") == "audio/wav"
+                and artifact.get("format") == "wav"
+                and (_safe_number(artifact.get("sample_rate_hz")) or 0) > 0
+                and (_safe_number(artifact.get("channels")) or 0) > 0
+                and str(artifact.get("reference_source_sha256") or "").lower()
+                == FISH_AIDEN_SOURCE_SHA256
+                and re.fullmatch(
+                    r"[0-9a-f]{64}",
+                    str(artifact.get("reference_audio_sha256") or "").lower(),
+                )
+                and isinstance(artifact.get("reference_preparation_revision"), str)
+                and bool(str(artifact.get("reference_preparation_revision") or "").strip())
+                and (_safe_number(artifact.get("reference_duration_s")) or 0) > 0
+                and runtime_s is not None and runtime_s > 0
+                and audio_s is not None and audio_s > 0
+                and (_safe_number(artifact.get("audio_duration_ms")) or 0) > 0
+                and abs(float(artifact["audio_duration_ms"]) - audio_s * 1000) <= 2
+            )
+            if not required_artifact:
+                attempt["terminal_evidence"] = evidence
+                _save(attempt)
+                return _mark_uncertain(attempt, "FISH_TERMINAL_EVIDENCE_INCOMPLETE")
+            if attempt.get("case_type") in {"medium", "long_form"}:
+                chunk_total = _safe_number(artifact.get("chunk_total"))
+                input_characters = int(attempt.get("input_text_characters") or 0)
+                minimum_chunks = max(
+                    2,
+                    math.ceil(input_characters / FISH_SECTION_MAX_CHARACTERS),
+                )
+                if (
+                    not str(artifact.get("long_form_strategy") or "").strip()
+                    or chunk_total is None
+                    or chunk_total < minimum_chunks
+                ):
+                    attempt["terminal_evidence"] = evidence
+                    _save(attempt)
+                    return _mark_uncertain(attempt, "FISH_CHUNK_EVIDENCE_MISSING")
+            artifact["slowdown_ratio"] = round(runtime_s / audio_s, 6)
+            artifact["inverse_realtime_throughput"] = round(audio_s / runtime_s, 6)
+            if target_s:
+                tolerance = target_s * FISH_DURATION_TOLERANCE_FRACTION
+                artifact["target_audio_duration_seconds"] = target_s
+                artifact["duration_tolerance_seconds"] = tolerance
+                if not target_s - tolerance <= audio_s <= target_s + tolerance:
+                    attempt.update(
+                        state="failed", terminal_evidence=evidence,
+                        review_reason="FISH_AUDIO_DURATION_TARGET_MISSED",
+                    )
+                    _save(attempt)
+                    broker.mark_external_machine_success(studio)
+                    return _public(attempt)
+        if attempt.get("stop_reason"):
+            attempt.update(
+                state="cancelled", terminal_evidence=evidence,
+                review_reason=attempt.get("stop_reason"),
+            )
+        else:
+            attempt.update(state="succeeded", terminal_evidence=evidence, review_reason=None)
     elif state == "cancelled":
-        attempt.update(state="cancelled", terminal_evidence=_terminal_evidence(job), review_reason=None)
+        attempt.update(
+            state="cancelled",
+            terminal_evidence=_terminal_evidence(job),
+            review_reason=attempt.get("review_reason"),
+        )
     else:
         attempt.update(state="failed", terminal_evidence=_terminal_evidence(job), review_reason="WORKER_TERMINAL_FAILURE")
     _save(attempt)
@@ -715,7 +1032,7 @@ async def cancel(monitor, attempt_id: str, client: httpx.AsyncClient) -> dict[st
     attempt = get(attempt_id)
     if attempt is None:
         raise QualificationError("ATTEMPT_NOT_FOUND", "Unknown qualification attempt.")
-    if attempt.get("state") in TERMINAL_STATES:
+    if attempt.get("state") in FINAL_STATES:
         return _public(attempt)
     attempt["cancel_requested_at"] = time.time()
     attempt["state"] = "cancel_requested"

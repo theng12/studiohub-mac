@@ -1137,6 +1137,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.77.0", date: "2026-08-04", items: [
+    "Controlled Fish Audio S2 Pro 8-bit qualification now covers Aiden reference cloning at 30 seconds, 5 minutes, and 15 minutes on 16 GB and 24 GB workers.",
+    "Fish stays internal-only; each tier must pass 30 seconds then 5 and 15 minutes with checksum-bound Aiden, duration/checkpoint/artifact/telemetry evidence, an independent 8 GB live-free-memory gate, and exact-job cancellation above the 10× realtime stop threshold.",
+  ]},
   { v: "1.76.2", date: "2026-08-03", items: [
     "OmniVoice qualification is now deliberately voice-cloning only; automatic and designed voices cannot enter approval or publication.",
     "Verified short-form clone evidence now permits the controlled 40,000-character long-form cloning test.",

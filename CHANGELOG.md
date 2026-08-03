@@ -10,6 +10,46 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.77.0] — 2026-08-04
+
+### Added — controlled Fish Audio S2 Pro memory qualification
+
+- The controller-owned Voice qualification harness now admits only the exact
+  `mlx-community/fish-audio-s2-pro-8bit` checkpoint and checksum-bound Aiden
+  reference/transcript for cloning at the 30-second, 5-minute, and 15-minute
+  evidence targets.
+- Fish attempts record their intended audio duration and automatically request
+  cancellation against the exact durable worker job after the 10× realtime
+  speed-stop threshold is exceeded.
+- A Fish pass now requires output within 15% of its requested duration, exact
+  checkpoint and reference evidence, a complete artifact contract, long-form
+  chunk evidence, and type-checked resource telemetry. Successful evidence
+  includes measured slowdown ratio and inverse realtime throughput.
+- Each physical worker tier must durably pass 30 seconds before 5 minutes and
+  both earlier gates before 15 minutes on the same immutable checkpoint.
+
+### Safety
+
+- The disputed Fish catalog RAM floor is retained as reported evidence but does
+  not control admission. Fish permits only controlled 16 GB and 24 GB tiers and
+  independently requires at least 8 GB live free memory, fresh authenticated
+  telemetry, an exact immutable revision, idle state, and Voice Studio 1.27.15.
+- Response-lost submissions reconcile through Voice Studio's stable request ID
+  without reposting. Uncertain jobs fence their physical machine until their
+  exact worker job reaches a final state; an authenticated empty reconciliation
+  releases the fence as a failed attempt after a three-minute safety grace.
+- The 10× watchdog uses worker execution time and falls back conservatively to
+  Hub acceptance time when a running worker omits its start timestamp.
+- Fish remains internal research only. This release does not approve, expose,
+  route, price, publish, or add it to GenStudio's desired-state catalog.
+
+### Verification
+
+- Fake-worker coverage proves 16 GB and 24 GB tier selection, checksum-bound
+  reference transport, variable-length 5-minute and 15-minute cases, exact-job
+  10× cancellation, durable replay behavior, sanitized telemetry, and artifact
+  access without exposing worker locations.
+
 ## [1.76.2] — 2026-08-03
 
 ### Changed — OmniVoice qualification is cloning-only
