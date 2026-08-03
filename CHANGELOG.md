@@ -10,6 +10,21 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.73.1] — 2026-08-03
+
+### Fixed
+
+- Authenticated Hub and fleet machine clients may now operate the isolated
+  Wave 1 qualification evidence API. Model exposure approval and revocation
+  remain restricted to the controller-local or remembered owner browser, so
+  fleet automation cannot approve, publish, price, or route a candidate.
+
+### Verification
+
+- Added an authorization boundary test proving the machine token can read the
+  qualification ledger while the same client remains forbidden from model
+  approval.
+
 ## [1.73.0] — 2026-08-03
 
 ### Added — controlled Wave 1 voice qualification

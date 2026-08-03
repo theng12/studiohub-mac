@@ -1129,6 +1129,9 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.73.1", date: "2026-08-03", items: [
+    "Authenticated controller automation can now operate Wave 1 qualification evidence without receiving any model-approval or publication authority.",
+  ]},
   { v: "1.73.0", date: "2026-08-03", items: [
     "Added controller-only Wave 1 Qwen3 TTS and Chatterbox qualification records, with explicit controller-local opt-in and physical-machine fences.",
     "Every attempted run captures safe worker resource evidence and becomes review-required instead of auto-retrying if its remote response is lost.",

@@ -340,3 +340,15 @@ def test_qualification_never_mutates_model_approval_or_catalog(reset):
     after = model_exposure.records()
 
     assert before == after == []
+
+
+def test_machine_token_can_collect_qualification_evidence_without_model_approval(authed):
+    listing = authed.get("/api/hub/admin/voice-qualifications")
+    exposure = authed.post(
+        "/api/hub/model-exposures/approve",
+        json={"candidate_key": "a" * 64},
+    )
+
+    assert listing.status_code == 200
+    assert listing.json() == {"attempts": []}
+    assert exposure.status_code == 403

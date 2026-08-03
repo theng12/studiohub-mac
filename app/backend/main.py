@@ -1607,6 +1607,26 @@ def _require_exposure_owner(request: Request) -> None:
     )
 
 
+def _require_qualification_operator(request: Request) -> None:
+    """Authorize evidence collection without widening model-approval access.
+
+    Qualification is an operational controller action used by authenticated
+    fleet automation. It cannot approve, expose, price, route, or publish a
+    model, so the Hub/fleet machine-token boundary is appropriate here while
+    model exposure remains browser-owner or loopback only.
+    """
+    if is_loopback(request):
+        return
+    if auth.valid_browser_session(request.cookies.get(auth.SESSION_COOKIE_NAME)):
+        return
+    if auth.valid_machine_token(request, HUB_TOKEN):
+        return
+    raise HTTPException(
+        403,
+        "Voice qualification requires the owner session or an authenticated controller client.",
+    )
+
+
 def _candidate_by_key(candidate_key: str) -> dict:
     row = next((item for item in monitor.candidate_models()
                 if item.get("candidate_key") == candidate_key), None)
@@ -1710,14 +1730,14 @@ async def refresh_hub_catalog(request: Request):
 # controller path is explicitly opt-in and can be fenced by physical machine ID.
 @app.get("/api/hub/admin/voice-qualifications")
 def list_voice_qualifications(request: Request, limit: int = Query(100, ge=1, le=500)):
-    _require_exposure_owner(request)
+    _require_qualification_operator(request)
     return {"attempts": [voice_qualification._public(item)
                          for item in voice_qualification.list_attempts(limit)]}
 
 
 @app.get("/api/hub/admin/voice-qualifications/{attempt_id}")
 def get_voice_qualification(request: Request, attempt_id: str):
-    _require_exposure_owner(request)
+    _require_qualification_operator(request)
     attempt = voice_qualification.get(attempt_id)
     if attempt is None:
         raise HTTPException(404, "Unknown qualification attempt.")
@@ -1726,7 +1746,7 @@ def get_voice_qualification(request: Request, attempt_id: str):
 
 @app.post("/api/hub/admin/voice-qualifications")
 async def submit_voice_qualification(request: Request, body: VoiceQualificationBody):
-    _require_exposure_owner(request)
+    _require_qualification_operator(request)
     try:
         async with httpx.AsyncClient() as worker_client:
             return await voice_qualification.submit(
@@ -1738,7 +1758,7 @@ async def submit_voice_qualification(request: Request, body: VoiceQualificationB
 
 @app.post("/api/hub/admin/voice-qualifications/{attempt_id}/poll")
 async def poll_voice_qualification(request: Request, attempt_id: str):
-    _require_exposure_owner(request)
+    _require_qualification_operator(request)
     try:
         async with httpx.AsyncClient() as worker_client:
             return await voice_qualification.poll(monitor, attempt_id, worker_client)
@@ -1749,7 +1769,7 @@ async def poll_voice_qualification(request: Request, attempt_id: str):
 
 @app.delete("/api/hub/admin/voice-qualifications/{attempt_id}")
 async def cancel_voice_qualification(request: Request, attempt_id: str):
-    _require_exposure_owner(request)
+    _require_qualification_operator(request)
     try:
         async with httpx.AsyncClient() as worker_client:
             return await voice_qualification.cancel(monitor, attempt_id, worker_client)
