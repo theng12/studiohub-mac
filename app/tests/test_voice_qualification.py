@@ -4,7 +4,14 @@ import time
 import httpx
 import pytest
 
-from backend import control_plane, main, model_exposure, peers, voice_qualification
+from backend import (
+    control_plane,
+    execution_assets,
+    main,
+    model_exposure,
+    peers,
+    voice_qualification,
+)
 
 
 CUSTOM = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit"
@@ -262,17 +269,39 @@ def test_voxcpm_design_is_reference_free_but_requires_design_prompt(reset):
     assert result["operation"] == "voice_design"
 
 
-def test_omnivoice_long_form_waits_for_short_form_adapter_evidence(reset):
+def test_omnivoice_long_form_clone_is_enabled_after_short_form_evidence(
+    reset, monkeypatch, tmp_path,
+):
     _controller(); _remote_memory()
-    with pytest.raises(voice_qualification.QualificationError) as error:
-        asyncio.run(voice_qualification.submit(
-            FakeMonitor(),
-            _request(model=OMNIVOICE, operation="voice_design", case_type="long_form",
-                     text="x" * 40_000,
-                     params={"voice_design_prompt": "female, warm, clear"}),
-            FakeClient(),
-        ))
-    assert error.value.code == "LONG_FORM_ADAPTER_NOT_READY"
+    reference = tmp_path / "reference.wav"
+    reference.write_bytes(b"RIFF-safe-test-reference")
+    monkeypatch.setattr(
+        execution_assets,
+        "resolve_voice_reference",
+        lambda _asset_id: ({
+            "id": "a" * 24,
+            "sha256": "b" * 64,
+            "audio_extension": ".wav",
+            "media_type": "audio/wav",
+            "expires_at": time.time() + 3600,
+            "transcript": "A stable, exact reference transcript.",
+            "transcript_segments": [],
+        }, reference),
+    )
+    result = asyncio.run(voice_qualification.submit(
+        FakeMonitor(),
+        _request(
+            model=OMNIVOICE,
+            operation="voice_clone",
+            case_type="long_form",
+            text="x" * 40_000,
+            params={"omnivoice_num_steps": 32, "omnivoice_guidance_scale": 2.0},
+            voice_reference_asset_id="a" * 24,
+        ),
+        FakeClient(),
+    ))
+    assert result["state"] == "running"
+    assert result["operation"] == "voice_clone"
 
 
 def test_qwen_requires_the_exact_worker_reported_nine_speaker_roster(reset):

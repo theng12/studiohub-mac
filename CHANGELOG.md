@@ -10,6 +10,23 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.76.2] — 2026-08-03
+
+### Changed — OmniVoice qualification is cloning-only
+
+- OmniVoice qualification now accepts only reference voice cloning. Auto voice,
+  voice design, and combined design controls remain internal sibling research
+  capabilities and cannot enter the controller's approval or publication flow.
+- The verified short-form clone evidence now unlocks the controlled 40,000
+  character adapter-managed long-form clone test without approving or exposing
+  the model.
+
+### Verification
+
+- Focused qualification tests prove that a checksum-bound, transcript-bearing
+  reference is still required for an OmniVoice long-form attempt and that the
+  attempt remains an internal evidence record rather than a customer job.
+
 ## [1.76.1] — 2026-08-03
 
 ### Fixed — approved catalog no longer blocks controller updates

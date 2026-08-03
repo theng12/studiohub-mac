@@ -53,9 +53,10 @@ MODEL_OPERATIONS = {
         "auto_tts", "voice_clone", "voice_design", "voice_clone_with_design",
     }),
     "mlx-community/VibeVoice-Realtime-0.5B-4bit": frozenset({"preset_tts"}),
-    "mlx-community/OmniVoice-bfloat16": frozenset({
-        "voice_clone", "voice_design", "voice_clone_with_design",
-    }),
+    # The owner-approved commercial scope is intentionally cloning-only.
+    # Auto voice and voice design remain research features in the sibling and
+    # must not enter Studio Hub qualification, approval, or publication.
+    "mlx-community/OmniVoice-bfloat16": frozenset({"voice_clone"}),
 }
 DEFAULT_OPERATIONS = {
     model: next(iter(operations)) if len(operations) == 1 else None
@@ -69,6 +70,7 @@ LONG_FORM_READY_MODELS = frozenset({
     "mlx-community/chatterbox-4bit",
     "mlx-community/VoxCPM2-4bit",
     "mlx-community/VibeVoice-Realtime-0.5B-4bit",
+    "mlx-community/OmniVoice-bfloat16",
 })
 WAVE_2_MODELS = frozenset({
     "mlx-community/VoxCPM2-4bit",

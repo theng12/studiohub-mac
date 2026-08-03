@@ -1137,6 +1137,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.76.2", date: "2026-08-03", items: [
+    "OmniVoice qualification is now deliberately voice-cloning only; automatic and designed voices cannot enter approval or publication.",
+    "Verified short-form clone evidence now permits the controlled 40,000-character long-form cloning test.",
+  ]},
   { v: "1.76.1", date: "2026-08-03", items: [
     "Approved-model catalogue changes are now recognized as controller-local runtime state and no longer block safe Hub updates.",
     "Existing approvals and audit evidence stay in place while the controller updates; nothing is deleted or rewritten.",
