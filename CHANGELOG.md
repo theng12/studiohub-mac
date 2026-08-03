@@ -10,6 +10,33 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.73.0] — 2026-08-03
+
+### Added — controlled Wave 1 voice qualification
+
+- Added a controller-owner API for durable, remote-only qualification attempts
+  for Qwen3 TTS CustomVoice 0.6B 8-bit, Qwen3 TTS Base 0.6B 8-bit cloning,
+  and Chatterbox 4-bit. It supports short, exact 40,000-character long-form,
+  and cancellation cases without creating a customer job or changing model
+  approval, catalog, price, or publication state.
+- Every attempt persists its stable client request ID and exact remote
+  site/machine/RAM/model/revision evidence before submission. Preflight
+  requires an idle remote Voice Studio at v1.27.0 or newer, a fully cached and
+  runtime-ready model, and a fresh authenticated memory snapshot for its 8,
+  16, or 24 GB tier.
+- Submissions, polls, and cancellation signals travel through the registered
+  remote machine's Studio Hub. Lost responses or worker identity changes become
+  review-required `uncertain` attempts and are never auto-resubmitted.
+- Terminal records retain only allowlisted artifact facts and Voice Studio
+  resource telemetry; worker endpoints, paths, credentials, prompts, and raw
+  worker errors are excluded from the admin response.
+
+### Verification
+
+- Added fake-worker coverage for persistence and idempotency, controller-local
+  exclusion, preflight checks, uncertain transport handling, terminal evidence
+  sanitization, remote cancellation, and no model-approval mutation.
+
 ## [1.72.3] — 2026-08-03
 
 ### Fixed

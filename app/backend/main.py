@@ -30,7 +30,8 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from pydantic import BaseModel, Field
 
 from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, control_plane, enrollment, execution_assets, execution_identity, fleet_ops, fleet_storage, gateway, hardware_profiles, hf_credentials, job_storage, memory_admission, model_exposure,
-               ledger, metrics, peers, recipes, shared_voices, startup_services, transcription_jobs)
+               ledger, metrics, peers, recipes, shared_voices, startup_services, transcription_jobs,
+               voice_qualification)
 from .auto_update import UpdateError
 from .auto_update_config import create_updater
 from .fleet_auto_updates import FleetAutoUpdates
@@ -103,6 +104,19 @@ class ModelExposureActionBody(BaseModel):
     candidate_key: str = Field(min_length=64, max_length=64,
                                pattern=r"^[0-9a-f]{64}$")
     reason: str | None = Field(default=None, max_length=500)
+
+
+class VoiceQualificationBody(BaseModel):
+    """Owner-only Wave 1 research request; never a customer job envelope."""
+    client_request_id: str = Field(min_length=8, max_length=160,
+                                   pattern=r"^[A-Za-z0-9._:-]+$")
+    target_studio_id: str = Field(min_length=1, max_length=120)
+    machine_tier_gb: int = Field(ge=8, le=24)
+    model: str = Field(min_length=1, max_length=500)
+    case_type: str = Field(min_length=1, max_length=40)
+    text: str = Field(min_length=1, max_length=40_000)
+    params: dict[str, Any] = Field(default_factory=dict)
+    voice_reference_asset_id: str | None = Field(default=None, max_length=120)
 
 
 class SharedVoiceUpdateBody(BaseModel):
@@ -1686,6 +1700,59 @@ def revoke_hub_model_exposure(request: Request, body: ModelExposureActionBody):
 async def refresh_hub_catalog(request: Request):
     _require_exposure_owner(request)
     return await monitor.refresh_catalogs(force=True)
+
+
+# ── Wave 1 Voice Studio qualification ────────────────────────────────────
+# These are deliberately separate from customer batches and from model exposure.
+# They are a controlled evidence collector for remote 8/16/24 GB workers only.
+@app.get("/api/hub/admin/voice-qualifications")
+def list_voice_qualifications(request: Request, limit: int = Query(100, ge=1, le=500)):
+    _require_exposure_owner(request)
+    return {"attempts": [voice_qualification._public(item)
+                         for item in voice_qualification.list_attempts(limit)]}
+
+
+@app.get("/api/hub/admin/voice-qualifications/{attempt_id}")
+def get_voice_qualification(request: Request, attempt_id: str):
+    _require_exposure_owner(request)
+    attempt = voice_qualification.get(attempt_id)
+    if attempt is None:
+        raise HTTPException(404, "Unknown qualification attempt.")
+    return voice_qualification._public(attempt)
+
+
+@app.post("/api/hub/admin/voice-qualifications")
+async def submit_voice_qualification(request: Request, body: VoiceQualificationBody):
+    _require_exposure_owner(request)
+    try:
+        async with httpx.AsyncClient() as worker_client:
+            return await voice_qualification.submit(
+                monitor, body.model_dump(), worker_client,
+            )
+    except voice_qualification.QualificationError as exc:
+        raise HTTPException(409, {"code": exc.code, "detail": exc.detail}) from exc
+
+
+@app.post("/api/hub/admin/voice-qualifications/{attempt_id}/poll")
+async def poll_voice_qualification(request: Request, attempt_id: str):
+    _require_exposure_owner(request)
+    try:
+        async with httpx.AsyncClient() as worker_client:
+            return await voice_qualification.poll(monitor, attempt_id, worker_client)
+    except voice_qualification.QualificationError as exc:
+        raise HTTPException(404 if exc.code == "ATTEMPT_NOT_FOUND" else 409,
+                            {"code": exc.code, "detail": exc.detail}) from exc
+
+
+@app.delete("/api/hub/admin/voice-qualifications/{attempt_id}")
+async def cancel_voice_qualification(request: Request, attempt_id: str):
+    _require_exposure_owner(request)
+    try:
+        async with httpx.AsyncClient() as worker_client:
+            return await voice_qualification.cancel(monitor, attempt_id, worker_client)
+    except voice_qualification.QualificationError as exc:
+        raise HTTPException(404 if exc.code == "ATTEMPT_NOT_FOUND" else 409,
+                            {"code": exc.code, "detail": exc.detail}) from exc
 
 
 async def _local_model_for_admission(model: str) -> dict:

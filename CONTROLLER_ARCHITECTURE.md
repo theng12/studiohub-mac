@@ -167,6 +167,14 @@ requests without the new metadata retain their current behavior.
   authority cannot be overridden at one location.
 - `POST /api/hub/catalog/refresh` — owner-triggered bounded concurrent refresh;
   failed workers retain their persisted last-good inventory.
+- `GET/POST /api/hub/admin/voice-qualifications`,
+  `GET/POST/DELETE /api/hub/admin/voice-qualifications/{attempt_id}` —
+  owner-only Wave 1 research evidence. These controller-local records may only
+  select a registered remote Voice Studio through its authenticated machine
+  Hub. They never create a customer job, approve a model, change the global
+  desired catalog, or contact a sibling Studio directly. A lost worker submit,
+  poll, or cancel response is terminal `uncertain` and requires operator
+  review; it is never automatically retried.
 - `GET /api/hub/controller` — authenticated role/site/shadow status.
 - `PUT /api/hub/controller` — save role, site, and optional shadow settings.
 - `POST /api/hub/controller/check` — verify the optional shadow schema and send
