@@ -10,12 +10,14 @@ an 8 GB Mac can still accept other modalities such as image generation.
 from __future__ import annotations
 
 
-# The 0.6B 8-bit Qwen3-TTS checkpoints are supported on 8 GB Apple-silicon
-# Macs. Voice Studio's own cold-load guard requires 3.15 GB free (1.9 GB model
-# plus 1.25 GB headroom), so the Hub rounds that up to 3.2 GB before dispatch.
-# This preserves 8 GB capacity without sending a job that the worker will
-# immediately decline under normal memory pressure.
+# Qwen3-TTS 0.6B Base technically completed an 8 GB qualification run, but it
+# reached urgent memory pressure, fell below 0.75 GB available, and used more
+# than 2.2 GB swap. The safe commercial floor is therefore 16 GB. CustomVoice
+# remains a separate unapproved model identity and keeps its existing local
+# testing floor until it receives its own quality and hardware decision.
 _MIN_MACHINE_MEMORY_GB_BY_REPO_PREFIX = {
+    "mlx-community/qwen3-tts-12hz-0.6b-base-8bit": 16.0,
+    "qwen/qwen3-tts-12hz-0.6b-base": 16.0,
     "mlx-community/qwen3-tts-12hz-0.6b-": 8.0,
     "qwen/qwen3-tts-12hz-0.6b-": 8.0,
 }

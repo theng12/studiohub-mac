@@ -10,6 +10,22 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.73.2] — 2026-08-03
+
+### Changed — safe Qwen3-TTS cloning admission
+
+- Qwen3-TTS 0.6B Base voice-cloning work now requires a 16 GB Apple Silicon
+  machine. The completed 8 GB run remains valid negative evidence, but urgent
+  memory pressure and swap make that tier ineligible for customer work.
+- The 24 GB tier remains preferred; unrelated Qwen3-TTS variants keep their
+  separate, unapproved qualification state and are not promoted by this rule.
+
+### Verification
+
+- Focused memory-admission and broker tests prove the exact Base checkpoint is
+  rejected on 8 GB and remains eligible on 16 GB when live free-memory policy
+  is satisfied.
+
 ## [1.73.1] — 2026-08-03
 
 ### Fixed
