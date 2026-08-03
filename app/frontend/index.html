@@ -1137,6 +1137,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.76.0", date: "2026-08-03", items: [
+    "Wave 2 qualification now covers VoxCPM2, VibeVoice Realtime, and the supported OmniVoice bfloat16 checkpoint with model-specific operation and memory fences.",
+    "Completed qualification audio can be downloaded through the controller for durable owner listening review without exposing worker addresses.",
+  ]},
   { v: "1.75.0", date: "2026-08-03", items: [
     "Approved models now appear in a machine-by-machine placement matrix with plain readiness, download, offline, incompatibility, and contract states.",
     "Every placement shows the audited RAM floor, observed machine RAM, and the controller's exact reason without changing fleet state.",

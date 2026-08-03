@@ -10,6 +10,28 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.76.0] — 2026-08-03
+
+### Added — Group B Wave 2 qualification controls
+
+- The controller-owned voice qualification harness now admits the exact
+  VoxCPM2 4-bit, VibeVoice Realtime 0.5B 4-bit, and OmniVoice bfloat16
+  checkpoints without granting approval, routing, or publication authority.
+- Qualification requests record the exact operation under test and enforce
+  model-specific reference, transcript, voice-design, preset-roster, immutable
+  revision, idle-worker, and live-memory requirements before remote execution.
+- OmniVoice long-form remains deliberately disabled until its short-form
+  runtime and memory evidence establishes a safe private section budget.
+- Completed qualification audio can be downloaded through the controller,
+  allowing every listening decision to retain its exact generated artifact
+  without revealing a worker address.
+
+### Safety
+
+- Wave 2 requires Voice Studio 1.27.9. Unknown, busy, stale, mismatched,
+  uncached, or memory-ineligible workers remain blocked before submission.
+- Lost submit responses remain uncertain and are never automatically retried.
+
 ## [1.75.0] — 2026-08-03
 
 ### Added — approved-model placement matrix

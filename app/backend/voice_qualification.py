@@ -1,7 +1,7 @@
 """Controller-owned, deliberately narrow Voice Studio qualification attempts.
 
 This is not a customer queue and cannot approve or expose a model.  It is an
-owner-operated evidence collector for the first Wave 1 models only.  Every
+owner-operated evidence collector for an explicit qualification set.  Every
 attempt is written to the local Hub SQLite ledger before a remote worker is
 contacted.  A lost submit, poll, or cancellation response is *uncertain* and
 is never automatically resubmitted.
@@ -40,8 +40,41 @@ ALLOWED_MODELS = frozenset({
     "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit",
     "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
     "mlx-community/chatterbox-4bit",
+    "mlx-community/VoxCPM2-4bit",
+    "mlx-community/VibeVoice-Realtime-0.5B-4bit",
+    "mlx-community/OmniVoice-bfloat16",
 })
 ALLOWED_CASES = frozenset({"short", "long_form", "cancellation"})
+MODEL_OPERATIONS = {
+    "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit": frozenset({"preset_tts"}),
+    "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit": frozenset({"voice_clone"}),
+    "mlx-community/chatterbox-4bit": frozenset({"voice_clone"}),
+    "mlx-community/VoxCPM2-4bit": frozenset({
+        "auto_tts", "voice_clone", "voice_design", "voice_clone_with_design",
+    }),
+    "mlx-community/VibeVoice-Realtime-0.5B-4bit": frozenset({"preset_tts"}),
+    "mlx-community/OmniVoice-bfloat16": frozenset({
+        "voice_clone", "voice_design", "voice_clone_with_design",
+    }),
+}
+DEFAULT_OPERATIONS = {
+    model: next(iter(operations)) if len(operations) == 1 else None
+    for model, operations in MODEL_OPERATIONS.items()
+}
+REFERENCE_OPERATIONS = frozenset({"voice_clone", "voice_clone_with_design"})
+DESIGN_OPERATIONS = frozenset({"voice_design", "voice_clone_with_design"})
+LONG_FORM_READY_MODELS = frozenset({
+    "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit",
+    "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
+    "mlx-community/chatterbox-4bit",
+    "mlx-community/VoxCPM2-4bit",
+    "mlx-community/VibeVoice-Realtime-0.5B-4bit",
+})
+WAVE_2_MODELS = frozenset({
+    "mlx-community/VoxCPM2-4bit",
+    "mlx-community/VibeVoice-Realtime-0.5B-4bit",
+    "mlx-community/OmniVoice-bfloat16",
+})
 TERMINAL_STATES = frozenset({"succeeded", "failed", "cancelled", "uncertain"})
 QWEN_CUSTOMVOICE_SPEAKERS = frozenset({
     "Ryan", "Aiden", "Serena", "Vivian", "Uncle_Fu", "Dylan", "Eric",
@@ -51,6 +84,15 @@ CHATTERBOX_LANGUAGE_CODES = frozenset({
     "ar", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi",
     "it", "ja", "ko", "ms", "nl", "no", "pl", "pt", "ru", "sv",
     "sw", "tr", "zh",
+})
+VIBEVOICE_VOICE_IDS = frozenset({
+    "en-Carter_man", "en-Davis_man", "en-Emma_woman", "en-Frank_man",
+    "en-Grace_woman", "en-Mike_man", "in-Samuel_man",
+    "de-Spk0_man", "de-Spk1_woman", "fr-Spk0_man", "fr-Spk1_woman",
+    "it-Spk0_woman", "it-Spk1_man", "jp-Spk0_man", "jp-Spk1_woman",
+    "kr-Spk0_woman", "kr-Spk1_man", "nl-Spk0_man", "nl-Spk1_woman",
+    "pl-Spk0_man", "pl-Spk1_woman", "pt-Spk0_woman", "pt-Spk1_man",
+    "sp-Spk0_woman", "sp-Spk1_man",
 })
 _CREATION_LOCK = threading.Lock()
 
@@ -236,9 +278,32 @@ def _qwen_speaker_ids(raw: object) -> frozenset[str] | None:
     return frozenset(speaker_ids)
 
 
+def _voice_ids(raw: object) -> frozenset[str] | None:
+    if not isinstance(raw, list):
+        return None
+    values = set()
+    for item in raw:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            return None
+        values.add(item["id"])
+    return frozenset(values)
+
+
+def _operation(request: dict[str, Any], model_id: str) -> str:
+    value = str(request.get("operation") or "").strip()
+    if not value:
+        value = DEFAULT_OPERATIONS.get(model_id) or ""
+    if value not in MODEL_OPERATIONS.get(model_id, frozenset()):
+        raise QualificationError(
+            "QUALIFICATION_OPERATION_INVALID",
+            "Choose an operation explicitly supported by this qualification model.",
+        )
+    return value
+
+
 async def _validate_model_controls(
     *, studio: dict[str, Any], model_id: str, entry: dict[str, Any],
-    params: dict[str, Any], client: httpx.AsyncClient,
+    operation: str, params: dict[str, Any], client: httpx.AsyncClient,
 ) -> None:
     """Verify exact, worker-reported controls before any job is admitted."""
     if model_id.endswith("CustomVoice-8bit"):
@@ -282,6 +347,36 @@ async def _validate_model_controls(
         if language not in CHATTERBOX_LANGUAGE_CODES:
             raise QualificationError("CHATTERBOX_LANGUAGE_REQUIRED", "Choose a verified Chatterbox language code.")
 
+    if model_id == "mlx-community/VibeVoice-Realtime-0.5B-4bit":
+        try:
+            url, headers = studio_request(studio, "/api/generate/availability")
+            response = await client.get(url, headers=headers, timeout=30.0)
+            availability = response.json() if response.status_code < 400 else None
+        except (httpx.HTTPError, ValueError, AttributeError):
+            availability = None
+        reported = _voice_ids(
+            availability.get("vibevoice_voices") if isinstance(availability, dict) else None
+        )
+        if reported != VIBEVOICE_VOICE_IDS:
+            raise QualificationError(
+                "VIBEVOICE_ROSTER_MISMATCH",
+                "The worker did not prove the exact 25-voice VibeVoice checkpoint roster.",
+            )
+        requested = str(params.get("voice") or "").strip()
+        if requested not in VIBEVOICE_VOICE_IDS:
+            raise QualificationError(
+                "VIBEVOICE_PRESET_REQUIRED",
+                "Choose one of the worker's verified VibeVoice presets.",
+            )
+
+    if operation in DESIGN_OPERATIONS:
+        prompt = str(params.get("voice_design_prompt") or params.get("instruct") or "").strip()
+        if not prompt:
+            raise QualificationError(
+                "VOICE_DESIGN_PROMPT_REQUIRED",
+                "This qualification operation requires a voice-design prompt.",
+            )
+
 
 async def _preflight(monitor, request: dict[str, Any], client: httpx.AsyncClient) -> Preflight:
     settings = control_plane.public_settings()
@@ -289,7 +384,8 @@ async def _preflight(monitor, request: dict[str, Any], client: httpx.AsyncClient
         raise QualificationError("CONTROLLER_REQUIRED", "Run qualification from a controller Hub.")
     model_id = str(request.get("model") or "")
     if model_id not in ALLOWED_MODELS:
-        raise QualificationError("MODEL_NOT_IN_WAVE_1", "This model is not in the approved Wave 1 qualification set.")
+        raise QualificationError("MODEL_NOT_IN_QUALIFICATION_SET", "This model is not in the approved qualification set.")
+    operation = _operation(request, model_id)
     case_type = str(request.get("case_type") or "")
     if case_type not in ALLOWED_CASES:
         raise QualificationError("QUALIFICATION_CASE_INVALID", "Use short, long_form, or cancellation.")
@@ -298,6 +394,11 @@ async def _preflight(monitor, request: dict[str, Any], client: httpx.AsyncClient
         raise QualificationError("QUALIFICATION_TEXT_INVALID", "Qualification text must contain 1 to 40,000 characters.")
     if case_type == "long_form" and len(text) != 40_000:
         raise QualificationError("LONG_FORM_TEXT_REQUIRED", "Long-form qualification requires exactly 40,000 characters.")
+    if case_type == "long_form" and model_id not in LONG_FORM_READY_MODELS:
+        raise QualificationError(
+            "LONG_FORM_ADAPTER_NOT_READY",
+            "This model must pass short-form stability before its adapter-managed long-form test is enabled.",
+        )
 
     studio_id = str(request.get("target_studio_id") or "")
     studio = next((candidate for candidate in monitor.registry if candidate.get("id") == studio_id), None)
@@ -332,6 +433,11 @@ async def _preflight(monitor, request: dict[str, Any], client: httpx.AsyncClient
                        (monitor.status.get(studio_id, {}).get("health") or {}).get("app_version"))
     if version is None or version < MIN_VOICE_STUDIO_VERSION:
         raise QualificationError("VOICE_STUDIO_VERSION_TOO_OLD", "Voice Studio 1.27.0 or newer is required for qualification.")
+    if model_id in WAVE_2_MODELS and version < (1, 27, 9):
+        raise QualificationError(
+            "VOICE_STUDIO_VERSION_TOO_OLD",
+            "Voice Studio 1.27.9 or newer is required for Wave 2 qualification.",
+        )
 
     entry = _catalog_entry(monitor, studio_id, model_id)
     if not entry or not entry.get("hub_cached"):
@@ -363,11 +469,12 @@ async def _preflight(monitor, request: dict[str, Any], client: httpx.AsyncClient
     params = request.get("params") if isinstance(request.get("params"), dict) else {}
     reference_asset_id = str(request.get("voice_reference_asset_id") or "").strip()
     await _validate_model_controls(
-        studio=studio, model_id=model_id, entry=entry, params=params, client=client,
+        studio=studio, model_id=model_id, entry=entry, operation=operation,
+        params=params, client=client,
     )
     reference = None
     reference_audio = None
-    if not model_id.endswith("CustomVoice-8bit") and not reference_asset_id:
+    if operation in REFERENCE_OPERATIONS and not reference_asset_id:
         raise QualificationError("REFERENCE_ASSET_REQUIRED", "Clone qualification requires a staged private voice reference asset.")
     if reference_asset_id:
         try:
@@ -378,6 +485,11 @@ async def _preflight(monitor, request: dict[str, Any], client: httpx.AsyncClient
                 "REFERENCE_ASSET_UNAVAILABLE",
                 "The private voice reference is unavailable. Upload it again before qualification.",
             ) from exc
+        if operation in REFERENCE_OPERATIONS and not str(reference.get("transcript") or "").strip():
+            raise QualificationError(
+                "REFERENCE_TRANSCRIPT_REQUIRED",
+                "Clone qualification requires the exact transcript for its private reference clip.",
+            )
 
     # The Hub's own queue is not the only possible source of activity. Verify
     # the selected sibling has no live generation jobs using the same
@@ -409,6 +521,7 @@ async def _preflight(monitor, request: dict[str, Any], client: httpx.AsyncClient
         "minimum_free_memory_gb": min_free,
         "voice_studio_version": ".".join(map(str, version)),
         "model_id": model_id,
+        "operation": operation,
         "runtime_revision": revision,
     }, reference=reference, reference_audio=reference_audio)
 
@@ -419,6 +532,7 @@ def _fingerprint(request: dict[str, Any]) -> str:
     safe = {
         "target_studio_id": request.get("target_studio_id"),
         "machine_tier_gb": request.get("machine_tier_gb"), "model": request.get("model"),
+        "operation": request.get("operation"),
         "case_type": request.get("case_type"), "text": request.get("text"),
         "params": request.get("params") or {},
         "voice_reference_asset_id": request.get("voice_reference_asset_id"),
@@ -433,7 +547,7 @@ def _public(attempt: dict[str, Any]) -> dict[str, Any]:
     return {
         key: attempt.get(key) for key in (
             "id", "client_request_id", "created_at", "updated_at", "state", "case_type",
-            "model", "target", "worker_job_id", "progress", "cancel_requested_at",
+            "model", "operation", "target", "worker_job_id", "progress", "cancel_requested_at",
             "terminal_evidence", "review_reason",
         )
     }
@@ -500,7 +614,8 @@ async def submit(monitor, request: dict[str, Any], client: httpx.AsyncClient) ->
         attempt = {
             "id": f"vq-{uuid.uuid4().hex[:16]}", "client_request_id": client_request_id,
             "request_fingerprint": fingerprint, "created_at": time.time(), "state": "prepared",
-            "case_type": request["case_type"], "model": request["model"], "target": preflight.target,
+            "case_type": request["case_type"], "model": request["model"],
+            "operation": preflight.target["operation"], "target": preflight.target,
             "worker_job_id": None, "progress": None, "terminal_evidence": None,
             "review_reason": None,
         }

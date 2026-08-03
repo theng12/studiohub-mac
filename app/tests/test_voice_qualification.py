@@ -4,12 +4,15 @@ import time
 import httpx
 import pytest
 
-from backend import control_plane, model_exposure, peers, voice_qualification
+from backend import control_plane, main, model_exposure, peers, voice_qualification
 
 
 CUSTOM = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit"
 BASE = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit"
 CHATTERBOX = "mlx-community/chatterbox-4bit"
+VOXCPM2 = "mlx-community/VoxCPM2-4bit"
+VIBEVOICE = "mlx-community/VibeVoice-Realtime-0.5B-4bit"
+OMNIVOICE = "mlx-community/OmniVoice-bfloat16"
 REVISION = "a" * 64
 QWEN_ROSTER = [
     {"id": value} for value in (
@@ -22,10 +25,11 @@ CHATTERBOX_LANGUAGES = [
     "it", "ja", "ko", "ms", "nl", "no", "pl", "pt", "ru", "sv",
     "sw", "tr", "zh",
 ]
+VIBEVOICE_ROSTER = [{"id": value} for value in sorted(voice_qualification.VIBEVOICE_VOICE_IDS)]
 
 
 class FakeMonitor:
-    def __init__(self, *, version="1.27.0", cached=True, ready=True, machine="worker-8"):
+    def __init__(self, *, version="1.27.9", cached=True, ready=True, machine="worker-8"):
         self.registry = [
             {"id": "voice", "modality": "voice", "machine": "local", "host": "127.0.0.1", "port": 47864},
             {"id": "voice@worker-8", "modality": "voice", "machine": machine,
@@ -40,7 +44,7 @@ class FakeMonitor:
     def cached_aggregate_catalog(self):
         models = []
         for studio_id in ("voice", "voice@worker-8"):
-            for repo in (CUSTOM, BASE, CHATTERBOX):
+            for repo in (CUSTOM, BASE, CHATTERBOX, VOXCPM2, VIBEVOICE, OMNIVOICE):
                 entry = {
                     "repo": repo, "hub_studio": studio_id, "hub_cached": self._cached,
                     "hub_catalog_stale": False, "runtime_compatible": self._ready,
@@ -70,7 +74,10 @@ class FakeClient:
         self.post_result = post or Response(200, {"job": {"id": "voice-job-1"}})
         self.get_result = get or Response(200, {"jobs": []})
         self.delete_result = delete or Response(200, {"ok": True})
-        self.availability_result = availability or Response(200, {"qwen3_preset_speakers": QWEN_ROSTER})
+        self.availability_result = availability or Response(200, {
+            "qwen3_preset_speakers": QWEN_ROSTER,
+            "vibevoice_voices": VIBEVOICE_ROSTER,
+        })
         self.calls = []
 
     async def post(self, url, **kwargs):
@@ -200,6 +207,72 @@ def test_long_form_requires_exact_40000_character_case(reset):
             FakeMonitor(), _request(case_type="long_form", text="too short"), FakeClient(),
         ))
     assert error.value.code == "LONG_FORM_TEXT_REQUIRED"
+
+
+def test_wave2_requires_current_voice_studio_release(reset):
+    _controller(); _remote_memory()
+    with pytest.raises(voice_qualification.QualificationError) as error:
+        asyncio.run(voice_qualification.submit(
+            FakeMonitor(version="1.27.8"),
+            _request(model=VIBEVOICE, operation="preset_tts", params={"voice": "en-Emma_woman"}),
+            FakeClient(),
+        ))
+    assert error.value.code == "VOICE_STUDIO_VERSION_TOO_OLD"
+
+
+def test_vibevoice_requires_exact_worker_roster_and_known_preset(reset):
+    _controller(); _remote_memory()
+    client = FakeClient(availability=Response(200, {"vibevoice_voices": VIBEVOICE_ROSTER[:-1]}))
+    with pytest.raises(voice_qualification.QualificationError) as error:
+        asyncio.run(voice_qualification.submit(
+            FakeMonitor(),
+            _request(model=VIBEVOICE, operation="preset_tts", params={"voice": "en-Emma_woman"}),
+            client,
+        ))
+    assert error.value.code == "VIBEVOICE_ROSTER_MISMATCH"
+
+    with pytest.raises(voice_qualification.QualificationError) as error:
+        asyncio.run(voice_qualification.submit(
+            FakeMonitor(),
+            _request(client_request_id="qualification.test-0002", model=VIBEVOICE,
+                     operation="preset_tts", params={"voice": "invented"}),
+            FakeClient(),
+        ))
+    assert error.value.code == "VIBEVOICE_PRESET_REQUIRED"
+
+
+def test_voxcpm_design_is_reference_free_but_requires_design_prompt(reset):
+    _controller(); _remote_memory()
+    with pytest.raises(voice_qualification.QualificationError) as error:
+        asyncio.run(voice_qualification.submit(
+            FakeMonitor(),
+            _request(model=VOXCPM2, operation="voice_design", params={}),
+            FakeClient(),
+        ))
+    assert error.value.code == "VOICE_DESIGN_PROMPT_REQUIRED"
+
+    result = asyncio.run(voice_qualification.submit(
+        FakeMonitor(),
+        _request(client_request_id="qualification.test-0002", model=VOXCPM2,
+                 operation="voice_design",
+                 params={"voice_design_prompt": "calm mature documentary narrator"}),
+        FakeClient(),
+    ))
+    assert result["state"] == "running"
+    assert result["operation"] == "voice_design"
+
+
+def test_omnivoice_long_form_waits_for_short_form_adapter_evidence(reset):
+    _controller(); _remote_memory()
+    with pytest.raises(voice_qualification.QualificationError) as error:
+        asyncio.run(voice_qualification.submit(
+            FakeMonitor(),
+            _request(model=OMNIVOICE, operation="voice_design", case_type="long_form",
+                     text="x" * 40_000,
+                     params={"voice_design_prompt": "female, warm, clear"}),
+            FakeClient(),
+        ))
+    assert error.value.code == "LONG_FORM_ADAPTER_NOT_READY"
 
 
 def test_qwen_requires_the_exact_worker_reported_nine_speaker_roster(reset):
@@ -352,3 +425,15 @@ def test_machine_token_can_collect_qualification_evidence_without_model_approval
     assert listing.status_code == 200
     assert listing.json() == {"attempts": []}
     assert exposure.status_code == 403
+
+
+def test_qualification_artifact_endpoint_never_exposes_unready_worker_location(authed, monkeypatch):
+    monkeypatch.setattr(main.voice_qualification, "get", lambda _attempt_id: {
+        "id": "vq-test", "state": "running", "worker_job_id": "private-worker-job",
+        "target": {"studio_id": "voice@private-machine"},
+    })
+    response = authed.get("/api/hub/admin/voice-qualifications/vq-test/artifact")
+
+    assert response.status_code == 425
+    assert "private-machine" not in response.text
+    assert "private-worker-job" not in response.text

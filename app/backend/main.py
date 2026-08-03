@@ -107,12 +107,13 @@ class ModelExposureActionBody(BaseModel):
 
 
 class VoiceQualificationBody(BaseModel):
-    """Owner-only Wave 1 research request; never a customer job envelope."""
+    """Owner-only voice research request; never a customer job envelope."""
     client_request_id: str = Field(min_length=8, max_length=160,
                                    pattern=r"^[A-Za-z0-9._:-]+$")
     target_studio_id: str = Field(min_length=1, max_length=120)
     machine_tier_gb: int = Field(ge=8, le=24)
     model: str = Field(min_length=1, max_length=500)
+    operation: str | None = Field(default=None, max_length=80)
     case_type: str = Field(min_length=1, max_length=40)
     text: str = Field(min_length=1, max_length=40_000)
     params: dict[str, Any] = Field(default_factory=dict)
@@ -1742,6 +1743,41 @@ def get_voice_qualification(request: Request, attempt_id: str):
     if attempt is None:
         raise HTTPException(404, "Unknown qualification attempt.")
     return voice_qualification._public(attempt)
+
+
+@app.get("/api/hub/admin/voice-qualifications/{attempt_id}/artifact")
+async def get_voice_qualification_artifact(request: Request, attempt_id: str):
+    """Download completed listening audio without exposing its worker URL."""
+    _require_qualification_operator(request)
+    attempt = voice_qualification.get(attempt_id)
+    if attempt is None:
+        raise HTTPException(404, "Unknown qualification attempt.")
+    if attempt.get("state") != "succeeded" or not attempt.get("worker_job_id"):
+        raise HTTPException(425, "Qualification audio is not ready.")
+    studio = next((item for item in monitor.registry
+                   if item.get("id") == (attempt.get("target") or {}).get("studio_id")), None)
+    if studio is None:
+        raise HTTPException(503, "Qualification worker is no longer registered.")
+    try:
+        client, response = await _open_worker_artifact(
+            studio, f"/api/generate/jobs/{attempt['worker_job_id']}/audio",
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "Qualification artifact could not be read.") from exc
+
+    async def close_worker_stream():
+        await response.aclose()
+        await client.aclose()
+
+    media_type = response.headers.get("content-type", "audio/wav").split(";", 1)[0]
+    if not media_type.startswith("audio/"):
+        await close_worker_stream()
+        raise HTTPException(502, "Qualification worker returned a non-audio artifact.")
+    return StreamingResponse(
+        response.aiter_bytes(), media_type=media_type,
+        background=BackgroundTask(close_worker_stream),
+        headers={"Content-Disposition": f'attachment; filename="{attempt_id}.wav"'},
+    )
 
 
 @app.post("/api/hub/admin/voice-qualifications")
