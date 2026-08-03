@@ -284,3 +284,17 @@ def test_automatic_catalog_can_be_paused_without_losing_desired_state(authed):
     assert response.status_code == 200
     assert response.json()["enabled"] is False
     assert response.json()["summary"]["approved_models"] == 1
+
+
+def test_dashboard_renders_approved_models_as_a_machine_placement_matrix() -> None:
+    frontend = (
+        Path(__file__).parents[1] / "frontend" / "index.html"
+    ).read_text(encoding="utf-8")
+
+    assert 'class="model-placement"' in frontend
+    assert "function renderModelPlacement(rows)" in frontend
+    assert 'return {label: "Ready", cls: "ok"}' in frontend
+    assert 'return {label: "Not suitable", cls: "err"}' in frontend
+    assert 'return {label: "Contract mismatch", cls: "err"}' in frontend
+    assert "Needs ${row.required_memory_gb" in frontend
+    assert "machine ${row.observed_memory_gb} GB" in frontend

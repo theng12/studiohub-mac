@@ -10,6 +10,30 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.75.0] — 2026-08-03
+
+### Added — approved-model placement matrix
+
+- The Models page now shows approved models as rows and registered sibling
+  machines as columns, so the owner can see fleet placement at a glance.
+- Every machine/model cell translates the controller's existing desired-state
+  evidence into a plain status: Ready, Downloading, Not installed, Offline,
+  Not suitable, RAM unknown, Contract mismatch, or Needs attention.
+- Each cell shows the audited RAM floor, observed machine RAM, and the exact
+  controller reason. The detailed target table remains available in a compact
+  disclosure for troubleshooting.
+
+### Safety
+
+- This is a read-only presentation of the existing GenStudio-approved catalog
+  and Studio Hub target evidence. It does not approve models, change desired
+  state, start downloads, or infer suitability without machine RAM evidence.
+
+### Verification
+
+- Focused baseline, frontend typography, and release metadata tests cover the
+  matrix contract and its suitability/error labels.
+
 ## [1.74.0] — 2026-08-03
 
 ### Added — resource-aware fleet scheduling

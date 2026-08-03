@@ -266,6 +266,9 @@
   .auto-update-table{min-width:1040px}.auto-update-table td{vertical-align:middle}.auto-update-table .selctl{min-width:112px;padding:7px 9px}.auto-update-table .actions{margin:0;flex-wrap:nowrap}.auto-update-status{max-width:210px;overflow-wrap:anywhere}.auto-update-app b{display:block}.auto-update-app .sub{display:block;margin-top:2px}.auto-update-unavailable{opacity:.62}.auto-update-spinner{display:inline-block;margin-right:5px;animation:autoSpin 1s linear infinite}@keyframes autoSpin{to{transform:rotate(360deg)}}
   .memory-modes{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin:15px 0}.memory-mode{position:relative;display:block;padding:15px;border:1px solid #d5dbd2;border-radius:14px;background:#f8f9f3;cursor:pointer;transition:.15s}.memory-mode:hover{border-color:#8bb49b;transform:translateY(-1px)}.memory-mode.on{border-color:var(--accent);background:#edf7ef;box-shadow:inset 0 0 0 1px var(--accent)}.memory-mode input{position:absolute;opacity:0;pointer-events:none}.memory-mode b{display:block;color:var(--accent2);font:750 14px/1.2 var(--display)}.memory-mode span{display:block;margin-top:6px;color:var(--dim);font-size:var(--font-secondary);line-height:1.4}.memory-default{display:inline-block;margin-left:5px;padding:2px 5px;border-radius:5px;background:#dce9dd;color:var(--accent);font:700 var(--font-compact)/1 var(--mono);text-transform:uppercase}.memory-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}.memory-actions .sub{flex:1;min-width:240px}.memory-table{min-width:1040px}.memory-table td{vertical-align:middle}.memory-studio b{display:block}.memory-studio .sub{display:block}.memory-model{max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.memory-row-muted{opacity:.68}
   .ram-admission-controls{display:grid;grid-template-columns:minmax(260px,2fr) minmax(150px,.7fr) minmax(150px,.7fr);gap:10px;margin:12px 0}.ram-admission-controls label{display:flex;flex-direction:column;gap:6px;color:var(--dim);font:700 var(--font-compact)/1.2 var(--mono);letter-spacing:.08em;text-transform:uppercase}.ram-admission-controls input,.ram-admission-controls select{width:100%}.ram-policy-main{display:block;color:var(--accent2);font-weight:750}.ram-policy-sub{display:block;margin-top:3px;color:var(--dim);font-size:var(--font-secondary);line-height:1.35}.ram-policy-override{color:var(--warn)}
+  .model-placement-wrap{max-width:100%;overflow:auto;border:1px solid var(--border);border-radius:14px;background:var(--panel)}
+  .model-placement{min-width:720px;margin:0}.model-placement th{background:var(--panel2);z-index:1}.model-placement th:first-child,.model-placement td:first-child{position:sticky;left:0;z-index:2;background:var(--panel)}.model-placement th:first-child{z-index:3;background:var(--panel2)}
+  .model-placement-model{min-width:220px}.model-placement-machine,.model-placement-cell{min-width:168px}.model-placement-cell .pill{font-family:var(--mono);font-weight:750}.model-placement-cell .sub{display:block;margin-top:4px;line-height:1.3}.model-placement-legend{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}.model-placement-details{margin-top:10px}.model-placement-details summary{cursor:pointer;color:var(--accent2);font-weight:700}.model-placement-details table{margin-top:8px}
   .voice-create{background:linear-gradient(145deg,#fffef9,#edf5ec)}
   .voice-form-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1.2fr;gap:11px;margin-top:12px}
   .voice-field{display:flex;flex-direction:column;gap:6px;min-width:0}.voice-field>span{font:700 var(--font-compact)/1 var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}
@@ -371,6 +374,11 @@
         <label class="wd"><input id="baseline-enabled" type="checkbox" onchange="saveModelBaseline()"> cache approved models automatically</label>
         <button class="btn primary" id="baseline-reconcile" onclick="reconcileModelBaseline()">Check & install now</button>
         <span class="sub" id="baseline-summary" role="status" aria-live="polite"></span>
+      </div>
+      <div class="model-placement-legend" aria-label="Placement status legend">
+        <span class="pill ok">Ready</span><span class="pill warn">Downloading</span>
+        <span class="pill no">Not installed</span><span class="pill err">Not suitable</span>
+        <span class="pill">Offline</span>
       </div>
       <div id="baseline-targets" style="margin-top:8px"></div>
     </div>
@@ -1129,6 +1137,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.75.0", date: "2026-08-03", items: [
+    "Approved models now appear in a machine-by-machine placement matrix with plain readiness, download, offline, incompatibility, and contract states.",
+    "Every placement shows the audited RAM floor, observed machine RAM, and the controller's exact reason without changing fleet state.",
+  ]},
   { v: "1.74.0", date: "2026-08-03", items: [
     "Flexible local models now fill the smallest eligible RAM tier first, preserving 16 GB and 24 GB workers for models that need them.",
     "Queued higher-memory work receives the next compatible worker after its current job finishes; running work is never interrupted.",
@@ -2398,8 +2410,58 @@ async function loadModelBaseline() {
   $("#baseline-summary").textContent = `${summary.approved_models || 0} approved · ${summary.cached || 0}/${summary.total || 0} ready · ${summary.pending || 0} pending · ${summary.ineligible || 0} ineligible · ${summary.failed || 0} need attention`;
   const rows = data.targets || [];
   $("#baseline-targets").innerHTML = rows.length
-    ? `<table><thead><tr><th>Model</th><th>Machine</th><th>Status</th><th>Detail</th></tr></thead><tbody>${rows.map(row => `<tr><td><strong>${esc(row.model_label || row.model_repo)}</strong><span class="sub">${esc(row.studio_id)}</span></td><td>${esc(mlabel(row.machine || "local"))}</td><td><span class="pill ${row.state === "cached" ? "ok" : row.state === "error" ? "err" : ""}">${esc(row.state)}</span></td><td>${esc(row.detail || "Waiting for the next check")}</td></tr>`).join("")}</tbody></table>`
+    ? renderModelPlacement(rows)
     : `<span class="sub">${data.authority === "genstudio" ? "No eligible caching targets at this site." : "Waiting for GenStudio to deliver the approved fleet model catalog."}</span>`;
+}
+
+function modelPlacementState(row) {
+  const state = row.state || "unknown";
+  if (state === "cached") return {label: "Ready", cls: "ok"};
+  if (state === "queued" || state === "running") return {label: "Downloading", cls: "warn"};
+  if (state === "ineligible") return {label: "Not suitable", cls: "err"};
+  if (state === "eligibility_unknown") return {label: "RAM unknown", cls: "warn"};
+  if (state === "offline") return {label: "Offline", cls: ""};
+  if (state === "audit_mismatch") return {label: "Contract mismatch", cls: "err"};
+  if (state === "error") return {label: "Needs attention", cls: "err"};
+  return {label: "Not installed", cls: "no"};
+}
+
+function renderModelPlacement(rows) {
+  const machines = [...new Map(rows.map(row => [
+    row.studio_id,
+    {studio_id: row.studio_id, machine: row.machine || "local"},
+  ])).values()].sort((a, b) => mlabel(a.machine).localeCompare(mlabel(b.machine)) || a.studio_id.localeCompare(b.studio_id));
+  const models = [...new Map(rows.map(row => [
+    row.candidate_key || `${row.operation}:${row.model_repo}`,
+    {
+      key: row.candidate_key || `${row.operation}:${row.model_repo}`,
+      label: row.model_label || row.model_repo,
+      repo: row.model_repo,
+      operation: row.operation,
+    },
+  ])).values()].sort((a, b) => a.label.localeCompare(b.label));
+  const byTarget = new Map(rows.map(row => [
+    `${row.candidate_key || `${row.operation}:${row.model_repo}`}::${row.studio_id}`,
+    row,
+  ]));
+  const head = machines.map(machine => `<th class="model-placement-machine">${esc(mlabel(machine.machine))}<span class="sub">${esc(machine.studio_id)}</span></th>`).join("");
+  const body = models.map(model => {
+    const cells = machines.map(machine => {
+      const row = byTarget.get(`${model.key}::${machine.studio_id}`);
+      if (!row) return `<td class="model-placement-cell"><span class="pill no">Not applicable</span></td>`;
+      const status = modelPlacementState(row);
+      const ram = row.observed_memory_gb == null
+        ? `Needs ${row.required_memory_gb ?? "?"} GB · machine RAM unknown`
+        : `Needs ${row.required_memory_gb ?? "?"} GB · machine ${row.observed_memory_gb} GB`;
+      return `<td class="model-placement-cell"><span class="pill ${status.cls}">${status.label}</span><span class="sub">${esc(ram)}</span><span class="sub">${esc(row.detail || "Waiting for the next check")}</span></td>`;
+    }).join("");
+    return `<tr><td class="model-placement-model"><strong>${esc(model.label)}</strong><span class="sub">${esc(model.operation || "model")}</span><span class="sub">${esc(model.repo || "")}</span></td>${cells}</tr>`;
+  }).join("");
+  const detailRows = rows.map(row => {
+    const status = modelPlacementState(row);
+    return `<tr><td><strong>${esc(row.model_label || row.model_repo)}</strong><span class="sub">${esc(row.studio_id)}</span></td><td>${esc(mlabel(row.machine || "local"))}</td><td><span class="pill ${status.cls}">${status.label}</span></td><td>${esc(row.detail || "Waiting for the next check")}</td></tr>`;
+  }).join("");
+  return `<div class="model-placement-wrap"><table class="model-placement"><thead><tr><th>Approved model</th>${head}</tr></thead><tbody>${body}</tbody></table></div><details class="model-placement-details"><summary>Show target details</summary><table><thead><tr><th>Model</th><th>Machine</th><th>Status</th><th>Detail</th></tr></thead><tbody>${detailRows}</tbody></table></details>`;
 }
 
 async function saveModelBaseline() {
