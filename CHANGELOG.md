@@ -10,6 +10,37 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.74.0] — 2026-08-03
+
+### Added — resource-aware fleet scheduling
+
+- Local inference now uses best-fit placement: an eligible 8 GB worker is
+  selected before a 16 GB or 24 GB worker for flexible models such as Kokoro,
+  preserving scarce higher-memory capacity without hardcoding model names.
+- Queued models with a higher audited or operator-controlled total-memory floor
+  receive the next compatible high-memory worker before flexible queued work.
+  A newly queued 16 GB Qwen3-TTS job therefore takes a 16/24 GB worker after
+  its current Kokoro item finishes, while 8 GB workers continue the Kokoro
+  queue.
+- Queue ranking reads only Studio Hub's durable last-good sibling catalog. It
+  never blocks dispatch on a live catalog request, and the existing exact
+  revision, cache, hardware, live-memory, and worker admission gates remain
+  authoritative.
+
+### Safety
+
+- Running jobs are never preempted. Larger machines remain work-conserving and
+  resume flexible work whenever no compatible constrained job is waiting.
+- Unknown-memory workers remain eligible as last-choice fallbacks, and Render
+  Studio keeps its existing hardware-score priority.
+
+### Verification
+
+- Broker tests cover 8 → 16 → 24 GB best-fit ordering, a 15-item constrained
+  Qwen queue overtaking an older flexible Kokoro backlog at the next dispatch
+  boundary, unchanged fair-turn behavior for unknown/cloud work, and preserved
+  render priority.
+
 ## [1.73.2] — 2026-08-03
 
 ### Changed — safe Qwen3-TTS cloning admission

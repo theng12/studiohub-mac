@@ -1129,6 +1129,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.74.0", date: "2026-08-03", items: [
+    "Flexible local models now fill the smallest eligible RAM tier first, preserving 16 GB and 24 GB workers for models that need them.",
+    "Queued higher-memory work receives the next compatible worker after its current job finishes; running work is never interrupted.",
+  ]},
   { v: "1.73.2", date: "2026-08-03", items: [
     "Qwen3-TTS 0.6B Base voice cloning now requires a qualified 16 GB worker; its measured 8 GB run remains visible as unsafe production evidence.",
   ]},

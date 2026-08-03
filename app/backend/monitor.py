@@ -641,6 +641,31 @@ class StudioMonitor:
         ]
         return self._assemble_aggregate_catalog(results, transcription)
 
+    def cached_catalog_entries(
+        self, model: str, *, modality: str | None = None,
+    ) -> list[dict]:
+        """Return last-good worker entries for one exact model without I/O.
+
+        The broker uses this cache-only view to compare queued workloads before
+        it selects a worker.  A scheduling decision must never turn into a live
+        catalogue fan-out; the dedicated refresher remains the only owner of
+        fresh fleet inventory.  The actual pre-dispatch catalogue and memory
+        gates still run afterwards and remain authoritative.
+        """
+        matches: list[dict] = []
+        for studio in self.registry:
+            if modality is not None and studio.get("modality") != modality:
+                continue
+            cached = self._catalog_cache.get(studio["id"])
+            catalog = cached[1] if cached else None
+            for entry in (catalog or {}).get("models", []):
+                if not isinstance(entry, dict):
+                    continue
+                if (entry.get("repo") == model
+                        or model in (entry.get("aliases") or [])):
+                    matches.append({"studio": studio, "entry": entry})
+        return matches
+
     async def aggregate_catalog(self, force: bool = False) -> dict:
         """Merge all studios' catalogs. Models pass through verbatim, annotated
         with hub_studio / hub_modality / hub_machine so clients know the source."""

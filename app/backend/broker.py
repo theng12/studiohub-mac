@@ -238,6 +238,45 @@ def _host_for_studio(studio: dict) -> dict | None:
     return host if isinstance(host, dict) else None
 
 
+def _studio_total_memory_gb(studio: dict) -> float:
+    """Sortable physical-memory capacity; unknown evidence stays eligible."""
+    host = _host_for_studio(studio)
+    try:
+        total = float((host or {}).get("total_gb"))
+    except (TypeError, ValueError):
+        return float("inf")
+    return total if total > 0 else float("inf")
+
+
+def _batch_memory_constraint_gb(batch: dict) -> float:
+    """Highest cache-observed admission floor for a queued exact model.
+
+    This is a ranking hint, never an admission decision. It reads the
+    monitor's durable last-good catalogue only, so queue inspection cannot
+    contact workers. The per-worker catalogue, cache, immutable revision, and
+    live-memory checks still decide whether dispatch may actually occur.
+    """
+    model = str(batch.get("model") or "")
+    modality = str(batch.get("modality") or "")
+    if not model:
+        return 0.0
+    floors: list[float] = []
+    for match in _monitor().cached_catalog_entries(model, modality=modality):
+        entry = match["entry"]
+        if not memory_admission.applies_to(
+            modality, is_cloud=bool(entry.get("is_cloud")),
+        ):
+            continue
+        requirements = _admission_requirements(model, entry)
+        try:
+            minimum = float((requirements or {}).get("min_total"))
+        except (TypeError, ValueError):
+            continue
+        if minimum > 0:
+            floors.append(minimum)
+    return max(floors, default=0.0)
+
+
 def _protection(machine: str) -> dict:
     return _machine_protection.setdefault(machine, {
         "failures": 0, "cooldown_until": None, "reason": None,
@@ -1184,6 +1223,16 @@ def _eligible_studios(modality: str, routing: str, model: str = "") -> list[dict
                    .get("render_score", 0)),
             s["id"],
         ))
+    else:
+        # Best-fit placement preserves scarce high-memory workers without
+        # reserving them while the queue is empty. A flexible 8 GB workload
+        # therefore fills an idle 8 GB Mac before a 16/24 GB Mac, while every
+        # larger worker remains an eligible fallback when demand exceeds the
+        # smaller tier's capacity. Unknown telemetry sorts last but is not
+        # blocked; the worker's own admission guard remains authoritative.
+        out.sort(key=lambda studio: (
+            _studio_total_memory_gb(studio), studio["id"],
+        ))
     return out
 
 
@@ -1226,10 +1275,18 @@ def _supports_genstudio_voice_evidence(batch: dict, studio: dict) -> bool:
 
 
 def _queued_batches() -> list[dict]:
-    """Queued work in priority/fair-turn order; running work is never preempted."""
+    """Queued work in modality, scarcity, then fair-turn order.
+
+    Within one normal-priority local-inference class, a workload that needs
+    more total memory receives the next compatible high-memory worker before a
+    flexible workload does. This changes only the next dispatch decision:
+    running work is never preempted, and lower-memory work remains
+    work-conserving when no constrained job is waiting.
+    """
     return sorted(
         batches.values(),
         key=lambda b: (MODALITY_PRIORITY.get(b["modality"], 10),
+                       -_batch_memory_constraint_gb(b),
                        b.get("last_dispatched_at", 0),
                        b.get("created_at", 0)),
     )

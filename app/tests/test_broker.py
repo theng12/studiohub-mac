@@ -550,6 +550,87 @@ def test_render_batches_have_queue_priority_without_preemption(reset):
     assert ordered[1]["id"] == image["batch_id"]
 
 
+def test_local_inference_workers_prefer_the_smallest_available_ram_tier(
+    reset, monkeypatch,
+):
+    mon = broker._monitor()
+    workers = [
+        {"id": f"voice@mac-{tier}", "modality": "voice",
+         "machine": f"mac-{tier}", "host": f"10.0.0.{tier}", "port": 47869}
+        for tier in (24, 8, 16)
+    ]
+    mon.registry.extend(workers)
+    for worker in workers:
+        mon.status[worker["id"]] = {"status": "up"}
+    memory = {
+        "mac-8": {"host": {"total_gb": 8, "available_gb": 6}},
+        "mac-16": {"host": {"total_gb": 16, "available_gb": 12}},
+        "mac-24": {"host": {"total_gb": 24, "available_gb": 20}},
+    }
+    monkeypatch.setattr(broker.peers, "cached", lambda machine: memory.get(machine))
+
+    eligible = broker._eligible_studios("voice", "pool", "flexible/model")
+
+    assert [studio["machine"] for studio in eligible] == [
+        "mac-8", "mac-16", "mac-24",
+    ]
+
+
+def test_constrained_voice_queue_gets_next_high_memory_worker_before_kokoro(
+    reset,
+):
+    mon = broker._monitor()
+    voice = next(studio for studio in mon.registry if studio["id"] == "voice")
+    mon._catalog_cache[voice["id"]] = (1.0, {"models": [
+        {
+            "repo": "mlx-community/Kokoro-82M-bf16",
+            "min_unified_memory_gb": 8,
+            "cache": {"state": "cached"},
+        },
+        {
+            "repo": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
+            "min_unified_memory_gb": 16,
+            "cache": {"state": "cached"},
+        },
+    ]})
+    kokoro = broker.submit_batch({
+        "modality": "voice",
+        "model": "mlx-community/Kokoro-82M-bf16",
+        "items": [{"text": "flexible"}],
+    })
+    qwen = broker.submit_batch({
+        "modality": "voice",
+        "model": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
+        "items": [{"text": f"constrained {index}"} for index in range(15)],
+    })
+    broker.batches[kokoro["batch_id"]]["created_at"] = 1.0
+    broker.batches[qwen["batch_id"]]["created_at"] = 2.0
+
+    ordered = broker._queued_batches()
+
+    assert ordered[0]["id"] == qwen["batch_id"]
+    assert ordered[1]["id"] == kokoro["batch_id"]
+    assert broker._batch_memory_constraint_gb(ordered[0]) == 16
+    assert broker._batch_memory_constraint_gb(ordered[1]) == 8
+
+
+def test_unknown_or_cloud_memory_keeps_existing_fair_turn_order(reset):
+    unknown = broker.submit_batch({
+        "modality": "voice", "model": "unknown/local",
+        "items": [{"text": "first"}],
+    })
+    cloud = broker.submit_batch({
+        "modality": "voice", "model": "provider:test/cloud",
+        "items": [{"text": "second"}],
+    })
+    broker.batches[unknown["batch_id"]]["created_at"] = 1.0
+    broker.batches[cloud["batch_id"]]["created_at"] = 2.0
+
+    assert [batch["id"] for batch in broker._queued_batches()[:2]] == [
+        unknown["batch_id"], cloud["batch_id"],
+    ]
+
+
 def test_pending_render_reserves_its_machine_from_external_queues(reset):
     mon = broker._monitor()
     render_studio = next(s for s in mon.registry if s["modality"] == "render")
