@@ -10,6 +10,34 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.78.0] — 2026-08-07
+
+### Added — fleet cache survey and repair
+
+- `tools/fleet_repair.py` walks every machine in the fleet, compares each
+  studio's on-disk model cache against what that machine's RAM qualifies it
+  for, and reports broken caches, stranded models, and uncovered capabilities.
+  It covers Voice Studio and Image Studio through the endpoints both already
+  expose, so no studio-side change was needed.
+- Interrupted downloads (`partial`) and caches that report `cached` while
+  holding well under their expected bytes (`phantom`) are both detected and
+  can be repaired in place with `--apply`. The first run over the fleet found
+  35 partial and 10 phantom caches; a phantom Kokoro cache on one worker had
+  been failing every job routed to it at load time.
+- `--fill-gaps` additionally installs one model for any essential capability a
+  machine cannot currently serve — a worker with no clone-capable voice model
+  is invisible dead weight in the routing pool rather than an obvious failure.
+- Nothing is ever deleted. Repair only starts downloads, so a wrong call costs
+  bandwidth rather than a cache. Models cached above a machine's memory floor
+  are reported as `stranded` for an operator to reclaim deliberately.
+
+### Fixed
+
+- Provisioning decisions use each model's static memory floor rather than Voice
+  Studio's `memory_eligible`. That field is `total >= floor and available >=
+  required`, and its live free-memory term made a busy machine look permanently
+  unqualified for models it runs perfectly well once other apps quit.
+
 ## [1.77.0] — 2026-08-04
 
 ### Added — controlled Fish Audio S2 Pro memory qualification

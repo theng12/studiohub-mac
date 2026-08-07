@@ -1137,6 +1137,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.78.0", date: "2026-08-07", items: [
+    "New operator tool surveys every fleet machine's model caches and repairs interrupted downloads and caches that claim to be complete while missing their weight files.",
+    "Machines that cannot serve an essential capability — such as a worker with no clone-capable voice model — are now reported, and one suitable model can be installed automatically.",
+    "Nothing is deleted: repair only starts downloads, and models cached above a machine's memory floor are reported for an operator to reclaim.",
+  ]},
   { v: "1.77.0", date: "2026-08-04", items: [
     "Controlled Fish Audio S2 Pro 8-bit qualification now covers Aiden reference cloning at 30 seconds, 5 minutes, and 15 minutes on 16 GB and 24 GB workers.",
     "Fish stays internal-only; each tier must pass 30 seconds then 5 and 15 minutes with checksum-bound Aiden, duration/checkpoint/artifact/telemetry evidence, an independent 8 GB live-free-memory gate, and exact-job cancellation above the 10× realtime stop threshold.",
