@@ -43,7 +43,7 @@ FISH_DURATION_TARGETS_S = {
     "medium": 300,
     "long_form": 900,
 }
-FISH_ALLOWED_MACHINE_TIERS_GB = frozenset({16, 24})
+FISH_ALLOWED_MACHINE_TIERS_GB = frozenset({24})
 FISH_MIN_FREE_MEMORY_GB = 8.0
 FISH_DURATION_TOLERANCE_FRACTION = 0.15
 FISH_SECTION_MAX_CHARACTERS = 300
@@ -528,7 +528,7 @@ async def _preflight(monitor, request: dict[str, Any], client: httpx.AsyncClient
     requested_tier = int(request.get("machine_tier_gb") or 0)
     allowed_tiers = FISH_ALLOWED_MACHINE_TIERS_GB if model_id == FISH_AUDIO_S2_PRO else frozenset({8, 16, 24})
     if requested_tier not in allowed_tiers or total_gb is None or not _tier_matches(total_gb, requested_tier):
-        tiers = "16 or 24 GB" if model_id == FISH_AUDIO_S2_PRO else "8, 16, or 24 GB"
+        tiers = "24 GB" if model_id == FISH_AUDIO_S2_PRO else "8, 16, or 24 GB"
         raise QualificationError(
             "MACHINE_TIER_MISMATCH",
             f"The selected worker does not match an allowed {tiers} qualification tier.",

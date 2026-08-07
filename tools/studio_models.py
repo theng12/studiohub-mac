@@ -78,11 +78,23 @@ STOCKED_VOICE_FAMILIES = frozenset({
     "omnivoice",        # the only strong cloner that fits the 8 GB majority
     "arktts",           # Audio8 TTS Preview
     "fish-audio-mlx",   # Fish Audio S2 Pro
-    "chatterbox-mlx",   # Chatterbox
-    "voxcpm-mlx",       # VoxCPM2
+    "chatterbox-mlx",   # Turbo and 8-bit only -- see BLOCKED_MODELS
     "qwen3-tts",        # Base checkpoints only -- see rule 2
     "echo-tts",         # Echo-TTS
 })
+
+# Individual checkpoints dropped despite their family being stocked. A family is
+# usually the right unit, but a single bad variant should not force the whole
+# family out.
+BLOCKED_MODELS = {
+    # Emitted 48 s of audio for a 15 s passage and only 23% of the reference
+    # vocabulary came back through Whisper -- "Morning light settled across the
+    # quiet harbor. P imitate the seven," then noise. Failed twice, producing
+    # different garbage each time. Its siblings are fine: Turbo is the fastest
+    # model measured on the fleet, and 8-bit is correct.
+    "mlx-community/chatterbox-4bit":
+        "drops and hallucinates text (23% transcribe-back over two runs)",
+}
 # Kept although they cannot clone, because they earn their place another way.
 NON_CLONING_FAMILIES = frozenset({
     "kokoro-mlx",       # 0.34 GB, useful for quick preset narration
@@ -110,6 +122,8 @@ def stocked(studio: str, repo: str, family: str, capabilities: list[str],
         return True
     if repo in companions:
         return True
+    if repo in BLOCKED_MODELS:
+        return False
     if studio == "image":
         return family in STOCKED_IMAGE_FAMILIES
     if studio != "voice":

@@ -1137,6 +1137,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.83.0", date: "2026-08-07", items: [
+    "VoxCPM2 is no longer stocked on the fleet, and Fish Audio S2 Pro now requires 24 GB — which means it runs on one worker rather than six.",
+    "Chatterbox 4-bit is blocked for dropping and inventing words, while its Turbo and 8-bit siblings stay; a single bad checkpoint no longer forces out its whole family.",
+  ]},
   { v: "1.82.0", date: "2026-08-07", items: [
     "The fleet now stocks three image families — FLUX.2 klein, Z-Image and ERNIE-Image — and drops the rest, including all three SDXL models.",
     "That reclaims 34.4 GB of cached models and avoids 488 GB that would otherwise have been downloaded.",

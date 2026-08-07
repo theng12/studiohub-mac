@@ -10,6 +10,25 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.83.0] — 2026-08-07
+
+### Changed — three stocking corrections from fleet measurement
+
+- **VoxCPM2 is no longer stocked.** Owner's call after seeing it take 738 s to
+  produce 15 s of audio on an 8 GB worker. It is usable on 16 GB (61.9 s, 3.95x
+  realtime), but the fleet already carries better cloners at that tier, so the
+  family earns nothing by occupying disk on 19 machines.
+- **Chatterbox 4-bit is blocked while its family stays.** It emitted 48 s of
+  audio for a 15 s passage and returned only 23% of the reference vocabulary
+  through Whisper, failing twice with different garbage each time. Its siblings
+  are fine — Turbo is the fastest model measured on the fleet, and 8-bit is
+  correct — so a new `BLOCKED_MODELS` list drops the single bad checkpoint
+  instead of forcing out the family.
+- **Fish Audio S2 Pro is now 24 GB** in the qualification harness and the
+  baseline, matching Voice Studio 1.32.0. Exactly one fleet machine has 24 GB,
+  so Fish is a single-worker model and pruning reclaims its 6.73 GB elsewhere.
+- Staging falls again, 78.6 GB to 70.7 GB: 27.8 GB of voice and 43.0 GB of image.
+
 ## [1.82.0] — 2026-08-07
 
 ### Changed — the stocked image list is the three cached families
