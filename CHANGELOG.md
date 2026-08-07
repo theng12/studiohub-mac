@@ -10,6 +10,19 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.84.0] — 2026-08-07
+
+### Changed — FLUX.2 klein is the whole stocked image catalogue
+
+- Z-Image and ERNIE are no longer stocked. Running them for the first time
+  showed neither had ever produced an image: the Onyx Z-Image checkpoints are
+  pre-packed quantizations that neither the diffusers nor the mflux loader can
+  unpack, and ERNIE is an MLX-layout checkpoint with no MLX path to load it.
+  Both were removed from Image Studio's catalogue in 1.28.0.
+- The fleet's image set is now FLUX.2 klein alone — three checkpoints, one of
+  which fits 8 GB. Staging drops to 50.5 GB total: 27.8 GB of voice, 22.7 GB of
+  image, from 128.6 GB when this tool was written.
+
 ## [1.83.1] — 2026-08-07
 
 ### Fixed

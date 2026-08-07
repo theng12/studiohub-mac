@@ -101,13 +101,15 @@ NON_CLONING_FAMILIES = frozenset({
 })
 
 # Image models are stocked by family only -- there is no cloning distinction to
-# apply. The list is the three families already cached and worth keeping. Every
-# other family is 16 or 24 GB with a footprint measured in tens of gigabytes,
-# which does not fit alongside everything else on a 256 GB machine.
+# apply. Every other family is 16 or 24 GB with a footprint measured in tens of
+# gigabytes, which does not fit alongside everything else on a 256 GB machine.
 STOCKED_IMAGE_FAMILIES = frozenset({
-    "flux2-klein",      # the only family with a model that fits 8 GB
-    "z-image",          # Onyx Turbo 3-bit and 4-bit, floors still unmeasured
-    "ernie-image",      # ERNIE-Image Turbo
+    # FLUX.2 klein is the whole image catalogue for the fleet, and the only
+    # family with a model that fits 8 GB. Z-Image and ERNIE were stocked until
+    # they were actually run: the Onyx Z-Image quantizations are packed in a
+    # format neither the diffusers nor the mflux loader can unpack, and ERNIE
+    # has no MLX path at all. Neither had ever produced an image on any machine.
+    "flux2-klein",
 })
 
 

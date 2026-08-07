@@ -1137,6 +1137,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.84.0", date: "2026-08-07", items: [
+    "FLUX.2 klein is now the fleet's entire image set: Z-Image and ERNIE turned out never to have generated an image on any machine and have been dropped.",
+    "Everything the fleet carries now fits in 50.5 GB, down from 128.6 GB.",
+  ]},
   { v: "1.83.1", date: "2026-08-07", items: [
     "Fixed the Fish qualification tests, which still assumed the old 16 GB tier, and added one that proves a 16 GB worker is now refused.",
   ]},
