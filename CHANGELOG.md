@@ -10,6 +10,23 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.84.3] — 2026-08-07
+
+### Changed — the fleet stops stocking Qwen3-TTS
+
+- Owner decision: the Qwen3-TTS family is disqualified and no longer carried to
+  or kept on the fleet. It is too large for the 8 GB machines that are most of
+  the fleet, it hallucinates, and it consumes excessive memory. OmniVoice has
+  replaced it on every node — it clones, it fits 8 GB, and the owner rates it on
+  par with cloud Fish Audio.
+- The sibling Voice Studio audit had already reached the same conclusion on its
+  own: the Base checkpoint is reported `conditional` and CustomVoice `failed`,
+  both with `candidate_for_genstudio: false`, so neither was ever exposed to
+  GenStudio. What survived was the stocking entry, which is now removed.
+- This is a stocking change only. Every Qwen3-TTS checkpoint stays visible and
+  installable in Voice Studio, and no cached file is deleted by this commit —
+  `restore --prune` is what reclaims the space, on its own schedule.
+
 ## [1.84.2] — 2026-08-07
 
 ### Changed

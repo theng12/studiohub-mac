@@ -79,9 +79,17 @@ STOCKED_VOICE_FAMILIES = frozenset({
     "arktts",           # Audio8 TTS Preview
     "fish-audio-mlx",   # Fish Audio S2 Pro
     "chatterbox-mlx",   # Turbo and 8-bit only -- see BLOCKED_MODELS
-    "qwen3-tts",        # Base checkpoints only -- see rule 2
     "echo-tts",         # Echo-TTS
 })
+# qwen3-tts was stocked here until 2026-08-07, on rule 2 (its two Base
+# checkpoints clone; CustomVoice and VoiceDesign do not). The owner has since
+# disqualified the whole family: it is too large for the 8 GB machines that are
+# most of the fleet, it hallucinates, and it eats memory. OmniVoice replaced it
+# on every node -- it clones, fits 8 GB, and he rates it on par with Fish. The
+# sibling audit had reached the same conclusion independently, reporting Base as
+# `conditional` and CustomVoice as `failed`, so nothing was exposed to GenStudio
+# either. Dropping the family here stops it being carried to and kept on the
+# fleet; it stays visible and installable in Voice Studio.
 
 # Individual checkpoints dropped despite their family being stocked. A family is
 # usually the right unit, but a single bad variant should not force the whole

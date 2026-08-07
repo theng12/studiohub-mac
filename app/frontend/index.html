@@ -1137,6 +1137,9 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.84.3", date: "2026-08-07", items: [
+    "The fleet no longer stocks Qwen3-TTS: it is too big for the 8 GB machines, it hallucinates, and OmniVoice has replaced it on every node. The checkpoints stay installable in Voice Studio; nothing cached is deleted.",
+  ]},
   { v: "1.84.2", date: "2026-08-07", items: [
     "The SSD copy guide now matches the final model set — around 50 GB rather than 129 GB.",
   ]},
