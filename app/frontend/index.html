@@ -1137,6 +1137,9 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.83.1", date: "2026-08-07", items: [
+    "Fixed the Fish qualification tests, which still assumed the old 16 GB tier, and added one that proves a 16 GB worker is now refused.",
+  ]},
   { v: "1.83.0", date: "2026-08-07", items: [
     "VoxCPM2 is no longer stocked on the fleet, and Fish Audio S2 Pro now requires 24 GB — which means it runs on one worker rather than six.",
     "Chatterbox 4-bit is blocked for dropping and inventing words, while its Turbo and 8-bit siblings stay; a single bad checkpoint no longer forces out its whole family.",

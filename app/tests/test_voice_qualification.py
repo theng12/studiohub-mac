@@ -138,7 +138,7 @@ def _request(**overrides):
     return request
 
 
-def _save_fish_gate(case_type: str, *, tier: int = 16, machine: str = "worker-8") -> None:
+def _save_fish_gate(case_type: str, *, tier: int = 24, machine: str = "worker-8") -> None:
     now = time.time()
     voice_qualification._save({
         "id": f"vq-gate-{tier}-{case_type}",
@@ -378,7 +378,29 @@ def test_omnivoice_long_form_clone_is_enabled_after_short_form_evidence(
     assert result["operation"] == "voice_clone"
 
 
-@pytest.mark.parametrize(("marketed_tier", "reported_total"), [(16, 17.18), (24, 25.77)])
+def test_fish_refuses_the_sixteen_gigabyte_tier(reset):
+    """Fish was admitted on 16 and 24 GB until it was measured on real hardware:
+    13.234 GB peak on a 17.2 GB machine leaves under 4 GB for macOS and whatever
+    else the worker is doing, at 3.75x realtime — the slowest model measured on
+    the fleet. 24 GB is the only admitted tier now, and a 16 GB worker has to be
+    refused outright rather than merely discouraged."""
+    _controller(); _remote_memory(tier=17.18, available=12)
+    client = FakeClient()
+    with pytest.raises(voice_qualification.QualificationError) as error:
+        asyncio.run(voice_qualification.submit(
+            FakeMonitor(version="1.27.15"),
+            _request(
+                model=FISH, operation="voice_clone", machine_tier_gb=16,
+                params={}, voice_reference_asset_id="f" * 24,
+            ),
+            client,
+        ))
+    assert error.value.code == "MACHINE_TIER_MISMATCH"
+    assert "24 GB" in str(error.value)
+    assert client.calls == []
+
+
+@pytest.mark.parametrize(("marketed_tier", "reported_total"), [(24, 25.77)])
 def test_fish_clone_qualification_uses_evidence_tier_not_catalog_claim(
     reset, monkeypatch, tmp_path, marketed_tier, reported_total,
 ):
@@ -441,7 +463,7 @@ def test_fish_rejects_8gb_tier_before_reference_or_worker_calls(reset):
 
 
 def test_fish_requires_checksum_bound_aiden_reference(reset, monkeypatch, tmp_path):
-    _controller(); _remote_memory(tier=17.18, available=12)
+    _controller(); _remote_memory(tier=25.77, available=12)
     reference = tmp_path / "not-aiden.wav"
     reference.write_bytes(b"RIFF-not-aiden")
     monkeypatch.setattr(
@@ -458,7 +480,7 @@ def test_fish_requires_checksum_bound_aiden_reference(reset, monkeypatch, tmp_pa
         asyncio.run(voice_qualification.submit(
             FakeMonitor(version="1.27.15"),
             _request(
-                model=FISH, operation="voice_clone", machine_tier_gb=16,
+                model=FISH, operation="voice_clone", machine_tier_gb=24,
                 params={}, voice_reference_asset_id="f" * 24,
             ),
             client,
@@ -468,26 +490,26 @@ def test_fish_requires_checksum_bound_aiden_reference(reset, monkeypatch, tmp_pa
 
 
 def test_fish_medium_and_long_form_require_ordered_same_tier_successes(reset):
-    _controller(); _remote_memory(tier=17.18, available=12)
+    _controller(); _remote_memory(tier=25.77, available=12)
     with pytest.raises(voice_qualification.QualificationError) as error:
         asyncio.run(voice_qualification.submit(
             FakeMonitor(version="1.27.15"),
             _request(
                 model=FISH, operation="voice_clone", case_type="medium",
-                machine_tier_gb=16, params={}, voice_reference_asset_id="f" * 24,
+                machine_tier_gb=24, params={}, voice_reference_asset_id="f" * 24,
             ),
             FakeClient(),
         ))
     assert error.value.code == "FISH_QUALIFICATION_GATE_REQUIRED"
 
-    _save_fish_gate("short", tier=16)
+    _save_fish_gate("short", tier=24)
     with pytest.raises(voice_qualification.QualificationError) as error:
         asyncio.run(voice_qualification.submit(
             FakeMonitor(version="1.27.15"),
             _request(
                 client_request_id="qualification.test-0002",
                 model=FISH, operation="voice_clone", case_type="long_form",
-                machine_tier_gb=16, params={}, voice_reference_asset_id="f" * 24,
+                machine_tier_gb=24, params={}, voice_reference_asset_id="f" * 24,
             ),
             FakeClient(),
         ))
@@ -497,9 +519,9 @@ def test_fish_medium_and_long_form_require_ordered_same_tier_successes(reset):
 def test_fish_long_form_targets_fifteen_minutes_without_legacy_40k_requirement(
     reset, monkeypatch, tmp_path,
 ):
-    _controller(); _remote_memory(tier=17.18, available=12)
-    _save_fish_gate("short", tier=16)
-    _save_fish_gate("medium", tier=16)
+    _controller(); _remote_memory(tier=25.77, available=12)
+    _save_fish_gate("short", tier=24)
+    _save_fish_gate("medium", tier=24)
     reference = tmp_path / "aiden.wav"
     reference.write_bytes(b"RIFF-safe-aiden")
     monkeypatch.setattr(
@@ -516,7 +538,7 @@ def test_fish_long_form_targets_fifteen_minutes_without_legacy_40k_requirement(
         FakeMonitor(version="1.27.15"),
         _request(
             model=FISH, operation="voice_clone", case_type="long_form",
-            machine_tier_gb=16, text="A complete sentence, well below forty thousand characters.",
+            machine_tier_gb=24, text="A complete sentence, well below forty thousand characters.",
             params={}, voice_reference_asset_id="f" * 24,
         ),
         FakeClient(),
@@ -658,7 +680,7 @@ def test_cancel_is_durable_and_uses_remote_hub_worker_path(reset):
 
 
 def test_fish_poll_cancels_exact_job_after_ten_x_speed_stop(reset, monkeypatch, tmp_path):
-    _controller(); _remote_memory(tier=17.18, available=12)
+    _controller(); _remote_memory(tier=25.77, available=12)
     reference = tmp_path / "aiden.wav"
     reference.write_bytes(b"RIFF-safe-aiden")
     monkeypatch.setattr(
@@ -675,7 +697,7 @@ def test_fish_poll_cancels_exact_job_after_ten_x_speed_stop(reset, monkeypatch, 
         FakeMonitor(version="1.27.15"),
         _request(
             model=FISH, operation="voice_clone", case_type="short",
-            machine_tier_gb=16, params={}, voice_reference_asset_id="f" * 24,
+            machine_tier_gb=24, params={}, voice_reference_asset_id="f" * 24,
         ),
         FakeClient(),
     ))
@@ -702,7 +724,7 @@ def test_fish_poll_cancels_exact_job_after_ten_x_speed_stop(reset, monkeypatch, 
 def test_fish_success_requires_and_derives_exact_duration_artifact_evidence(
     reset, monkeypatch, tmp_path,
 ):
-    _controller(); _remote_memory(tier=17.18, available=12)
+    _controller(); _remote_memory(tier=25.77, available=12)
     reference = tmp_path / "aiden.wav"
     reference.write_bytes(b"RIFF-safe-aiden")
     monkeypatch.setattr(
@@ -718,7 +740,7 @@ def test_fish_success_requires_and_derives_exact_duration_artifact_evidence(
         FakeMonitor(version="1.27.15"),
         _request(
             model=FISH, operation="voice_clone", case_type="short",
-            machine_tier_gb=16, params={}, voice_reference_asset_id="f" * 24,
+            machine_tier_gb=24, params={}, voice_reference_asset_id="f" * 24,
         ),
         FakeClient(),
     ))
@@ -754,7 +776,7 @@ def test_fish_success_requires_and_derives_exact_duration_artifact_evidence(
 def test_fish_output_outside_duration_tolerance_is_not_a_pass(
     reset, monkeypatch, tmp_path,
 ):
-    _controller(); _remote_memory(tier=17.18, available=12)
+    _controller(); _remote_memory(tier=25.77, available=12)
     reference = tmp_path / "aiden.wav"
     reference.write_bytes(b"RIFF-safe-aiden")
     monkeypatch.setattr(
@@ -770,7 +792,7 @@ def test_fish_output_outside_duration_tolerance_is_not_a_pass(
         FakeMonitor(version="1.27.15"),
         _request(
             model=FISH, operation="voice_clone", case_type="short",
-            machine_tier_gb=16, params={}, voice_reference_asset_id="f" * 24,
+            machine_tier_gb=24, params={}, voice_reference_asset_id="f" * 24,
         ),
         FakeClient(),
     ))

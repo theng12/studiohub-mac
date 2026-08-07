@@ -10,6 +10,16 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.83.1] — 2026-08-07
+
+### Fixed
+
+- The Fish qualification tests still asserted the old 16-or-24 GB contract, so
+  1.83.0 shipped with seven of them failing. They now exercise the 24 GB tier,
+  and a new test asserts that a 16 GB worker is refused outright with
+  `MACHINE_TIER_MISMATCH` — the tier change is now covered rather than merely
+  applied.
+
 ## [1.83.0] — 2026-08-07
 
 ### Changed — three stocking corrections from fleet measurement
