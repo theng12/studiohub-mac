@@ -1137,6 +1137,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.78.1", date: "2026-08-07", items: [
+    "Broken model caches are now identified by comparing each machine against the rest of the fleet instead of against catalogue size estimates, which are approximate and often stale.",
+    "This removed six false alarms that would have re-downloaded perfectly healthy caches, and caught one genuinely damaged cache the earlier check had passed.",
+  ]},
   { v: "1.78.0", date: "2026-08-07", items: [
     "New operator tool surveys every fleet machine's model caches and repairs interrupted downloads and caches that claim to be complete while missing their weight files.",
     "Machines that cannot serve an essential capability — such as a worker with no clone-capable voice model — are now reported, and one suitable model can be installed automatically.",

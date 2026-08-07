@@ -10,6 +10,25 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.78.1] — 2026-08-07
+
+### Fixed — broken-cache detection now compares machines, not catalog sizes
+
+- `tools/fleet_repair.py` judged a cache broken by comparing its bytes against
+  the catalog's `size_gb`, which is a hand-maintained approximation and is
+  routinely off. `chatterbox-turbo-4bit` measures 69% of its claimed size on
+  all six machines that hold it — the catalog is stale and every one of those
+  caches is healthy, but all six were reported broken and queued for a pointless
+  re-download.
+- Completeness is now judged against the rest of the fleet: healthy copies of a
+  repo measure the same to within rounding, so a machine well below its peers
+  has genuinely lost data whatever the catalog claims. Repos held by fewer than
+  three machines fall back to a deliberately forgiving absolute check.
+- This removed all six false positives and kept every real one, each of which
+  now reports its own evidence — a Kokoro cache holding 10% where the fleet
+  holds 115%, a VibeVoice cache at 1%, and a MOSS cache 20% under its peers
+  that the previous tolerance had let through.
+
 ## [1.78.0] — 2026-08-07
 
 ### Added — fleet cache survey and repair

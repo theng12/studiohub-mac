@@ -84,11 +84,29 @@ MACHINES = {
     "terranash-0206": "100.76.16.94",
 }
 
-# A cache dir that claims "cached" while holding well under the catalog's
-# stated size has lost its weight files -- seen on terranash-0007, whose Kokoro
-# entry reported cached with no weights at all, so every job routed there for
-# that model failed at load time. Trust measured bytes over the state field.
-PHANTOM_FRACTION = 0.80
+# A cache dir can lose its weight files and still report ``cached`` -- seen on
+# terranash-0007, whose Kokoro cache held 10% of the model while the studio
+# reported it available and runtime-ready, so every job routed there failed at
+# load time.
+#
+# Detecting that by comparing bytes against the catalog's ``size_gb`` does not
+# work: that figure is a hand-maintained approximation and is routinely off.
+# chatterbox-turbo-4bit measures 0.69 of its claimed size on all six machines
+# that hold it -- the catalog is stale, the caches are fine. An absolute
+# threshold called all six broken.
+#
+# The fleet is its own reference. The same repo on many machines should measure
+# the same; a machine well below its peers has really lost data, whatever the
+# catalog claims. Only fall back to an absolute fraction when too few machines
+# hold the repo to form a consensus.
+# Healthy copies of the same repo measure the same to within rounding: across
+# the fleet, chatterbox-turbo reads 0.69 on all six machines holding it,
+# VibeVoice 1.05 on seven, MOSS 0.98 on five. Observed spread among healthy
+# peers is effectively zero, so the tolerance below is already generous --
+# 0.70 was not, and passed a MOSS cache sitting 20% under its peers.
+PEER_MIN_SAMPLES = 3        # machines needed before peer consensus is trusted
+PEER_BROKEN_RATIO = 0.90    # below this share of the peer median = lost data
+ABSOLUTE_FRACTION = 0.50    # lone-copy fallback, deliberately forgiving
 
 
 def token_for(machine_id: str, tokens: dict) -> str:
@@ -144,19 +162,49 @@ def eligible(model: dict, ram_gb: float) -> bool:
     return floor is not None and floor <= ram_gb
 
 
-def classify(model: dict, ram_gb: float) -> tuple[str, str]:
+def peer_medians(surveyed: list[dict]) -> dict[str, float]:
+    """Median completeness ratio per repo across every machine holding it.
+
+    Built only from caches the studios call ``cached``, so a half-finished
+    download on one machine cannot drag the reference down for the rest.
+    """
+    samples: dict[str, list[float]] = {}
+    for machine in surveyed:
+        for data in machine.get("studios", {}).values():
+            for m in data.get("models", []):
+                if m["cache_state"] != "cached" or not m["expected"]:
+                    continue
+                samples.setdefault(m["repo"], []).append(m["complete"] / m["expected"])
+    medians = {}
+    for repo, values in samples.items():
+        if len(values) < PEER_MIN_SAMPLES:
+            continue
+        values.sort()
+        mid = len(values) // 2
+        medians[repo] = (values[mid] if len(values) % 2
+                         else (values[mid - 1] + values[mid]) / 2)
+    return medians
+
+
+def classify(model: dict, ram_gb: float, peer: float | None) -> tuple[str, str]:
     """Return (state, reason) for one model on one machine.
 
     States: ok, partial, phantom, absent, stranded, unqualified.
     ``absent`` is not a defect -- most of the catalog is legitimately absent
     from most machines. Only the capability check turns absence into work.
     """
-    cache = model.get("cache") or {}
-    complete = cache.get("bytes_complete") or 0
-    incomplete = cache.get("bytes_incomplete") or 0
-    expected = (model.get("size_gb") or 0) * 1_000_000_000
+    complete = model["complete"]
+    incomplete = model["incomplete"]
+    expected = model["expected"]
     on_disk = complete + incomplete
-    intact = cache.get("state") == "cached" and complete >= expected * PHANTOM_FRACTION
+    ratio = (complete / expected) if expected else 0.0
+
+    if model["cache_state"] != "cached":
+        intact = False
+    elif peer is not None:
+        intact = ratio >= peer * PEER_BROKEN_RATIO
+    else:
+        intact = ratio >= ABSOLUTE_FRACTION
 
     floor = model.get("min_unified_memory_gb")
     if floor is None:
@@ -175,8 +223,12 @@ def classify(model: dict, ram_gb: float) -> tuple[str, str]:
 
     if intact:
         return "ok", "cached"
-    if cache.get("state") == "cached":
-        return "phantom", f"claims cached, holds {complete / 1e9:.2f} of {expected / 1e9:.2f} GB"
+    if model["cache_state"] == "cached":
+        if peer is not None:
+            return "phantom", (f"claims cached at {ratio:.0%} of catalog size; "
+                               f"the fleet holds {peer:.0%}")
+        return "phantom", (f"claims cached, holds {complete / 1e9:.2f} of "
+                           f"{expected / 1e9:.2f} GB (no peers to compare)")
     if on_disk:
         # size_gb is a rounded catalog approximation, so a repo can hold more
         # bytes than it claims and still be missing files. Printing "1.89 of
@@ -219,20 +271,42 @@ def survey_machine(machine_id: str, ip: str, token: str, studios: list[str]) -> 
         for m in catalog.get("models", []):
             if is_cloud(m):
                 continue
-            state, reason = classify(m, result["ram_gb"])
+            cache = m.get("cache") or {}
             models.append({
                 "repo": m["repo"],
                 "label": m.get("label") or m["repo"],
                 "size_gb": m.get("size_gb") or 0,
-                "floor": m.get("min_unified_memory_gb"),
+                "min_unified_memory_gb": m.get("min_unified_memory_gb"),
                 "capabilities": m.get("capabilities") or [],
                 "eligible": eligible(m, result["ram_gb"]),
                 "recommended": "recommended" in (m.get("label") or "").lower(),
-                "state": "downloading" if m["repo"] in in_flight else state,
-                "reason": "already downloading" if m["repo"] in in_flight else reason,
+                "cache_state": cache.get("state"),
+                "complete": cache.get("bytes_complete") or 0,
+                "incomplete": cache.get("bytes_incomplete") or 0,
+                "expected": (m.get("size_gb") or 0) * 1_000_000_000,
+                "downloading": m["repo"] in in_flight,
             })
         result["studios"][name] = {"reachable": True, "models": models}
     return result
+
+
+def assign_states(surveyed: list[dict]) -> None:
+    """Second pass: classify every model once the whole fleet is visible.
+
+    Classification cannot happen during collection because deciding whether one
+    machine's cache is broken depends on what the other machines hold.
+    """
+    peers = peer_medians(surveyed)
+    for machine in surveyed:
+        if not machine["online"]:
+            continue
+        for data in machine.get("studios", {}).values():
+            for m in data.get("models", []):
+                if m["downloading"]:
+                    m["state"], m["reason"] = "downloading", "already downloading"
+                    continue
+                m["state"], m["reason"] = classify(
+                    m, machine["ram_gb"], peers.get(m["repo"]))
 
 
 # Broken caches for models the machine can run. Always worth fixing.
@@ -315,6 +389,7 @@ def main() -> int:
             lambda kv: survey_machine(kv[0], kv[1], token_for(kv[0], tokens), studios),
             sorted(targets.items()),
         ))
+    assign_states(surveyed)
 
     if args.as_json:
         print(json.dumps(surveyed, indent=2))
