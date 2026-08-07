@@ -419,6 +419,9 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
         families, local_floors, _all_companions = catalog_index(models)
         companions = needed_companions(name, models, keep_non_cloning)
         caps = {m["repo"]: (m.get("capabilities") or []) for m in models}
+        # Family *id*, not the display label `families` carries -- the stocking
+        # lists are keyed by id.
+        fam_of = {m["repo"]: (m.get("family") or "") for m in models}
         ssd_floors = {e["repo"]: e.get("floor_gb") for e in staged}
         state_of = {m["repo"]: (m.get("cache") or {}).get("state")
                     for m in models}
@@ -439,12 +442,15 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
                 # nobody had established it runs here. That guard predates the
                 # family allowlist: a model only reaches this point now because
                 # its family was deliberately chosen, so membership already is
-                # the decision. Z-Image is exactly the case -- both checkpoints
-                # are unmeasured and are on the fleet precisely to find out
-                # whether they run on 8 GB. Skipping them by default would have
-                # quietly guaranteed that question never got answered.
+                # the decision.
                 want.append((e, floor))
-                unqualified.append((e, floor))
+                # Only *models* are worth flagging as unmeasured. Whisper and
+                # the codecs have no catalogue floor because they are not voice
+                # models at all, and reporting "may not run here" for the
+                # speech-to-text checker is noise that trains you to ignore the
+                # warning that matters.
+                if e["repo"] in caps:
+                    unqualified.append((e, floor))
             elif floor <= ram:
                 want.append((e, floor))
             else:
@@ -458,6 +464,15 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
             tag = f"[{i}/{len(want)}] {e['dir'][:52]}"
             if dst.exists():
                 state = state_of.get(e["repo"])
+                if state is None:
+                    # Whisper and the codecs are not in the studio's model
+                    # catalogue, so it reports no cache state for them. Treating
+                    # "no state" as "untrustworthy" re-copied 1.6 GB of Whisper
+                    # onto every machine that already had a perfect copy. Fall
+                    # back to comparing what is on disk against what was staged.
+                    staged_bytes = e.get("bytes") or 0
+                    if staged_bytes and dir_bytes(dst) >= staged_bytes * 0.98:
+                        state = "cached"
                 if force:
                     action, note = "replace", "--force"
                 elif state == "cached":
@@ -513,7 +528,12 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
                 if floor is not None and floor > ram:
                     victims.append((d, repo, floor, dir_bytes(d)))
             for d, repo, floor, b in victims:
-                why = f"needs {floor:>2.0f} GB" if floor else "cannot clone"
+                if floor:
+                    why = f"needs {floor:>2.0f} GB"
+                else:
+                    # "cannot clone" is a voice-only reason; on the image side a
+                    # model is dropped because its family is not stocked.
+                    why = "not stocked" if name == "image" else "cannot clone"
                 print(f"  prune {repo[:48]:50} {why:>12}  {b / 1e9:5.2f} GB")
                 pruned += 1
                 pruned_bytes += b

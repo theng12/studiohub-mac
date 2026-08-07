@@ -10,6 +10,25 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.84.1] — 2026-08-07
+
+### Fixed — three faults a dry run caught before any machine was visited
+
+- `restore` crashed outright with `NameError: fam_of` the moment the family
+  allowlist was consulted. It would have failed on the first Mac, with the SSD
+  plugged in and nothing to show for the trip.
+- Whisper and the shared codecs are not in either studio's model catalogue, so
+  no cache state is reported for them. Treating "no state" as "untrustworthy"
+  re-copied 1.6 GB of Whisper onto machines that already held a perfect copy;
+  when the studio has nothing to say, on-disk size is now compared against the
+  staged size instead.
+- The same models were announced as having "no measured memory floor" and
+  possibly not running — nonsense for the speech-to-text checker, and exactly
+  the kind of noise that teaches you to ignore the warning when it is real.
+  Only catalogue models are flagged now.
+- Image models being pruned were labelled "cannot clone", a voice-only reason.
+  They now read "not stocked".
+
 ## [1.84.0] — 2026-08-07
 
 ### Changed — FLUX.2 klein is the whole stocked image catalogue
