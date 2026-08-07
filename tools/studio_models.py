@@ -60,18 +60,36 @@ DEFAULT_ROOT = Path("/Volumes/UGREEN-1TB/studio-models")
 MANIFEST_NAME = "MANIFEST.json"
 STT_FAMILY = "Whisper (speech-to-text)"
 
-# The fleet exists to clone one of the owner's own voices, so a voice model that
-# cannot clone earns nothing by sitting on 19 machines. Kokoro is the deliberate
-# exception: 0.34 GB, and useful for quick preset narration.
+# The fleet exists to clone the owner's own voices, so it stocks an explicit
+# short list of families rather than everything the catalogue offers. Two rules
+# combine:
 #
-# This is a stocking policy, not a catalogue change -- the models stay visible
-# and installable in Voice Studio. It only decides what gets carried to, kept
-# on, and reclaimed from the fleet. Pass --keep-non-cloning to ignore it.
+#   1. the family must be on this list, and
+#   2. within it, the model must actually be able to clone.
+#
+# Rule 2 is what keeps Qwen3-TTS's two Base checkpoints while dropping its
+# CustomVoice and VoiceDesign siblings, which are preset- and design-only.
+#
+# This is a stocking policy, not a catalogue change -- every model stays visible
+# and installable in Voice Studio. It only decides what is carried to, kept on,
+# and reclaimed from the fleet. Pass --keep-non-cloning to ignore it entirely.
 CLONE_CAPABILITY = "voice-cloning"
-NON_CLONING_KEEP = frozenset({"mlx-community/Kokoro-82M-bf16"})
+STOCKED_VOICE_FAMILIES = frozenset({
+    "omnivoice",        # the only strong cloner that fits the 8 GB majority
+    "arktts",           # Audio8 TTS Preview
+    "fish-audio-mlx",   # Fish Audio S2 Pro
+    "chatterbox-mlx",   # Chatterbox
+    "voxcpm-mlx",       # VoxCPM2
+    "qwen3-tts",        # Base checkpoints only -- see rule 2
+    "echo-tts",         # Echo-TTS
+})
+# Kept although they cannot clone, because they earn their place another way.
+NON_CLONING_FAMILIES = frozenset({
+    "kokoro-mlx",       # 0.34 GB, useful for quick preset narration
+})
 
 
-def stocked(studio: str, repo: str, capabilities: list[str],
+def stocked(studio: str, repo: str, family: str, capabilities: list[str],
             companions: set[str], keep_non_cloning: bool) -> bool:
     """Should this model be carried to and kept on the fleet?
 
@@ -80,13 +98,16 @@ def stocked(studio: str, repo: str, capabilities: list[str],
     """
     if keep_non_cloning or studio != "voice":
         return True
-    if repo in NON_CLONING_KEEP or repo in companions:
+    if repo in companions:
         return True
-    # Whisper is speech-to-text; it has no cloning capability and is needed by
-    # the transcribe-back check that validates every other model.
+    # Whisper is speech-to-text, not a voice family, and every checkpoint stays:
+    # it is what the transcribe-back check uses to prove the other models
+    # actually said the words they were given.
     if "whisper" in repo.lower():
         return True
-    return CLONE_CAPABILITY in capabilities
+    if family in NON_CLONING_FAMILIES:
+        return True
+    return family in STOCKED_VOICE_FAMILIES and CLONE_CAPABILITY in capabilities
 
 
 def needed_companions(studio: str, models: list[dict],
@@ -102,8 +123,8 @@ def needed_companions(studio: str, models: list[dict],
     for m in models:
         if not is_local(m):
             continue
-        parent_kept = stocked(studio, m["repo"], m.get("capabilities") or [],
-                              set(), keep_non_cloning)
+        parent_kept = stocked(studio, m["repo"], m.get("family") or "",
+                              m.get("capabilities") or [], set(), keep_non_cloning)
         if not parent_kept:
             continue
         for c in (m.get("cache") or {}).get("companions") or []:
@@ -252,6 +273,7 @@ def do_stage(root: Path, plan_only: bool, keep_non_cloning: bool) -> int:
         families, floors, _all_companions = catalog_index(models)
         companions = needed_companions(name, models, keep_non_cloning)
         caps = {m["repo"]: (m.get("capabilities") or []) for m in models}
+        fam_of = {m["repo"]: (m.get("family") or "") for m in models}
         jobs, unstocked = [], []
         for src in sorted(hub.iterdir()):
             if not src.is_dir() or src.name.startswith("."):
@@ -259,7 +281,8 @@ def do_stage(root: Path, plan_only: bool, keep_non_cloning: bool) -> int:
             repo = dirname_to_repo(src.name)
             if repo is None:
                 continue
-            if not stocked(name, repo, caps.get(repo, []), companions, keep_non_cloning):
+            if not stocked(name, repo, fam_of.get(repo, ""), caps.get(repo, []),
+                           companions, keep_non_cloning):
                 unstocked.append((repo, dir_bytes(src)))
                 continue
             fam = families.get(repo)
@@ -373,8 +396,8 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
         # ---- restore
         want, defer, unqualified = [], [], []
         for e in staged:
-            if not stocked(name, e["repo"], caps.get(e["repo"], []),
-                           companions, keep_non_cloning):
+            if not stocked(name, e["repo"], fam_of.get(e["repo"], ""),
+                           caps.get(e["repo"], []), companions, keep_non_cloning):
                 continue
             floor = resolve_floor(e["repo"], local_floors, ssd_floors)
             if restore_all:
@@ -444,8 +467,8 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
                 repo = dirname_to_repo(d.name)
                 if repo is None or repo in companions:
                     continue  # never prune a codec/tokenizer
-                if not stocked(name, repo, caps.get(repo, []), companions,
-                               keep_non_cloning):
+                if not stocked(name, repo, fam_of.get(repo, ""),
+                               caps.get(repo, []), companions, keep_non_cloning):
                     victims.append((d, repo, None, dir_bytes(d)))
                     continue
                 floor = resolve_floor(repo, local_floors, ssd_floors)

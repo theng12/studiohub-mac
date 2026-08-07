@@ -10,6 +10,26 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.81.0] — 2026-08-07
+
+### Changed — the stocked voice list is now an explicit family allowlist
+
+- Owner decision: the fleet stocks OmniVoice, Audio8, Fish S2 Pro, Chatterbox,
+  VoxCPM2, Qwen3-TTS and Echo-TTS, plus Kokoro. Everything else is dropped —
+  MOSS-TTS-Nano, Orpheus, Spark-TTS, F5-TTS, VibeVoice, Voxtral, KittenTTS,
+  Marvis and Suno Bark.
+- Membership is now a named family list rather than a capability heuristic, so
+  the intent is legible and a new catalogue entry cannot silently opt itself in.
+  Two rules combine: the family must be listed, and within it a model must
+  actually be able to clone. That second rule keeps Qwen3-TTS's two Base
+  checkpoints while dropping its CustomVoice and VoiceDesign siblings.
+- Every Whisper checkpoint is kept regardless. Whisper is what the
+  transcribe-back check uses to prove the other models said the words they were
+  given, so losing it would cost the fleet its only quality evidence.
+- 13 models stay, 22 go: 13.0 GB reclaimed on the staging machine, and the
+  companions dropped with their parents include MOSS's tokenizer and Orpheus's
+  SNAC codec.
+
 ## [1.80.0] — 2026-08-07
 
 ### Changed — the fleet now stocks only voice models that can clone

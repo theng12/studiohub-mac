@@ -1137,6 +1137,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.81.0", date: "2026-08-07", items: [
+    "The fleet now stocks a named list of voice families — OmniVoice, Audio8, Fish S2 Pro, Chatterbox, VoxCPM2, Qwen3-TTS, Echo-TTS and Kokoro — and drops the rest.",
+    "Within Qwen3-TTS only the cloning Base checkpoints are kept; the preset and voice-design variants are dropped.",
+    "Every Whisper checkpoint is kept, since it is what verifies the other models actually said what they were given.",
+  ]},
   { v: "1.80.0", date: "2026-08-07", items: [
     "Voice models that cannot clone a voice are no longer stocked on the fleet — Kokoro and the speech-to-text checker are kept, everything else is skipped and reclaimed, saving 15.4 GB per machine.",
     "Shared codecs now follow the models that use them, so dropping a model no longer strands its codec on every machine forever.",
