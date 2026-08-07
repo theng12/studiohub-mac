@@ -34,6 +34,10 @@ catalog_observations.json
 
 machine_labels.json
 machine_flags.json
+
+# Private fleet machine table (tools/fleet_repair.py) — addresses and token keys
+fleet_machines.json
+
 hardware_profiles.json
 machine_hardware_profiles.json
 controller_settings.json

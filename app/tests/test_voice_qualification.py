@@ -601,7 +601,7 @@ def test_missing_clone_reference_is_a_preflight_failure_before_worker_submit(res
 def test_controller_local_requires_explicit_opt_in_and_stores_physical_controller_id(reset, monkeypatch):
     _controller()
     control_plane.save_settings({"role": "controller", "site_id": "site-a",
-                                 "site_name": "Site A", "controller_id": "terranash-0200",
+                                 "site_name": "Site A", "controller_id": "site-a-0200",
                                  "database_mode": "off"})
     monkeypatch.setattr(voice_qualification, "host_stats", lambda: {
         "total_gb": 25.8, "available_gb": 20.0,
@@ -612,7 +612,7 @@ def test_controller_local_requires_explicit_opt_in_and_stores_physical_controlle
                                 allow_controller_local=True), client,
     ))
     assert result["state"] == "running"
-    assert result["target"]["machine_id"] == "terranash-0200"
+    assert result["target"]["machine_id"] == "site-a-0200"
     assert result["target"]["registry_machine_id"] == "local"
     assert result["target"]["execution_path"] == "controller_local"
     assert client.calls[2][1].startswith("http://127.0.0.1:47864/")
@@ -621,7 +621,7 @@ def test_controller_local_requires_explicit_opt_in_and_stores_physical_controlle
 def test_excluded_physical_machine_blocks_controller_local_before_worker_calls(reset, monkeypatch):
     _controller()
     control_plane.save_settings({"role": "controller", "site_id": "site-a",
-                                 "site_name": "Site A", "controller_id": "terranash-0205",
+                                 "site_name": "Site A", "controller_id": "site-a-0205",
                                  "database_mode": "off"})
     monkeypatch.setattr(voice_qualification, "host_stats", lambda: {
         "total_gb": 25.8, "available_gb": 20.0,
@@ -631,7 +631,7 @@ def test_excluded_physical_machine_blocks_controller_local_before_worker_calls(r
         asyncio.run(voice_qualification.submit(
             FakeMonitor(), _request(target_studio_id="voice", machine_tier_gb=24,
                                     allow_controller_local=True,
-                                    excluded_machine_ids=["terranash-0205"]), client,
+                                    excluded_machine_ids=["site-a-0205"]), client,
         ))
     assert error.value.code == "TARGET_MACHINE_EXCLUDED"
     assert client.calls == []

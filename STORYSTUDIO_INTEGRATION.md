@@ -288,7 +288,7 @@ don't wait for all 120, and you don't have to poll):
   "batch_id": "0e13ca4f16", "label": "storystudio:my-story",
   "index": 7, "state": "done", "machine": "macmini-m4-16gb-003-256",
   "studio": "image@macmini-m4-16gb-003-256",
-  "artifact_url": "http://100.79.198.73:47868/api/generate/jobs/<jid>/image",
+  "artifact_url": "http://<studio-host>:47868/api/generate/jobs/<jid>/image",
   "artifact_path": "/…/scene7.png", "asset_id": "…", "duration_s": 44.8,
   "error": null,
   "done": 8, "total": 120
