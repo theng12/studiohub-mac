@@ -88,6 +88,16 @@ NON_CLONING_FAMILIES = frozenset({
     "kokoro-mlx",       # 0.34 GB, useful for quick preset narration
 })
 
+# Image models are stocked by family only -- there is no cloning distinction to
+# apply. The list is the three families already cached and worth keeping. Every
+# other family is 16 or 24 GB with a footprint measured in tens of gigabytes,
+# which does not fit alongside everything else on a 256 GB machine.
+STOCKED_IMAGE_FAMILIES = frozenset({
+    "flux2-klein",      # the only family with a model that fits 8 GB
+    "z-image",          # Onyx Turbo 3-bit and 4-bit, floors still unmeasured
+    "ernie-image",      # ERNIE-Image Turbo
+})
+
 
 def stocked(studio: str, repo: str, family: str, capabilities: list[str],
             companions: set[str], keep_non_cloning: bool) -> bool:
@@ -96,9 +106,13 @@ def stocked(studio: str, repo: str, family: str, capabilities: list[str],
     `companions` must be the codecs still needed by models that survive this
     policy, not every companion in the catalogue -- see `needed_companions`.
     """
-    if keep_non_cloning or studio != "voice":
+    if keep_non_cloning:
         return True
     if repo in companions:
+        return True
+    if studio == "image":
+        return family in STOCKED_IMAGE_FAMILIES
+    if studio != "voice":
         return True
     # Whisper is speech-to-text, not a voice family, and every checkpoint stays:
     # it is what the transcribe-back check uses to prove the other models
@@ -312,7 +326,9 @@ def do_stage(root: Path, plan_only: bool, keep_non_cloning: bool) -> int:
             print(f"    {fam[:44]:46} {b / 1e9:6.2f} GB")
         if p["unstocked"]:
             gb = sum(b for _, b in p["unstocked"]) / 1e9
-            print(f"    not stocked — cannot clone ({gb:.2f} GB, "
+            why = ("family not stocked" if name == "image"
+                   else "family not stocked, or cannot clone")
+            print(f"    not stocked — {why} ({gb:.2f} GB, "
                   f"--keep-non-cloning to include):")
             for repo, b in sorted(p["unstocked"], key=lambda kv: -kv[1]):
                 print(f"      {repo[:50]:52} {b / 1e9:5.2f} GB")
@@ -403,11 +419,16 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
             if restore_all:
                 want.append((e, floor))
             elif floor is None:
-                # No measured floor means nobody has established this model runs
-                # here. Installing it anyway is how a small Mac ends up holding
-                # models it swaps through -- and on the image side an unmeasured
-                # model is 6 GB, not 600 MB. Opt in per run instead.
-                (want if include_unqualified else unqualified).append((e, floor))
+                # An unmeasured model used to be skipped, on the grounds that
+                # nobody had established it runs here. That guard predates the
+                # family allowlist: a model only reaches this point now because
+                # its family was deliberately chosen, so membership already is
+                # the decision. Z-Image is exactly the case -- both checkpoints
+                # are unmeasured and are on the fleet precisely to find out
+                # whether they run on 8 GB. Skipping them by default would have
+                # quietly guaranteed that question never got answered.
+                want.append((e, floor))
+                unqualified.append((e, floor))
             elif floor <= ram:
                 want.append((e, floor))
             else:
@@ -453,8 +474,9 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
                   f" ({', '.join(sorted({str(f) + ' GB' for _, f in defer}))})")
         if unqualified:
             gb = sum(e["bytes"] for e, _ in unqualified) / 1e9
-            print(f"  skipped {len(unqualified)} with no measured memory floor "
-                  f"({gb:.1f} GB) — add --include-unqualified to install them:")
+            print(f"  installing {len(unqualified)} with no measured memory floor "
+                  f"({gb:.1f} GB) — they may not run here; report it if they fail "
+                  f"and the floor gets raised:")
             for e, _ in unqualified:
                 print(f"      {e['repo']}")
 
@@ -521,8 +543,8 @@ def main() -> int:
     r.add_argument("--keep-non-cloning", action="store_true",
                    help="also keep voice models that cannot clone (default: prune them)")
     r.add_argument("--include-unqualified", action="store_true",
-                   help="also install models with no measured memory floor "
-                        "(use when trialling a model on a tier, e.g. Z-Image on 8 GB)")
+                   help="accepted for compatibility; unmeasured models in a "
+                        "stocked family are installed by default now")
 
     args = ap.parse_args()
     if args.command == "stage":

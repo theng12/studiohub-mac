@@ -10,6 +10,36 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.82.0] — 2026-08-07
+
+### Changed — the stocked image list is the three cached families
+
+- Owner decision: stock FLUX.2 klein, Z-Image and ERNIE-Image. Everything else
+  goes, including all three SDXL checkpoints — Juggernaut XL, DreamShaper XL and
+  Segmind Vega — which were cached but judged poor.
+- That drops 16 of 22 image models. Three were cached and reclaim 34.4 GB; the
+  other 13 were never downloaded and now never will be, sparing 488 GB. Each of
+  them needs 16 or 24 GB and runs to tens of gigabytes, which does not fit
+  alongside everything else on a 256 GB machine.
+- Staging falls from 128.6 GB to 78.6 GB: 35.6 GB of voice and 43.0 GB of image.
+
+### Changed — unmeasured models in a stocked family are now installed
+
+- Models with no measured memory floor were skipped by default. That guard
+  predates the family allowlist and now works against it: a model only reaches
+  the fleet because its family was deliberately chosen, so membership already is
+  the decision.
+- Z-Image is the case in point. Both checkpoints are unmeasured and are on the
+  fleet precisely to establish whether they run on 8 GB. Skipping them by default
+  would have quietly guaranteed that question was never answered. They are
+  installed and called out by name in the run, so a failure is attributable.
+
+### Fixed
+
+- Image models excluded from staging were reported as "cannot clone", which is a
+  voice-only distinction and meaningless for SDXL. They are now correctly
+  reported as excluded by family.
+
 ## [1.81.0] — 2026-08-07
 
 ### Changed — the stocked voice list is now an explicit family allowlist
