@@ -14,7 +14,7 @@ This walks every machine and reports both, and can fix both.
     python3 tools/fleet_repair.py --apply            # repair broken caches
     python3 tools/fleet_repair.py --apply --fill-gaps  # also cover capabilities
     python3 tools/fleet_repair.py --studio image     # one studio
-    python3 tools/fleet_repair.py --machine 0007     # one machine
+    python3 tools/fleet_repair.py --machine <id-fragment>   # one machine
 
 Nothing is ever deleted. Repair only starts downloads, so a wrong call costs
 bandwidth, not a cache.
@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -58,34 +59,43 @@ ESSENTIAL_CAPABILITIES = {
     "image": ("txt2img",),
 }
 
-# id -> tailscale ip. RAM is NOT recorded here: it is read live from each
-# machine's /api/system. A hardcoded RAM table is exactly the kind of thing
-# that goes stale after a hardware swap and then silently plans the wrong
-# model set for the rest of the fleet's life.
-MACHINES = {
-    "terranash-0000": "100.83.69.73",
-    "terranash-0001": "100.78.224.16",
-    "terranash-0002": "100.119.47.106",
-    "terranash-0003": "100.75.145.115",
-    "terranash-0004": "100.102.177.25",
-    "terranash-0005": "100.71.193.102",
-    "terranash-0006": "100.72.219.83",
-    "terranash-0007": "100.95.11.119",
-    "terranash-0100": "100.76.231.48",
-    "terranash-0101": "100.117.8.43",
-    "terranash-0102": "100.69.120.98",
-    "terranash-0103": "100.88.96.113",
-    "terranash-0104": "100.101.15.42",
-    "terranash-0105": "100.65.38.87",
-    "terranash-0200": "100.91.195.122",
-    "terranash-0201": "100.75.249.107",
-    "terranash-0202": "100.96.171.120",
-    "terranash-0203": "100.98.173.75",
-    "terranash-0206": "100.76.16.94",
-}
+# The machine table is private infrastructure detail and this repository is
+# public, so it lives in an untracked local file rather than here. RAM is not
+# recorded in it either: that is read live from each machine's /api/system,
+# because a hardcoded RAM table goes stale after a hardware swap and then
+# silently plans the wrong model set for the rest of the fleet's life. The same
+# argument applies to the addresses, so there is no built-in fallback list.
+MACHINES_FILE = Path(os.environ.get("FLEET_MACHINES_FILE")
+                     or Path(__file__).resolve().parents[1] / "fleet_machines.json")
+
+MACHINES_FORMAT = ('  {"machines": [{"id": "<machine-id>", "ip": "<address>", '
+                   '"token_key": "<fleet-token-key>"}]}')
+
+
+def load_machines() -> list[dict]:
+    """Fleet machine records, read from the untracked local config."""
+    if not MACHINES_FILE.exists():
+        raise SystemExit(
+            f"missing fleet machine table: {MACHINES_FILE}\n"
+            "Create it (chmod 600), or point FLEET_MACHINES_FILE at an existing "
+            "copy. Expected format:\n" + MACHINES_FORMAT)
+    try:
+        data = json.loads(MACHINES_FILE.read_text())
+    except ValueError as exc:
+        raise SystemExit(f"{MACHINES_FILE}: not valid JSON -- {exc}") from exc
+    machines = data.get("machines") if isinstance(data, dict) else data
+    if not isinstance(machines, list) or not machines:
+        raise SystemExit(f"{MACHINES_FILE}: no machines listed. Expected format:\n"
+                         + MACHINES_FORMAT)
+    bad = [m for m in machines
+           if not isinstance(m, dict) or not m.get("id") or not m.get("ip")]
+    if bad:
+        raise SystemExit(f"{MACHINES_FILE}: every entry needs 'id' and 'ip' -- "
+                         f"first bad entry: {bad[0]!r}")
+    return machines
 
 # A cache dir can lose its weight files and still report ``cached`` -- seen on
-# terranash-0007, whose Kokoro cache held 10% of the model while the studio
+# a 16 GB fleet Mac whose Kokoro cache held 10% of the model while the studio
 # reported it available and runtime-ready, so every job routed there failed at
 # load time.
 #
@@ -109,10 +119,9 @@ PEER_BROKEN_RATIO = 0.90    # below this share of the peer median = lost data
 ABSOLUTE_FRACTION = 0.50    # lone-copy fallback, deliberately forgiving
 
 
-def token_for(machine_id: str, tokens: dict) -> str:
-    """00xx / 01xx / 02xx are separate sites with separate fleet tokens."""
-    block = machine_id.replace("terranash-", "")[:2]
-    return (tokens.get(block) or {}).get("token", "")
+def token_for(machine_id: str, tokens: dict, token_keys: dict) -> str:
+    """The fleet token covering this machine, named by its own config entry."""
+    return (tokens.get(token_keys.get(machine_id) or "") or {}).get("token", "")
 
 
 def api(ip: str, port: int, path: str, token: str, *, body: dict | None = None,
@@ -376,8 +385,12 @@ def main() -> int:
         return 2
     tokens = json.loads(TOKENS_FILE.read_text())
 
+    machines = load_machines()
+    hosts = {m["id"]: m["ip"] for m in machines}
+    token_keys = {m["id"]: m.get("token_key") or "" for m in machines}
+
     studios = args.studio or sorted(STUDIOS)
-    selected = {mid for mid in MACHINES
+    selected = {mid for mid in hosts
                 if not args.machine or any(f in mid for f in args.machine)}
     if not selected:
         print("no machines matched", file=sys.stderr)
@@ -389,15 +402,16 @@ def main() -> int:
     # from exactly the machines suspected of being broken, and a run targeting
     # two damaged caches would take their damage as the fleet norm and call
     # them healthy.
-    scope = (f"{len(selected)} of {len(MACHINES)} machines"
-             if len(selected) < len(MACHINES) else f"{len(MACHINES)} machines")
+    scope = (f"{len(selected)} of {len(hosts)} machines"
+             if len(selected) < len(hosts) else f"{len(hosts)} machines")
     # Progress goes to stderr under --json so stdout stays pipeable into jq.
     print(f"surveying {scope} across {', '.join(studios)} ...\n",
           file=sys.stderr if args.as_json else sys.stdout)
     with ThreadPoolExecutor(max_workers=8) as pool:
         surveyed = list(pool.map(
-            lambda kv: survey_machine(kv[0], kv[1], token_for(kv[0], tokens), studios),
-            sorted(MACHINES.items()),
+            lambda kv: survey_machine(kv[0], kv[1],
+                                      token_for(kv[0], tokens, token_keys), studios),
+            sorted(hosts.items()),
         ))
     assign_states(surveyed)
     surveyed = [m for m in surveyed if m["id"] in selected]
@@ -470,7 +484,7 @@ def main() -> int:
     print(f"\nstarting {to_start} downloads ({queued_gb:.1f} GB) ...")
     started = failed = 0
     for machine in online:
-        token = token_for(machine["id"], tokens)
+        token = token_for(machine["id"], tokens, token_keys)
         for item in plans[machine["id"]]:
             ok = api(machine["ip"], STUDIOS[item["studio"]], "/api/downloads",
                      token, body={"repo": item["repo"]})

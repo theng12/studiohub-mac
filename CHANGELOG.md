@@ -10,6 +10,30 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.84.4] — 2026-08-08
+
+### Security — the fleet's machine table was being published in a public repo
+
+- `tools/fleet_repair.py` carried a `MACHINES` dict mapping all 19 fleet machine
+  ids to their Tailscale addresses, and `token_for()` derived the fleet token
+  from the machine-id prefix. This repository is public, so both the topology
+  and the shape of the auth scheme were readable by anyone.
+- The table now loads from `fleet_machines.json`, an untracked file at the
+  launcher root — the same convention as `studios.json`, `controller_settings.json`
+  and the other per-machine files — or from whatever `FLEET_MACHINES_FILE`
+  points at, so one copy can serve both this repo and Voice Studio's
+  `fleet_test.py` without the two drifting apart. Each entry carries its own
+  `token_key`, so the repo no longer encodes which machines share a token.
+- **There is deliberately no built-in fallback list**, for the same reason the
+  RAM figures were never hardcoded here: a stale table plans against machines
+  that have moved. A missing config exits naming the expected path and format.
+- Replaced the one real address left in `STORYSTUDIO_INTEGRATION.md`'s example
+  payload with a placeholder, and the real machine ids used as fixtures in
+  `test_voice_qualification.py` with obviously synthetic ones.
+- This stops future publication only. The addresses remain in this repository's
+  git history and in any clone or fork already taken; rotating the fleet tokens
+  and re-addressing are the owner's call.
+
 ## [1.84.3] — 2026-08-07
 
 ### Changed — the fleet stops stocking Qwen3-TTS
