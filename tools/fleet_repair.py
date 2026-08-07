@@ -391,7 +391,9 @@ def main() -> int:
     # them healthy.
     scope = (f"{len(selected)} of {len(MACHINES)} machines"
              if len(selected) < len(MACHINES) else f"{len(MACHINES)} machines")
-    print(f"surveying {scope} across {', '.join(studios)} ...\n")
+    # Progress goes to stderr under --json so stdout stays pipeable into jq.
+    print(f"surveying {scope} across {', '.join(studios)} ...\n",
+          file=sys.stderr if args.as_json else sys.stdout)
     with ThreadPoolExecutor(max_workers=8) as pool:
         surveyed = list(pool.map(
             lambda kv: survey_machine(kv[0], kv[1], token_for(kv[0], tokens), studios),

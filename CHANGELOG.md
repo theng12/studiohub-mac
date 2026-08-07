@@ -10,6 +10,38 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.79.0] — 2026-08-07
+
+### Added — one SSD tool for every studio, with pruning
+
+- `tools/studio_models.py` stages Voice Studio's and Image Studio's model caches
+  onto one SSD folder and restores them onto each fleet Mac in a single pass.
+  A Mac needs both its voice and its image models and the trip to that Mac is
+  the expensive part, so it is one script, one folder, one run.
+- `restore --prune` also deletes models a machine has too little memory to run,
+  turning the visit into a repair *and* a cleanup. Across the fleet that is
+  196 GB of dead weight, almost all of it on 8 GB workers.
+- Pruning is deliberately narrow: it removes a model only when its floor is
+  known and exceeds this Mac's memory. Companions (codecs, tokenizers) are never
+  pruned, and a model whose floor nobody has measured is never touched.
+- Models with no measured floor are no longer restored by default either, which
+  matches how `fleet_repair.py` already treats them. `--include-unqualified`
+  opts in — the way to trial Z-Image on an 8 GB worker.
+
+### Fixed — two ways this could have shipped wrong values fleet-wide
+
+- Nothing is hardcoded to one machine's layout. Each studio is asked where its
+  own cache lives, because the fleet does not match the staging machine: the
+  image launcher is `imagestudio-mac` there and `imagestudio-mac.git` on the
+  fleet, under a different home directory. A path constant would have been wrong
+  on every Mac it was carried to.
+- Memory floors resolve to the highest value any source knows, and staging now
+  warns when a studio is serving an older build than its checked-out code.
+  Caught in practice: Fish Audio's floor had been corrected to 16 GB on disk
+  while the running server still reported `None`. Staging from that server would
+  have marked Fish unqualified on all 19 machines — and taking the `None` at
+  face value would have deleted a working Fish cache off a 16 GB worker.
+
 ## [1.78.2] — 2026-08-07
 
 ### Fixed — `--machine` no longer weakens broken-cache detection

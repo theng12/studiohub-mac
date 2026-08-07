@@ -1137,6 +1137,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.79.0", date: "2026-08-07", items: [
+    "One tool now stages every studio's models onto an SSD and installs them on each Mac in a single visit, instead of one script per studio.",
+    "The same run can reclaim models a machine is too small to run — around 196 GB across the fleet, almost all of it on 8 GB workers.",
+    "Deleting is deliberately cautious: only models with a known memory requirement the machine cannot meet, never shared codecs, and never anything unmeasured.",
+  ]},
   { v: "1.78.2", date: "2026-08-07", items: [
     "Repairing a named subset of machines now reaches the same conclusions as a full fleet run; previously, filtering a run could weaken its ability to spot a damaged cache.",
   ]},
