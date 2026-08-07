@@ -10,6 +10,19 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.79.1] — 2026-08-07
+
+### Added
+
+- `SSD-COPY-README.md` — a plain-language, copy-paste guide for the SSD model
+  copy: two commands on the staging machine, three at each Mac, plus what the
+  tool will and will not delete. Written to be readable at the machine rather
+  than from a chat transcript, and the guide tells you to copy it onto the SSD
+  itself so it is available before the `git pull` step.
+- Every command uses `~/pinokio/api/studiohub-mac*/`, which resolves whether the
+  launcher folder carries a `.git` suffix — it does on the fleet and does not on
+  the staging machine.
+
 ## [1.79.0] — 2026-08-07
 
 ### Added — one SSD tool for every studio, with pruning
