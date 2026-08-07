@@ -19,7 +19,7 @@ Every command below can be pasted straight into Terminal.
 cd ~/pinokio/api/studiohub-mac*/ && python3 tools/studio_models.py stage --plan
 ```
 
-You should see roughly **129 GB** — about 51 GB of voice models and 77 GB of
+You should see roughly **50 GB** — about 28 GB of voice models and 23 GB of
 image models. If it says a studio is "not reachable", open that studio in
 Pinokio so it is running, then run the command again.
 
@@ -81,9 +81,9 @@ That's it. Move to the next Mac.
 - It skips models that are already there and complete, so running it twice is
   safe and the second run is fast.
 - If a model is there but damaged, it replaces it.
-- `--prune` deletes models that Mac is too small to run. Across all your Macs
-  that is about **196 GB** of wasted space, almost all of it on the 8 GB ones.
-
+- `--prune` deletes models that Mac cannot use — around **90 GB** on a machine
+  that has been collecting them, counting both models dropped from the catalogue
+  and models the Mac is too small to run.
 - It also skips and removes voice models that **cannot clone a voice**, since
   the fleet exists to clone your own voices. Kokoro is kept anyway because it is
   tiny and handy for quick narration.
@@ -103,20 +103,6 @@ If you would rather not delete anything, just leave `--prune` off:
 ```bash
 cd ~/pinokio/api/studiohub-mac*/ && python3 tools/studio_models.py restore
 ```
-
----
-
-## The two 8 GB test models
-
-Z-Image Turbo 3-bit and 4-bit have never been measured, so they are **skipped by
-default**. If you want to try them on an 8 GB Mac, add one word:
-
-```bash
-cd ~/pinokio/api/studiohub-mac*/ && python3 tools/studio_models.py restore --prune --include-unqualified
-```
-
-If they fail there, tell me and I will raise their requirement so they stop
-being offered on small machines.
 
 ---
 

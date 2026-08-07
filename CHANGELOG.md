@@ -10,6 +10,13 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.84.2] — 2026-08-07
+
+### Changed
+
+- `SSD-COPY-README.md` matches the final model set: the copy is ~50 GB rather
+  than ~129 GB, and the Z-Image section is gone with the models it described.
+
 ## [1.84.1] — 2026-08-07
 
 ### Fixed — three faults a dry run caught before any machine was visited
