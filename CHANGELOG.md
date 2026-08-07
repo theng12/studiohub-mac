@@ -10,6 +10,32 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.80.0] — 2026-08-07
+
+### Changed — the fleet now stocks only voice models that can clone
+
+- The fleet exists to clone the owner's own voices, so a voice model that cannot
+  clone earns nothing by occupying 19 machines. `studio_models.py` no longer
+  carries them to the SSD, no longer installs them, and prunes them when found.
+  Kokoro is kept as a deliberate exception at 0.34 GB, as is the speech-to-text
+  model the transcribe-back check depends on.
+- On the staging machine this removes 15.4 GB from the copy, including all three
+  Qwen3-TTS preset and voice-design checkpoints, Orpheus, Voxtral and VibeVoice.
+- This is a stocking policy, not a catalogue change: every model stays visible
+  and installable in Voice Studio. `--keep-non-cloning` restores the old
+  behaviour for a single run.
+- Companions now follow their parents. A codec is carried only while some model
+  that uses it survives the policy — dropping every Orpheus variant used to
+  leave its SNAC codec behind as a permanent orphan, because the
+  "never prune a companion" rule protected it unconditionally.
+
+### Fixed
+
+- Fish Audio S2 Pro's baseline said it required 24 GB while the qualification
+  harness admits 16 and 24 GB tiers and the Voice Studio catalogue says 16. The
+  stale 24 GB record, last reconciled 2026-08-02, made Fish look ineligible on
+  every 16 GB worker. All three sources now agree on 16 GB.
+
 ## [1.79.1] — 2026-08-07
 
 ### Added

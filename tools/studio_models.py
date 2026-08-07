@@ -60,6 +60,56 @@ DEFAULT_ROOT = Path("/Volumes/UGREEN-1TB/studio-models")
 MANIFEST_NAME = "MANIFEST.json"
 STT_FAMILY = "Whisper (speech-to-text)"
 
+# The fleet exists to clone one of the owner's own voices, so a voice model that
+# cannot clone earns nothing by sitting on 19 machines. Kokoro is the deliberate
+# exception: 0.34 GB, and useful for quick preset narration.
+#
+# This is a stocking policy, not a catalogue change -- the models stay visible
+# and installable in Voice Studio. It only decides what gets carried to, kept
+# on, and reclaimed from the fleet. Pass --keep-non-cloning to ignore it.
+CLONE_CAPABILITY = "voice-cloning"
+NON_CLONING_KEEP = frozenset({"mlx-community/Kokoro-82M-bf16"})
+
+
+def stocked(studio: str, repo: str, capabilities: list[str],
+            companions: set[str], keep_non_cloning: bool) -> bool:
+    """Should this model be carried to and kept on the fleet?
+
+    `companions` must be the codecs still needed by models that survive this
+    policy, not every companion in the catalogue -- see `needed_companions`.
+    """
+    if keep_non_cloning or studio != "voice":
+        return True
+    if repo in NON_CLONING_KEEP or repo in companions:
+        return True
+    # Whisper is speech-to-text; it has no cloning capability and is needed by
+    # the transcribe-back check that validates every other model.
+    if "whisper" in repo.lower():
+        return True
+    return CLONE_CAPABILITY in capabilities
+
+
+def needed_companions(studio: str, models: list[dict],
+                      keep_non_cloning: bool) -> set[str]:
+    """Codecs and tokenizers still required once the policy is applied.
+
+    A companion is only worth carrying while some model that uses it survives.
+    Orpheus's SNAC codec is the case that made this necessary: dropping every
+    Orpheus variant as non-cloning left its codec behind as an orphan that the
+    "never prune a companion" rule would have preserved forever.
+    """
+    needed: set[str] = set()
+    for m in models:
+        if not is_local(m):
+            continue
+        parent_kept = stocked(studio, m["repo"], m.get("capabilities") or [],
+                              set(), keep_non_cloning)
+        if not parent_kept:
+            continue
+        for c in (m.get("cache") or {}).get("companions") or []:
+            needed.add(c["repo"])
+    return needed
+
 
 # ---------------------------------------------------------------- discovery
 
@@ -189,7 +239,7 @@ def resolve_floor(repo: str, *sources: dict) -> float | None:
 
 # ------------------------------------------------------------------- stage
 
-def do_stage(root: Path, plan_only: bool) -> int:
+def do_stage(root: Path, plan_only: bool, keep_non_cloning: bool) -> int:
     plans, notes = {}, []
     for name, meta in STUDIOS.items():
         hub, models = discover(meta["port"])
@@ -199,13 +249,18 @@ def do_stage(root: Path, plan_only: bool) -> int:
         stale = staleness(meta["port"], hub)
         if stale:
             notes.append(f"{meta['label']} {stale}")
-        families, floors, _ = catalog_index(models)
-        jobs = []
+        families, floors, _all_companions = catalog_index(models)
+        companions = needed_companions(name, models, keep_non_cloning)
+        caps = {m["repo"]: (m.get("capabilities") or []) for m in models}
+        jobs, unstocked = [], []
         for src in sorted(hub.iterdir()):
             if not src.is_dir() or src.name.startswith("."):
                 continue
             repo = dirname_to_repo(src.name)
             if repo is None:
+                continue
+            if not stocked(name, repo, caps.get(repo, []), companions, keep_non_cloning):
+                unstocked.append((repo, dir_bytes(src)))
                 continue
             fam = families.get(repo)
             if fam is None:
@@ -214,7 +269,7 @@ def do_stage(root: Path, plan_only: bool) -> int:
                 else:
                     continue  # not in this studio's catalogue; don't ship junk
             jobs.append((src, repo, fam.replace("/", "-"), floors.get(repo)))
-        plans[name] = {"hub": hub, "jobs": jobs}
+        plans[name] = {"hub": hub, "jobs": jobs, "unstocked": unstocked}
 
     if not plans:
         for n in notes:
@@ -232,6 +287,12 @@ def do_stage(root: Path, plan_only: bool) -> int:
             by_fam[fam] = by_fam.get(fam, 0) + dir_bytes(src)
         for fam, b in sorted(by_fam.items(), key=lambda kv: -kv[1]):
             print(f"    {fam[:44]:46} {b / 1e9:6.2f} GB")
+        if p["unstocked"]:
+            gb = sum(b for _, b in p["unstocked"]) / 1e9
+            print(f"    not stocked — cannot clone ({gb:.2f} GB, "
+                  f"--keep-non-cloning to include):")
+            for repo, b in sorted(p["unstocked"], key=lambda kv: -kv[1]):
+                print(f"      {repo[:50]:52} {b / 1e9:5.2f} GB")
         print()
     for n in notes:
         print(f"  note: {n}")
@@ -277,7 +338,8 @@ def do_stage(root: Path, plan_only: bool) -> int:
 # ----------------------------------------------------------------- restore
 
 def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
-               force: bool, include_unqualified: bool) -> int:
+               force: bool, include_unqualified: bool,
+               keep_non_cloning: bool) -> int:
     manifest_path = root / MANIFEST_NAME
     if not manifest_path.is_file():
         sys.exit(f"no {MANIFEST_NAME} under {root} — is the SSD plugged in?")
@@ -299,7 +361,9 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
                       f"on :{meta['port']} — skipped\n")
             continue
 
-        families, local_floors, companions = catalog_index(models)
+        families, local_floors, _all_companions = catalog_index(models)
+        companions = needed_companions(name, models, keep_non_cloning)
+        caps = {m["repo"]: (m.get("capabilities") or []) for m in models}
         ssd_floors = {e["repo"]: e.get("floor_gb") for e in staged}
         state_of = {m["repo"]: (m.get("cache") or {}).get("state")
                     for m in models}
@@ -309,6 +373,9 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
         # ---- restore
         want, defer, unqualified = [], [], []
         for e in staged:
+            if not stocked(name, e["repo"], caps.get(e["repo"], []),
+                           companions, keep_non_cloning):
+                continue
             floor = resolve_floor(e["repo"], local_floors, ssd_floors)
             if restore_all:
                 want.append((e, floor))
@@ -377,12 +444,16 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
                 repo = dirname_to_repo(d.name)
                 if repo is None or repo in companions:
                     continue  # never prune a codec/tokenizer
+                if not stocked(name, repo, caps.get(repo, []), companions,
+                               keep_non_cloning):
+                    victims.append((d, repo, None, dir_bytes(d)))
+                    continue
                 floor = resolve_floor(repo, local_floors, ssd_floors)
                 if floor is not None and floor > ram:
                     victims.append((d, repo, floor, dir_bytes(d)))
             for d, repo, floor, b in victims:
-                print(f"  prune {repo[:48]:50} needs {floor:>2.0f} GB  "
-                      f"{b / 1e9:5.2f} GB")
+                why = f"needs {floor:>2.0f} GB" if floor else "cannot clone"
+                print(f"  prune {repo[:48]:50} {why:>12}  {b / 1e9:5.2f} GB")
                 pruned += 1
                 pruned_bytes += b
                 if not plan_only:
@@ -411,6 +482,8 @@ def main() -> int:
     s = sub.add_parser("stage", help="copy this Mac's caches onto the SSD")
     s.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     s.add_argument("--plan", action="store_true", help="show the plan, write nothing")
+    s.add_argument("--keep-non-cloning", action="store_true",
+                   help="also stock voice models that cannot clone (default: skip them)")
 
     r = sub.add_parser("restore", help="install onto this Mac from the SSD")
     r.add_argument("--root", type=Path, default=DEFAULT_ROOT)
@@ -422,16 +495,19 @@ def main() -> int:
                    help="restore everything, ignoring this Mac's memory tier")
     r.add_argument("--force", action="store_true",
                    help="replace local copies even when already complete")
+    r.add_argument("--keep-non-cloning", action="store_true",
+                   help="also keep voice models that cannot clone (default: prune them)")
     r.add_argument("--include-unqualified", action="store_true",
                    help="also install models with no measured memory floor "
                         "(use when trialling a model on a tier, e.g. Z-Image on 8 GB)")
 
     args = ap.parse_args()
     if args.command == "stage":
-        return do_stage(args.root, args.plan)
+        return do_stage(args.root, args.plan, args.keep_non_cloning)
     return do_restore(args.root, plan_only=args.plan, prune=args.prune,
                       restore_all=args.all, force=args.force,
-                      include_unqualified=args.include_unqualified)
+                      include_unqualified=args.include_unqualified,
+                      keep_non_cloning=args.keep_non_cloning)
 
 
 if __name__ == "__main__":

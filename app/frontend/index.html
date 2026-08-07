@@ -1137,6 +1137,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.80.0", date: "2026-08-07", items: [
+    "Voice models that cannot clone a voice are no longer stocked on the fleet — Kokoro and the speech-to-text checker are kept, everything else is skipped and reclaimed, saving 15.4 GB per machine.",
+    "Shared codecs now follow the models that use them, so dropping a model no longer strands its codec on every machine forever.",
+    "Fish Audio S2 Pro is recognised as needing 16 GB rather than 24, so it is no longer treated as ineligible on 16 GB workers.",
+  ]},
   { v: "1.79.1", date: "2026-08-07", items: [
     "Added a plain-language copy-paste guide for the SSD model copy, meant to be read at each machine rather than from a chat transcript.",
   ]},

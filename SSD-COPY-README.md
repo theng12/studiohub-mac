@@ -84,11 +84,19 @@ That's it. Move to the next Mac.
 - `--prune` deletes models that Mac is too small to run. Across all your Macs
   that is about **196 GB** of wasted space, almost all of it on the 8 GB ones.
 
+- It also skips and removes voice models that **cannot clone a voice**, since
+  the fleet exists to clone your own voices. Kokoro is kept anyway because it is
+  tiny and handy for quick narration.
+
 ### What it will never delete
 
-- Anything a Mac can actually run.
-- Shared parts that other models depend on.
+- Anything a Mac can actually run and that can clone.
+- Kokoro, or the speech-to-text model used to check the others.
+- Shared parts that models you are keeping still depend on.
 - Anything whose memory requirement has not been measured yet.
+
+If you want the non-cloning ones kept after all, add `--keep-non-cloning` to any
+command.
 
 If you would rather not delete anything, just leave `--prune` off:
 
