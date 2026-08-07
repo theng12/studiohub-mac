@@ -377,19 +377,28 @@ def main() -> int:
     tokens = json.loads(TOKENS_FILE.read_text())
 
     studios = args.studio or sorted(STUDIOS)
-    targets = {mid: ip for mid, ip in MACHINES.items()
-               if not args.machine or any(f in mid for f in args.machine)}
-    if not targets:
+    selected = {mid for mid in MACHINES
+                if not args.machine or any(f in mid for f in args.machine)}
+    if not selected:
         print("no machines matched", file=sys.stderr)
         return 2
 
-    print(f"surveying {len(targets)} machines across {', '.join(studios)} ...\n")
+    # Always survey the whole fleet, even when --machine narrows the report.
+    # Peer comparison is only meaningful against the full population: surveying
+    # just the machines named on the command line means the reference is drawn
+    # from exactly the machines suspected of being broken, and a run targeting
+    # two damaged caches would take their damage as the fleet norm and call
+    # them healthy.
+    scope = (f"{len(selected)} of {len(MACHINES)} machines"
+             if len(selected) < len(MACHINES) else f"{len(MACHINES)} machines")
+    print(f"surveying {scope} across {', '.join(studios)} ...\n")
     with ThreadPoolExecutor(max_workers=8) as pool:
         surveyed = list(pool.map(
             lambda kv: survey_machine(kv[0], kv[1], token_for(kv[0], tokens), studios),
-            sorted(targets.items()),
+            sorted(MACHINES.items()),
         ))
     assign_states(surveyed)
+    surveyed = [m for m in surveyed if m["id"] in selected]
 
     if args.as_json:
         print(json.dumps(surveyed, indent=2))

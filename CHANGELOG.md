@@ -10,6 +10,19 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.78.2] — 2026-08-07
+
+### Fixed — `--machine` no longer weakens broken-cache detection
+
+- Narrowing a repair run to specific machines also narrowed the population that
+  broken-cache detection compares against, so a run targeting two damaged
+  caches drew its reference from exactly those damaged caches. Observed live: a
+  VibeVoice peer median of 105% across the fleet collapsed to 14% when the run
+  was filtered to three machines.
+- The whole fleet is now always surveyed to build the comparison; `--machine`
+  and `--studio` filter only what is reported and acted on. A filtered run and
+  a full run now reach identical conclusions about the same machine.
+
 ## [1.78.1] — 2026-08-07
 
 ### Fixed — broken-cache detection now compares machines, not catalog sizes

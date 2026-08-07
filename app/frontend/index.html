@@ -1137,6 +1137,9 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.78.2", date: "2026-08-07", items: [
+    "Repairing a named subset of machines now reaches the same conclusions as a full fleet run; previously, filtering a run could weaken its ability to spot a damaged cache.",
+  ]},
   { v: "1.78.1", date: "2026-08-07", items: [
     "Broken model caches are now identified by comparing each machine against the rest of the fleet instead of against catalogue size estimates, which are approximate and often stale.",
     "This removed six false alarms that would have re-downloaded perfectly healthy caches, and caught one genuinely damaged cache the earlier check had passed.",
