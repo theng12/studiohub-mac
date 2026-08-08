@@ -1125,6 +1125,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.0.1", date: "2026-08-09", items: [
+    "Memory-mode idle thresholds now have <b>one source of truth</b>: the Studio that actually releases the model. Hub still validates every mode and shows its label, while each Studio reports its own resolved <code>idle_seconds</code> in its policy row.",
+    "Fleet controls, saved operator choices, and idle-release timing are unchanged; this removes an unused duplicate table that could have drifted away from the workers.",
+  ]},
   { v: "2.0.0", date: "2026-08-09", items: [
     "<b>Studio Hub is now local-only.</b> Hosted model IDs are refused before a job is saved, no matter whether the caller is GenStudio, the Jobs tab, or another client. Local generation, render, transcription, fleet control, shared voices, and memory management are unchanged.",
     "The <b>Models</b> and <b>Stats</b> tabs no longer carry provider groups, prices, Local/Cloud switches, or lane totals. Sibling catalog rows that still describe hosted routes are filtered at the Hub boundary instead of leaking into fleet inventory.",

@@ -10,6 +10,16 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.0.1] — 2026-08-09
+
+### Changed — memory-mode thresholds have one source of truth
+
+- Hub now publishes only the names and labels of memory modes. Each Studio remains
+  the sole owner of its idle thresholds and reports its resolved `idle_seconds` in
+  its policy row, preventing Hub's unused duplicate table from drifting away from
+  the worker that actually releases the model. Mode validation, fleet controls,
+  saved operator choices, and idle-release behavior are unchanged.
+
 ## [2.0.0] — 2026-08-09
 
 ### Removed — Studio Hub is now a local fleet controller only

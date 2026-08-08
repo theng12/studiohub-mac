@@ -12,11 +12,13 @@ from .registry import label_for
 
 
 SUPPORTED_MODALITIES = {"image", "chat", "video", "music", "voice"}
+# Hub validates mode names and renders their labels. Each Studio owns and reports
+# the actual idle threshold, so keeping a second table here would risk drift.
 MODES = {
-    "performance": {"label": "Performance", "idle_seconds": None},
-    "balanced": {"label": "Balanced", "idle_seconds": 600},
-    "memory_saver": {"label": "Memory Saver", "idle_seconds": 120},
-    "immediate": {"label": "Immediate", "idle_seconds": 0},
+    "performance": {"label": "Performance"},
+    "balanced": {"label": "Balanced"},
+    "memory_saver": {"label": "Memory Saver"},
+    "immediate": {"label": "Immediate"},
 }
 # Every Studio moved its own default off "performance" after 2026-08-07, when 16
 # of 19 fleet machines sat below the memory floor with 1.5-4.4 GB of swap because

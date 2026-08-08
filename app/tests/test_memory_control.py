@@ -54,6 +54,7 @@ def test_inventory_uses_authenticated_direct_and_peer_routes():
     data = asyncio.run(control.inventory())
 
     assert data["default_mode"] == DEFAULT_MODE == "balanced"
+    assert all("idle_seconds" not in option for option in data["options"])
     assert [row["id"] for row in data["studios"]] == ["image", "voice@renderbox"]
     assert data["summary"] == {"total": 2, "ready": 2, "offline": 0,
                                "update_required": 0}
