@@ -27,8 +27,6 @@ CATALOG_TIMEOUT_S = 10.0
 CATALOG_TTL_S = 60.0
 CATALOG_REFRESH_INTERVAL_S = 60.0
 CATALOG_STALE_S = 5 * 60.0
-PROVIDER_TIMEOUT_S = 3.0
-PROVIDER_TTL_S = 30.0
 HEALTH_FAILURES_TO_DOWN = 3
 HEALTH_SUCCESSES_TO_RECOVER = 2
 
@@ -95,7 +93,6 @@ class StudioMonitor:
         self.catalog_state_path = (
             catalog_state_path or DATA_DIR / "catalog_observations.json"
         )
-        self._provider_cache: dict[str, tuple[float, dict]] = {}
         self._restart_alerts: dict[str, dict] = {}
         self._client = httpx.AsyncClient()
         self._task: asyncio.Task | None = None
@@ -142,7 +139,6 @@ class StudioMonitor:
             self._catalog_cache.pop(studio_id, None)
             self._transcribe_cache.pop(studio_id, None)
             self._catalog_meta.pop(studio_id, None)
-            self._provider_cache.pop(studio_id, None)
             self._restart_alerts.pop(studio_id, None)
         self._save_catalog_state()
 
@@ -304,16 +300,6 @@ class StudioMonitor:
 
     async def poll_all(self):
         await asyncio.gather(*(self._poll_one(s) for s in self.registry))
-        # Each peer Hub is authoritative for the providers on its own Voice
-        # Studio. Remote provider health arrives through the peer resource
-        # snapshot, so this Hub only calls its local Voice Studio directly.
-        await asyncio.gather(*(
-            self.get_provider_health(s)
-            for s in self.registry
-            if s.get("modality") == "voice"
-            and s.get("machine", "local") == "local"
-            and self.status.get(s["id"], {}).get("status") == "up"
-        ))
         # metrics sample + watchdog revival pass (late import: no cycle)
         from . import metrics, peers
         metrics.on_poll(self.registry, self.status)
@@ -503,56 +489,6 @@ class StudioMonitor:
             self._catalog_meta.setdefault(sid, {})["last_error"] = \
                 self._safe_error(exc)
             return cached[1] if cached else None
-
-    async def get_provider_health(self, studio: dict, force: bool = False) -> dict:
-        """Cache Voice Studio's public cloud-provider readiness summary.
-
-        Only explicit public fields are retained. API keys and future private
-        settings can never leak into peer snapshots even if Voice Studio adds
-        them to its provider response later.
-        """
-        sid = studio["id"]
-        cached = self._provider_cache.get(sid)
-        if cached and not force and (time.time() - cached[0]) < PROVIDER_TTL_S:
-            return cached[1]
-        if self.status.get(sid, {}).get("status") != "up":
-            return cached[1] if cached else {"supported": False, "providers": []}
-        try:
-            url, headers = studio_request(studio, "/api/providers")
-            r = await self._client.get(
-                url, headers=headers, timeout=PROVIDER_TIMEOUT_S,
-            )
-            if r.status_code == 404:
-                data = {"supported": False, "providers": [], "stale": False}
-            else:
-                r.raise_for_status()
-                rows = r.json().get("providers") or []
-                data = {
-                    "supported": True,
-                    "stale": False,
-                    "providers": [{
-                        "key": str(row.get("key") or ""),
-                        "name": str(row.get("name") or row.get("key") or ""),
-                        "has_key": bool(row.get("has_key")),
-                        "paid": bool(row.get("paid")),
-                        "enabled": bool(row.get("enabled")),
-                        "live": bool(row.get("live")),
-                        "models": len(row.get("models") or []),
-                    } for row in rows if row.get("key")],
-                }
-            self._provider_cache[sid] = (time.time(), data)
-            return data
-        except Exception:
-            data = {
-                **(cached[1] if cached else {"supported": False, "providers": []}),
-                "stale": True,
-            }
-            self._provider_cache[sid] = (time.time(), data)
-            return data
-
-    def provider_health(self, studio_id: str) -> dict:
-        cached = self._provider_cache.get(studio_id)
-        return cached[1] if cached else {"supported": False, "providers": []}
 
     def _assemble_aggregate_catalog(
             self, results: list[dict | None],

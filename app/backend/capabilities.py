@@ -179,24 +179,7 @@ def _controls(model: dict, modality: str, cloud: bool) -> dict:
     return controls
 
 
-def _provider_health(monitor, studio: dict, provider: str | None) -> bool | None:
-    if not provider:
-        return None
-    machine = studio.get("machine", "local")
-    if machine == "local":
-        health = monitor.provider_health(studio["id"])
-    else:
-        peer = peers.cached(machine) or {}
-        service = ((peer.get("studios") or {}).get(studio.get("modality")) or {})
-        health = service.get("cloud_providers") or {}
-    if health.get("stale"):
-        return False
-    row = next((item for item in (health.get("providers") or [])
-                if item.get("key") == provider), None)
-    return bool(row and row.get("enabled") and row.get("live"))
-
-
-def _model_capability(model: dict, studio: dict, worker: dict, monitor) -> dict:
+def _model_capability(model: dict, studio: dict, worker: dict) -> dict:
     modality = str(model.get("hub_modality") or studio.get("modality") or "unknown")
     operation = str(model.get("hub_operation") or OPERATION_BY_MODALITY.get(
         modality, f"{modality}.operation"))
@@ -211,14 +194,15 @@ def _model_capability(model: dict, studio: dict, worker: dict, monitor) -> dict:
     provider = str(model.get("provider") or model.get("cloud_provider") or "").strip() or None
     if provider is None and repo.startswith("provider:"):
         provider = repo.split(":", 2)[1] or None
+    # Cloud readiness comes from what the studio itself reports about its own
+    # credentials. Voice Studio used to be asked separately via a Hub-side
+    # provider-health poll; it no longer exposes cloud providers at all, so
+    # every remaining cloud lane (video, chat, image) uses this one path.
     provider_ready = None
     if cloud:
         explicit = [model.get(key) for key in ("cloud_credentials_ok", "key_set")
                     if key in model]
         provider_ready = all(bool(value) for value in explicit) if explicit else None
-        if modality == "voice":
-            reported = _provider_health(monitor, studio, provider)
-            provider_ready = reported if reported is not None else provider_ready
 
     installed = None if cloud else bool(model.get("hub_cached"))
     runtime_compatible = model.get("runtime_compatible") is not False
@@ -515,7 +499,7 @@ async def build_snapshot(monitor, *, app_version: str, settings: dict,
             },
         }
         worker["models"] = [
-            _model_capability(model, studio, worker, monitor)
+            _model_capability(model, studio, worker)
             for model in models_by_studio.get(studio_id, [])
         ]
         if not any(model["availability"]["available_now"] for model in worker["models"]):

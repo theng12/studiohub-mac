@@ -10,6 +10,40 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.85.0] — 2026-08-08
+
+### Removed — Voice Studio no longer exposes `/api/providers`, so the Hub stops aggregating it
+
+Voice Studio 1.33.0 and Image Studio 1.29.0 removed cloud-provider support
+entirely. `GET /api/providers` no longer exists on any Voice Studio, so every
+piece of Hub machinery built on top of it could only ever report an empty set
+from here on. Nothing was broken — the poller already treated a 404 as
+"unsupported" — this is dead weight coming out.
+
+- **Removed `GET /api/hub/providers`.** The endpoint is gone rather than left
+  returning a permanently empty inventory, so a caller finds out immediately
+  instead of reading "no providers" as "no providers configured". Its
+  aggregator (`_cloud_provider_inventory`) and the `cloud_providers` key on
+  `GET /api/hub/summary` are removed with it.
+- **Removed the provider-health poll.** Each health cycle asked every local,
+  up Voice Studio for `/api/providers`; that call, its 30-second cache, its
+  timeouts, and the per-studio provider state the monitor kept are all gone.
+  `GET /api/hub/resources` no longer decorates Voice Studio process stats with
+  a `cloud_providers` block.
+- **Removed the dashboard's cloud-audio readout** — the per-card "Cloud audio"
+  row, the compact list-view provider line, and the "N cloud ready" element of
+  the header summary. Only Voice Studios were ever asked, so no other card
+  changes.
+- **Cloud support itself is untouched.** Video Studio and Chat Studio still
+  route to providers, and the cloud lane, the ledger's `is_cloud` column,
+  provider grouping, and the render governor bypass all behave exactly as
+  before. Cloud readiness for the remaining lanes now comes solely from what a
+  studio reports about its own credentials, which is the path video and chat
+  already used.
+- Cached catalogue observations still listing Voice Studio's 17 retired
+  `provider:`-prefixed model ids need no action: that file is untracked runtime
+  state and each poll replaces a studio's catalogue wholesale.
+
 ## [1.84.4] — 2026-08-08
 
 ### Security — the fleet's machine table was being published in a public repo

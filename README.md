@@ -19,8 +19,6 @@ The Hub runs on fixed port **47873** and provides:
   opt individual local/remote Studios into 10-minute, 2-minute, or immediate
   idle release. A manual release button unloads idle models without stopping an
   app or interrupting active work.
-- **Cloud audio readiness** — Voice Studio cards show which provider gateways are
-  configured and live on each machine without exposing provider credentials.
 - **Central ElevenLabs gateway** — cloud ElevenLabs batches always use Voice
   Studio on the main Hub Mac, where the named account pool, quotas, per-account
   voice IDs, and safe paid-call recovery live. Remote Voice Studios need no
@@ -254,7 +252,6 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `PATCH /api/hub/shared-voices/{id}` · `POST /api/hub/shared-voices/{id}/sync` | Correct shared metadata/transcript and resynchronize / manually retry all targets |
 | `DELETE /api/hub/shared-voices/{id}` · `POST /api/hub/shared-voices/{id}/delete-sync` | Remove the Hub master and exact managed fleet copies / retry pending removals |
 | `GET /api/hub/shared-voices/{id}/audio` | Stream the canonical authenticated reference clip |
-| `GET /api/hub/providers` | Fleet-wide cloud audio provider readiness, configuration counts, and reporting Voice Studio endpoints |
 | `POST /api/hub/transcribe` | Multipart audio transcription routed to a free Voice Studio that has the selected Whisper model cached |
 | `POST /api/hub/transcription/jobs` | Stream a multi-file episode transcription batch into the persistent fleet queue |
 | `GET /api/hub/transcription/jobs` · `GET /api/hub/transcription/jobs/{batch}` | List batches/lifetime totals or read chapter-level status |
@@ -277,7 +274,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `DELETE /api/hub/registry/machines/{machine}` | Unregister a machine and purge its live inventory/update state (history is retained) |
 | `GET /api/hub/fleet` · `POST /api/hub/fleet` | Fleet token status / set (`{token}`) — enables remote specs + control |
 | `GET /api/hub/resources?local_only=true` | This machine only (peers call with this to prevent recursion) |
-| `GET /api/hub/resources` | Host memory/CPU + per-studio process stats, including key-free Voice provider health |
+| `GET /api/hub/resources` | Host memory/CPU + per-studio process stats |
 | `GET /api/hub/memory` | Read model-memory policy, loaded-model state, friendly process title, and reachability for every model-hosting Studio |
 | `PUT /api/hub/memory-policy` | Apply `{mode, studio_ids?}` using `performance`, `balanced`, `memory_saver`, or `immediate` |
 | `POST /api/hub/memory/release` | Release idle model/accelerator memory on selected Studios; returns one result per worker |

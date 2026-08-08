@@ -118,7 +118,6 @@ def _reset_state():
     monitor._transcribe_cache.clear()
     monitor._catalog_meta.clear()
     monitor._catalog_refresh_lock = None
-    monitor._provider_cache.clear()
     monitor._restart_alerts.clear()
 
 
