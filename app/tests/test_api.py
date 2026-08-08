@@ -38,8 +38,10 @@ def test_dashboard_includes_render_studio():
     assert 'onclick="updateReadyHubs()"' in dashboard
     assert 'function startHubUpdate(machines = null)' in dashboard
     assert 'class="btn primary compact"' in dashboard
-    assert 'function providerHealthHTML(s, compact = false)' in dashboard
-    assert 'sum.cloud_providers?.ready_count || 0' in dashboard
+    # Voice Studio no longer exposes /api/providers, so the dashboard must not
+    # render (or ask for) cloud-audio provider health anywhere.
+    assert 'providerHealth' not in dashboard
+    assert 'cloud_providers' not in dashboard
     assert '>Cancel image queue</button>' in dashboard
     assert 'data-job-kind="image"' in dashboard
     assert 'data-job-kind="voice"' in dashboard
@@ -94,36 +96,30 @@ def test_hub_health_and_studios(authed):
     assert all("machine_label" in s for s in studios)
 
 
-def test_cloud_provider_health_is_aggregated_without_keys(authed):
-    import time
-    from backend import main
+def test_voice_provider_aggregation_is_retired(authed):
+    """Voice Studio dropped /api/providers, so the Hub no longer aggregates it.
 
-    main.monitor.status["voice"] = {"status": "up", "last_seen": time.time()}
-    main.monitor._provider_cache["voice"] = (time.time(), {
-        "supported": True,
-        "providers": [{
-            "key": "genaipro", "name": "GenAIPro", "has_key": True,
-            "paid": True, "enabled": True, "live": True, "models": 4,
-        }, {
-            "key": "fal", "name": "fal.ai", "has_key": True,
-            "paid": False, "enabled": True, "live": False, "models": 0,
-        }],
-    })
+    The endpoint is gone rather than returning a permanently empty result, and
+    neither the summary nor the resource snapshot carries provider health.
+    """
+    from backend import main, monitor as mon
 
-    response = authed.get("/api/hub/providers")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["provider_count"] == 2
-    assert data["ready_count"] == 1
-    genaipro = next(row for row in data["providers"] if row["key"] == "genaipro")
-    assert genaipro["ready_on"] == ["local"]
-    assert genaipro["endpoints"][0]["models"] == 4
-    assert "api_key" not in response.text
+    assert authed.get("/api/hub/providers").status_code == 404
+    assert not hasattr(main.monitor, "provider_health")
+    assert not hasattr(main.monitor, "get_provider_health")
+    assert not hasattr(main, "_cloud_provider_inventory")
 
     summary = authed.get("/api/hub/summary").json()
-    voice = next(row for row in summary["studios"] if row["id"] == "voice")
-    assert voice["cloud_providers"]["providers"][0]["key"] == "genaipro"
-    assert summary["cloud_providers"]["ready_count"] == 1
+    assert "cloud_providers" not in summary
+    assert all("cloud_providers" not in s for s in summary["studios"])
+    resources = authed.get("/api/hub/resources").json()
+    assert all("cloud_providers" not in (row or {})
+               for row in resources["studios"].values())
+
+    # the cloud lane itself survives — video and chat still route to providers
+    assert mon.is_cloud_lane(True, "video") is True
+    assert mon.is_cloud_lane(True, "render") is False
+    assert mon._provider_of({"provider": "fal"}) == "fal"
 
 
 def test_render_asset_stream_round_trip(authed):
@@ -337,7 +333,7 @@ def test_remove_machine_purges_live_inventory_and_update_state(authed):
     reg.set_studio_enabled("mac-clean", "image@mac-clean", False)
     for studio_id in studio_ids:
         monitor._catalog_cache[studio_id] = (time.time(), {"models": []})
-        monitor._provider_cache[studio_id] = (time.time(), {"providers": []})
+        monitor._transcribe_cache[studio_id] = (time.time(), {"models": []})
     peers._cache["mac-clean"] = (time.time(), {"reachable": True})
     fleet_ops._studio_versions = {
         "checked_at": time.time(),
@@ -352,7 +348,7 @@ def test_remove_machine_purges_live_inventory_and_update_state(authed):
     assert not studio_ids.intersection({row["id"] for row in monitor.registry})
     assert not studio_ids.intersection(monitor.status)
     assert not studio_ids.intersection(monitor._catalog_cache)
-    assert not studio_ids.intersection(monitor._provider_cache)
+    assert not studio_ids.intersection(monitor._transcribe_cache)
     assert "mac-clean" not in peers._cache
     assert "mac-clean" not in reg.load_labels()
     assert "mac-clean" not in reg.load_flags()

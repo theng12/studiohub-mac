@@ -959,13 +959,6 @@ def hub_resources(local_only: bool = Query(False)):
         st = monitor.status.get(s["id"], {})
         if machine == "local":
             process = studio_process_stats(s["port"]) if st.get("status") == "up" else None
-            if s.get("modality") == "voice":
-                process = dict(process or {})
-                health = monitor.provider_health(s["id"])
-                process["cloud_providers"] = {
-                    **health,
-                    "stale": bool(health.get("stale")) or st.get("status") != "up",
-                }
             per_studio[s["id"]] = process
         elif local_only:
             continue
@@ -992,71 +985,6 @@ def hub_resources(local_only: bool = Query(False)):
             "ts": time.time()}
 
 
-def _cloud_provider_inventory(resources: dict) -> dict:
-    """Aggregate key-free provider readiness across every Voice Studio."""
-    by_key: dict[str, dict] = {}
-    endpoints = []
-    for studio in monitor.registry:
-        if studio.get("modality") != "voice":
-            continue
-        health = ((resources.get("studios") or {}).get(studio["id"]) or {}).get(
-            "cloud_providers"
-        ) or {"supported": False, "providers": [], "stale": True}
-        endpoint = {
-            "studio": studio["id"],
-            "machine": studio.get("machine", "local"),
-            "supported": bool(health.get("supported")),
-            "stale": bool(health.get("stale")),
-            "providers": health.get("providers") or [],
-        }
-        endpoints.append(endpoint)
-        for provider in endpoint["providers"]:
-            key = provider.get("key")
-            if not key:
-                continue
-            row = by_key.setdefault(key, {
-                "key": key,
-                "name": provider.get("name") or key,
-                "ready_on": [],
-                "configured_on": [],
-                "available_on": [],
-                "endpoints": [],
-            })
-            target = {
-                "studio": endpoint["studio"],
-                "machine": endpoint["machine"],
-                "live": bool(provider.get("live")),
-                "has_key": bool(provider.get("has_key")),
-                "paid": bool(provider.get("paid")),
-                "enabled": bool(provider.get("enabled")),
-                "models": int(provider.get("models") or 0),
-                "stale": endpoint["stale"],
-            }
-            row["endpoints"].append(target)
-            machine = endpoint["machine"]
-            if machine not in row["available_on"]:
-                row["available_on"].append(machine)
-            if target["has_key"] and machine not in row["configured_on"]:
-                row["configured_on"].append(machine)
-            if target["live"] and not target["stale"] and machine not in row["ready_on"]:
-                row["ready_on"].append(machine)
-    providers = sorted(by_key.values(), key=lambda row: row["name"].lower())
-    return {
-        "providers": providers,
-        "endpoints": endpoints,
-        "provider_count": len(providers),
-        "ready_count": sum(1 for row in providers if row["ready_on"]),
-        "voice_studios": len(endpoints),
-        "reporting_studios": sum(1 for row in endpoints if row["supported"]),
-    }
-
-
-@app.get("/api/hub/providers")
-def hub_providers():
-    """Fleet-wide cloud audio-provider health without credentials."""
-    return _cloud_provider_inventory(hub_resources(local_only=False))
-
-
 def _build_summary() -> dict:
     workloads = {
         studio_id: {"kind": "generation"}
@@ -1074,10 +1002,6 @@ def _build_summary() -> dict:
     for s in studio_list:
         s["workload"] = workloads.get(s["id"])
         s["busy"] = s["workload"] is not None
-        if s.get("modality") == "voice":
-            s["cloud_providers"] = (
-                (resources.get("studios") or {}).get(s["id"]) or {}
-            ).get("cloud_providers")
     now = time.time()
     active_alerts = sum(1 for e in alerts.recent(100)
                         if now - e["ts"] < 3600 and e["kind"] != "studio_recovered")
@@ -1088,7 +1012,6 @@ def _build_summary() -> dict:
         # FastAPI Query(False) default object, which is truthy — that would drop
         # every remote machine from the summary (and thus the live dashboard).
         "resources": resources,
-        "cloud_providers": _cloud_provider_inventory(resources),
         "control_plane": {
             "settings": control_plane.public_settings(),
             "runtime": control_plane.runtime.status(),

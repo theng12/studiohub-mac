@@ -109,17 +109,16 @@ async def test_refresh_success_caches_host(reset):
         "host": {"total_gb": 64},
         "studios": {
             "image": {"rss_gb": 3},
-            "voice": {"cloud_providers": {
-                "supported": True,
-                "providers": [{"key": "genaipro", "live": True}],
-            }},
+            # a peer's per-studio stats are passed through verbatim, including
+            # nested structures this Hub version does not itself produce
+            "voice": {"rss_gb": 2, "proxy": {"https": True, "port": 47869}},
         },
     })
     await peers.refresh(REMOTE, FakeGet(resp=resp))
     c = peers.cached("mac-b")
     assert c["reachable"] and c["host"]["total_gb"] == 64
     assert c["studios"]["image"]["rss_gb"] == 3
-    assert c["studios"]["voice"]["cloud_providers"]["providers"][0]["key"] == "genaipro"
+    assert c["studios"]["voice"]["proxy"]["port"] == 47869
 
 
 @pytest.mark.asyncio
