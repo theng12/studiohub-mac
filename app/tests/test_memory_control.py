@@ -53,7 +53,7 @@ def test_inventory_uses_authenticated_direct_and_peer_routes():
 
     data = asyncio.run(control.inventory())
 
-    assert data["default_mode"] == DEFAULT_MODE == "performance"
+    assert data["default_mode"] == DEFAULT_MODE == "balanced"
     assert [row["id"] for row in data["studios"]] == ["image", "voice@renderbox"]
     assert data["summary"] == {"total": 2, "ready": 2, "offline": 0,
                                "update_required": 0}
@@ -107,7 +107,7 @@ def test_memory_routes_validate_and_expose_friendly_hub_title(authed, monkeypatc
     from backend import main
 
     async def inventory():
-        return {"default_mode": "performance", "options": [], "studios": [],
+        return {"default_mode": "balanced", "options": [], "studios": [],
                 "summary": {"total": 0, "ready": 0, "offline": 0,
                             "update_required": 0}}
 
@@ -125,7 +125,7 @@ def test_memory_routes_validate_and_expose_friendly_hub_title(authed, monkeypatc
     monkeypatch.setattr(main.memory_control, "set_mode", set_mode)
     monkeypatch.setattr(main.memory_control, "release", release)
 
-    assert authed.get("/api/hub/memory").json()["default_mode"] == "performance"
+    assert authed.get("/api/hub/memory").json()["default_mode"] == "balanced"
     assert authed.put("/api/hub/memory-policy", json={
         "mode": "balanced", "studio_ids": ["image"],
     }).json()["succeeded"] == 1
@@ -143,6 +143,16 @@ def test_whats_new_is_read_from_the_current_changelog(authed):
     assert data["releases"][0]["details"]
 
 
+def test_hub_never_defaults_the_fleet_to_the_mode_that_never_releases():
+    """Every Studio moved off "performance" after the 2026-08-07 swap incident;
+    Hub was missed and kept both a "performance" published default and a
+    pre-checked "performance" bulk-apply radio, so one Apply click could push
+    never-release to the whole fleet. Neither may point at it again."""
+    dashboard = (Path(__file__).parents[1] / "frontend" / "index.html").read_text()
+    assert DEFAULT_MODE != "performance"
+    assert 'let memoryModeDraft = "performance";' not in dashboard
+
+
 def test_memory_dashboard_preserves_an_unsaved_mode_draft():
     dashboard = (Path(__file__).parents[1] / "frontend" / "index.html").read_text()
     assert 'data-tab="memory"' in dashboard
@@ -151,7 +161,7 @@ def test_memory_dashboard_preserves_an_unsaved_mode_draft():
     assert 'data-mode="balanced"' in dashboard
     assert 'data-mode="memory_saver"' in dashboard
     assert 'data-mode="immediate"' in dashboard
-    assert 'let memoryModeDraft = "performance";' in dashboard
+    assert 'let memoryModeDraft = "balanced";' in dashboard
     assert 'if (!memorySelectionInitialized)' in dashboard
     assert 'setMemoryModeDraft(memoryModeDraft);' in dashboard
     assert 'if (btn.dataset.tab === "memory") loadFleetMemory();' in dashboard

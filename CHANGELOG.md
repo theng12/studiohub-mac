@@ -10,6 +10,36 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.87.1] — 2026-08-08
+
+### Fixed — the fleet memory control no longer points at the mode that caused the swap incident
+
+Every Studio moved its own default off `performance` after 2026-08-07, when 16
+of 19 fleet machines sat below the memory guard's floor with 1.5–4.4 GB of swap
+burned and could not start a job at all. `performance` never releases an idle
+model, so the idle-release thread ran the whole time with nothing to do. The
+Studios were fixed. **Studio Hub was missed**, in the two places that matter
+most, because it is the one console that can change all of them at once.
+
+- **The bulk-apply radio on the Memory tab no longer arrives pre-checked on
+  Performance.** It was. An operator who selected studios and clicked Apply
+  without touching the radio pushed never-release to every studio selected —
+  and because a Hub `PUT` is recorded as an explicit operator choice, it
+  *overrode* each Studio's own corrected default rather than deferring to it.
+  The draft now starts on Balanced.
+- **`GET /api/hub/memory` stopped publishing `default_mode: "performance"`.**
+  Hub cannot size a studio's RAM from here, so it now reports the fleet-wide
+  floor the Studios agree on (`balanced`); each studio still reports its own
+  resolved default — `memory_saver` under 12 GB — in its own policy row.
+
+Idle release itself is unchanged, and was never Hub's to run: it is owned end to
+end by each Studio's own `memory_policy` background thread. Hub only reads policy
+and forwards operator button-presses. Nothing here alters a mode an operator has
+already chosen and saved.
+
+A regression test now asserts neither the constant nor the dashboard draft can
+name `performance` again.
+
 ## [1.87.0] — 2026-08-08
 
 ### Added — Studio Hub structurally cannot accept cloud work from GenStudio

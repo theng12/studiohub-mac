@@ -18,7 +18,12 @@ MODES = {
     "memory_saver": {"label": "Memory Saver", "idle_seconds": 120},
     "immediate": {"label": "Immediate", "idle_seconds": 0},
 }
-DEFAULT_MODE = "performance"
+# Every Studio moved its own default off "performance" after 2026-08-07, when 16
+# of 19 fleet machines sat below the memory floor with 1.5-4.4 GB of swap because
+# that mode never releases. Hub cannot size a studio's RAM from here, so it
+# publishes the fleet-wide floor the Studios agree on; each studio still reports
+# its own resolved default in its policy row.
+DEFAULT_MODE = "balanced"
 REQUEST_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 
 

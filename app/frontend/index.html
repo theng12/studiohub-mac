@@ -1135,6 +1135,12 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.87.1", date: "2026-08-08", items: [
+    "The <b>Memory tab's bulk-apply radio no longer starts on Performance</b>. It did — so selecting studios and clicking Apply without touching the radio pushed <i>never release an idle model</i> to all of them, and overrode each Studio's own corrected default in the process. It now starts on Balanced.",
+    "This is the mode behind the <b>2026-08-07 incident</b>, where 16 of 19 machines sat below the memory floor with 1.5–4.4 GB of swap and could not start a job. Every Studio was fixed then; Hub was missed, in the one console that can change the whole fleet at once.",
+    "<code>GET /api/hub/memory</code> also stopped reporting <code>default_mode: \"performance\"</code>. Each studio still reports its own resolved default — <code>memory_saver</code> under 12 GB — in its policy row.",
+    "<b>Idle release is unchanged and was never Hub's to run.</b> Each Studio owns it in its own background thread; Hub only reads policy and forwards your button-presses. A mode you have already chosen and saved is untouched.",
+  ]},
   { v: "1.87.0", date: "2026-08-08", items: [
     "Studio Hub now <b>refuses cloud work sent by GenStudio</b>, rather than relying on GenStudio to keep routing it elsewhere. A GenStudio job naming a cloud model is rejected the moment it arrives, with the model id in the error — it is never queued and never half-run.",
     "This is about <b>where the work came from, not what it is</b>. Submitting a cloud model yourself from the Jobs tab still works exactly as before, and Video Studio's <code>fal:</code>/<code>kie:</code>/<code>replicate:</code> routes and Chat Studio's paid tiers are untouched.",
@@ -4069,7 +4075,7 @@ async function saveFleet() {
 
 // ── fleet model-memory controller ────────────────────────────────────────
 let fleetMemoryData = null;
-let memoryModeDraft = "performance";
+let memoryModeDraft = "balanced";
 let memorySelected = new Set();
 let memorySelectionInitialized = false;
 let memoryBusy = false;
