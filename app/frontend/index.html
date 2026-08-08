@@ -1135,6 +1135,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.86.0", date: "2026-08-08", items: [
+    "The broker no longer pins ElevenLabs voice jobs to the Hub Mac. That gateway does not exist any more — Voice Studio 1.33.0 removed every cloud provider — so the rule could only ever route a job to a worker that would refuse it.",
+    "A voice batch naming a removed cloud model (an id starting with <code>provider:</code>) now <b>fails immediately with a clear reason</b>. Previously it sat in the queue indefinitely, showing only \"not in the catalog\" — indistinguishable from a job that was about to run.",
+    "Nothing else about queueing changed: a local model that is still downloading, or whose worker is offline, keeps waiting exactly as before. Video and Chat Studio cloud jobs are untouched.",
+  ]},
   { v: "1.85.0", date: "2026-08-08", items: [
     "Voice Studio no longer supports cloud providers at all, so its provider endpoint is gone and the Hub has stopped asking for it. The <b>Cloud audio</b> line on Voice Studio cards, the provider line in list view, and the \"cloud ready\" count in the header have been removed rather than left showing an empty result forever.",
     "<code>GET /api/hub/providers</code> is removed for the same reason — an empty answer would have read as \"no providers configured\" instead of \"this no longer exists\".",

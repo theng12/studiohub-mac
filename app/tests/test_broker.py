@@ -1,9 +1,21 @@
+import asyncio
 import base64
 
 import httpx
 import pytest
 
 from backend import broker, ledger, shared_voices, workload_policy
+
+
+async def _run_dispatch_loop_briefly(seconds: float = 0.5) -> None:
+    """Run the real scheduler for one or two ticks, then stop it."""
+    task = asyncio.create_task(broker._dispatch_loop())
+    await asyncio.sleep(seconds)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 
 def test_submit_validation(reset):
@@ -569,7 +581,7 @@ def test_local_inference_workers_prefer_the_smallest_available_ram_tier(
     }
     monkeypatch.setattr(broker.peers, "cached", lambda machine: memory.get(machine))
 
-    eligible = broker._eligible_studios("voice", "pool", "flexible/model")
+    eligible = broker._eligible_studios("voice", "pool")
 
     assert [studio["machine"] for studio in eligible] == [
         "mac-8", "mac-16", "mac-24",
@@ -677,7 +689,50 @@ def test_remote_render_routing_excludes_hub_machine(reset):
         mon.status.pop(remote["id"], None)
 
 
-def test_elevenlabs_cloud_jobs_only_use_local_voice_gateway(reset):
+async def test_retired_cloud_provider_voice_batch_fails_instead_of_stalling(
+    reset, seed_catalog,
+):
+    """Voice Studio 1.33.0 removed cloud providers, so a `provider:` voice model
+    can never be served. It must fail terminally, not sit queued forever."""
+    seed_catalog("voice", [{"repo": "mlx-community/Kokoro", "cached": True}])
+    submitted = broker.submit_batch({
+        "modality": "voice",
+        "model": "provider:elevenlabs:eleven_multilingual_v2",
+        "items": [{"text": "hello"}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+
+    await _run_dispatch_loop_briefly()
+
+    item = batch["items"][0]
+    assert item["state"] == "error"
+    assert item["error_code"] == "CLOUD_PROVIDER_RETIRED"
+    assert "removed cloud providers" in item["error"]
+    assert batch["finished_at"] is not None
+    summary = broker.batch_summary(batch)
+    assert (summary["error"], summary["queued"], summary["running"]) == (1, 0, 0)
+    # Persisted, so a Hub restart does not resurrect the unservable batch.
+    assert ledger.load_batch(batch["id"])["items"][0]["state"] == "error"
+
+
+async def test_local_voice_model_still_waits_for_its_download(reset, seed_catalog):
+    """The generic governor is untouched: a real model that is not cached yet
+    keeps waiting for its worker rather than failing fast."""
+    seed_catalog("voice", [{"repo": "mlx-community/Kokoro", "cached": False}])
+    submitted = broker.submit_batch({
+        "modality": "voice", "model": "mlx-community/Kokoro",
+        "items": [{"text": "hello"}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+
+    await _run_dispatch_loop_briefly()
+
+    assert batch["items"][0]["state"] == "queued"
+    assert "not downloaded" in batch["governor_note"]
+
+
+def test_voice_eligibility_no_longer_pins_cloud_ids_to_the_hub_mac(reset):
+    """The ElevenLabs gateway pin is gone: voice eligibility is machine-blind."""
     mon = broker._monitor()
     local = next(s for s in mon.registry if s["id"] == "voice")
     remote = {**local, "id": "voice@macmini-m1-01", "machine": "macmini-m1-01",
@@ -686,12 +741,8 @@ def test_elevenlabs_cloud_jobs_only_use_local_voice_gateway(reset):
     mon.status[local["id"]] = {"status": "up"}
     mon.status[remote["id"]] = {"status": "up"}
     try:
-        elevenlabs = broker._eligible_studios(
-            "voice", "pool", "provider:elevenlabs:eleven_multilingual_v2",
-        )
-        local_tts = broker._eligible_studios("voice", "pool", "mlx-community/Kokoro")
-        assert [s["id"] for s in elevenlabs] == ["voice"]
-        assert {s["id"] for s in local_tts} == {"voice", "voice@macmini-m1-01"}
+        eligible = broker._eligible_studios("voice", "pool")
+        assert {s["id"] for s in eligible} == {"voice", "voice@macmini-m1-01"}
     finally:
         mon.registry.remove(remote)
         mon.status.pop(remote["id"], None)
