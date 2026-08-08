@@ -13,7 +13,6 @@ from datetime import datetime, timezone
 
 from . import (broker, chat_jobs, hardware_profiles, memory_admission,
                model_exposure, peers, transcription_jobs)
-from .monitor import is_cloud_lane
 from .registry import machine_enabled, studio_enabled
 from .resources import host_stats
 
@@ -107,12 +106,10 @@ def _immutable_runtime_revision(model: dict) -> tuple[str | None, str | None, st
     return None, None, "reported_but_not_immutable" if saw_unverified else "not_reported"
 
 
-def _voice_modes(model: dict, cloud: bool) -> list[str]:
+def _voice_modes(model: dict) -> list[str]:
     capabilities = set(_string_list(model.get("capabilities")))
     repo = str(model.get("repo") or "").lower()
     modes = []
-    if cloud:
-        modes.append("provider_voice_id")
     if "voice-cloning" in capabilities:
         modes.append("reference_audio_clone")
     if "voice-design" in capabilities or "voicedesign" in repo:
@@ -122,7 +119,7 @@ def _voice_modes(model: dict, cloud: bool) -> list[str]:
     return modes
 
 
-def _controls(model: dict, modality: str, cloud: bool) -> dict:
+def _controls(model: dict, modality: str) -> dict:
     controls = {
         "capabilities": _string_list(model.get("capabilities")),
     }
@@ -173,7 +170,7 @@ def _controls(model: dict, modality: str, cloud: bool) -> dict:
         if safe_defaults:
             controls["defaults"] = safe_defaults
     if modality == "voice":
-        controls["voice_modes"] = _voice_modes(model, cloud)
+        controls["voice_modes"] = _voice_modes(model)
     if modality == "chat" and model.get("verified_token_usage") is True:
         controls["verified_token_usage"] = True
     return controls
@@ -186,30 +183,12 @@ def _model_capability(model: dict, studio: dict, worker: dict) -> dict:
     candidate = model.get("hub_candidate")
     candidate = candidate if isinstance(candidate, dict) else None
     repo = str(model.get("repo") or model.get("model_id") or "unknown")[:500]
-    cloud = (
-        is_cloud_lane(model.get("is_cloud"), modality)
-        or model.get("kind") == "cloud"
-        or repo.startswith("provider:")
-    )
-    provider = str(model.get("provider") or model.get("cloud_provider") or "").strip() or None
-    if provider is None and repo.startswith("provider:"):
-        provider = repo.split(":", 2)[1] or None
-    # Cloud readiness comes from what the studio itself reports about its own
-    # credentials. Voice Studio used to be asked separately via a Hub-side
-    # provider-health poll; it no longer exposes cloud providers at all, so
-    # every remaining cloud lane (video, chat, image) uses this one path.
-    provider_ready = None
-    if cloud:
-        explicit = [model.get(key) for key in ("cloud_credentials_ok", "key_set")
-                    if key in model]
-        provider_ready = all(bool(value) for value in explicit) if explicit else None
-
-    installed = None if cloud else bool(model.get("hub_cached"))
+    installed = bool(model.get("hub_cached"))
     runtime_compatible = model.get("runtime_compatible") is not False
     subsystem_ready = model.get("hub_ready") is not False
     admission = None
     memory_ready = None
-    if memory_admission.applies_to(modality, is_cloud=cloud):
+    if memory_admission.applies_to(modality):
         admission = memory_admission.describe(repo, model)
         host_known, host = _machine_host(studio.get("machine", "local"))
         if host_known and host:
@@ -230,9 +209,8 @@ def _model_capability(model: dict, studio: dict, worker: dict) -> dict:
                          "observed_available_memory_gb": None,
                          "eligible_now": None}
     catalog_stale = bool(model.get("hub_catalog_stale"))
-    model_ready = runtime_compatible and subsystem_ready and not catalog_stale and (
-        provider_ready is True if cloud else installed is True
-    ) and memory_ready is not False
+    model_ready = (runtime_compatible and subsystem_ready and not catalog_stale
+                   and installed and memory_ready is not False)
     available_now = bool(worker["available_capacity"]["slots"] and model_ready)
     if not worker["online"]:
         reason = "worker_offline"
@@ -258,9 +236,7 @@ def _model_capability(model: dict, studio: dict, worker: dict) -> dict:
         reason = "insufficient_total_memory"
     elif memory_ready is False:
         reason = "waiting_for_memory"
-    elif cloud and provider_ready is not True:
-        reason = "provider_unavailable_or_unverified"
-    elif not cloud and installed is not True:
+    elif not installed:
         reason = "model_not_installed"
     else:
         reason = None
@@ -272,8 +248,7 @@ def _model_capability(model: dict, studio: dict, worker: dict) -> dict:
     else:
         revision, revision_source, revision_status = _immutable_runtime_revision(model)
     internal_id = (
-        model.get("model_id") or model.get("cloud_model_id")
-        or model.get("provider_model") or model.get("repo") or "unknown"
+        model.get("model_id") or model.get("repo") or "unknown"
     )
     return {
         "operation": operation,
@@ -281,8 +256,8 @@ def _model_capability(model: dict, studio: dict, worker: dict) -> dict:
         "runtime_revision": revision,
         "revision_source": revision_source,
         "revision_status": revision_status,
-        "provider": provider or ("local" if not cloud else None),
-        "execution_lane": "cloud" if cloud else "local",
+        "provider": "local",
+        "execution_lane": "local",
         "audit": ({
             "audit_id": candidate.get("audit_id"),
             "audit_status": candidate.get("audit_status"),
@@ -300,7 +275,7 @@ def _model_capability(model: dict, studio: dict, worker: dict) -> dict:
         ),
         "controls": (
             candidate.get("controls", {}) if candidate
-            else _controls(model, modality, cloud)
+            else _controls(model, modality)
         ),
         "adapter": candidate.get("adapter", {}) if candidate else {},
         "capacity": candidate.get("capacity", {}) if candidate else {},
@@ -322,7 +297,6 @@ def _model_capability(model: dict, studio: dict, worker: dict) -> dict:
             "runtime_compatible": runtime_compatible,
             "revision_pinning_ready": revision is not None,
             "subsystem_ready": subsystem_ready,
-            "provider_ready": provider_ready,
             "available_now": available_now,
             "reason": reason,
         },

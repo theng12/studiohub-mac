@@ -243,7 +243,7 @@ them or turn them into global ownership state.
   GenStudio-generated fingerprint.
 - `availability.reason` is diagnostic and should not be translated into a
   customer promise without GenStudio policy.
-- Cloud models are available only when Hub has verified their provider state.
+- Hosted models are never advertised or accepted by Studio Hub.
 - Maintenance, drains, quarantines, worker busy state, and shared-machine busy
   state are already reflected in `available_now`.
 - `catalog_observation.stale=true` makes that model unavailable. Preserve the

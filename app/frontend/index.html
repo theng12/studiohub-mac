@@ -94,7 +94,6 @@
   .pill.prov { color: var(--accent); border-color: var(--accent); text-transform: uppercase; font-weight: 600; letter-spacing: .03em; }
   .pill.new { color: var(--up); border-color: var(--up); font-weight: 600; }
   .pill.deprecated { color: var(--warn); border-color: var(--warn); opacity: .85; }
-  .lane-head td { background: var(--panel); font-weight: 700; letter-spacing: .02em; padding-top: 12px; }
   .prov-head td { font-weight: 600; color: var(--dim); font-size: 12px; padding-left: 14px; }
   .pill.gen { color: var(--gen); border-color: var(--gen); }
   .numbadge { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: var(--panel2); border: 1px solid var(--border); font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
@@ -253,8 +252,7 @@
   .studio-schedules{display:flex;gap:6px;flex-wrap:wrap;min-width:270px}.studio-schedule-wrap{display:inline-flex;align-items:stretch;border:1px solid #cbd1c8;border-radius:10px;background:#f5f6f1;overflow:hidden}.studio-schedule{display:flex;align-items:center;gap:7px;border:0;background:transparent;color:var(--text);padding:6px 8px;font:700 var(--font-secondary)/1.1 var(--sans);cursor:pointer}.studio-schedule:hover{background:#fff}.studio-schedule small{padding:2px 5px;border-radius:999px;background:#dfeae2;color:#176f50;font:700 var(--font-compact)/1 var(--mono);letter-spacing:.03em;text-transform:uppercase}.studio-schedule.off{background:#fbf1dc;color:#7a611d}.studio-schedule.off small{background:#f1dcae;color:#7a5a0d}.studio-schedule.master-off small{background:#e6e8e2;color:#6d746d}.studio-schedule-remove{display:grid;place-items:center;width:32px;border:0;border-left:1px solid #d8ddd5;background:transparent;color:var(--dim);cursor:pointer}.studio-schedule-remove:hover{background:#f9e8e4;color:var(--down)}
   .rows,.table-wrap{border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:var(--shadow)}.lrow{grid-template-columns:22px minmax(0,1.7fr) minmax(0,1fr) 100px minmax(0,1.15fr) 80px 205px;background:#fffef9;border-color:#e2e3da;padding:12px 15px}.lrow .actions{width:100%;justify-content:flex-end}.lrow:hover:not(.lhead){background:#f8f8f2}.lrow.lhead{background:#edf0e9;color:#6f776f;font:700 var(--font-compact)/1 var(--mono);letter-spacing:.09em}
   table{background:#fffef9;border-radius:14px;overflow:hidden;box-shadow:0 8px 28px #2945350a}th,td{padding:11px 12px;border-color:#e2e3da}th{top:0;background:#edf0e9;color:#68736b;font:700 var(--font-compact)/1.2 var(--mono);letter-spacing:.08em;text-transform:uppercase}tbody tr{transition:background .12s}tbody tr:hover{background:#f5f6ef}td{font-size:var(--font-secondary)}
-  .pill{padding:3px 8px;border-color:#cbd1c8;background:#f5f6f1;font:650 var(--font-compact)/1.2 var(--mono)}.pill.dl,.pill.ok,.pill.new{color:#167a55;border-color:#b6d5c3;background:#eaf5ed}.pill.cloud,.pill.prov{color:#287491;border-color:#b9d5dd;background:#eaf3f5}.pill.warn,.pill.gen,.pill.deprecated{background:#fbf1dc;color:#8a6d1f;border-color:#e4d3a4}.pill.err{background:#f9e8e4}.numbadge{background:#e8eee8;border-color:#c8d5ca;color:#285944}
-  .lane-head td{background:#eef1ea;font:700 var(--font-compact)/1 var(--sans);color:var(--accent2);letter-spacing:.03em;text-transform:uppercase}.prov-head td{background:#f6f8f4;font:600 var(--font-compact)/1 var(--mono);color:#68736b;padding-left:16px}
+  .pill{padding:3px 8px;border-color:#cbd1c8;background:#f5f6f1;font:650 var(--font-compact)/1.2 var(--mono)}.pill.dl,.pill.ok,.pill.new{color:#167a55;border-color:#b6d5c3;background:#eaf5ed}.pill.cloud{color:#287491;border-color:#b9d5dd;background:#eaf3f5}.pill.warn,.pill.gen,.pill.deprecated{background:#fbf1dc;color:#8a6d1f;border-color:#e4d3a4}.pill.err{background:#f9e8e4}.numbadge{background:#e8eee8;border-color:#c8d5ca;color:#285944}
   .bar{height:9px;background:#e2e6dd;border-radius:999px}.bar i{background:linear-gradient(90deg,#1c8d62,#67bd87);border-radius:999px}.prog{background:#e4e7df;border-radius:999px}.prog i{background:linear-gradient(90deg,#1b8d61,#51bd83)}
   .hostcard{background:linear-gradient(135deg,#fffef9,#eef4eb)}.hostcard .stat b{font:700 25px/1 var(--display);color:var(--accent2)}.hostcard .stat span{margin-top:4px;font:600 var(--font-compact)/1.2 var(--mono);text-transform:uppercase;letter-spacing:.06em}#mem-line{stroke:#167a55!important;stroke-width:2.2!important}
   .resource-studio-table{table-layout:fixed}.resource-studio-table th,.resource-studio-table td{overflow:hidden;text-overflow:ellipsis}.resource-studio-table td{white-space:nowrap}
@@ -445,9 +443,6 @@
         <option value="avail">Sort: Availability</option><option value="size">Sort: Size</option>
         <option value="ram">Sort: Min RAM</option>
       </select>
-      <div class="seg" id="m-lane">
-        <button data-v="all">All</button><button data-v="local">Local</button><button data-v="cloud">Cloud</button>
-      </div>
     </div>
     <div id="m-count" class="muted" style="margin-bottom:8px"></div>
     <div style="max-height:70vh;overflow:auto">
@@ -708,11 +703,6 @@
       <div class="grp"><label>Source</label>
         <div class="seg" id="st-src">
           <button data-v="all">All</button><button data-v="job">Hub</button><button data-v="direct">Direct</button>
-        </div>
-      </div>
-      <div class="grp"><label>Lane</label>
-        <div class="seg" id="st-lane">
-          <button data-v="all">All</button><button data-v="local">Local</button><button data-v="cloud">Cloud</button>
         </div>
       </div>
       <div class="grp"><label>Machine</label>
@@ -1135,6 +1125,12 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.0.0", date: "2026-08-09", items: [
+    "<b>Studio Hub is now local-only.</b> Hosted model IDs are refused before a job is saved, no matter whether the caller is GenStudio, the Jobs tab, or another client. Local generation, render, transcription, fleet control, shared voices, and memory management are unchanged.",
+    "The <b>Models</b> and <b>Stats</b> tabs no longer carry provider groups, prices, Local/Cloud switches, or lane totals. Sibling catalog rows that still describe hosted routes are filtered at the Hub boundary instead of leaking into fleet inventory.",
+    "Chat packs now have one honest contract: <b>up to 10 scenes on a local Chat Studio</b>. The old paid/free tier field is no longer stored or returned.",
+    "This is version 2.0 because the removed <code>cloud</code>/<code>lane</code> query options and <code>lanes</code>/<code>providers</code>/<code>by_lane</code> response fields are API-breaking. Normal Update + restart is enough; the existing local asset database remains readable.",
+  ]},
   { v: "1.87.1", date: "2026-08-08", items: [
     "The <b>Memory tab's bulk-apply radio no longer starts on Performance</b>. It did — so selecting studios and clicking Apply without touching the radio pushed <i>never release an idle model</i> to all of them, and overrode each Studio's own corrected default in the process. It now starts on Balanced.",
     "This is the mode behind the <b>2026-08-07 incident</b>, where 16 of 19 machines sat below the memory floor with 1.5–4.4 GB of swap and could not start a job. Every Studio was fixed then; Hub was missed, in the one console that can change the whole fleet at once.",
@@ -2369,7 +2365,6 @@ let modelsData = [];
 let modelExposureData = null;
 let mMachine = localStorage.getItem("m_machine") || "";
 let mSort = localStorage.getItem("m_sort") || "modality";
-let mLane = localStorage.getItem("m_lane") || "all";  // all | local | cloud
 let ramAdmissionModel = localStorage.getItem("ram_admission_model") || "";
 async function loadModels() {
   const p = new URLSearchParams();
@@ -2770,63 +2765,23 @@ function renderModels() {
     ram: (a, b) => (b.memory_admission?.effective_min_total_memory_gb || 0) - (a.memory_admission?.effective_min_total_memory_gb || 0),
   }[mSort];
   const sortRows = list => [...list].sort(cmp);
-  // ── lane split: local vs cloud are DISTINCT lanes, never one merged list ──
-  const local = rows.filter(m => !m.is_cloud);
-  const cloud = rows.filter(m => m.is_cloud);
-  const provCount = {};
-  cloud.forEach(m => { const p = m.provider || "cloud"; provCount[p] = (provCount[p] || 0) + 1; });
-  const dlCount = local.filter(m => m.downloaded).length;
-  const provSummary = Object.keys(provCount).sort().map(p => `${p} ${provCount[p]}`).join(", ");
+  const dlCount = rows.filter(m => m.downloaded).length;
   $("#m-count").textContent =
-    `${local.length} local · ${dlCount} downloaded` +
-    (cloud.length ? ` — ${cloud.length} cloud${provSummary ? " (" + provSummary + ")" : ""}` : "") +
+    `${rows.length} models · ${dlCount} downloaded` +
     (mMachine ? ` · on ${mMachine}` : "");
-
-  const priceLabel = p => {
-    if (!p || typeof p !== "object") return null;
-    const amt = p.amount ?? p.per_unit ?? p.usd;
-    if (typeof amt !== "number") return null;
-    const unit = p.unit || p.per || "call";
-    return `$${amt}/${unit}`;
-  };
   const rowHtml = m => {
-    let avail;
-    if (m.is_cloud) {
-      const badges = [`<span class="pill prov">${esc(m.provider || "cloud")}</span>`];
-      if (m.status === "new") badges.push(`<span class="pill new">new</span>`);
-      if (m.status === "deprecated") badges.push(`<span class="pill deprecated">deprecated</span>`);
-      const pl = priceLabel(m.price);
-      if (pl) badges.push(`<span class="pill">${esc(pl)}</span>`);
-      avail = badges.join(" ");
-    }
-    else if (m.cached_on.length) avail = `<span class="numbadge">${m.cached_on.length}</span> ` + m.cached_on.map(mc => `<span class="pill dl">${esc(mc)}</span>`).join("");
-    else avail = `<span class="pill no">not downloaded</span>`;
+    const avail = m.cached_on.length
+      ? `<span class="numbadge">${m.cached_on.length}</span> ` + m.cached_on.map(mc => `<span class="pill dl">${esc(mc)}</span>`).join("")
+      : `<span class="pill no">not downloaded</span>`;
     return `<tr>
       <td><b>${esc(m.label)}</b><br><span class="sub">${esc(m.repo)}</span></td>
       <td>${esc(m.modality)}</td>
-      <td>${m.is_cloud ? "—" : esc(m.family_label || "—")}</td>
-      <td class="num">${m.is_cloud ? "cloud" : (m.size_gb != null ? m.size_gb + " GB" : "—")}</td>
-      <td>${m.is_cloud ? "—" : (() => { const p = m.memory_admission || {}; return `<span class="ram-policy-main ${p.overridden ? "ram-policy-override" : ""}">${esc(p.effective_min_total_memory_gb ?? "—")} GB total</span><span class="ram-policy-sub">${esc(p.effective_min_free_memory_gb ?? "—")} GB free · ${esc(ramSourceLabel(p.source))}${p.catalog_min_total_memory_gb != null && p.catalog_min_total_memory_gb !== p.effective_min_total_memory_gb ? ` · catalog ${esc(p.catalog_min_total_memory_gb)} GB` : ""}</span>`; })()}</td>
+      <td>${esc(m.family_label || "—")}</td>
+      <td class="num">${m.size_gb != null ? m.size_gb + " GB" : "—"}</td>
+      <td>${(() => { const p = m.memory_admission || {}; return `<span class="ram-policy-main ${p.overridden ? "ram-policy-override" : ""}">${esc(p.effective_min_total_memory_gb ?? "—")} GB total</span><span class="ram-policy-sub">${esc(p.effective_min_free_memory_gb ?? "—")} GB free · ${esc(ramSourceLabel(p.source))}${p.catalog_min_total_memory_gb != null && p.catalog_min_total_memory_gb !== p.effective_min_total_memory_gb ? ` · catalog ${esc(p.catalog_min_total_memory_gb)} GB` : ""}</span>`; })()}</td>
       <td>${avail}</td></tr>`;
   };
-  const laneHead = (label, n) => `<tr class="lane-head"><td colspan="6">${label} · ${n}</td></tr>`;
-  const provHead = (label, n) => `<tr class="prov-head"><td colspan="6">${esc(label)} · ${n}</td></tr>`;
-
-  let html = "";
-  if (mLane !== "cloud" && local.length) {
-    if (mLane === "all") html += laneHead("Local", local.length);
-    html += sortRows(local).map(rowHtml).join("");
-  }
-  if (mLane !== "local" && cloud.length) {
-    if (mLane === "all") html += laneHead("Cloud", cloud.length);
-    // grouped by provider, then modality-ordered (the chosen sort) within
-    const byProv = {};
-    cloud.forEach(m => { const p = m.provider || "cloud"; (byProv[p] = byProv[p] || []).push(m); });
-    Object.keys(byProv).sort().forEach(p => {
-      html += provHead(p, byProv[p].length);
-      html += sortRows(byProv[p]).map(rowHtml).join("");
-    });
-  }
+  const html = sortRows(rows).map(rowHtml).join("");
   body.innerHTML = html || `<tr><td colspan="6" class="empty">No models match</td></tr>`;
 }
 let mTimer;
@@ -2834,7 +2789,6 @@ let mTimer;
 $("#m-machine").addEventListener("change", e => { mMachine = e.target.value; localStorage.setItem("m_machine", mMachine); renderModels(); });
 $("#m-sort").value = mSort;
 $("#m-sort").addEventListener("change", e => { mSort = e.target.value; localStorage.setItem("m_sort", mSort); renderModels(); });
-initSeg("m-lane", mLane, v => { mLane = v; localStorage.setItem("m_lane", v); renderModels(); });
 
 // ── resources ─────────────────────────────────────────────────────────────
 let resGroup = localStorage.getItem("res_group") || "machine";
@@ -2933,7 +2887,7 @@ async function loadSpark() {
 async function loadJobModels() {
   const mod = $("#j-modality").value;
   const r = await api(`/api/hub/models?modality=${mod}&downloaded=true`).then(x => x.json()).catch(() => null);
-  $("#j-model").innerHTML = (r?.models || []).map(m => `<option value="${esc(m.repo)}">${esc(m.label)} — on ${esc(m.is_cloud ? "cloud" : m.cached_on.join(", "))}</option>`).join("")
+  $("#j-model").innerHTML = (r?.models || []).map(m => `<option value="${esc(m.repo)}">${esc(m.label)} — on ${esc(m.cached_on.join(", "))}</option>`).join("")
     || `<option value="">no downloaded ${mod} models</option>`;
 }
 $("#j-modality").addEventListener("input", loadJobModels);
@@ -3479,12 +3433,10 @@ function renderThroughput(tl) {
 }
 let stWin = localStorage.getItem("st_win") || "0";
 let stSrc = localStorage.getItem("st_src") || "all";
-let stLane = localStorage.getItem("st_lane") || "all";  // all | local | cloud
 let stOp = "";       // operation-type (app) filter — click a tile to set
 let stMach = "";     // machine filter
 initSeg("st-win", stWin, v => { stWin = v; localStorage.setItem("st_win", v); loadStats(); });
 initSeg("st-src", stSrc, v => { stSrc = v; localStorage.setItem("st_src", v); loadStats(); });
-initSeg("st-lane", stLane, v => { stLane = v; localStorage.setItem("st_lane", v); loadStats(); });
 $("#st-mach").addEventListener("change", () => { stMach = $("#st-mach").value; loadStats(); });
 $("#st-clear").addEventListener("click", () => { stOp = ""; stMach = ""; $("#st-mach").value = ""; loadStats(); });
 function setStatOp(m) { stOp = (stOp === m ? "" : m); loadStats(); }   // toggle app filter
@@ -3493,7 +3445,6 @@ async function loadStats() {
   const p = new URLSearchParams();
   if (stWin !== "0") p.set("hours", stWin);
   if (stSrc !== "all") p.set("source", stSrc);
-  if (stLane !== "all") p.set("lane", stLane);
   if (stOp) p.set("modality", stOp);
   if (stMach) p.set("machine", stMach);
   const qs = p.toString();
@@ -3512,15 +3463,11 @@ async function loadStats() {
   // Total line + active-filter summary.
   const active = [];
   if (stSrc !== "all") active.push(stSrc === "job" ? "Hub jobs" : "direct");
-  if (stLane !== "all") active.push(stLane === "cloud" ? "☁ cloud" : "local");
   if (stOp) active.push((MOD_EMOJI[stOp] || "") + " " + stOp);
   if (stMach) active.push(mlabel(stMach));
   $("#st-clear").style.display = (stOp || stMach) ? "" : "none";
   const winTxt = stWin !== "0" ? " · last " + (WIN_LABEL[stWin] || stWin + " h") : "";
-  // by_lane always reports both lanes for the current window — show the split
-  const bl = d.by_lane || { local: 0, cloud: 0 };
-  const laneTxt = (bl.local || bl.cloud) ? ` · ${bl.local || 0} local / ${bl.cloud || 0} cloud` : "";
-  $("#st-total").textContent = `${d.total} generations${winTxt}${laneTxt}${active.length ? " · " + active.join(" · ") : ""}`;
+  $("#st-total").textContent = `${d.total} generations${winTxt}${active.length ? " · " + active.join(" · ") : ""}`;
 
   // tiles per operation type — click to filter every table + the chart
   const mods = Object.keys(d.by_modality).sort((a, b) => d.by_modality[b].count - d.by_modality[a].count);

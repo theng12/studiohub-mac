@@ -626,20 +626,20 @@ def test_constrained_voice_queue_gets_next_high_memory_worker_before_kokoro(
     assert broker._batch_memory_constraint_gb(ordered[1]) == 8
 
 
-def test_unknown_or_cloud_memory_keeps_existing_fair_turn_order(reset):
-    unknown = broker.submit_batch({
-        "modality": "voice", "model": "unknown/local",
+def test_unknown_model_memory_keeps_existing_fair_turn_order(reset):
+    first = broker.submit_batch({
+        "modality": "voice", "model": "unknown/local-a",
         "items": [{"text": "first"}],
     })
-    cloud = broker.submit_batch({
-        "modality": "voice", "model": "provider:test/cloud",
+    second = broker.submit_batch({
+        "modality": "voice", "model": "unknown/local-b",
         "items": [{"text": "second"}],
     })
-    broker.batches[unknown["batch_id"]]["created_at"] = 1.0
-    broker.batches[cloud["batch_id"]]["created_at"] = 2.0
+    broker.batches[first["batch_id"]]["created_at"] = 1.0
+    broker.batches[second["batch_id"]]["created_at"] = 2.0
 
     assert [batch["id"] for batch in broker._queued_batches()[:2]] == [
-        unknown["batch_id"], cloud["batch_id"],
+        first["batch_id"], second["batch_id"],
     ]
 
 
@@ -689,32 +689,6 @@ def test_remote_render_routing_excludes_hub_machine(reset):
         mon.status.pop(remote["id"], None)
 
 
-async def test_retired_cloud_provider_voice_batch_fails_instead_of_stalling(
-    reset, seed_catalog,
-):
-    """Voice Studio 1.33.0 removed cloud providers, so a `provider:` voice model
-    can never be served. It must fail terminally, not sit queued forever."""
-    seed_catalog("voice", [{"repo": "mlx-community/Kokoro", "cached": True}])
-    submitted = broker.submit_batch({
-        "modality": "voice",
-        "model": "provider:elevenlabs:eleven_multilingual_v2",
-        "items": [{"text": "hello"}],
-    })
-    batch = broker.batches[submitted["batch_id"]]
-
-    await _run_dispatch_loop_briefly()
-
-    item = batch["items"][0]
-    assert item["state"] == "error"
-    assert item["error_code"] == "CLOUD_PROVIDER_RETIRED"
-    assert "removed cloud providers" in item["error"]
-    assert batch["finished_at"] is not None
-    summary = broker.batch_summary(batch)
-    assert (summary["error"], summary["queued"], summary["running"]) == (1, 0, 0)
-    # Persisted, so a Hub restart does not resurrect the unservable batch.
-    assert ledger.load_batch(batch["id"])["items"][0]["state"] == "error"
-
-
 async def test_local_voice_model_still_waits_for_its_download(reset, seed_catalog):
     """The generic governor is untouched: a real model that is not cached yet
     keeps waiting for its worker rather than failing fast."""
@@ -731,8 +705,7 @@ async def test_local_voice_model_still_waits_for_its_download(reset, seed_catalo
     assert "not downloaded" in batch["governor_note"]
 
 
-def test_voice_eligibility_no_longer_pins_cloud_ids_to_the_hub_mac(reset):
-    """The ElevenLabs gateway pin is gone: voice eligibility is machine-blind."""
+def test_voice_pool_eligibility_is_machine_blind(reset):
     mon = broker._monitor()
     local = next(s for s in mon.registry if s["id"] == "voice")
     remote = {**local, "id": "voice@macmini-m1-01", "machine": "macmini-m1-01",
@@ -753,15 +726,6 @@ def test_prompt_and_text_both_accepted(reset):
                              "items": [{"text": "spoken"}]})
     b = broker.batches[r["batch_id"]]
     assert b["items"][0]["prompt"] == "spoken"
-
-
-def test_uncertain_paid_worker_result_is_never_retryable():
-    uncertain = broker._worker_terminal_error(
-        "ProviderResultUncertain: paid result could not be recovered"
-    )
-    ordinary = broker._worker_terminal_error("RuntimeError: temporary worker failure")
-    assert uncertain.retryable is False
-    assert ordinary.retryable is True
 
 
 @pytest.mark.asyncio
@@ -830,7 +794,7 @@ def test_multipart_fields():
 
 def test_video_multipart_fields_are_img2video_only():
     out = broker._video_multipart_fields({
-        "repo": "fal:provider/image-to-video",
+        "repo": "Lightricks/LTX-Video",
         "mode": "img2video",
         "prompt": "gentle camera push",
         "duration": 5,
@@ -839,7 +803,7 @@ def test_video_multipart_fields_are_img2video_only():
         "reference_images": [{"asset_id": "asset-1"}],
     })
     assert out == {
-        "repo": "fal:provider/image-to-video",
+        "repo": "Lightricks/LTX-Video",
         "mode": "img2video",
         "prompt": "gentle camera push",
         "duration": "5",

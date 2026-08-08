@@ -1,24 +1,12 @@
-"""Refuse GenStudio-originated cloud work at the Studio Hub door.
+"""Keep Studio Hub's execution and catalog surfaces local-only.
 
-Studio Hub KH is a *local* fleet controller: it exists to run models on the
-Macs it controls. GenStudio KH owns cloud generation and runs it in its own
-provider adapters. Until now that split held only because GenStudio chose to
-route cloud away from the Hub — a convention on the sender's side, undone by
-one routing change in another repository. This module makes it a property of
-the Hub instead: a GenStudio-originated job naming a cloud model is refused at
-submission, before anything is queued or persisted, with the offending model id
-in the error.
+Studio Hub KH exists to run models on the Macs it controls. Any job naming a
+hosted model is refused at submission, before it is queued or persisted, and
+hosted rows from stale sibling catalogs are filtered out. Render remains exempt:
+its historical ``is_cloud`` flag is only a local broker hint for FFmpeg work.
 
-What this is NOT:
-
-* It is not a removal of cloud support. A local operator submitting a cloud
-  model from the Hub's own Jobs tab is unaffected, and so is any other caller
-  that carries no GenStudio identity. Video Studio's ``fal:`` / ``kie:`` /
-  ``replicate:`` routes and Chat Studio's paid/free tiers keep working for
-  them. The rule is about the *source* of the work.
-* It is not a second download/memory governor. A local model that is still
-  downloading keeps waiting exactly as it did.
-* It never applies to Render. See ``LOCAL_ONLY_MODALITIES`` below.
+This is not a second download or memory governor. A local model that is still
+downloading keeps waiting exactly as it did.
 """
 
 from __future__ import annotations
@@ -29,18 +17,7 @@ from .monitor import LOCAL_ONLY_MODALITIES
 
 log = logging.getLogger("studiohub.cloud_guard")
 
-REFUSAL_CODE = "GENSTUDIO_CLOUD_WORK_REFUSED"
-
-# GenStudio stamps every customer job it owns with a job/attempt id pair, which
-# ``execution_identity`` then validates. Those two ids are the authoritative
-# origin marker: no local operator produces them.
-_IDENTITY_FIELDS = ("genstudio_job_id", "genstudio_attempt_id")
-
-# The broker already treats this label prefix as "customer job from GenStudio"
-# (see ``_supports_genstudio_voice_evidence``). Kept as a second, independent
-# marker so a GenStudio submission that omits execution identity is still
-# recognised.
-GENSTUDIO_LABEL_PREFIX = "genstudio-kh:"
+REFUSAL_CODE = "CLOUD_WORK_RETIRED"
 
 # Id schemes that are cloud by construction. The separator is load-bearing:
 # ``fal:fal-ai/kling-video/...`` is a Video Studio cloud route, while
@@ -66,27 +43,6 @@ LOCAL_PROVIDER_VALUES = {"", "local", "none", "hub", "on-device", "device"}
 # the lane on the job instead. "local" runs on a Mac, "free" and "paid" are
 # provider calls.
 CLOUD_COST_TIERS = {"free", "paid"}
-
-
-def is_genstudio_origin(envelope: object) -> bool:
-    """Whether GenStudio KH — not a local operator — submitted this work.
-
-    Accepts either a raw submission envelope or a stored batch, since both
-    carry the same two markers. Either marker alone is enough; a local
-    operator produces neither.
-    """
-    if not isinstance(envelope, dict):
-        return False
-    if str(envelope.get("label") or "").startswith(GENSTUDIO_LABEL_PREFIX):
-        return True
-    nested = envelope.get("genstudio_execution")
-    if isinstance(nested, dict) and _has_identity(nested):
-        return True
-    return _has_identity(envelope)
-
-
-def _has_identity(source: dict) -> bool:
-    return any(str(source.get(field) or "").strip() for field in _IDENTITY_FIELDS)
 
 
 def _id_cloud_reason(model: str) -> str | None:
@@ -137,7 +93,7 @@ def cloud_reason(
     governor — it is a local FFmpeg assembly step running on a Mac in the
     fleet, not a hosted model. ``LOCAL_ONLY_MODALITIES`` is the single place
     that fact is recorded, and this function honours it before it looks at
-    anything else, exactly as ``monitor.is_cloud_lane`` does. Render is
+    anything else. Render is
     additionally safe by id: ``episode-assembly-v1`` matches no cloud scheme
     and no cloud namespace.
     """
@@ -178,19 +134,17 @@ def _cached_entries(model: object, modality: object) -> list[dict]:
 
 
 def refusal(
-    envelope: object,
+    _envelope: object,
     *,
     model: object,
     modality: object = None,
     cost_tier: object = None,
 ) -> str | None:
-    """The refusal message for GenStudio cloud work, or ``None`` to allow.
+    """The refusal message for hosted work, or ``None`` for local work.
 
     Callers must apply this at the API boundary, before the work is queued: a
     refused job must never be accepted and then failed downstream.
     """
-    if not is_genstudio_origin(envelope):
-        return None
     reason = cloud_reason(
         model,
         modality=modality,
@@ -200,13 +154,12 @@ def refusal(
     if reason is None:
         return None
     message = (
-        f"Studio Hub does not accept cloud work from GenStudio. "
+        f"Studio Hub does not accept cloud generation. "
         f"'{model}' is a cloud model because {reason}. Studio Hub runs the "
-        f"local Mac fleet only — run this model on GenStudio's own provider "
-        f"adapters instead."
+        f"local Mac fleet only."
     )
     log.warning(
-        "refused GenStudio cloud submission: model=%r modality=%r reason=%s",
+        "refused cloud submission: model=%r modality=%r reason=%s",
         str(model or ""), str(modality or ""), reason,
     )
     return message

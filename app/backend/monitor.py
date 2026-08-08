@@ -1,7 +1,7 @@
 """Health poller + catalog aggregator.
 
 Polls every studio's /api/health on a short interval and caches /api/catalog
-with a TTL. Model params/schemas are never normalized (SPEC §6.2) — catalog
+with a TTL. Model params/schemas are never normalized — catalog
 entries are passed through verbatim, only ANNOTATED with hub_* fields naming
 the source studio.
 """
@@ -43,39 +43,10 @@ def is_cached(model: dict) -> bool:
     return bool(cache)  # tolerate a studio that ever uses a bool/string
 
 
-# 'render' is a local FFmpeg episode-assembly step. Render studios flag their
-# catalog entry is_cloud=true ONLY to bypass the broker's download/memory gates
-# (a dispatch hint, not a hosting statement), so it must never land in the cloud
-# lane or count as a cloud generation. Any other is_cloud entry is a genuine
-# external-provider (cloud) model.
+# 'render' is a local FFmpeg episode-assembly step. Render studios historically
+# flag its catalog entry is_cloud=true only to bypass broker download/memory
+# gates, so cloud filtering must exempt it.
 LOCAL_ONLY_MODALITIES = {"render"}
-
-
-def is_cloud_lane(is_cloud, modality) -> bool:
-    """Whether an entry belongs in the CLOUD lane (external provider) for the
-    dashboard and ledger — distinct from the broker's raw is_cloud dispatch flag,
-    which render overloads as a governor bypass."""
-    return bool(is_cloud) and modality not in LOCAL_ONLY_MODALITIES
-
-
-def _provider_of(model: dict) -> str:
-    """The effective cloud provider used to GROUP a cloud model in the Models
-    tab (fal / cloudflare / gemini / …).
-
-    Prefer the studio-supplied `provider`, but existing Image/Chat cloud entries
-    set a generic literal ``"cloud"`` and encode the real vendor in the repo
-    prefix (``cloudflare/flux-1-schnell`` → ``cloudflare``). Fall back to that
-    prefix so those group correctly today, while Video's explicit
-    ``provider="fal"`` is used verbatim. Last resort: the literal ``"cloud"``."""
-    p = (model.get("provider") or "").strip()
-    if p and p.lower() != "cloud":
-        return p
-    repo = model.get("repo") or ""
-    if "/" in repo:
-        prefix = repo.split("/", 1)[0].strip()
-        if prefix:
-            return prefix
-    return p or "cloud"
 
 
 class StudioMonitor:
@@ -506,9 +477,27 @@ class StudioMonitor:
             if catalog is None:
                 per_studio[sid] = {"ok": False, "models": 0}
                 continue
-            entries = catalog.get("models") or []
+            from . import cloud_guard
+
+            reported_entries = catalog.get("models") or []
+            entries = [
+                model for model in reported_entries
+                if cloud_guard.cloud_reason(
+                    model.get("repo"), modality=studio["modality"],
+                    entries=(model,),
+                ) is None
+            ]
             for m in entries:
                 annotated = dict(m)
+                # Do not federate obsolete hosted-lane metadata. Render's raw
+                # dispatch hint remains in its direct worker catalog, where the
+                # broker reads it, but the Hub's public aggregate is local-only.
+                for field in (
+                    "is_cloud", "cloud_provider", "cloud_model_id",
+                    "provider_model", "cloud_credentials_ok", "key_set",
+                    "cost_tier", "price",
+                ):
+                    annotated.pop(field, None)
                 annotated["hub_studio"] = sid
                 annotated["hub_modality"] = studio["modality"]
                 annotated["hub_machine"] = studio.get("machine", "local")
@@ -521,6 +510,7 @@ class StudioMonitor:
                 models.append(annotated)
             per_studio[sid] = {
                 "ok": True, "models": len(entries),
+                "retired_cloud_models": len(reported_entries) - len(entries),
                 "catalog": self.catalog_observation(sid),
             }
 
@@ -658,10 +648,7 @@ class StudioMonitor:
             hardware_profile = hardware_profiles.machine_hardware_profile(machine)
             admission = None
             hardware_eligible = True
-            if memory_admission.applies_to(
-                    model.get("hub_modality"),
-                    is_cloud=is_cloud_lane(model.get("is_cloud"),
-                                           model.get("hub_modality"))):
+            if memory_admission.applies_to(model.get("hub_modality")):
                 admission = memory_admission.describe(
                     candidate["internal_model_id"], model,
                 )
@@ -800,9 +787,6 @@ class StudioMonitor:
                 continue
             row = by_repo.get(repo)
             if row is None:
-                # cloud LANE classification — not the raw is_cloud dispatch flag
-                # (render sets is_cloud=true purely as a broker governor bypass).
-                is_cloud = is_cloud_lane(m.get("is_cloud"), m.get("hub_modality"))
                 row = by_repo[repo] = {
                     "repo": repo,
                     "label": m.get("label") or repo,
@@ -810,15 +794,6 @@ class StudioMonitor:
                     "family_label": m.get("family_label") or m.get("family"),
                     "size_gb": m.get("size_gb"),
                     "min_unified_memory_gb": m.get("min_unified_memory_gb"),
-                    "is_cloud": is_cloud,
-                    "lane": "cloud" if is_cloud else "local",
-                    # cloud metadata (present only on cloud entries; harmless None
-                    # for local): provider (fal/kie/…), tier, availability status,
-                    # and the price object, so the UI can badge/group them.
-                    "provider": _provider_of(m) if is_cloud else None,
-                    "cost_tier": m.get("cost_tier"),
-                    "status": m.get("status"),
-                    "price": m.get("price"),
                     "recommended": bool(m.get("recommended") or m.get("default")),
                     "note": m.get("note"),
                     "machines": [],       # every studio that lists it
@@ -855,12 +830,10 @@ class StudioMonitor:
                 row["available_on"].append(machine)
         rows = list(by_repo.values())
         for r in rows:
-            r["downloaded"] = bool(r["cached_on"]) or r["is_cloud"]
+            r["downloaded"] = bool(r["cached_on"]) or r["modality"] == "render"
             r["available"] = bool(r["available_on"]) if r["modality"] == "transcription" else True
         rows.sort(key=lambda r: (
-            0 if r["lane"] == "local" else 1,                              # local lane first
-            (r.get("provider") or "") if r["lane"] == "cloud" else "",     # then provider (cloud)
-            r["modality"] or "",                                            # then modality within
+            r["modality"] or "",
             not r["downloaded"], r["repo"],
         ))
         return rows

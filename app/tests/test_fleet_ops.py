@@ -10,7 +10,7 @@ def test_catalog_and_diagnostic_summaries():
     total, ready = fleet_ops._downloaded({"models": [
         {"cache": {"state": "cached"}}, {"cache": {"state": "absent"}}, {"is_cloud": True}
     ]})
-    assert (total, ready) == (3, 2)
+    assert (total, ready) == (3, 1)
     assert fleet_ops._diag_state({"available": False}) == "warn"
     assert fleet_ops._diag_state({"available": True}) == "pass"
 

@@ -1,4 +1,4 @@
-"""Unified asset ledger — index + link, never copy (SPEC §7).
+"""Unified asset ledger — index + link, never copy.
 
 SQLite at the launcher root (hub.db, gitignored). Two sources of truth:
 - `job`: assets created through the Hub's broker/recipes — full provenance
@@ -59,8 +59,7 @@ CREATE TABLE IF NOT EXISTS assets (
   item_index INTEGER,
   recipe_id TEXT,
   duration_s REAL,                -- legacy alias for runtime_s
-  runtime_s REAL,                 -- generation/processing time in seconds
-  is_cloud INTEGER DEFAULT 0      -- 1 = cloud-provider generation, 0/NULL = local
+  runtime_s REAL                  -- generation/processing time in seconds
 );
 CREATE INDEX IF NOT EXISTS idx_assets_created ON assets(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_assets_batch ON assets(batch_id);
@@ -73,8 +72,7 @@ def _conn() -> sqlite3.Connection:
     conn.executescript(_SCHEMA)
     # Migrations for DBs created before newer columns existed.
     for ddl in ("ALTER TABLE assets ADD COLUMN duration_s REAL",
-                "ALTER TABLE assets ADD COLUMN runtime_s REAL",
-                "ALTER TABLE assets ADD COLUMN is_cloud INTEGER DEFAULT 0"):
+                "ALTER TABLE assets ADD COLUMN runtime_s REAL"):
         try:
             conn.execute(ddl)
             conn.commit()
@@ -84,7 +82,7 @@ def _conn() -> sqlite3.Connection:
 
 
 def save_batch(batch: dict):
-    """Write-through persistence for the broker queue (SPEC: restart-safe)."""
+    """Write-through persistence for the restart-safe broker queue."""
     states = {i["state"] for i in batch["items"]}
     finished = int(not (states & {"queued", "running"}))
     with _conn() as conn:
@@ -243,7 +241,6 @@ def record_asset(**fields) -> str:
         "recipe_id": fields.pop("recipe_id", None),
         "duration_s": fields.pop("duration_s", None),
         "runtime_s": fields.pop("runtime_s", None),
-        "is_cloud": int(bool(fields.pop("is_cloud", False))),
     }
     with _conn() as conn:
         conn.execute(
@@ -300,14 +297,12 @@ _OP_SQL = (
 
 
 def _stats_where(source: str | None, op: str | None, machine: str | None,
-                 since_s: float | None, lane: str | None = None) -> tuple[str, list]:
+                 since_s: float | None) -> tuple[str, list]:
     """Build the shared WHERE clause + args for stats/timeline.
 
     source: 'all' (default) | 'job' (Hub-dispatched) | 'direct' (scans + uploads
-    made straight in a studio). lane: 'all' (default) | 'local' | 'cloud' —
-    orthogonal to source, splits local vs cloud-provider generations. op/machine
-    narrow to one operation type / one machine. All values are parameterized (or
-    fixed literals) — no injection."""
+    made straight in a studio). op/machine narrow to one operation type / one
+    machine. All values are parameterized (or fixed literals) — no injection."""
     where = ["1=1"]
     args: list = []
     if source == "job":
@@ -315,11 +310,6 @@ def _stats_where(source: str | None, op: str | None, machine: str | None,
     elif source == "direct":
         where.append("source != 'job'")
     # 'all' / None → every source
-    if lane == "cloud":
-        where.append("COALESCE(is_cloud,0) = 1")
-    elif lane == "local":
-        where.append("COALESCE(is_cloud,0) = 0")
-    # 'all' / None → both lanes
     if since_s:
         where.append("created_at >= ?"); args.append(since_s)
     if op:
@@ -330,8 +320,7 @@ def _stats_where(source: str | None, op: str | None, machine: str | None,
 
 
 def stats(since_s: float | None = None, source: str = "all",
-          op: str | None = None, machine: str | None = None,
-          lane: str = "all") -> dict:
+          op: str | None = None, machine: str | None = None) -> dict:
     """Generation analytics from the ledger. Counts span every source by
     default (Hub jobs + direct-in-studio scans + uploads); pass source='job'
     or 'direct' to split them. Groups by operation type (see _OP_SQL) so voice
@@ -339,7 +328,7 @@ def stats(since_s: float | None = None, source: str = "all",
     reflect assets that carry a duration/model (Hub jobs) — SQL AVG ignores
     the nulls. Also returns the full option lists (`available_*`) for the
     filter UI, computed independent of the op/machine filters."""
-    where, args = _stats_where(source, op, machine, since_s, lane)
+    where, args = _stats_where(source, op, machine, since_s)
     with _conn() as conn:
         cells = conn.execute(
             f"SELECT machine, ({_OP_SQL}) op, COUNT(*) c, "
@@ -361,9 +350,6 @@ def stats(since_s: float | None = None, source: str = "all",
         src_rows = conn.execute(
             f"SELECT source, COUNT(*) c FROM assets WHERE {where} GROUP BY source",
             args).fetchall()
-        lane_rows = conn.execute(
-            f"SELECT CASE WHEN COALESCE(is_cloud,0)=1 THEN 'cloud' ELSE 'local' END lane, "
-            f"COUNT(*) c FROM assets WHERE {where} GROUP BY lane", args).fetchall()
         # Option lists for the filter chips — narrowed by source+window only, so
         # picking an op/machine filter doesn't make the other options vanish.
         aw, aargs = _stats_where(source, None, None, since_s)
@@ -404,22 +390,17 @@ def stats(since_s: float | None = None, source: str = "all",
                              "modality": r["op"]}
                 for r in model_rows if r["model"]}
     by_source = {r["source"] or "unknown": r["c"] for r in src_rows}
-    by_lane = {"local": 0, "cloud": 0}
-    for r in lane_rows:
-        by_lane[r["lane"]] = r["c"]
     return {"total": total, "by_machine": by_machine, "by_modality": by_modality,
             "by_model": by_model, "matrix": matrix, "by_source": by_source,
-            "by_lane": by_lane,
             "available_modalities": sorted(r["op"] for r in avail_ops if r["op"]),
             "available_machines": sorted(r["machine"] for r in avail_mach if r["machine"])}
 
 
 def timeline(since_s: float | None, bucket_s: int, source: str = "all",
-             op: str | None = None, machine: str | None = None,
-             lane: str = "all") -> dict:
+             op: str | None = None, machine: str | None = None) -> dict:
     """Generations bucketed over time, split by operation type — for a
-    throughput chart. Honours the same source/op/machine/lane filters as stats()."""
-    where, args = _stats_where(source, op, machine, since_s, lane)
+    throughput chart. Honours the same source/op/machine filters as stats()."""
+    where, args = _stats_where(source, op, machine, since_s)
     bucket_s = int(bucket_s)
     with _conn() as conn:
         rows = conn.execute(

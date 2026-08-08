@@ -50,7 +50,7 @@ async def broadcast_hf_token(
 ) -> dict:
     """Set the Hugging Face token on many studios at once via each studio's own
     `POST /api/settings` (a partial update — only `hf_token` is sent, so other
-    keys like cloud API credentials are preserved). The token is passed through,
+    sibling settings are preserved). The token is passed through,
     never stored in the Hub. Studios without a settings endpoint (e.g. Render)
     report a clean failure rather than blocking the rest."""
     results = {}

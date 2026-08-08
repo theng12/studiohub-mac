@@ -8,8 +8,9 @@ Control plane for the KH Studio family. One dashboard — and one canonical API 
 The Hub runs on fixed port **47873** and provides:
 
 - **Live health grid** — up/down, version, latency and last-seen for every studio.
-- **Unified model catalog** — every model across all generative studios in one searchable
-  table (downloaded state, size, minimum unified-memory fit, local vs cloud lane).
+- **Unified local model catalog** — every on-device model across all generative
+  studios in one searchable table (downloaded state, size, and minimum
+  unified-memory fit). Hosted provider rows are discarded at the fleet boundary.
   Per-model parameters are passed through verbatim — the Hub never flattens
   model-specific capabilities.
 - **Resource monitor** — host unified-memory pressure + per-studio process memory
@@ -41,9 +42,6 @@ The Hub runs on fixed port **47873** and provides:
   after three days. The main Hub can save or run the policy across all reachable
   peer Hubs without touching active jobs, source/reference uploads, shared voices,
   models, chat history, credentials, or results still awaiting delivery.
-
-See `SPEC.md` for the full architecture and phased roadmap (gateway, job broker,
-Swarm Batch, recipes).
 
 ## How to use
 
@@ -239,7 +237,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/startup-services/{machine}/{studio}/install` | Install or repair one sibling's startup service on its own machine; refuses Hub-tracked active work |
 | `POST /api/hub/registry/studios/{id}/enabled` | Pause/resume new jobs for one Studio with `{"enabled": false/true}`; running work and the process are untouched |
 | `GET /api/hub/health` | Aggregate: totals + per-studio statuses |
-| `GET /api/hub/catalog` | Raw per-studio catalog rows (annotated `hub_cached`, `hub_machine`). Query: `q`, `modality`, `downloaded`, `cloud`, `force` |
+| `GET /api/hub/catalog` | Local per-studio catalog rows (annotated `hub_cached`, `hub_machine`). Query: `q`, `modality`, `downloaded`, `force` |
 | `GET /api/hub/models` | **Deduped by repo** with per-machine availability (`cached_on`, `machines[]`). Query: `q`, `modality`, `downloaded` |
 | `GET /api/hub/transcription` | Fleet-wide Whisper inventory with `cached_on`, `available_on`, ready counts, and recommended default |
 | `GET /api/hub/shared-voices` | List Hub-owned cloning references plus pending per-machine deletions |
@@ -254,7 +252,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/transcription/jobs/{batch}/items/{index}/artifact` | Download a verified completed SRT through Hub authentication |
 | `DELETE /api/hub/transcription/jobs/{batch}` · `POST /api/hub/transcription/jobs/{batch}/retry` | Cancel unfinished chapters or retry failed/interrupted chapters only |
 | `POST /api/hub/transcription/jobs/clear` · `POST /api/hub/transcription/jobs/{batch}/clear` | Permanently clear terminal transcription history and its Hub-local input/SRT files; active work is refused |
-| `POST /api/hub/chat/jobs` | Submit visual or motion prompts as adaptive worker packs (10 local/free-cloud; up to 30 paid-cloud) |
+| `POST /api/hub/chat/jobs` | Submit visual or motion prompts as local worker packs of up to 10 scenes |
 | `GET /api/hub/chat/jobs` · `GET /api/hub/chat/jobs/{batch}` | Read compact fleet history or full pack/scene results |
 | `DELETE /api/hub/chat/jobs/{batch}` · `POST /api/hub/chat/jobs/{batch}/retry` | Cancel unfinished packs or retry only missing scene IDs |
 | `GET /api/hub/transcription/settings` · `POST /api/hub/transcription/settings` | Read/set SRT and upload retention (`1`, `3`, `7`, `15`, `30`, or `90` days; default `3`) |
@@ -277,7 +275,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/memory-admission` | Read catalog, Hub-default, and effective total/free RAM floors for locally brokered Image, Voice, Music, and Video models |
 | `PUT /api/hub/memory-admission` · `DELETE /api/hub/memory-admission?model=...` | Save `{model, min_total_memory_gb, min_free_memory_gb}` or reset one model to its visible Hub default |
 | `GET /api/releases` | Current Hub version and complete release details read from the shipped changelog |
-| `GET /api/hub/summary` | One-shot dashboard payload (studios + resources + cloud provider inventory) |
+| `GET /api/hub/summary` | One-shot dashboard payload (studios + resources + queues) |
 | `POST /api/hub/studios/{id}/start` | Start a local studio (via Pinokio's `pterm` CLI) |
 | `GET` / `POST /api/hub/maintenance/studio-versions` | Read saved or rescan running/latest Studio versions and reachability |
 | `POST /api/hub/maintenance/updates` | Start a drained, sequential rolling update |
@@ -828,15 +826,13 @@ Lowering a floor is an explicit operator choice and can increase memory-failure
 risk. A worker MemoryGuard remains the final authority where implemented; a
 memory refusal waits/rebalances without consuming an attempt. Physical-machine
 leases prevent sibling Studios from overlapping heavy work, repeated connection
-failures temporarily pause that Mac, and cloud-backed models bypass local RAM
-admission entirely.
+failures temporarily pause that Mac. Hosted models are not accepted by Hub.
 
 ## Chat prompt packs
 
 Chat work uses a saved queue separate from media generation. Each item is one
-LLM request containing at most 10 local/free-cloud scenes or 30 paid-cloud
-scenes. Story Studio defaults paid cloud to 20 for output reliability. One
-eligible Chat Studio leases one pack at a time. This is an adaptive wave size,
+local LLM request containing at most 10 scenes. One eligible Chat Studio leases
+one pack at a time. This is an adaptive wave size,
 not a 100-scene limit: 70 scenes
 can use seven compatible servers at once; 200 scenes with five compatible
 servers continue over four waves. A batch may contain up to 5,000 scenes.
@@ -849,7 +845,6 @@ the oldest batch's model, so capable hardware is not left idle.
 curl -X POST http://localhost:47873/api/hub/chat/jobs \
   -H "Content-Type: application/json" -d '{
   "model": "mlx-community/Llama-3.2-3B-Instruct-4bit",
-  "model_cost_tier": "local",
   "kind": "visual",
   "project": "dozing-knight",
   "episode": "DK0001",
@@ -937,8 +932,8 @@ for browsing a studio's web UI, use the dashboard's direct "Open UI" links.
 # Which studios are up?
 curl http://localhost:47873/api/hub/health
 
-# All downloaded local image models
-curl "http://localhost:47873/api/hub/catalog?modality=image&downloaded=true&cloud=false"
+# All downloaded image models
+curl "http://localhost:47873/api/hub/catalog?modality=image&downloaded=true"
 
 # Memory picture
 curl http://localhost:47873/api/hub/resources
@@ -1005,7 +1000,6 @@ studiohub-mac/
 │   ├── backend/          # FastAPI app (registry, monitor, resources)
 │   ├── frontend/         # Dashboard (single page)
 │   └── requirements.txt
-├── SPEC.md               # Full architecture + roadmap
 ├── VERSION
 ├── install.js / start.js / update.js / reset.js
 ├── pinokio.js / pinokio.json

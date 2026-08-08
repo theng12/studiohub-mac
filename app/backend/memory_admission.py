@@ -41,9 +41,9 @@ def _normalized(model: str) -> str:
     return str(model or "").strip().lower()
 
 
-def applies_to(modality: str | None, *, is_cloud: bool = False) -> bool:
+def applies_to(modality: str | None) -> bool:
     """Whether this queue uses the broker's local inference RAM governor."""
-    return not is_cloud and str(modality or "") in SUPPORTED_MODALITIES
+    return str(modality or "") in SUPPORTED_MODALITIES
 
 
 def _number(value) -> float | None:

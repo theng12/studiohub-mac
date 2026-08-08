@@ -1,4 +1,4 @@
-"""Recipe engine + agentic director (SPEC intelligence plane).
+"""Recipe engine + local agentic director.
 
 A recipe is a linear chain of steps. Each step runs on one studio; template
 variables carry context forward:
@@ -177,7 +177,7 @@ async def direct(brief: str, chat_model: str | None = None) -> dict:
     # only models actually downloaded somewhere (hub_cached), deduped by repo
     seen, downloaded = set(), []
     for m in agg["models"]:
-        if (m.get("hub_cached") or m.get("is_cloud")) and m["repo"] not in seen:
+        if m.get("hub_cached") and m["repo"] not in seen:
             seen.add(m["repo"])
             downloaded.append(m)
     if chat_model is None:

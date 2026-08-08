@@ -1,6 +1,6 @@
 """Remote authentication for Studio Hub KH.
 
-Trust model (SPEC §7 exposure decision):
+Trust model:
 - Requests from loopback (this Mac) need no token: the Pinokio webview, local
   scripts and the local dashboard keep working untouched.
 - Requests from anywhere else (LAN / Tailscale) must present either a valid

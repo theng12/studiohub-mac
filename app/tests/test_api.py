@@ -102,7 +102,7 @@ def test_voice_provider_aggregation_is_retired(authed):
     The endpoint is gone rather than returning a permanently empty result, and
     neither the summary nor the resource snapshot carries provider health.
     """
-    from backend import main, monitor as mon
+    from backend import main
 
     assert authed.get("/api/hub/providers").status_code == 404
     assert not hasattr(main.monitor, "provider_health")
@@ -116,10 +116,6 @@ def test_voice_provider_aggregation_is_retired(authed):
     assert all("cloud_providers" not in (row or {})
                for row in resources["studios"].values())
 
-    # the cloud lane itself survives — video and chat still route to providers
-    assert mon.is_cloud_lane(True, "video") is True
-    assert mon.is_cloud_lane(True, "render") is False
-    assert mon._provider_of({"provider": "fal"}) == "fal"
 
 
 def test_render_asset_stream_round_trip(authed):
@@ -160,17 +156,14 @@ def test_update_status(authed):
 def test_stats_empty(authed):
     d = authed.get("/api/hub/stats").json()
     assert d["total"] == 0 and d["by_machine"] == {}
-    # lane facet is always present (both lanes reported even when empty)
-    assert d["by_lane"] == {"local": 0, "cloud": 0}
-    assert d["filters"]["lane"] == "all"
+    assert "by_lane" not in d
+    assert "lane" not in d["filters"]
 
 
 def test_models_empty_when_all_down(authed):
     d = authed.get("/api/hub/models").json()
     assert d["count"] == 0
-    # lane/provider summaries are always present so the UI can group by lane
-    assert d["lanes"] == {"local": 0, "cloud": 0}
-    assert d["providers"] == {}
+    assert "lanes" not in d and "providers" not in d
 
 
 def test_transcription_empty_when_all_voice_studios_down(authed):

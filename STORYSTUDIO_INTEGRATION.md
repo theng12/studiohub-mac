@@ -165,10 +165,8 @@ For continuity / style-ref renders, add `reference_images` to an image item's
 
 ## 4c. Visual and motion prompts — adaptive Chat packs
 
-`POST /api/hub/chat/jobs` with one or more packs. A pack is one Chat Studio
-completion containing at most 10 stable scene IDs for local/free-cloud models,
-or up to 30 for a paid-cloud model. Story Studio should default paid cloud to
-20. Hub leases one pack per
+`POST /api/hub/chat/jobs` with one or more packs. A pack is one local Chat
+Studio completion containing at most 10 stable scene IDs. Hub leases one pack per
 eligible Chat Studio. The fleet size controls only each wave: 70 scenes can use
 seven compatible servers; 200 scenes with five compatible servers continue
 over four waves. Packs are pulled as workers finish, and a batch can contain up
@@ -177,7 +175,6 @@ to 5,000 scenes. Multiple episodes share workers in fair round-robin turns.
 ```json
 {
   "model": "mlx-community/Llama-3.2-3B-Instruct-4bit",
-  "model_cost_tier": "local",
   "kind": "visual",
   "label": "Scene visual prompts",
   "project": "dozing-knight",
@@ -436,12 +433,11 @@ def generate(prompts, modality="image", shared=None):
 - **Token required off-box.** A 401 means missing/wrong token (loopback is exempt).
 - **Model must be downloaded somewhere.** Submitting a model no machine has cached
   leaves items queued with a `governor_note`. Check `/api/hub/models` first.
-- **Local vs cloud models.** `is_cloud: true` models don't use local RAM and aren't
-  gated by memory; local models are. Either works as a `model` value.
+- **Local models only.** Hosted model IDs are refused before a job is queued.
 - **`/api/hub/models` latency** with offline fleet machines — cache it client-side.
 - **Artifacts live on the producing machine.** Story Studio needs tailnet access to
   fetch remote `artifact_url`s.
 - **Batch queue is durable; in-flight items are re-run after a Hub restart.** Idempotent
   by design (results keyed by new artifact + recorded in the ledger).
 
-Full API reference: the Hub's `README.md` and `SPEC.md`.
+Full API reference: the Hub's `README.md`.

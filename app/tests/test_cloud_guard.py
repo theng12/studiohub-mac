@@ -1,9 +1,6 @@
-"""Studio Hub structurally refuses cloud work that originates in GenStudio.
+"""Studio Hub structurally refuses hosted work from every caller.
 
-The guarantee under test is one-sided on purpose: it is keyed on the SOURCE of
-the work, not on the modality. A local operator keeps full access to every
-cloud lane the fleet offers, and Render — which flags ``is_cloud=true`` purely
-to bypass the download/memory governor — must never be caught.
+Render flags ``is_cloud=true`` only as a local broker hint and remains exempt.
 """
 
 import hashlib
@@ -50,19 +47,6 @@ def _genstudio_envelope(**overrides):
 
 
 # ── origin detection ───────────────────────────────────────────────────────
-def test_genstudio_origin_is_recognised_from_either_marker():
-    assert cloud_guard.is_genstudio_origin(
-        {"label": "genstudio-kh:story-studio-kh"}) is True
-    assert cloud_guard.is_genstudio_origin(
-        {"genstudio_execution": dict(GENSTUDIO_EXECUTION)}) is True
-    assert cloud_guard.is_genstudio_origin(
-        {"genstudio_job_id": "job-1"}) is True
-    # A local operator carries neither marker.
-    assert cloud_guard.is_genstudio_origin({"label": "storystudio"}) is False
-    assert cloud_guard.is_genstudio_origin({}) is False
-    assert cloud_guard.is_genstudio_origin(None) is False
-
-
 # ── cloud detection ────────────────────────────────────────────────────────
 @pytest.mark.parametrize("model", [
     "fal:fal-ai/kling-video/v2/master/text-to-video",
@@ -136,7 +120,7 @@ def test_genstudio_cloud_submission_is_refused_at_the_door(reset):
 
     assert result["code"] == cloud_guard.REFUSAL_CODE
     assert "cloudflare/flux-1-schnell" in result["error"]
-    assert "does not accept cloud work from GenStudio" in result["error"]
+    assert "does not accept cloud generation" in result["error"]
     # Refused, not queued-then-failed: nothing was created at all.
     assert broker.batches == {}
 
@@ -198,9 +182,7 @@ def test_genstudio_local_submission_still_succeeds(controller, seed_catalog):
     assert result["items"] == 1
 
 
-def test_a_local_operator_may_still_submit_cloud_work(reset):
-    """Removing cloud support was never the point — the Hub's own Jobs tab
-    keeps every cloud lane it had."""
+def test_a_local_operator_cannot_submit_cloud_work(reset):
     result = broker.submit_batch({
         "modality": "video",
         "model": "fal:fal-ai/veo3",
@@ -208,9 +190,8 @@ def test_a_local_operator_may_still_submit_cloud_work(reset):
         "items": [{"prompt": "a stick figure waving"}],
     })
 
-    assert "error" not in result
-    assert result["items"] == 1
-    assert broker.batches[result["batch_id"]]["model"] == "fal:fal-ai/veo3"
+    assert result["code"] == cloud_guard.REFUSAL_CODE
+    assert broker.batches == {}
 
 
 def test_a_genstudio_render_batch_still_dispatches_normally(controller, seed_catalog):
@@ -234,7 +215,6 @@ def test_a_genstudio_render_batch_still_dispatches_normally(controller, seed_cat
 def _chat_payload(**overrides):
     payload = {
         "model": "mlx-community/Llama-3.2-3B-Instruct-4bit",
-        "model_cost_tier": "local",
         "label": "genstudio-kh:story-studio-kh",
         "packs": [{"pack_id": "pack-1", "scene_ids": ["scene-1"],
                    "messages": [{"role": "user", "content": "hello"}]}],
@@ -260,18 +240,22 @@ def test_genstudio_paid_chat_work_is_refused_by_cost_tier(reset):
 def test_genstudio_local_chat_work_still_succeeds(controller):
     batch, duplicate = chat_jobs.create_batch(_chat_payload())
     assert duplicate is False
-    assert batch["model_cost_tier"] == "local"
+    assert "model_cost_tier" not in batch
 
 
-def test_a_local_operator_may_still_submit_paid_chat_work(reset):
-    batch, _duplicate = chat_jobs.create_batch({
-        "model": "cloudflare/some-chat-model",
-        "model_cost_tier": "paid",
-        "label": "jobs-tab",
-        "packs": [{"pack_id": "pack-1", "scene_ids": ["scene-1"],
-                   "messages": [{"role": "user", "content": "hello"}]}],
-    })
-    assert batch["model_cost_tier"] == "paid"
+def test_a_local_operator_cannot_submit_paid_chat_work(reset):
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as raised:
+        chat_jobs.create_batch({
+            "model": "cloudflare/some-chat-model",
+            "model_cost_tier": "paid",
+            "label": "jobs-tab",
+            "packs": [{"pack_id": "pack-1", "scene_ids": ["scene-1"],
+                       "messages": [{"role": "user", "content": "hello"}]}],
+        })
+    assert raised.value.status_code == 403
+    assert raised.value.detail["code"] == cloud_guard.REFUSAL_CODE
 
 
 # ── the catalog door ───────────────────────────────────────────────────────

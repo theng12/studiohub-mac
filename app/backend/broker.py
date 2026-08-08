@@ -1,4 +1,4 @@
-"""Job broker + Swarm Batch — pull-based worker pools per modality (SPEC §5).
+"""Job broker + Swarm Batch — pull-based worker pools per modality.
 
 An N-item batch is a work queue. Each UP studio of the right modality is a
 worker slot (one concurrent generation each — heavy models on unified
@@ -7,11 +7,11 @@ do more and everyone finishes together; a failed item is requeued (max
 MAX_TRIES). With one machine today the pool has one worker per modality —
 the moment a second machine joins the registry, the same code fans out.
 
-Memory governor (local models only, SPEC §7 two-lane decision): before
+Memory governor: before
 dispatching to a local or connected remote studio, the stricter of the
 studio's catalog requirement and Hub production policy is checked against the
-host's available memory; the item waits rather than OOMing the box. Cloud
-models bypass the check.
+host's available memory; the item waits rather than OOMing the box. Render's
+catalog hint bypasses the model-memory check because it runs local FFmpeg.
 
 Params stay opaque: item params + sharedParams merge over {repo, prompt-field}
 and are forwarded verbatim to the studio's own generate endpoint.
@@ -33,7 +33,7 @@ import httpx
 from . import (artifact_metadata, cloud_guard, execution_assets,
                execution_identity, ledger, peers, shared_voices)
 from .peers import studio_request
-from .monitor import is_cached, is_cloud_lane
+from .monitor import is_cached
 from .registry import base_url, machine_enabled, studio_enabled
 from .resources import host_stats
 from . import memory_admission
@@ -263,9 +263,7 @@ def _batch_memory_constraint_gb(batch: dict) -> float:
     floors: list[float] = []
     for match in _monitor().cached_catalog_entries(model, modality=modality):
         entry = match["entry"]
-        if not memory_admission.applies_to(
-            modality, is_cloud=bool(entry.get("is_cloud")),
-        ):
+        if entry.get("is_cloud") or not memory_admission.applies_to(modality):
             continue
         requirements = _admission_requirements(model, entry)
         try:
@@ -386,7 +384,7 @@ def _monitor():
 
 
 async def _catalog_entry(studio: dict, model: str) -> dict | None:
-    """The studio's own catalog entry for a model (verbatim, per SPEC §6.2).
+    """The studio's own catalog entry for a model, kept verbatim.
     Carries cache state for model-aware dispatch and capability facts for the
     governor: min_unified_memory_gb = 'needs ≥N GB TOTAL machine'. size_gb
     is download/disk metadata and is never treated as runtime RAM."""
@@ -545,7 +543,7 @@ def _submit_batch_locked(envelope: dict) -> dict:
         return {"error": "batch payload must be valid JSON"}
     if not envelope.get("model"):
         return {"error": "model (repo) is required"}
-    # Refuse at the door: GenStudio cloud work is never queued, never accepted
+    # Refuse at the door: cloud work is never queued, never accepted
     # and then failed. This runs before execution_identity.prepare so a refused
     # submission also leaves no fence or idempotency record behind.
     refusal = cloud_guard.refusal(
@@ -1100,7 +1098,6 @@ async def _record_worker_success(client: httpx.AsyncClient, b: dict, item: dict,
         params=body, artifact_path=item["artifact_path"],
         artifact_url=worker_url, batch_id=b["id"],
         item_index=item["index"], duration_s=runtime, runtime_s=runtime,
-        is_cloud=item.get("is_cloud", False),
     )
     # Publish terminal state only after metadata, revision evidence, and the
     # stable asset identity are complete. Pollers must never observe a partial
@@ -1181,50 +1178,6 @@ async def _maybe_finish(client: httpx.AsyncClient, b: dict):
             }, timeout=10.0)
         except httpx.HTTPError:
             pass  # client unreachable — batch state is still queryable
-
-
-def _names_retired_cloud_provider(modality: str, model: str) -> bool:
-    """A voice model id that no Voice Studio in the fleet can ever serve again.
-
-    Voice Studio 1.33.0 removed cloud providers outright — the route, the
-    adapter, and the account pool. ``provider:<vendor>:<model>`` was the id
-    scheme those lanes used and it is voice-only: the surviving cloud lanes
-    carry their vendor in the repo itself (video ``fal:…``/``kie:…``, image
-    ``cloudflare/…``), so they are unaffected by this check.
-    """
-    return modality == "voice" and str(model).startswith("provider:")
-
-
-def _fail_retired_cloud_provider_batch(batch: dict) -> bool:
-    """Terminate a batch that names a removed cloud-provider voice model.
-
-    The generic dispatch path would set "'<model>' not in <studio>'s catalog"
-    and wait — correct for a model that is still downloading or lives on a
-    worker that is temporarily offline, but this model is never coming back.
-    An unservable batch that looks queued forever is worse than one that fails,
-    so it fails once, terminally, saying why.
-    """
-    if not _names_retired_cloud_provider(batch.get("modality"),
-                                         batch.get("model") or ""):
-        return False
-    queued = [item for item in batch.get("items") or []
-              if item.get("state") == "queued"]
-    if not queued:
-        return False
-    reason = (
-        f"'{batch.get('model')}' is a cloud-provider voice model. Voice Studio "
-        "1.33.0 removed cloud providers, so no worker can run it — resubmit "
-        "with a local voice model."
-    )
-    batch["governor_note"] = reason
-    now = time.time()
-    for item in queued:
-        item["state"] = "error"
-        item["error_code"] = "CLOUD_PROVIDER_RETIRED"
-        item["error"] = reason
-        item["finished_at"] = now
-        item["retry_at"] = None
-    return True
 
 
 def _eligible_studios(modality: str, routing: str) -> list[dict]:
@@ -1344,10 +1297,6 @@ async def _dispatch_loop():
                     continue
                 if b["cancelled"]:
                     continue
-                if _fail_retired_cloud_provider_batch(b):
-                    ledger.save_batch(b)
-                    await _maybe_finish(client, b)
-                    continue
                 now = time.time()
                 queued = [i for i in b["items"] if i["state"] == "queued"
                           and (i.get("retry_at") or 0) <= now]
@@ -1438,7 +1387,6 @@ async def _dispatch_loop():
                     # worker id if the new POST loses its response.
                     item["studio_job_id"] = None
                     item["tries"] += 1
-                    item["is_cloud"] = is_cloud_lane(entry.get("is_cloud"), b["modality"])
                     item["_reserved"] = reserve
                     _reserved["gb"] += reserve
                     _busy.add(studio["id"])
@@ -1472,10 +1420,7 @@ def _worker_http_error(response) -> RuntimeError:
 
 def _worker_terminal_error(message: str) -> RuntimeError:
     error = RuntimeError(message)
-    # Voice Studio uses this exact class prefix when a paid ElevenLabs call may
-    # have completed but could not be uniquely recovered. Retrying the batch
-    # would risk a duplicate charge, so the Hub must preserve the terminal state.
-    error.retryable = not message.startswith("ProviderResultUncertain:")
+    error.retryable = True
     return error
 
 

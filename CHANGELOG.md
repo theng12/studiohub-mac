@@ -10,6 +10,43 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.0.0] — 2026-08-09
+
+### Removed — Studio Hub is now a local fleet controller only
+
+Studio Hub no longer exposes, queues, groups, prices, or reports hosted model
+lanes. This completes the production boundary already adopted by Image, Voice,
+Chat, Music, and Video Studio: provider execution belongs outside the Studio
+fleet, while Hub owns local capacity, fleet coordination, memory admission,
+idle-model control, shared voices, and durable local queues.
+
+- **Every hosted submission is refused before persistence**, regardless of
+  whether it came from GenStudio, the Hub Jobs tab, or another caller. The
+  stable error code is now `CLOUD_WORK_RETIRED`. Local image, music, voice,
+  video, chat, transcription, and render work is unchanged.
+- **Sibling catalog aggregation drops hosted rows.** The drop count remains
+  visible per Studio for diagnosis, but `/api/hub/catalog`, `/api/hub/models`,
+  recipes, fleet preflight, RAM admission, and the private GenStudio capability
+  snapshot now describe local models only. Render's historical `is_cloud` flag
+  remains a direct-worker broker hint for local FFmpeg and is explicitly exempt.
+- **The Models and Stats interfaces are local-only.** Provider grouping,
+  pricing badges, Local/Cloud filters, lane totals, and cloud query parameters
+  are removed. `/api/hub/models` no longer returns `lanes` or `providers`;
+  `/api/hub/stats` no longer accepts `lane` or returns `by_lane`; and
+  `/api/hub/catalog` no longer accepts `cloud` or returns `lanes`.
+- **Chat packs have one contract:** at most 10 scenes per local request.
+  `model_cost_tier` is no longer persisted or returned; legacy `free` or `paid`
+  submissions are refused at the boundary.
+- **Removed 383 lines of obsolete roadmap and the retired provider-specific
+  recovery/fail-fast paths.** Current README and integration contracts now
+  document the shipped local fleet instead of the abandoned two-lane design.
+
+This is a major release because the removed lane filters and response fields
+are API-breaking. The SQLite asset table remains backward-readable; its old
+`is_cloud` column is simply ignored, so no data migration is required. Use the
+normal Update flow and restart Hub to load 2.0.0. Existing live jobs and Studio
+services are not changed by the update itself.
+
 ## [1.87.1] — 2026-08-08
 
 ### Fixed — the fleet memory control no longer points at the mode that caused the swap incident

@@ -1,4 +1,4 @@
-"""Studio registry — host-aware from day one (SPEC §6.1).
+"""Studio registry — host-aware local fleet inventory.
 
 Defaults cover the five local KH studios. A per-machine `studios.json` at the
 launcher root (gitignored) can override any default by `id` or add extra

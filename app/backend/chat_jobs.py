@@ -17,7 +17,6 @@ from .registry import machine_enabled, studio_enabled
 
 MAX_PACKS = 500
 MAX_SCENES_PER_PACK = 10
-MAX_PAID_CLOUD_SCENES_PER_PACK = 30
 MAX_TOTAL_SCENES = 5000
 MAX_MESSAGE_CHARS = 500_000
 MAX_TRIES = 3
@@ -107,13 +106,6 @@ def _model(value: object) -> str:
     return clean
 
 
-def _model_cost_tier(value: object) -> str:
-    tier = str(value or "local").strip().lower()
-    if tier not in {"local", "free", "paid"}:
-        raise HTTPException(400, "model_cost_tier must be local, free, or paid")
-    return tier
-
-
 def _messages(value: object) -> list[dict]:
     if not isinstance(value, list) or not value or len(value) > 20:
         raise HTTPException(400, "each pack needs 1 to 20 messages")
@@ -171,10 +163,8 @@ def create_batch(payload: dict) -> tuple[dict, bool]:
     )
     if supplied_operation is not None and str(supplied_operation).strip().lower() != "chat.completion":
         raise HTTPException(400, "GenStudio execution operation must be chat.completion")
-    # Refuse at the door, before any identity is persisted. Chat is the one
-    # modality that declares its lane on the job rather than the catalogue
-    # entry, so the cost tier is part of the evidence here. Local operators
-    # keep full access to the paid and free tiers.
+    # Refuse at the door, before any identity is persisted. Chat declares its
+    # lane on the job rather than the catalogue entry, so tier is evidence too.
     refusal = cloud_guard.refusal(
         payload, model=payload.get("model"), modality="chat",
         cost_tier=payload.get("model_cost_tier"),
@@ -195,9 +185,7 @@ def create_batch(payload: dict) -> tuple[dict, bool]:
     if not isinstance(raw_packs, list) or not raw_packs or len(raw_packs) > MAX_PACKS:
         raise HTTPException(400, f"packs must contain 1 to {MAX_PACKS} entries")
     model = _model(payload.get("model"))
-    model_cost_tier = _model_cost_tier(payload.get("model_cost_tier"))
-    max_scenes_per_pack = (MAX_PAID_CLOUD_SCENES_PER_PACK
-                           if model_cost_tier == "paid" else MAX_SCENES_PER_PACK)
+    max_scenes_per_pack = MAX_SCENES_PER_PACK
     kind = str(payload.get("kind") or "visual").strip().lower()
     if kind not in {"visual", "motion", "completion"}:
         raise HTTPException(400, "kind must be visual, motion, or completion")
@@ -214,7 +202,7 @@ def create_batch(payload: dict) -> tuple[dict, bool]:
         scene_values = raw.get("scene_ids")
         if (not isinstance(scene_values, list) or not scene_values
                 or len(scene_values) > max_scenes_per_pack):
-            raise HTTPException(400, f"each {model_cost_tier} pack must contain 1 to "
+            raise HTTPException(400, f"each pack must contain 1 to "
                                 f"{max_scenes_per_pack} scene_ids")
         scene_ids = [_identifier(scene_id, "scene_id") for scene_id in scene_values]
         if kind == "completion" and len(scene_ids) != 1:
@@ -238,8 +226,7 @@ def create_batch(payload: dict) -> tuple[dict, bool]:
         raise HTTPException(400, f"batch exceeds {MAX_TOTAL_SCENES} total scenes")
 
     canonical = {
-        "model": model, "model_cost_tier": model_cost_tier,
-        "kind": kind, "label": label, "project": project,
+        "model": model, "kind": kind, "label": label, "project": project,
         "episode": episode,
         "packs": [{"pack_id": p["pack_id"], "scene_ids": p["scene_ids"],
                    "messages": p["messages"], "params": p["params"]} for p in packs],
@@ -255,8 +242,7 @@ def create_batch(payload: dict) -> tuple[dict, bool]:
     batch = {
         "id": uuid.uuid4().hex[:12], "idempotency_key": key,
         "created_at": now, "updated_at": now, "finished_at": None,
-        "cancelled": False, "model": model, "model_cost_tier": model_cost_tier,
-        "kind": kind, "label": label,
+        "cancelled": False, "model": model, "kind": kind, "label": label,
         "project": project, "episode": episode, "packs": packs,
         "genstudio_execution": prepared.evidence,
     }
@@ -337,7 +323,7 @@ def summary(batch: dict, include_raw: bool = False, include_results: bool = True
         status = "done"
     result = {
         "id": batch["id"], "status": status, "kind": batch["kind"],
-        "model": batch["model"], "model_cost_tier": batch.get("model_cost_tier", "local"),
+        "model": batch["model"],
         "label": batch.get("label"),
         "project": batch.get("project"), "episode": batch.get("episode"),
         "created_at": batch["created_at"], "updated_at": batch.get("updated_at"),
@@ -451,7 +437,7 @@ async def _eligible_studios(
         catalog = await monitor.get_catalog(studio)
         entry = next((item for item in (catalog or {}).get("models", [])
                       if item.get("repo") == model or model in (item.get("aliases") or [])), None)
-        if not entry or not (entry.get("is_cloud") or broker.is_cached(entry)):
+        if not entry or not broker.is_cached(entry):
             continue
         if execution:
             expected_revision = str(execution.get("model_revision") or "").strip().lower()

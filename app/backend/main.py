@@ -1,6 +1,6 @@
 """Studio Hub KH — control plane for the KH Studio family.
 
-Phase 1 (SPEC §9): monitoring dashboard.
+Monitoring dashboard and local fleet control plane.
   - host-aware studio registry
   - health/version poller
   - unified (pass-through) model catalog
@@ -905,7 +905,6 @@ async def hub_catalog(
     modality: str | None = Query(None),
     q: str | None = Query(None, description="substring match on repo/label"),
     downloaded: bool | None = Query(None),
-    cloud: bool | None = Query(None, description="true=cloud lane, false=local lane"),
     force: bool = Query(False, description="bypass the 60s cache"),
 ):
     agg = await monitor.aggregate_catalog(force=force)
@@ -922,15 +921,9 @@ async def hub_catalog(
     if downloaded is not None:
         # hub_cached is the corrected download flag (cache.state == 'cached').
         models = [m for m in models if bool(m.get("hub_cached")) == downloaded]
-    # lanes counted before the cloud filter so both are always reported
-    lanes = {"local": sum(1 for m in models if not m.get("is_cloud")),
-             "cloud": sum(1 for m in models if m.get("is_cloud"))}
-    if cloud is not None:
-        models = [m for m in models if bool(m.get("is_cloud")) == cloud]
     return {
         "models": models,
         "count": len(models),
-        "lanes": lanes,
         "total_unfiltered": agg["total"],
         "per_studio": agg["per_studio"],
     }
@@ -1333,8 +1326,7 @@ def hub_submit_jobs(envelope: dict):
         raise HTTPException(409, "This Hub is in agent mode; submit customer jobs to a controller.")
     result = broker.submit_batch(envelope)
     if result.get("code") == cloud_guard.REFUSAL_CODE:
-        # A policy refusal, not a malformed request: this Hub structurally
-        # does not accept cloud work from GenStudio.
+        # A policy refusal, not a malformed request: this Hub is local-only.
         raise HTTPException(403, {"code": result["code"], "detail": result["error"]})
     if "error" in result:
         raise HTTPException(400, result["error"])
@@ -1501,15 +1493,12 @@ def hub_assets(q: str | None = None, modality: str | None = None,
 
 @app.get("/api/hub/models")
 async def hub_models(modality: str | None = None, q: str | None = None,
-                     downloaded: bool | None = None, cloud: bool | None = None,
-                     force: bool = False):
-    """Deduped-by-repo model list with per-machine availability (Models tab).
-    Reports local vs cloud as distinct lanes (never one merged number)."""
+                     downloaded: bool | None = None, force: bool = False):
+    """Local models deduped by repo with per-machine availability."""
     rows = await monitor.models_by_repo(force=force)
     for row in rows:
         row["memory_admission"] = (
-            None if not memory_admission.applies_to(
-                row.get("modality"), is_cloud=bool(row.get("is_cloud")))
+            None if not memory_admission.applies_to(row.get("modality"))
             else memory_admission.describe(row["repo"], row)
         )
     if modality:
@@ -1520,18 +1509,7 @@ async def hub_models(modality: str | None = None, q: str | None = None,
                 if needle in r["repo"].lower() or needle in r["label"].lower()]
     if downloaded is not None:
         rows = [r for r in rows if r["downloaded"] == downloaded]
-    # Lane + per-provider counts are computed BEFORE the cloud filter so the UI
-    # can always show both lanes even while viewing one.
-    lanes = {"local": sum(1 for r in rows if not r["is_cloud"]),
-             "cloud": sum(1 for r in rows if r["is_cloud"])}
-    providers: dict[str, int] = {}
-    for r in rows:
-        if r["is_cloud"]:
-            p = r.get("provider") or "cloud"
-            providers[p] = providers.get(p, 0) + 1
-    if cloud is not None:
-        rows = [r for r in rows if r["is_cloud"] == cloud]
-    return {"models": rows, "count": len(rows), "lanes": lanes, "providers": providers}
+    return {"models": rows, "count": len(rows)}
 
 
 def _require_exposure_owner(request: Request) -> None:
@@ -1759,8 +1737,7 @@ async def _local_model_for_admission(model: str) -> dict:
     )
     if row is None:
         raise HTTPException(404, "Model is not present in the current fleet catalog.")
-    if not memory_admission.applies_to(
-            row.get("modality"), is_cloud=bool(row.get("is_cloud"))):
+    if not memory_admission.applies_to(row.get("modality")):
         raise HTTPException(
             400, "This model's queue does not use the local generation RAM governor.")
     return row
@@ -1770,8 +1747,7 @@ async def _local_model_for_admission(model: str) -> dict:
 async def get_memory_admission():
     """Effective per-model local RAM floors and their visible source."""
     rows = [row for row in await monitor.models_by_repo(force=False)
-            if memory_admission.applies_to(
-                row.get("modality"), is_cloud=bool(row.get("is_cloud")))]
+            if memory_admission.applies_to(row.get("modality"))]
     return {
         "default_min_free_memory_gb": memory_admission.DEFAULT_MIN_FREE_MEMORY_GB,
         "policies": [memory_admission.describe(row["repo"], row) for row in rows],
@@ -2471,21 +2447,18 @@ def hub_stats(
                         description="all | job (Hub-dispatched) | direct (in-studio)"),
     modality: str | None = Query(None, description="filter to one operation type"),
     machine: str | None = Query(None, description="filter to one machine"),
-    lane: str = Query("all", pattern="^(all|local|cloud)$",
-                      description="all | local | cloud (cloud-provider generations)"),
 ):
     """Generation analytics: per-machine / operation-type / model counts +
     speed, plus a time-bucketed throughput series (bucket sized to the window).
-    Counts span every source by default; `source`, `modality`, `machine`, and
-    `lane` (local vs cloud) narrow the view (and the throughput chart) to match.
-    `by_lane` in the response always reports both lanes for the current window."""
+    Counts span every source by default; `source`, `modality`, and `machine`
+    narrow the view and throughput chart to match."""
     since = time.time() - hours * 3600 if hours else None
     bucket = 300 if hours == 1 else (3600 if hours == 24 else 86400)
-    result = ledger.stats(since_s=since, source=source, op=modality, machine=machine, lane=lane)
+    result = ledger.stats(since_s=since, source=source, op=modality, machine=machine)
     result["timeline"] = ledger.timeline(since, bucket, source=source, op=modality,
-                                          machine=machine, lane=lane)
-    result["filters"] = {"source": source, "modality": modality, "machine": machine,
-                         "lane": lane, "hours": hours}
+                                          machine=machine)
+    result["filters"] = {"source": source, "modality": modality,
+                         "machine": machine, "hours": hours}
     return result
 
 

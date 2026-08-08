@@ -127,7 +127,9 @@ def test_models_api_and_ram_admission_controls(seed_catalog, authed):
     assert restored.json()["policy"]["source"] == "fleet_default"
 
 
-def test_ram_admission_rejects_unknown_cloud_and_unsafe_values(seed_catalog, authed):
+def test_ram_admission_hides_retired_hosted_models_and_rejects_unsafe_values(
+    seed_catalog, authed,
+):
     seed_catalog("image", [{
         "repo": "provider:test/cloud-image", "label": "Cloud",
         "is_cloud": True, "provider": "test",
@@ -147,5 +149,5 @@ def test_ram_admission_rejects_unknown_cloud_and_unsafe_values(seed_catalog, aut
     })
 
     assert unknown.status_code == 404
-    assert cloud.status_code == 400
+    assert cloud.status_code == 404
     assert unsafe.status_code == 422

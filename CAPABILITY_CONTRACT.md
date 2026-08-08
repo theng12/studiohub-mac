@@ -99,11 +99,10 @@ Operations use stable names such as:
 - `video.generation`
 - `video.render`
 
-Each model capability reports the worker's internal model ID, execution lane,
-provider when relevant, input/output limits, allowlisted controls, and current
-availability. Voice models may report `preset_voice`,
-`reference_audio_clone`, `voice_design`, or `provider_voice_id` modes when the
-worker catalog provides enough evidence.
+Each model capability reports the worker's internal model ID, local execution
+lane, input/output limits, allowlisted controls, and current availability.
+Voice models may report `preset_voice`, `reference_audio_clone`, or
+`voice_design` modes when the worker catalog provides enough evidence.
 
 For `reference_audio_clone`, the audit-bound `input_limits` may additionally
 report `text_max_characters`, `long_form_strategy`,
@@ -195,15 +194,14 @@ GenStudio decides whether its routing policy requires an immutable revision.
 
 - The worker is online and ready.
 - The worker and machine are not drained, in maintenance, quarantined, or busy.
-- A local model is installed, or a cloud provider is currently verified ready.
+- The local model is installed.
 - The runtime and subsystem report compatibility/readiness.
 - The audited catalogue observation is not stale.
 - The exact model contract remains present in the last-good GenStudio fleet
   catalog accepted by this controller.
 
 An unavailable model includes a stable reason such as `worker_offline`,
-`physical_machine_busy`, `worker_maintenance`, `model_not_installed`, or
-`provider_unavailable_or_unverified`.
+`physical_machine_busy`, `worker_maintenance`, or `model_not_installed`.
 
 ## Privacy and authority boundary
 
@@ -212,7 +210,7 @@ and scheduler facts. It never includes:
 
 - Customer prompts, text, or generated content.
 - Artifact or cache paths.
-- API keys, passwords, tokens, or provider credentials.
+- API keys, passwords, or tokens.
 - GenStudio customer job IDs, attempt IDs, idempotency keys, or fencing tokens.
 
 GenStudio remains responsible for global jobs, routing, billing, retries,

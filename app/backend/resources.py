@@ -7,7 +7,7 @@ run as this user). Process handles are cached so cpu_percent() deltas are
 meaningful across polls.
 
 Apple Silicon note: unified memory means there is no separate VRAM figure —
-process RSS + host memory pressure IS the honest picture (SPEC §9).
+process RSS + host memory pressure is the honest picture.
 """
 
 from functools import lru_cache

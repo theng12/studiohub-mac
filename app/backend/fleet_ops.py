@@ -126,8 +126,8 @@ _load_state()
 
 def _downloaded(catalog: dict) -> tuple[int, int]:
     models = catalog.get("models") or []
-    ready = sum(1 for m in models if m.get("is_cloud") or
-                (m.get("cache") or {}).get("state") == "cached")
+    ready = sum(1 for m in models
+                if (m.get("cache") or {}).get("state") == "cached")
     return len(models), ready
 
 

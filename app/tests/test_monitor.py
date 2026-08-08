@@ -123,60 +123,36 @@ async def test_models_dedup_and_availability(monitor, seed_catalog):
     assert by_repo["org/absent"]["cached_on"] == []
 
 
-def test_is_cloud_lane_excludes_render():
-    assert mon.is_cloud_lane(True, "video") is True
-    assert mon.is_cloud_lane(True, "image") is True
-    assert mon.is_cloud_lane(False, "image") is False
-    # render overloads is_cloud=true as a broker governor bypass — never cloud
-    assert mon.is_cloud_lane(True, "render") is False
-    assert mon.is_cloud_lane(None, "video") is False
-
-
 @pytest.mark.asyncio
-async def test_cloud_models_carry_lane_and_provider(monitor, seed_catalog):
-    # Video Studio gateway surfaces cloud + local entries in one catalog.
+async def test_aggregate_drops_hosted_rows_but_keeps_local_render(
+    monitor, seed_catalog,
+):
     seed_catalog("video", [
         {"repo": "local/ltx", "label": "LTX", "cache": {"state": "cached"},
          "size_gb": 8.0},
         {"repo": "fal/kling-v2", "label": "Kling v2", "is_cloud": True,
          "provider": "fal", "cost_tier": "paid-cloud", "status": "new",
          "size_gb": 0, "price": {"unit": "second", "amount": 0.05}},
-        {"repo": "fal/old-model", "label": "Old", "is_cloud": True,
-         "provider": "fal", "cost_tier": "paid-cloud", "status": "deprecated",
-         "size_gb": 0},
-        # existing Image/Chat style: generic provider="cloud", real vendor in the
-        # repo prefix — must derive "cloudflare" so it groups on its own.
         {"repo": "cloudflare/sdxl-base", "label": "SDXL", "is_cloud": True,
          "provider": "cloud", "size_gb": 0},
     ])
-    # render flags is_cloud=true only to bypass the broker gates — it is LOCAL.
     seed_catalog("render", [
         {"repo": "episode-assembly-v1", "label": "Episode Assembly",
          "cache": {"state": "cached"}, "is_cloud": True},
     ])
+
+    aggregate = await monitor.aggregate_catalog()
+    assert {row["repo"] for row in aggregate["models"]} == {
+        "local/ltx", "episode-assembly-v1",
+    }
+    assert aggregate["per_studio"]["video"]["retired_cloud_models"] == 2
+    assert all("is_cloud" not in row for row in aggregate["models"])
+
     rows = await monitor.models_by_repo()
     by_repo = {r["repo"]: r for r in rows}
-    # render is never in the cloud lane despite is_cloud=true at the source
-    render = by_repo["episode-assembly-v1"]
-    assert render["lane"] == "local"
-    assert render["is_cloud"] is False
-    # local entry stays in the local lane, no provider
-    assert by_repo["local/ltx"]["lane"] == "local"
-    assert by_repo["local/ltx"]["is_cloud"] is False
-    assert by_repo["local/ltx"]["provider"] is None
-    # cloud entries carry lane + provider + status + price verbatim
-    kling = by_repo["fal/kling-v2"]
-    assert kling["lane"] == "cloud"
-    assert kling["is_cloud"] is True
-    assert kling["provider"] == "fal"
-    assert kling["status"] == "new"
-    assert kling["price"] == {"unit": "second", "amount": 0.05}
-    assert by_repo["fal/old-model"]["status"] == "deprecated"
-    # generic provider="cloud" resolves to the repo-prefix vendor
-    assert by_repo["cloudflare/sdxl-base"]["provider"] == "cloudflare"
-    # local sorts before cloud in the row order
-    lanes = [r["lane"] for r in rows]
-    assert lanes.index("local") < lanes.index("cloud")
+    assert set(by_repo) == {"local/ltx", "episode-assembly-v1"}
+    assert by_repo["episode-assembly-v1"]["downloaded"] is True
+    assert all("lane" not in row and "provider" not in row for row in rows)
 
 
 @pytest.mark.asyncio
