@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import re
 import time
 from pathlib import Path
@@ -18,8 +19,10 @@ from typing import Any
 
 import httpx
 
-from . import hardware_profiles, model_exposure, peers
+from . import cloud_guard, hardware_profiles, model_exposure, peers
 
+
+log = logging.getLogger("studiohub.model_baselines")
 
 CATALOG_SCHEMA = "genstudio.fleet-model-catalog"
 CATALOG_SCHEMA_VERSION = 1
@@ -47,6 +50,9 @@ class FleetModelBaselines:
         self.catalog_generated_at: str | None = None
         self.catalog_synced_at: float | None = None
         self.models: list[dict[str, Any]] = []
+        # Cloud rows dropped from the most recent GenStudio push, kept so the
+        # filter is visible in the snapshot and never looks like a silent loss.
+        self.refused_cloud_models: list[dict[str, Any]] = []
         self.last_reconciled_at: float | None = None
         self.targets: dict[str, dict[str, Any]] = {}
         self._task: asyncio.Task | None = None
@@ -75,6 +81,11 @@ class FleetModelBaselines:
         models = payload.get("models")
         if isinstance(models, list):
             self.models = [dict(row) for row in models if isinstance(row, dict)]
+        refused = payload.get("refused_cloud_models")
+        if isinstance(refused, list):
+            self.refused_cloud_models = [
+                dict(row) for row in refused if isinstance(row, dict)
+            ]
         targets = payload.get("targets")
         if isinstance(targets, dict):
             self.targets = {
@@ -96,6 +107,7 @@ class FleetModelBaselines:
                         "catalog_generated_at": self.catalog_generated_at,
                         "catalog_synced_at": self.catalog_synced_at,
                         "models": self.models,
+                        "refused_cloud_models": self.refused_cloud_models,
                         "last_reconciled_at": self.last_reconciled_at,
                         "targets": self.targets,
                     },
@@ -194,6 +206,30 @@ class FleetModelBaselines:
             raise ValueError("Fleet catalog inventory source is unsupported.")
         return model
 
+    @staticmethod
+    def _split_cloud_models(
+        models: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Separate local desired state from cloud rows GenStudio must not push."""
+        kept: list[dict[str, Any]] = []
+        refused: list[dict[str, Any]] = []
+        for model in models:
+            reason = cloud_guard.catalog_cloud_reason(model)
+            if reason is None:
+                kept.append(model)
+                continue
+            refused.append({
+                "repo": model["repo"],
+                "sibling_studio": model["sibling_studio"],
+                "candidate_key": model["candidate_key"],
+                "reason": reason,
+            })
+            log.warning(
+                "dropped cloud model %r from the GenStudio fleet catalog: %s",
+                model["repo"], reason,
+            )
+        return kept, refused
+
     def replace_catalog(self, payload: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
         if payload.get("schema") != CATALOG_SCHEMA:
             raise ValueError("Unsupported GenStudio fleet catalog schema.")
@@ -210,6 +246,13 @@ class FleetModelBaselines:
         models = [self._validate_model(row) for row in raw_models]
         if len({row["candidate_key"] for row in models}) != len(models):
             raise ValueError("Fleet catalog contains a duplicate exact model contract.")
+        # A pushed catalog is desired state for what this Hub caches on its own
+        # Macs, so a cloud row is meaningless here as well as unwanted. Filter
+        # rather than reject: a partial catalog still tells every worker what to
+        # download, whereas rejecting the whole push would strand the local
+        # models too. Never silent — the drops are logged, persisted in the
+        # snapshot, and returned to the caller.
+        models, self.refused_cloud_models = self._split_cloud_models(models)
         changed = revision != self.catalog_revision or models != self.models
         self.catalog_revision = revision
         generated = payload.get("generated_at")
@@ -299,11 +342,13 @@ class FleetModelBaselines:
             "catalog_synced_at": self.catalog_synced_at,
             "scope": "every eligible registered sibling Studio worker",
             "models": self.models,
+            "refused_cloud_models": self.refused_cloud_models,
             "last_reconciled_at": self.last_reconciled_at,
             "reconcile_seconds": self.reconcile_seconds,
             "targets": rows,
             "summary": {
                 "approved_models": len(self.models),
+                "refused_cloud_models": len(self.refused_cloud_models),
                 "total": len(rows),
                 "cached": sum(row.get("state") == "cached" for row in rows),
                 "eligible_total": sum(bool(row.get("eligible")) for row in rows),

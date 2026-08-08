@@ -10,6 +10,69 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.87.0] — 2026-08-08
+
+### Added — Studio Hub structurally cannot accept cloud work from GenStudio
+
+Studio Hub KH is a local fleet controller: it exists to run models on the Macs
+it controls. GenStudio KH owns cloud generation and runs it in its own provider
+adapters. Until now that split held only because GenStudio *chose* not to send
+cloud work here — a convention on the sender's side that one routing change in
+another repository could undo, silently. It is now a property of this Hub.
+
+- **A GenStudio-originated job naming a cloud model is refused at the door**
+  with `403` and error code `GENSTUDIO_CLOUD_WORK_REFUSED`, naming the
+  offending model id. It is not queued, not accepted-then-failed, and not
+  partially dispatched. The refusal runs before `execution_identity.prepare`,
+  so a refused submission also leaves no fencing token or idempotency record
+  behind — GenStudio can immediately reuse the same job id for a local model.
+  Both job doors are covered: `POST /api/hub/jobs` (image / music / voice /
+  video / render) and `POST /api/hub/chat/jobs`.
+- **Origin, not modality, is what the rule keys on.** Work counts as
+  GenStudio-originated when it carries a GenStudio-issued execution identity
+  (`genstudio_job_id` / `genstudio_attempt_id`, the pair `execution_identity`
+  already validates) or the `genstudio-kh:` label prefix the broker already
+  treats as a customer job. Nothing else is affected.
+- **Cloud support is untouched for local callers.** Submitting a cloud model
+  from the Hub's own Jobs tab still works exactly as before, including Video
+  Studio's nine `fal:` / `kie:` / `replicate:` routes and Chat Studio's free
+  and paid tiers. This release removes no cloud capability from anything.
+- **Render is exempt, deliberately and first.** Render Studio sets
+  `is_cloud=true` on `episode-assembly-v1` purely to bypass the broker's
+  download/memory governor — it is a local FFmpeg assembly step on a fleet Mac,
+  not a hosted model. The new check honours `LOCAL_ONLY_MODALITIES` before it
+  reads anything else, exactly as `monitor.is_cloud_lane` does, and
+  `episode-assembly-v1` additionally matches no cloud id scheme or namespace.
+  A GenStudio render batch dispatches normally, and a test proves it.
+- **Cloud is detected from five independent signals, never `is_cloud` alone.**
+  That flag has meant three different things in this repo — a genuine cloud
+  model, a Render governor bypass, and (historically) nothing at all, since
+  Voice Studio's provider entries carried `is_cloud=None` and announced
+  themselves only through `cache.state` and `kind`. The check now reads the id
+  scheme (`provider:` / `fal:` / `kie:` / `replicate:`), the cloud-provider
+  namespaces Image Studio uses (`cloudflare/`, `gemini/`, `together/`,
+  `nebius/`, `pollinations/`, `huggingface/`), `is_cloud`, `kind`,
+  `cache.state`, the reported `provider`, and — for Chat, which declares its
+  lane on the job rather than the catalogue entry — the `model_cost_tier`. The
+  colon in the id schemes is load-bearing: `fal:fal-ai/veo3` is a cloud route,
+  while `fal/AuraFlow-v0.3` is a *local* image model whose Hugging Face owner
+  happens to be named "fal".
+- **A pushed GenStudio fleet catalog now has its cloud rows filtered, not the
+  whole push rejected.** `POST /api/hub/fleet-model-catalog` is desired state
+  for what this Hub caches on its own Macs, so a cloud row is meaningless here
+  as well as unwanted — but rejecting the entire document would strand the
+  local rows alongside it. A partial catalog is more useful than none, whereas
+  a refused *job* must be unambiguous. The drop is never silent: each dropped
+  row is logged with its reason, returned to the caller as
+  `refused_cloud_models`, and persisted in the `/api/hub/model-baselines`
+  snapshot with a `summary.refused_cloud_models` count.
+- **Everything the guard must not disturb is unchanged.** The generic
+  download/memory governor still makes a local model that is still downloading
+  wait rather than fail; the `CLOUD_PROVIDER_RETIRED` fail-fast from 1.86.0 is
+  a separate, complementary guard and is left alone; `is_cloud_lane`,
+  `is_cached`, `_provider_of`, the ledger's `is_cloud` column, `provider_ready`
+  and `tools/fleet_repair.py` are untouched.
+
 ## [1.86.0] — 2026-08-08
 
 ### Removed — the local ElevenLabs gateway routing, which now points at nothing

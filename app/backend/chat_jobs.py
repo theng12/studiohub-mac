@@ -11,7 +11,7 @@ import uuid
 import httpx
 from fastapi import HTTPException
 
-from . import broker, execution_identity, ledger
+from . import broker, cloud_guard, execution_identity, ledger
 from .peers import studio_request
 from .registry import machine_enabled, studio_enabled
 
@@ -171,6 +171,16 @@ def create_batch(payload: dict) -> tuple[dict, bool]:
     )
     if supplied_operation is not None and str(supplied_operation).strip().lower() != "chat.completion":
         raise HTTPException(400, "GenStudio execution operation must be chat.completion")
+    # Refuse at the door, before any identity is persisted. Chat is the one
+    # modality that declares its lane on the job rather than the catalogue
+    # entry, so the cost tier is part of the evidence here. Local operators
+    # keep full access to the paid and free tiers.
+    refusal = cloud_guard.refusal(
+        payload, model=payload.get("model"), modality="chat",
+        cost_tier=payload.get("model_cost_tier"),
+    )
+    if refusal:
+        raise HTTPException(403, {"code": cloud_guard.REFUSAL_CODE, "detail": refusal})
     try:
         prepared = execution_identity.prepare(payload)
     except execution_identity.ExecutionIdentityError as exc:

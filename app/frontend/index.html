@@ -1135,6 +1135,12 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "1.87.0", date: "2026-08-08", items: [
+    "Studio Hub now <b>refuses cloud work sent by GenStudio</b>, rather than relying on GenStudio to keep routing it elsewhere. A GenStudio job naming a cloud model is rejected the moment it arrives, with the model id in the error — it is never queued and never half-run.",
+    "This is about <b>where the work came from, not what it is</b>. Submitting a cloud model yourself from the Jobs tab still works exactly as before, and Video Studio's <code>fal:</code>/<code>kie:</code>/<code>replicate:</code> routes and Chat Studio's paid tiers are untouched.",
+    "Render is explicitly exempt. <code>episode-assembly-v1</code> reports itself as <code>is_cloud</code> only to skip the download check — it is local FFmpeg work on one of your Macs, and it keeps running normally.",
+    "A GenStudio model catalogue that contains cloud entries is no longer rejected wholesale: the local models still land, the cloud ones are dropped, and every drop is named back to the caller and shown in the model baselines view instead of disappearing quietly.",
+  ]},
   { v: "1.86.0", date: "2026-08-08", items: [
     "The broker no longer pins ElevenLabs voice jobs to the Hub Mac. That gateway does not exist any more — Voice Studio 1.33.0 removed every cloud provider — so the rule could only ever route a job to a worker that would refuse it.",
     "A voice batch naming a removed cloud model (an id starting with <code>provider:</code>) now <b>fails immediately with a clear reason</b>. Previously it sat in the queue indefinitely, showing only \"not in the catalog\" — indistinguishable from a job that was about to run.",
