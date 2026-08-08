@@ -30,8 +30,8 @@ from pathlib import Path
 
 import httpx
 
-from . import (artifact_metadata, execution_assets, execution_identity, ledger,
-               peers, shared_voices)
+from . import (artifact_metadata, cloud_guard, execution_assets,
+               execution_identity, ledger, peers, shared_voices)
 from .peers import studio_request
 from .monitor import is_cached, is_cloud_lane
 from .registry import base_url, machine_enabled, studio_enabled
@@ -545,6 +545,14 @@ def _submit_batch_locked(envelope: dict) -> dict:
         return {"error": "batch payload must be valid JSON"}
     if not envelope.get("model"):
         return {"error": "model (repo) is required"}
+    # Refuse at the door: GenStudio cloud work is never queued, never accepted
+    # and then failed. This runs before execution_identity.prepare so a refused
+    # submission also leaves no fence or idempotency record behind.
+    refusal = cloud_guard.refusal(
+        envelope, model=envelope["model"], modality=modality,
+    )
+    if refusal:
+        return {"error": refusal, "code": cloud_guard.REFUSAL_CODE}
     routing = str(envelope.get("routing") or "pool")
     if routing not in {"pool", "remote"} and not (
         routing.startswith("studio:") and routing.split(":", 1)[1]

@@ -140,6 +140,7 @@ def test_global_catalog_endpoint_requires_machine_auth_and_controller_role(
         "reconcile_scheduled": True,
         "revision": payload["revision"],
         "approved_models": 1,
+        "refused_cloud_models": [],
     }
     assert model_exposure.global_authority_active()
 

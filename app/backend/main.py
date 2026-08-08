@@ -29,7 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, control_plane, enrollment, execution_assets, execution_identity, fleet_ops, fleet_storage, gateway, hardware_profiles, hf_credentials, job_storage, memory_admission, model_exposure,
+from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, cloud_guard, control_plane, enrollment, execution_assets, execution_identity, fleet_ops, fleet_storage, gateway, hardware_profiles, hf_credentials, job_storage, memory_admission, model_exposure,
                ledger, metrics, peers, recipes, shared_voices, startup_services, transcription_jobs,
                voice_qualification)
 from .auto_update import UpdateError
@@ -1168,6 +1168,13 @@ async def receive_fleet_model_catalog(request: Request, body: dict[str, Any]):
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     scheduled = model_baselines.trigger_reconcile() if changed else False
+    refused = snapshot.get("refused_cloud_models") or []
+    if refused:
+        _hub_log.warning(
+            "GenStudio fleet catalog push %s dropped %d cloud model(s): %s",
+            snapshot["catalog_revision"], len(refused),
+            ", ".join(row["repo"] for row in refused),
+        )
     return {
         "ok": True,
         "accepted": True,
@@ -1175,6 +1182,9 @@ async def receive_fleet_model_catalog(request: Request, body: dict[str, Any]):
         "reconcile_scheduled": scheduled,
         "revision": snapshot["catalog_revision"],
         "approved_models": snapshot["summary"]["approved_models"],
+        # Never a silent drop: Studio Hub caches local fleet models only, so
+        # cloud rows are refused and named back to the caller.
+        "refused_cloud_models": refused,
     }
 
 
@@ -1322,6 +1332,10 @@ def hub_submit_jobs(envelope: dict):
     if not control_plane.accepts_customer_jobs():
         raise HTTPException(409, "This Hub is in agent mode; submit customer jobs to a controller.")
     result = broker.submit_batch(envelope)
+    if result.get("code") == cloud_guard.REFUSAL_CODE:
+        # A policy refusal, not a malformed request: this Hub structurally
+        # does not accept cloud work from GenStudio.
+        raise HTTPException(403, {"code": result["code"], "detail": result["error"]})
     if "error" in result:
         raise HTTPException(400, result["error"])
     return result
