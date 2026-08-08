@@ -10,6 +10,43 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [1.86.0] — 2026-08-08
+
+### Removed — the local ElevenLabs gateway routing, which now points at nothing
+
+Voice Studio 1.33.0 removed cloud-provider support outright: the route, the
+adapter, and the account pool are all gone. No Voice Studio in the fleet can
+serve a model whose id starts with `provider:`. The Hub, however, still carried
+the routing rule that pinned exactly those models to the Voice Studio on this
+Mac — a rule whose only remaining effect was to steer work toward a worker
+guaranteed to refuse it.
+
+- **Removed the ElevenLabs gateway pin** (`_uses_local_elevenlabs_gateway` and
+  both call sites). Voice eligibility no longer inspects the model id at all,
+  so `_eligible_studios` drops its now-unused `model` argument. The
+  "Waiting for the local Voice Studio ElevenLabs gateway on this Hub Mac"
+  scheduler note is gone with it.
+- **A retired cloud-provider voice batch now fails fast instead of stalling
+  silently.** This is the behavioural half of the change. Removing the pin
+  alone would have dropped such a batch into the ordinary dispatch path, where
+  it sets `'<model>' not in <studio>'s catalog` and waits — forever, for a
+  model that is never coming back. It now terminates on the first scheduler
+  tick with error code `CLOUD_PROVIDER_RETIRED` and a reason a human can act
+  on: cloud providers were removed, resubmit with a local voice model. The
+  batch is persisted, finishes, and raises the usual `batch_failed` alert and
+  webhook rather than looking queued indefinitely.
+- **The generic download/memory governor is untouched.** A local model that is
+  still downloading, or whose worker is temporarily offline or busy, keeps
+  waiting exactly as before — that wait is correct and is covered by its own
+  regression test. Only a `provider:`-prefixed **voice** id fails fast.
+- **Every other cloud lane is untouched.** Video Studio (`fal:…`, `kie:…`,
+  `replicate:…`) and Chat Studio still route to providers; `is_cloud_lane`,
+  `is_cached`, `_provider_of`, the ledger's `is_cloud` column, `provider_ready`
+  in `capabilities.py`, `LOCAL_ONLY_MODALITIES = {"render"}` (Render Studio's
+  deliberate governor bypass), and `tools/fleet_repair.py` are all unchanged.
+  `provider:` is a voice-only id scheme — the surviving cloud lanes carry their
+  vendor in the repo id itself — so no other modality can match this check.
+
 ## [1.85.0] — 2026-08-08
 
 ### Removed — Voice Studio no longer exposes `/api/providers`, so the Hub stops aggregating it

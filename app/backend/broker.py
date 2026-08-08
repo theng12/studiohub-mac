@@ -1175,17 +1175,51 @@ async def _maybe_finish(client: httpx.AsyncClient, b: dict):
             pass  # client unreachable — batch state is still queryable
 
 
-def _uses_local_elevenlabs_gateway(modality: str, model: str) -> bool:
-    """ElevenLabs secrets and account quotas live only on the Hub Mac.
+def _names_retired_cloud_provider(modality: str, model: str) -> bool:
+    """A voice model id that no Voice Studio in the fleet can ever serve again.
 
-    Remote Voice Studios remain available for local TTS engines. Cloud
-    ElevenLabs batches always wait for the local Voice Studio gateway, which
-    owns account selection, per-account voice IDs, and safe paid-call recovery.
+    Voice Studio 1.33.0 removed cloud providers outright — the route, the
+    adapter, and the account pool. ``provider:<vendor>:<model>`` was the id
+    scheme those lanes used and it is voice-only: the surviving cloud lanes
+    carry their vendor in the repo itself (video ``fal:…``/``kie:…``, image
+    ``cloudflare/…``), so they are unaffected by this check.
     """
-    return modality == "voice" and str(model).startswith("provider:elevenlabs:")
+    return modality == "voice" and str(model).startswith("provider:")
 
 
-def _eligible_studios(modality: str, routing: str, model: str = "") -> list[dict]:
+def _fail_retired_cloud_provider_batch(batch: dict) -> bool:
+    """Terminate a batch that names a removed cloud-provider voice model.
+
+    The generic dispatch path would set "'<model>' not in <studio>'s catalog"
+    and wait — correct for a model that is still downloading or lives on a
+    worker that is temporarily offline, but this model is never coming back.
+    An unservable batch that looks queued forever is worse than one that fails,
+    so it fails once, terminally, saying why.
+    """
+    if not _names_retired_cloud_provider(batch.get("modality"),
+                                         batch.get("model") or ""):
+        return False
+    queued = [item for item in batch.get("items") or []
+              if item.get("state") == "queued"]
+    if not queued:
+        return False
+    reason = (
+        f"'{batch.get('model')}' is a cloud-provider voice model. Voice Studio "
+        "1.33.0 removed cloud providers, so no worker can run it — resubmit "
+        "with a local voice model."
+    )
+    batch["governor_note"] = reason
+    now = time.time()
+    for item in queued:
+        item["state"] = "error"
+        item["error_code"] = "CLOUD_PROVIDER_RETIRED"
+        item["error"] = reason
+        item["finished_at"] = now
+        item["retry_at"] = None
+    return True
+
+
+def _eligible_studios(modality: str, routing: str) -> list[dict]:
     mon = _monitor()
     out = []
     leased_machines = busy_machines()
@@ -1197,8 +1231,6 @@ def _eligible_studios(modality: str, routing: str, model: str = "") -> list[dict
         # It waits for an external Render Studio rather than quietly consuming
         # the Hub machine's CPU / Media Engine as a fallback.
         if routing == "remote" and machine == "local":
-            continue
-        if _uses_local_elevenlabs_gateway(modality, model) and machine != "local":
             continue
         if (s["modality"] != modality or s["id"] in _busy
                 or s["id"] in _maintenance or machine in leased_machines):
@@ -1304,14 +1336,16 @@ async def _dispatch_loop():
                     continue
                 if b["cancelled"]:
                     continue
+                if _fail_retired_cloud_provider_batch(b):
+                    ledger.save_batch(b)
+                    await _maybe_finish(client, b)
+                    continue
                 now = time.time()
                 queued = [i for i in b["items"] if i["state"] == "queued"
                           and (i.get("retry_at") or 0) <= now]
                 if not queued:
                     continue
-                eligible = _eligible_studios(
-                    b["modality"], b["routing"], b.get("model", ""),
-                )
+                eligible = _eligible_studios(b["modality"], b["routing"])
                 evidence_eligible = [
                     studio
                     for studio in eligible
@@ -1326,13 +1360,6 @@ async def _dispatch_loop():
                 if not eligible and b.get("routing") == "remote":
                     b["governor_note"] = (
                         "Waiting for an online remote worker; this Hub Mac is intentionally excluded"
-                    )
-                elif not eligible and _uses_local_elevenlabs_gateway(
-                    b["modality"], b.get("model", ""),
-                ):
-                    b["governor_note"] = (
-                        "Waiting for the local Voice Studio ElevenLabs gateway "
-                        "on this Hub Mac"
                     )
                 for studio in eligible:
                     if not queued:
