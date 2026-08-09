@@ -156,7 +156,7 @@ class ControllerSettingsBody(BaseModel):
 class SimpleControllerSetupBody(BaseModel):
     location_name: str = Field(min_length=1, max_length=120)
     site_id: str = Field(min_length=1, max_length=100)
-    hardware_profile_id: str = Field(min_length=3, max_length=64)
+    hardware_profile_id: str | None = Field(default=None, max_length=64)
 
 
 class EnrollmentCodeBody(BaseModel):
@@ -174,7 +174,7 @@ class ControllerProbeBody(BaseModel):
 class AgentJoinBody(BaseModel):
     controller_url: str = Field(min_length=1, max_length=500)
     enrollment_code: str = Field(min_length=1, max_length=256)
-    hardware_profile_id: str = Field(min_length=3, max_length=64)
+    hardware_profile_id: str | None = Field(default=None, max_length=64)
     machine_name: str | None = Field(default=None, max_length=120)
 
 
@@ -190,6 +190,9 @@ class HardwareProfileBody(BaseModel):
 
 class MachineHardwareProfileBody(BaseModel):
     hardware_profile_id: str | None = Field(default=None, max_length=64)
+
+
+PRODUCTION_STUDIO_MODALITIES = ("image", "voice")
 
 # Give our loggers a handler regardless of how uvicorn configures logging, so
 # structured warnings/alerts actually reach the service log.
@@ -540,9 +543,13 @@ def setup_new_location_controller(request: Request, body: SimpleControllerSetupB
     if not is_loopback(request):
         raise HTTPException(403, "Set up this Mac from its local Studio Hub dashboard.")
     try:
+        profile_id = body.hardware_profile_id or hardware_profiles.local_hardware().get(
+            "profile_id")
+        if not profile_id:
+            raise ValueError("This Mac's chip and RAM could not be matched automatically; choose a hardware profile.")
         return enrollment.configure_new_controller(
             body.location_name.strip(), body.site_id.strip().lower(),
-            body.hardware_profile_id,
+            profile_id,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -618,7 +625,7 @@ def claim_agent_enrollment(request: Request, body: EnrollmentCodeBody):
                 "hardware_profile_id": body.hardware_profile_id,
             })
             modalities = (body.modalities if body.modalities is not None
-                          else list(registry.MODALITY_PORT))
+                          else list(PRODUCTION_STUDIO_MODALITIES))
             unknown = sorted(set(modalities) - set(registry.MODALITY_PORT))
             if unknown:
                 raise ValueError(f"unknown modalities: {unknown}")
@@ -656,21 +663,24 @@ async def join_existing_location(request: Request, body: AgentJoinBody):
         raise HTTPException(403, "Open this Hub locally or sign in as its owner before changing its location.")
     try:
         local_hardware = hardware_profiles.local_hardware()
+        profile_id = body.hardware_profile_id or local_hardware.get("profile_id")
+        if not profile_id:
+            raise ValueError("This Mac's chip and RAM could not be matched automatically; choose a hardware profile.")
         machine_name = (str(body.machine_name or "").strip()
                         or str(local_hardware.get("machine_name") or "").strip()
                         or None)
-        agent_id = enrollment.suggested_local_hub_id(body.hardware_profile_id)
+        agent_id = enrollment.suggested_local_hub_id(profile_id)
         claim = await enrollment.claim_remote(
             body.controller_url, body.enrollment_code,
             registration={
                 "machine": agent_id,
                 "machine_name": machine_name,
-                "hardware_profile_id": body.hardware_profile_id,
-                "modalities": [row["modality"] for row in registry.DEFAULT_STUDIOS],
+                "hardware_profile_id": profile_id,
+                "modalities": list(PRODUCTION_STUDIO_MODALITIES),
             },
         )
         result = enrollment.configure_joined_agent(
-            body.controller_url, body.hardware_profile_id, claim,
+            body.controller_url, profile_id, claim,
             machine_name=machine_name,
         )
         if claim.get("registration"):
@@ -1168,10 +1178,32 @@ async def hub_broadcast_download(body: dict):
     if not repo:
         raise HTTPException(400, "repo is required")
     import httpx
+    studios = _pick_studios(body.get("studios"))
     async with httpx.AsyncClient() as client:
         results = await broadcast.broadcast_download(
-            client, _pick_studios(body.get("studios")), repo, body.get("token"))
-    return {"repo": repo, "results": results}
+            client, studios, repo, body.get("token"))
+    download = broadcast.record_download(repo, studios, results)
+    return {"repo": repo, "results": results, "download": download}
+
+
+@app.get("/api/hub/broadcast/downloads")
+async def hub_broadcast_downloads():
+    async with httpx.AsyncClient() as client:
+        downloads = await broadcast.refresh_downloads(client, monitor.registry)
+    return {"downloads": downloads}
+
+
+@app.delete("/api/hub/broadcast/downloads/{run_id}/studios/{studio_id:path}")
+async def hub_cancel_broadcast_download(run_id: str, studio_id: str):
+    try:
+        async with httpx.AsyncClient() as client:
+            run = await broadcast.cancel_download(
+                client, run_id, studio_id, monitor.registry)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, f"worker could not cancel the download: {exc}") from exc
+    return {"ok": True, "download": run}
 
 
 @app.get("/api/hub/model-baselines")
@@ -1381,9 +1413,14 @@ def hub_submit_jobs(envelope: dict):
 
 @app.get("/api/hub/jobs")
 def hub_list_jobs():
-    return {"batches": [broker.batch_summary(b)
-                        for b in sorted(broker.batches.values(),
-                                        key=lambda x: -x["created_at"])]}
+    # Finished batches leave broker memory after a restart, but remain in the
+    # SQLite ledger until the operator clears them.  Merge both sources so the
+    # Jobs workspace is a durable history instead of a process-lifetime view.
+    batches = {batch["id"]: batch for batch in ledger.load_finished_batches()}
+    batches.update({batch["id"]: batch for batch in broker.batches.values()})
+    return {"batches": [broker.batch_summary(batch)
+                        for batch in sorted(batches.values(),
+                                            key=lambda row: -row["created_at"])]}
 
 
 @app.get("/api/hub/jobs/{batch_id}")
@@ -2921,12 +2958,13 @@ def remove_studio_route(studio_id: str):
 def add_machine_manual(body: dict):
     """Pre-register a machine's studios WITHOUT probing — works while the
     machine is offline. The entries persist and turn 'up' on their own once the
-    machine is reachable. `modalities` defaults to all five."""
+    machine is reachable. `modalities` defaults to the production Image and
+    Voice siblings."""
     from .registry import (FAMILY_PORTS, add_user_entries,
                            build_machine_entries)
 
     host, machine, profile_id = _registration_identity(body)
-    modalities = body.get("modalities") or list(FAMILY_PORTS.values())
+    modalities = body.get("modalities") or list(PRODUCTION_STUDIO_MODALITIES)
     valid = set(FAMILY_PORTS.values())
     bad = [m for m in modalities if m not in valid]
     if bad:

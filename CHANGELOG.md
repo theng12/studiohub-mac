@@ -10,6 +10,41 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.5.0] — 2026-08-09
+
+### Added — durable fleet operations
+
+- Fleet model downloads now retain their worker job IDs and byte, percent,
+  speed, ETA, completion, and cancellation state in Studio Hub. The visible
+  history survives a Hub restart, and a temporarily unreachable Mac preserves
+  its last progress rather than becoming a false failure.
+- Registered machines are grouped under the current site. Healthy machines are
+  collapsed by default, attention rows open automatically, and an attention-only
+  filter makes a large fleet manageable without hiding per-Studio controls.
+
+### Changed — reduced capacity never blocks a healthy fleet
+
+- Studio, agent-Hub, automatic, and generation-dependency rollouts now finish
+  as complete with reduced capacity when at least one target succeeds. Failed
+  rows remain explicit and retryable; the whole operation is failed only when
+  every selected target fails.
+- Startup and generation maintenance now live in Updates instead of lengthening
+  Remote. New agent enrollment auto-detects this Mac's Apple chip and unified
+  RAM, uses that profile immediately, and registers Image and Voice by default.
+  Optional legacy siblings can still be added deliberately, and hardware
+  profiles remain unlimited planning/routing labels.
+
+### Fixed — generation history survives restart
+
+- Jobs now merges terminal batches from the SQLite ledger with the live broker
+  queue, so completed Image and Voice generations remain visible after Studio
+  Hub restarts until the operator explicitly clears them.
+
+### Safety
+
+- This release does not delete, prune, or restrict model caches. Existing SSD
+  model stock and any additional locally stored models remain untouched.
+
 ## [2.4.7] — 2026-08-09
 
 ### Changed — OmniVoice is the default production cloner

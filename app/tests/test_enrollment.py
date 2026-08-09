@@ -266,9 +266,7 @@ def test_agent_join_endpoint_requires_local_or_owner_access(app, token, monkeypa
     async def claim_remote(controller_url, code, registration=None):
         assert controller_url == "100.70.0.2"
         assert registration["hardware_profile_id"] == "mac-mini-m4-16gb"
-        assert set(registration["modalities"]) == {
-            "image", "music", "voice", "chat", "video", "render",
-        }
+        assert set(registration["modalities"]) == {"image", "voice"}
         return {
             "site_id": "location-a", "site_name": "Location A",
             "controller_id": "controller-a", "fleet_token": "new-site-token-123",
@@ -300,6 +298,33 @@ def test_controller_check_endpoint_uses_read_only_probe(app, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["enrollment_active"] is True
+
+
+def test_join_auto_detects_local_hardware_and_registers_only_production_studios(
+        app, monkeypatch):
+    captured = {}
+
+    monkeypatch.setattr(hardware_profiles, "local_hardware", lambda: {
+        "profile_id": "mac-mini-m4-16gb", "machine_name": "worker-auto",
+    })
+
+    async def claim_remote(controller_url, code, registration=None):
+        captured.update(registration)
+        return {
+            "site_id": "location-a", "site_name": "Location A",
+            "controller_id": "controller-a", "fleet_token": "new-site-token-123",
+        }
+
+    monkeypatch.setattr(enrollment, "claim_remote", claim_remote)
+    response = TestClient(app, client=("127.0.0.1", 50000)).post(
+        "/api/hub/setup/join", json={
+            "controller_url": "http://100.70.0.2:47873",
+            "enrollment_code": "permanent-code",
+        })
+
+    assert response.status_code == 200
+    assert captured["hardware_profile_id"] == "mac-mini-m4-16gb"
+    assert captured["modalities"] == ["image", "voice"]
 
 
 def test_new_controller_setup_assigns_hardware_and_keeps_authority_local(reset):

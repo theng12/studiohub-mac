@@ -321,9 +321,7 @@ class FleetAutoUpdates:
             self._persist()
             if index + 1 < len(job["items"]):
                 await asyncio.sleep(self.stagger_seconds)
-        job["status"] = "failed" if any(
-            item["status"] == "failed" for item in job["items"]) else "complete"
-        job["finished_at"] = time.time()
+        fleet_ops.finish_fleet_job(job)
         self._persist()
 
     async def _update_one(self, target: dict[str, Any], item: dict[str, Any]) -> None:

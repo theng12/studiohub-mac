@@ -256,7 +256,11 @@
   .machine-mode-picker{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}.machine-mode-picker button{display:flex;align-items:center;gap:7px;border:1px solid var(--border);border-radius:10px;background:#fff;padding:9px 13px;color:var(--text);font:750 var(--font-secondary)/1 var(--sans);cursor:pointer}.machine-mode-picker button[aria-pressed="true"]{box-shadow:inset 0 0 0 2px currentColor}.machine-mode-picker .standalone{color:#b46b13}.machine-mode-picker .controller{color:var(--down)}.machine-mode-picker .agent{color:var(--up)}
   .machine-mode-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;font:800 var(--font-compact)/1 var(--mono);letter-spacing:.05em;text-transform:uppercase}.machine-mode-badge:before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor}.machine-mode-badge.standalone{color:#a55d0d;background:#fff0dc;border:1px solid #e3af73}.machine-mode-badge.controller{color:#b9352d;background:#ffe6e2;border:1px solid #e39a93}.machine-mode-badge.agent{color:#147d46;background:#e5f6ea;border:1px solid #8dcc9d}
   .machine-mode-panel{display:none;padding:16px;border:1px solid var(--border);border-radius:14px;background:#fbfbf7}.machine-mode-panel.active{display:block}.machine-mode-grid{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px}.machine-mode-grid label{display:flex;flex-direction:column;gap:6px;color:var(--dim);font:750 var(--font-compact)/1 var(--mono);letter-spacing:.08em;text-transform:uppercase}.machine-mode-grid input,.machine-mode-grid select{width:100%;margin:0}.machine-mode-grid .wide{grid-column:1/-1}.machine-secret{display:grid;gap:6px;padding:12px;border:1px solid var(--border);border-radius:11px;background:#fff}.machine-secret b{font-size:var(--font-secondary)}.machine-secret code{display:block;min-height:36px;overflow-wrap:anywhere;background:#edf2eb;padding:9px 10px}.machine-secret .sub{font-size:var(--font-secondary)}.mode-status{margin-top:12px;padding:10px 12px;border-radius:10px;background:#edf7ef;color:#176e42;font-weight:700}.mode-status.waiting{background:#fff4e1;color:#9b650f}.mode-status.error{background:#fce9e5;color:#ad3c32}.mode-owner{margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
+  .fleet-site-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 10px;padding:11px 13px;border:1px solid var(--border);border-radius:12px;background:var(--panel2);font-size:var(--font-secondary)}
+  .machine-list{display:grid;gap:9px}.machine-entry{border:1px solid var(--border);border-radius:13px;background:#fff;overflow:hidden}.machine-entry.attention{border-color:#d7a65d}.machine-entry[open]{box-shadow:0 8px 24px #2f49380d}.machine-entry>summary{display:grid;grid-template-columns:minmax(190px,1.2fr) minmax(165px,.8fr) minmax(130px,.65fr) auto;gap:13px;align-items:center;padding:12px 14px;cursor:pointer;list-style:none}.machine-entry>summary::-webkit-details-marker{display:none}.machine-entry>summary:after{content:"›";font-size:20px;color:var(--dim);transition:transform .15s}.machine-entry[open]>summary:after{transform:rotate(90deg)}.machine-entry-title{display:flex;align-items:center;gap:8px;min-width:0}.machine-entry-title b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.machine-entry-meta{display:block;color:var(--dim);font-size:var(--font-compact)}.machine-entry-body{display:grid;grid-template-columns:minmax(220px,.9fr) minmax(280px,1.5fr) auto;gap:14px;padding:13px 14px;border-top:1px solid var(--border);background:#fbfbf7}.machine-entry-controls{display:flex;align-items:flex-start;justify-content:flex-end;gap:7px;flex-wrap:wrap}.machine-entry .machine-hardware{min-width:0}.machine-entry .studio-schedules{align-content:start}.update-progress.degraded{border-color:#dfc48d;background:#fff8e9;box-shadow:inset 3px 0 var(--warn)}
+  .fleet-downloads{display:grid;gap:9px}.fleet-download{padding:11px 12px;border:1px solid var(--border);border-radius:12px;background:var(--panel2)}.fleet-download-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.fleet-download-items{display:grid;gap:7px;margin-top:9px}.fleet-download-item{display:grid;grid-template-columns:minmax(150px,.8fr) minmax(180px,1.4fr) auto;gap:10px;align-items:center;padding-top:7px;border-top:1px solid var(--border)}.fleet-download-item .bar{margin:3px 0}.fleet-download-item .sub{display:block}
   @media(max-width:700px){.machine-mode-grid{grid-template-columns:1fr}.machine-mode-grid .wide{grid-column:auto}}
+  @media(max-width:850px){.machine-entry>summary{grid-template-columns:1fr auto}.machine-entry>summary .machine-summary-secondary{display:none}.machine-entry-body{grid-template-columns:1fr}.machine-entry-controls{justify-content:flex-start}.fleet-download-item{grid-template-columns:1fr}.fleet-site-summary{align-items:flex-start;flex-direction:column}}
   .studio-schedules{display:flex;gap:6px;flex-wrap:wrap;min-width:270px}.studio-schedule-wrap{display:inline-flex;align-items:stretch;border:1px solid #cbd1c8;border-radius:10px;background:#f5f6f1;overflow:hidden}.studio-schedule{display:flex;align-items:center;gap:7px;border:0;background:transparent;color:var(--text);padding:6px 8px;font:700 var(--font-secondary)/1.1 var(--sans);cursor:pointer}.studio-schedule:hover{background:#fff}.studio-schedule small{padding:2px 5px;border-radius:999px;background:#dfeae2;color:#176f50;font:700 var(--font-compact)/1 var(--mono);letter-spacing:.03em;text-transform:uppercase}.studio-schedule.off{background:#fbf1dc;color:#7a611d}.studio-schedule.off small{background:#f1dcae;color:#7a5a0d}.studio-schedule.master-off small{background:#e6e8e2;color:#6d746d}.studio-schedule-remove{display:grid;place-items:center;width:32px;border:0;border-left:1px solid #d8ddd5;background:transparent;color:var(--dim);cursor:pointer}.studio-schedule-remove:hover{background:#f9e8e4;color:var(--down)}
   .rows,.table-wrap{border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:var(--shadow)}.lrow{grid-template-columns:22px minmax(0,1.7fr) minmax(0,1fr) 100px minmax(0,1.15fr) 80px 205px;background:#fffef9;border-color:#e2e3da;padding:12px 15px}.lrow .actions{width:100%;justify-content:flex-end}.lrow:hover:not(.lhead){background:#f8f8f2}.lrow.lhead{background:#edf0e9;color:#6f776f;font:700 var(--font-compact)/1 var(--mono);letter-spacing:.09em}
   table{background:#fffef9;border-radius:14px;overflow:hidden;box-shadow:0 8px 28px #2945350a}th,td{padding:11px 12px;border-color:#e2e3da}th{top:0;background:#edf0e9;color:#68736b;font:700 var(--font-compact)/1.2 var(--mono);letter-spacing:.08em;text-transform:uppercase}tbody tr{transition:background .12s}tbody tr:hover{background:#f5f6ef}td{font-size:var(--font-secondary)}
@@ -831,11 +835,11 @@
       <div id="machine-mode-agent" class="machine-mode-panel">
         <div class="machine-mode-grid">
           <label>Machine name <span class="sub">(optional)</span><input id="mode-agent-name" maxlength="120" placeholder="Uses this Mac's name if blank"></label>
-          <label>This Mac's hardware<select class="selctl" id="mode-agent-profile"><option value="">Choose this Mac's hardware…</option></select></label>
-          <label class="wide">Controller address<input id="mode-agent-controller-url" inputmode="url" autocomplete="off" placeholder="100.x.y.z:47873"></label>
+          <label>This Mac's hardware <span class="sub">(auto-detected)</span><select class="selctl" id="mode-agent-profile"><option value="">Detecting this Mac…</option></select></label>
+          <label class="wide">Controller address<input id="mode-agent-controller-url" inputmode="url" autocomplete="off" placeholder="192.168.x.y:47873 or 100.x.y.z:47873"></label>
           <label class="wide">Registration code<input id="mode-agent-registration-code" autocomplete="off" placeholder="Paste the permanent registration code"></label>
         </div>
-        <p class="sub" style="margin-top:11px">Enter the Controller’s private LAN or Tailscale address and its registration code. Studio Hub fills this Agent’s site and fleet details automatically.</p>
+        <p class="sub" style="margin-top:11px">Enter the Controller’s private LAN or Tailscale address and its registration code. Chip and RAM are detected automatically. No Controller ready yet? Keep Standalone mode and connect later.</p>
         <div class="actions"><button class="btn primary" id="mode-agent-connect" onclick="connectMachineAgent()">Connect this Agent</button></div>
         <div id="mode-agent-status" class="mode-status waiting" role="status" aria-live="polite">Enter the Controller address and registration code to connect this Mac.</div>
       </div>
@@ -851,7 +855,7 @@
         <div id="setup-connection" class="setup-connection" role="status" aria-live="polite">No code is sent during the connection check.</div>
         <div class="setup-intro"><span class="setup-step">2</span><span>Paste the <b>permanent enrollment code</b> from that controller's Remote tab. This is not the Hub token and not the fleet token.</span></div>
         <label class="wide">Permanent enrollment code<input id="setup-enrollment-code" type="password" autocomplete="off" placeholder="Paste the permanent enrollment code"></label>
-        <label>This Mac's hardware<select class="selctl" id="setup-agent-profile"><option value="">Choose this Mac's hardware…</option></select></label>
+        <label>This Mac's hardware <span class="sub">(auto-detected)</span><select class="selctl" id="setup-agent-profile"><option value="">Detecting this Mac…</option></select></label>
         <div class="setup-intro"><span class="setup-step">3</span><span>Click once. This Hub will safely configure itself as a worker for the selected location and store the shared fleet credential for you.</span></div>
         <div class="action full"><button class="btn primary" id="setup-agent-join" onclick="setupJoinAgent()">Add this Mac to the location</button></div>
       </div>
@@ -861,7 +865,7 @@
           <div class="setup-intro"><span>This is needed only once per physical location. This Mac becomes that location's manager; all other Macs use the simple form above.</span></div>
           <label>Location name<input id="setup-location-name" placeholder="KT-PPS" oninput="suggestSetupSiteId()"></label>
           <label>Stable site ID<input id="setup-site-id" placeholder="kt-pps" oninput="this.dataset.edited='1'"></label>
-          <label>This Mac's hardware<select class="selctl" id="setup-controller-profile"><option value="">Choose this Mac's hardware…</option></select></label>
+          <label>This Mac's hardware <span class="sub">(auto-detected)</span><select class="selctl" id="setup-controller-profile"><option value="">Detecting this Mac…</option></select></label>
           <div class="action full"><button class="btn primary" id="setup-controller-save" onclick="setupNewController()">Create this location</button></div>
         </div>
       </details>
@@ -1046,11 +1050,11 @@
       <div style="display:flex;gap:16px;flex-wrap:wrap;margin:4px 0 12px;align-items:center">
         <span class="muted" style="font-size:12px">Studios it runs:</span>
         <label class="wd" style="margin:0"><input type="checkbox" class="d-mod" value="image" checked> 🎨 image</label>
-        <label class="wd" style="margin:0"><input type="checkbox" class="d-mod" value="music" checked> 🎵 music</label>
+        <label class="wd" style="margin:0"><input type="checkbox" class="d-mod" value="music"> 🎵 music</label>
         <label class="wd" style="margin:0"><input type="checkbox" class="d-mod" value="voice" checked> 🎙️ voice</label>
-        <label class="wd" style="margin:0"><input type="checkbox" class="d-mod" value="chat" checked> 💬 chat</label>
-        <label class="wd" style="margin:0"><input type="checkbox" class="d-mod" value="video" checked> 🎬 video</label>
-        <label class="wd" style="margin:0"><input type="checkbox" class="d-mod" value="render" checked> 🖥️ render</label>
+        <label class="wd" style="margin:0"><input type="checkbox" class="d-mod" value="chat"> 💬 chat</label>
+        <label class="wd" style="margin:0"><input type="checkbox" class="d-mod" value="video"> 🎬 video</label>
+        <label class="wd" style="margin:0"><input type="checkbox" class="d-mod" value="render"> 🖥️ render</label>
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         <button class="go" onclick="discoverMachine()" style="white-space:nowrap">Discover &amp; Add</button>
@@ -1073,13 +1077,17 @@
       <div class="top"><span class="emoji">🗂️</span><h3>Registered machines</h3>
         <div class="grp" style="margin-left:auto;display:flex;align-items:center;gap:7px">
           <button class="btn" id="mach-refetch-all" onclick="refetchAllMachines()" title="Re-probe every machine and add studios that have since come online">Refetch all</button>
+          <div class="seg" id="mach-filter" aria-label="Filter registered machines">
+            <button data-v="all" class="on">All</button><button data-v="attention">Needs attention</button>
+          </div>
           <label style="color:var(--dim);font-size:12px;text-transform:uppercase">Sort</label>
           <select class="selctl" id="mach-sort"><option value="status">Status</option><option value="name">Name</option><option value="studios">Studios up</option></select>
         </div>
       </div>
       <p class="muted" style="font-size:12px;margin:-4px 0 12px">Click a Studio to pause or resume <b>new jobs for only that app</b>. Running work finishes safely. The machine switch remains the master control. <b>Refetch</b> adds Studios that came online later.</p>
+      <div id="mach-site-summary" class="fleet-site-summary"></div>
       <div class="sub" id="mach-refetch-status" style="margin-bottom:8px"></div>
-      <table><thead><tr><th class="num">#</th><th>Machine</th><th>Hardware profile</th><th>Address</th><th>Studios</th><th></th></tr></thead><tbody id="mach-body"></tbody></table>
+      <div id="mach-body" class="machine-list"></div>
     </div>
 
     <div class="card section">
@@ -1144,6 +1152,12 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.5.0", date: "2026-08-09", items: [
+    "Fleet releases now continue across healthy nodes and finish with a visible reduced-capacity result when only some machines fail; only an all-target failure blocks the release.",
+    "Completed Image and Voice batches remain in Jobs after a Hub restart, and fleet model downloads now retain progress, completion, errors, and per-worker cancellation.",
+    "Remote is shorter and site-focused: healthy machines collapse, attention rows open, hardware is detected automatically, and maintenance controls now live in Updates.",
+    "Model caches are not pruned or restricted; existing SSD stock and any additional local models remain untouched.",
+  ]},
   { v: "2.4.7", date: "2026-08-09", items: [
     "Swarm Batch now puts OmniVoice first whenever it is downloaded, matching the fleet's production voice-cloning policy while keeping other local Voice models available for deliberate selection.",
   ]},
@@ -2014,7 +2028,7 @@ function updatePageHeading(tab) {
   requestAnimationFrame(() => section.classList.add("tab-enter"));
 }
 const manualFleetMaintenance = $("#manual-fleet-maintenance");
-for (const id of ["studio-updates-card", "hub-updates-card"]) {
+for (const id of ["startup-services-card", "generation-dependencies-card", "studio-updates-card", "hub-updates-card"]) {
   manualFleetMaintenance.append($("#" + id));
 }
 document.querySelectorAll("nav button").forEach(btn => {
@@ -2026,8 +2040,8 @@ document.querySelectorAll("nav button").forEach(btn => {
     if (btn.dataset.tab === "models") loadModels();
     if (btn.dataset.tab === "voices") loadSharedVoices();
     if (btn.dataset.tab === "memory") loadFleetMemory();
-    if (btn.dataset.tab === "updates") { loadAutoUpdates(); loadMaintenance(); }
-    if (btn.dataset.tab === "remote") { loadController(); loadEnrollmentCode(); loadAccess(); loadMachines(); loadAlerts(); loadStartupServices(); }
+    if (btn.dataset.tab === "updates") { loadAutoUpdates(); loadMaintenance(); loadStartupServices(); }
+    if (btn.dataset.tab === "remote") { loadController(); loadEnrollmentCode(); loadAccess(); loadMachines(); loadAlerts(); }
     if (btn.dataset.tab === "jobs") { loadJobModels(); loadBatches(); loadTranscriptionSettings(); loadFleetStorage(); selectJobKind(activeJobKind); }
     if (btn.dataset.tab === "assets") loadAssets();
     if (btn.dataset.tab === "stats") loadStats();
@@ -2481,6 +2495,7 @@ async function loadModels() {
   fillRamAdmissionModels();
   loadModelBaseline();
   loadHfCredential();
+  loadFleetDownloads();
 }
 
 function renderModelExposures() {
@@ -2682,11 +2697,48 @@ async function broadcastModelDownload() {
   if (r.error) { status.textContent = "failed: " + r.error; return; }
   const res = r.results || {};
   const ok = Object.values(res).filter(v => v.ok).length;
-  status.innerHTML = `Started on <b>${ok}/${Object.keys(res).length}</b> studio(s) — they download in the background. Watch the <b>Availability</b> column below fill in.`;
-  $("#bc-results").innerHTML = `<table><thead><tr><th>Studio</th><th>Result</th></tr></thead><tbody>` +
-    Object.entries(res).map(([id, v]) => `<tr><td>${esc(id)}</td><td>${v.ok
-      ? `<span class="pill ok">started${v.job ? " · job " + esc(v.job) : ""}</span>`
-      : `<span class="pill err">${esc(v.detail || v.error || ("HTTP " + v.status))}</span>`}</td></tr>`).join("") + `</tbody></table>`;
+  status.innerHTML = `Accepted by <b>${ok}/${Object.keys(res).length}</b> studio(s). Progress is retained here even if this Hub restarts; an unavailable Mac does not stop the others.`;
+  await loadFleetDownloads();
+}
+function fleetDownloadState(state) {
+  return ({ done: ["ok", "Complete"], complete_with_errors: ["warn", "Complete with errors"],
+    failed: ["err", "Failed"], error: ["err", "Failed"], cancelled: ["warn", "Cancelled"],
+    running: ["warn", "Downloading"], queued: ["warn", "Queued"], paused: ["warn", "Paused"],
+    cancelling: ["warn", "Cancelling"] })[state] || ["", state || "Unknown"];
+}
+function fleetDownloadCaption(item) {
+  const bits = [];
+  if (item.percent != null) bits.push(`${Number(item.percent).toFixed(1)}%`);
+  if (item.bytes_observed) bits.push(fmtBytes(item.bytes_observed));
+  if (item.bytes_total) bits.push(`of ${fmtBytes(item.bytes_total)}`);
+  if (item.speed_bps) bits.push(`${fmtBytes(item.speed_bps)}/s`);
+  if (item.eta_seconds != null) bits.push(`about ${Math.max(1, Math.round(item.eta_seconds / 60))} min left`);
+  if (!item.reachable) bits.push("Mac unavailable · progress preserved");
+  return bits.join(" · ") || item.detail || item.state;
+}
+function renderFleetDownloads(downloads) {
+  const target = $("#bc-results"); if (!target) return;
+  target.className = "fleet-downloads";
+  target.innerHTML = (downloads || []).slice(0, 8).map(run => {
+    const state = fleetDownloadState(run.state);
+    return `<div class="fleet-download"><div class="fleet-download-head"><span><b>${esc(run.repo)}</b><span class="sub">${new Date(run.created_at * 1000).toLocaleString()}</span></span><span class="pill ${state[0]}">${esc(state[1])}</span></div><div class="fleet-download-items">${(run.items || []).map(item => {
+      const itemState = fleetDownloadState(item.state), percent = item.percent == null ? 0 : Math.max(0, Math.min(100, Number(item.percent)));
+      const active = ["queued", "running", "paused", "cancelling"].includes(item.state) && item.job_id;
+      return `<div class="fleet-download-item"><span><b>${esc(mlabel(item.machine || "local"))}</b><span class="sub">${esc(item.modality || "model")} · ${esc(item.studio)}</span></span><span><span class="pill ${itemState[0]}">${esc(itemState[1])}</span><span class="sub">${esc(fleetDownloadCaption(item))}</span><div class="bar"><i style="width:${percent}%"></i></div></span><span>${active ? `<button class="btn stop" onclick="cancelFleetDownload('${jsq(run.id)}','${jsq(item.studio)}')">Cancel</button>` : ""}</span></div>`;
+    }).join("")}</div></div>`;
+  }).join("") || `<div class="sub">No fleet model download has been started from this Hub.</div>`;
+}
+async function loadFleetDownloads() {
+  const data = await api("/api/hub/broadcast/downloads").then(r => r.ok ? r.json() : null).catch(() => null);
+  if (data) renderFleetDownloads(data.downloads);
+}
+async function cancelFleetDownload(runId, studioId) {
+  const response = await api(`/api/hub/broadcast/downloads/${encodeURIComponent(runId)}/studios/${encodeURIComponent(studioId)}`, { method: "DELETE" }).catch(() => null);
+  if (!response?.ok) {
+    const detail = response ? await response.json().catch(() => ({})) : {};
+    $("#bc-status").textContent = detail.detail || "The worker could not cancel this download.";
+  }
+  await loadFleetDownloads();
 }
 function renderHfCredential(data) {
   const state = $("#hft-state"), status = $("#hft-status");
@@ -3798,7 +3850,7 @@ async function setupNewController() {
   const locationName = $("#setup-location-name").value.trim();
   const siteId = $("#setup-site-id").value.trim();
   const profile = $("#setup-controller-profile").value;
-  if (!locationName || !siteId || !profile) { renderSetupResult("Enter the location name, confirm its site ID, and choose this Mac's hardware.", true); return; }
+  if (!locationName || !siteId) { renderSetupResult("Enter the location name and confirm its site ID.", true); return; }
   const button = $("#setup-controller-save"); button.disabled = true; button.setAttribute("aria-busy", "true"); button.textContent = "Setting up…";
   const response = await api("/api/hub/setup/controller", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location_name: locationName, site_id: siteId, hardware_profile_id: profile }) }).catch(() => null);
   const data = response ? await response.json().catch(() => ({})) : {};
@@ -3895,7 +3947,7 @@ async function setupJoinAgent() {
   const controllerUrl = $("#setup-controller-url").value.trim();
   const codeInput = $("#setup-enrollment-code"), code = codeInput.value.trim();
   const profile = $("#setup-agent-profile").value;
-  if (!controllerUrl || !code || !profile) { renderSetupResult("Enter the main controller address, paste its permanent enrollment code, and choose this Mac's hardware.", true); return; }
+  if (!controllerUrl || !code) { renderSetupResult("Enter the main controller address and paste its permanent enrollment code.", true); return; }
   const button = $("#setup-agent-join"); button.disabled = true; button.setAttribute("aria-busy", "true"); button.textContent = "Joining…";
   const probe = checkedSetupControllerUrl === controllerUrl ? { controller_url: controllerUrl } : await checkSetupController(true);
   if (!probe) { button.disabled = false; button.removeAttribute("aria-busy"); button.textContent = "Add this Mac to the location"; return; }
@@ -3984,7 +4036,7 @@ async function connectMachineAgent() {
   const code = $("#mode-agent-registration-code").value.trim();
   const profile = $("#mode-agent-profile").value;
   const status = $("#mode-agent-status"), button = $("#mode-agent-connect");
-  if (!controllerUrl || !code || !profile) { status.className = "mode-status error"; status.textContent = "Confirm this Mac's hardware, then enter the Controller address and registration code."; return; }
+  if (!controllerUrl || !code) { status.className = "mode-status error"; status.textContent = "Enter the Controller address and registration code."; return; }
   button.disabled = true; button.setAttribute("aria-busy", "true"); button.textContent = "Connecting…";
   status.className = "mode-status waiting"; status.textContent = "Contacting the Controller and registering this Agent…";
   const response = await api("/api/hub/setup/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ controller_url: controllerUrl, enrollment_code: code, hardware_profile_id: profile, machine_name: name }) }).catch(() => null);
@@ -4423,11 +4475,11 @@ function renderFleetAutoProgress(job, apps) {
   const active = job.items.find(item => !terminal.has(item.status)) || job.items[job.items.length - 1];
   const row = (apps || []).find(app => app.id === active.target);
   const name = row ? `${row.title} on ${row.machine}` : active.target;
-  let title = busy ? "Updating idle apps one at a time" : failed ? "Fleet update needs attention" : "Fleet update finished";
+  let title = busy ? "Updating idle apps one at a time" : failed && job.status === "failed" ? "Fleet update could not reach any target" : failed ? "Fleet update completed with reduced capacity" : "Fleet update finished";
   let detail = busy ? `${name} · ${active.detail || active.status}` : `${done - failed - scheduled} updated or current`;
   if (scheduled) detail += ` · ${scheduled} safely queued on the app until idle`;
   if (failed) detail += ` · ${failed} failed`;
-  el.className = `update-progress${busy ? "" : failed ? " error" : " success"}`;
+  el.className = `update-progress${busy ? "" : failed && job.status === "failed" ? " error" : failed ? " degraded" : " success"}`;
   el.innerHTML = `<div class="update-progress-head"><span class="update-progress-title">${busy ? '<span class="auto-update-spinner">↻</span>' : failed ? "! " : "✓ "}${esc(title)}</span><span class="update-progress-count">${done}/${job.items.length} finished${failed && !busy ? ` · <button class="btn compact" onclick="retryFleetAutoJob('${jsq(job.id)}')">Retry failed</button>` : ""}</span></div>
     <div class="bar"><i style="width:${Math.round(done / job.items.length * 100)}%"></i></div><div class="update-progress-detail">${esc(detail)}</div>`;
 }
@@ -4723,12 +4775,13 @@ function renderGenerationInstall(job) {
   const failed = job.items.filter(item => item.status === "failed").length;
   const active = job.items.find(item => !["complete", "failed"].includes(item.status));
   const title = generationInstallBusy ? "Installing generation dependencies" :
-    failed ? `Generation install finished with ${failed} failure${failed === 1 ? "" : "s"}` : "Generation dependencies verified";
+    failed && job.status === "failed" ? "Generation install could not reach any target" :
+    failed ? `Generation install completed with ${failed} unavailable or failed` : "Generation dependencies verified";
   const detail = active && generationInstallBusy
     ? `${_updateItemName(active, "generation")} · ${active.detail || active.status || "waiting"}`
     : failed ? `${done - failed} succeeded · ${failed} failed. Offline or failed Macs can be retried after they are reachable.`
     : `All ${job.items.length} selected Studio environments finished successfully.`;
-  status.className = `update-progress${generationInstallBusy ? "" : failed ? " error" : " success"}`;
+  status.className = `update-progress${generationInstallBusy ? "" : failed && job.status === "failed" ? " error" : failed ? " degraded" : " success"}`;
   status.innerHTML = `<div class="update-progress-head"><span class="update-progress-title">${generationInstallBusy ? "↻ " : failed ? "! " : "✓ "}${esc(title)}</span><span class="update-progress-count">${done}/${job.items.length} finished</span></div><div class="bar"><i style="width:${Math.round(done / job.items.length * 100)}%"></i></div><div class="update-progress-detail">${esc(detail)}</div>`;
 }
 async function startGenerationInstall() {
@@ -4757,11 +4810,11 @@ function renderUpdateProgress(el, job, kind) {
   const active = job.items.find(i => !_updateTerminal(i.status) && i.status !== "queued")
     || job.items.find(i => i.status === "queued");
   const noun = kind === "hub" ? "agent Hubs" : "Studios";
-  const title = busy ? `Updating ${noun}` : failed ? `${noun} update finished with ${failed} failure${failed === 1 ? "" : "s"}` : `${noun} update complete`;
+  const title = busy ? `Updating ${noun}` : failed && job.status === "failed" ? `${noun} update could not reach any target` : failed ? `${noun} update completed with reduced capacity` : `${noun} update complete`;
   const detail = active && busy
     ? `${_updateItemName(active, kind)} · ${_updateState(active.status)[1].toLowerCase()}${active.detail ? ` · ${active.detail}` : ""}`
     : failed ? `${total - failed} succeeded · ${failed} failed. ${kind === "hub" ? "Offline machines remain marked below; rescan and retry them when reachable." : "The failed rows below show why."}` : `All ${total} finished successfully.`;
-  el.className = `update-progress${busy ? "" : failed ? " error" : " success"}`;
+  el.className = `update-progress${busy ? "" : failed && job.status === "failed" ? " error" : failed ? " degraded" : " success"}`;
   el.innerHTML = `<div class="update-progress-head"><span class="update-progress-title">${busy ? "↻ " : failed ? "! " : "✓ "}${esc(title)}</span><span class="update-progress-count">${done}/${total} finished</span></div>
     <div class="bar"><i style="width:${Math.round(done / total * 100)}%"></i></div><div class="update-progress-detail">${esc(detail)}</div>`;
 }
@@ -5162,7 +5215,7 @@ async function loadHardwareProfiles() {
   for (const id of ["setup-controller-profile", "setup-agent-profile", "mode-agent-profile"]) {
     const setupSelect = $(`#${id}`); if (!setupSelect) continue;
     const selectedSetup = setupSelect.value || data.assignments?.local || detectedLocalProfile;
-    setupSelect.innerHTML = `<option value="">Choose this Mac's hardware…</option>` + hardwareProfiles.map(profile =>
+    setupSelect.innerHTML = `<option value="">Auto-detect this Mac…</option>` + hardwareProfiles.map(profile =>
       `<option value="${esc(profile.id)}"${profile.id === selectedSetup ? " selected" : ""}>${esc(profile.display_name)}</option>`
     ).join("");
   }
@@ -5219,8 +5272,18 @@ async function addHardwareProfile() {
   selectRegistrationHardware();
 }
 let machSort = localStorage.getItem("mach_sort") || "status";
+let machFilter = localStorage.getItem("mach_filter") || "all";
 $("#mach-sort").value = machSort;
 $("#mach-sort").onchange = e => { machSort = e.target.value; localStorage.setItem("mach_sort", machSort); loadMachines(); };
+document.querySelectorAll("#mach-filter button").forEach(button => {
+  button.classList.toggle("on", button.dataset.v === machFilter);
+  button.onclick = () => {
+    machFilter = button.dataset.v;
+    localStorage.setItem("mach_filter", machFilter);
+    document.querySelectorAll("#mach-filter button").forEach(row => row.classList.toggle("on", row === button));
+    renderMachines();
+  };
+});
 // Peer Hub connection badge + live RAM/CPU for a machine, from the summary's
 // resources.machines map. This is where the fleet setup becomes diagnosable:
 // each machine says exactly why it is or isn't reporting specs.
@@ -5248,36 +5311,46 @@ function renderMachines() {
   const sum = lastSummary; if (!sum || !sum.studios) return;
   const byM = {};
   sum.studios.forEach(s => (byM[s.machine || "local"] = byM[s.machine || "local"] || []).push(s));
-  let entries = Object.entries(byM).map(([m, list]) => ({ m, list, host: list[0].host, up: list.filter(s => s.status === "up").length, total: list.length }));
+  const mstat = (sum.resources && sum.resources.machines) || {};
+  let entries = Object.entries(byM).map(([m, list]) => {
+    const production = list.filter(s => ["image", "voice"].includes(s.modality));
+    const health = production.length ? production : list;
+    const up = health.filter(s => s.status === "up").length;
+    const enabled = mstat[m] ? mstat[m].enabled !== false : true;
+    const profile = mstat[m]?.hardware_profile || hardwareProfiles.find(row => row.id === machineHardwareAssignments[m]) || null;
+    const peerState = m === "local" ? "connected" : (mstat[m]?.status || "pending");
+    return { m, list, production, health, host: list[0].host, up, total: health.length,
+      enabled, profile, attention: !enabled || up < health.length || peerState !== "connected" || !profile };
+  });
   entries.sort((a, b) => {
     if (a.m === "local") return -1; if (b.m === "local") return 1;
     if (machSort === "name") return a.m.localeCompare(b.m);
     if (machSort === "studios") return b.up - a.up || a.m.localeCompare(b.m);
     return (b.up > 0) - (a.up > 0) || b.up - a.up || a.m.localeCompare(b.m); // status: any-online first
   });
-  const mstat = (sum.resources && sum.resources.machines) || {};
-  $("#mach-body").innerHTML = entries.map((e, i) => {
+  const visible = machFilter === "attention" ? entries.filter(entry => entry.attention) : entries;
+  const settings = sum.control_plane?.settings || controllerData?.settings || {};
+  const healthy = entries.filter(entry => !entry.attention).length;
+  $("#mach-site-summary").innerHTML = `<span><b>${esc(settings.site_name || "This site")}</b><span class="machine-entry-meta">${esc(settings.site_id || "local-site")} · ${entries.length} machine${entries.length === 1 ? "" : "s"}</span></span><span><span class="pill ok">${healthy} healthy</span>${entries.length - healthy ? `<span class="pill warn">${entries.length - healthy} need attention</span>` : ""}</span>`;
+  $("#mach-body").innerHTML = visible.map((e, i) => {
     const label = mlabel(e.m);
     const named = label !== e.m;
-    const enabled = mstat[e.m] ? mstat[e.m].enabled !== false : true;
-    const profile = mstat[e.m]?.hardware_profile || hardwareProfiles.find(row => row.id === machineHardwareAssignments[e.m]) || null;
-    const disBadge = enabled ? "" : ' <span class="pill warn">⏸ disabled — no jobs</span>';
-    const toggle = `<button class="btn${enabled ? " stop" : ""}" onclick="toggleMachine('${jsq(e.m)}', ${enabled ? "false" : "true"})">${enabled ? "Disable" : "Enable"}</button>`;
-    return `<tr style="${enabled ? "" : "opacity:.62"}">
-    <td class="num"><span class="numbadge">${i + 1}</span></td>
-    <td><b>${esc(label)}</b>${named ? ` <span class="sub">(${esc(e.m)})</span>` : ""}${e.m === "local" ? ' <span class="sub">· this Mac</span>' : ""}${disBadge}<br><span class="sub">${e.up}/${e.total} up</span></td>
-    <td><div class="machine-hardware"><b>${profile ? esc(profile.display_name) : "Profile needed"}</b><select class="selctl" aria-label="Hardware profile for ${esc(label)}" onchange="assignMachineHardware('${jsq(e.m)}', this.value)">${hardwareProfileOptions(profile?.id || "")}</select></div></td>
-    <td class="sub">${esc(e.host)}${peerBadge(e.m)}</td>
-    <td><div class="studio-schedules">${e.list.map(s => {
+    const disBadge = e.enabled ? "" : ' <span class="pill warn">⏸ disabled</span>';
+    const toggle = `<button class="btn${e.enabled ? " stop" : ""}" onclick="toggleMachine('${jsq(e.m)}', ${e.enabled ? "false" : "true"})">${e.enabled ? "Disable" : "Enable"}</button>`;
+    const order = [...e.production, ...e.list.filter(s => !["image", "voice"].includes(s.modality))];
+    const studioButtons = order.map(s => {
       const accepting = s.enabled !== false;
-      const state = !accepting ? "paused" : (!enabled ? "master off" : (s.busy ? "working" : (s.status === "up" ? "ready" : s.status)));
+      const state = !accepting ? "paused" : (!e.enabled ? "master off" : (s.busy ? "working" : (s.status === "up" ? "ready" : s.status)));
       const title = accepting
         ? `Pause new ${s.modality} jobs on ${label}. Current work will finish.`
         : `Resume new ${s.modality} jobs on ${label}.`;
-      return `<span class="studio-schedule-wrap"><button class="studio-schedule ${accepting ? "on" : "off"}${enabled ? "" : " master-off"}" aria-pressed="${accepting}" onclick="toggleStudio('${jsq(s.id)}', ${accepting ? "false" : "true"})" title="${esc(title)}"><span>${esc(s.emoji || "")} ${esc(s.modality)}</span><small>${esc(state)}</small></button>${e.m !== "local" ? `<button class="studio-schedule-remove" title="Remove ${esc(s.modality)} from ${esc(label)} — use only when this app is not installed" onclick="removeStudio('${jsq(s.id)}')" aria-label="Remove ${esc(s.modality)} Studio">✕</button>` : ""}</span>`;
-    }).join("")}</div></td>
-    <td style="white-space:nowrap">${toggle} ${e.m !== "local" ? `<button class="btn" onclick="refetchMachine('${jsq(e.m)}','${jsq(e.host)}')" title="Re-probe ${esc(e.host)} and add any studios now online">Refetch</button> ` : ""}<button class="btn" onclick="renameMachine('${jsq(e.m)}')">Rename</button>${e.m !== "local" ? ` <button class="btn stop" onclick="removeMachine('${jsq(e.m)}')">Remove</button>` : ""}</td></tr>`;
-  }).join("");
+      return `<span class="studio-schedule-wrap"><button class="studio-schedule ${accepting ? "on" : "off"}${e.enabled ? "" : " master-off"}" aria-pressed="${accepting}" onclick="toggleStudio('${jsq(s.id)}', ${accepting ? "false" : "true"})" title="${esc(title)}"><span>${esc(s.emoji || "")} ${esc(s.modality)}</span><small>${esc(state)}</small></button>${e.m !== "local" ? `<button class="studio-schedule-remove" title="Remove ${esc(s.modality)} from ${esc(label)} — use only when this app is not installed" onclick="removeStudio('${jsq(s.id)}')" aria-label="Remove ${esc(s.modality)} Studio">✕</button>` : ""}</span>`;
+    }).join("");
+    return `<details class="machine-entry${e.attention ? " attention" : ""}"${e.attention ? " open" : ""} style="${e.enabled ? "" : "opacity:.72"}">
+      <summary><span class="machine-entry-title"><span class="numbadge">${i + 1}</span><span><b>${esc(label)}</b>${named ? ` <span class="sub">(${esc(e.m)})</span>` : ""}<span class="machine-entry-meta">${e.m === "local" ? "this Mac · " : ""}${e.up}/${e.total} production Studios ready</span></span>${disBadge}</span><span class="machine-summary-secondary"><b>${e.profile ? esc(e.profile.display_name) : "Profile needed"}</b><span class="machine-entry-meta">chip and unified RAM</span></span><span class="machine-summary-secondary"><b>${esc(e.host)}</b>${peerBadge(e.m)}</span><span class="pill ${e.attention ? "warn" : "ok"}">${e.attention ? "Needs attention" : "Healthy"}</span></summary>
+      <div class="machine-entry-body"><div class="machine-hardware"><b>${e.profile ? esc(e.profile.display_name) : "Assign a planning profile"}</b><select class="selctl" aria-label="Hardware profile for ${esc(label)}" onchange="assignMachineHardware('${jsq(e.m)}', this.value)">${hardwareProfileOptions(e.profile?.id || "")}</select><span class="sub">Profiles describe hardware for routing; they never limit machine count.</span></div><div class="studio-schedules">${studioButtons}</div><div class="machine-entry-controls">${toggle}${e.m !== "local" ? `<button class="btn" onclick="refetchMachine('${jsq(e.m)}','${jsq(e.host)}')">Refetch</button>` : ""}<button class="btn" onclick="renameMachine('${jsq(e.m)}')">Rename</button>${e.m !== "local" ? `<button class="btn stop" onclick="removeMachine('${jsq(e.m)}')">Remove</button>` : ""}</div></div>
+    </details>`;
+  }).join("") || `<div class="empty">${machFilter === "attention" ? "No machines need attention." : "No machines are registered."}</div>`;
 }
 async function toggleMachine(m, enabled) {
   const verb = enabled ? "enable" : "disable";

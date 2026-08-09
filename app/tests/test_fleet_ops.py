@@ -379,11 +379,24 @@ async def test_updates_are_sequential_and_failure_is_contained(monkeypatch, moni
                      {"studio": "voice", "status": "queued", "detail": ""}]}
     await fleet_ops._run_updates(monitor, job)
     assert calls == ["image", "music", "voice"]
-    assert job["status"] == "failed"
+    assert job["status"] == "complete"
+    assert job["degraded"] is True
+    assert job["failed_count"] == 1
+    assert job["succeeded_count"] == 2
     assert job["items"][0]["status"] == "complete"
     assert job["items"][1]["status"] == "failed"
     assert job["items"][2]["status"] == "complete"
     assert refreshed == [True]
+
+
+def test_rollout_fails_only_when_every_target_fails():
+    partial = {"items": [{"status": "complete"}, {"status": "failed"}]}
+    fleet_ops.finish_fleet_job(partial)
+    assert partial["status"] == "complete" and partial["degraded"] is True
+
+    unavailable = {"items": [{"status": "failed"}, {"status": "failed"}]}
+    fleet_ops.finish_fleet_job(unavailable)
+    assert unavailable["status"] == "failed" and unavailable["degraded"] is False
 
 
 @pytest.mark.asyncio

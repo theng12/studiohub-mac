@@ -12,6 +12,10 @@ class _FakeResp:
     def json(self):
         return self._p
 
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
 
 class _FakeClient:
     def __init__(self):
@@ -20,6 +24,21 @@ class _FakeClient:
     async def post(self, url, json=None, headers=None, timeout=None):
         self.calls.append((url, json))
         return _FakeResp(200, {"job": {"id": "j1"}})
+
+
+class _DownloadStatusClient:
+    async def get(self, url, headers=None, timeout=None):
+        if url.endswith("/api/downloads"):
+            return _FakeResp(200, {"jobs": [{
+                "id": "j1", "state": "running", "percent": 42.5,
+                "bytes_observed": 425, "bytes_total": 1000,
+                "speed_bps": 50, "eta_seconds": 11,
+            }]})
+        raise AssertionError(url)
+
+    async def delete(self, url, headers=None, timeout=None):
+        assert url.endswith("/api/downloads/j1")
+        return _FakeResp(200, {"job": {"id": "j1", "state": "cancelling"}})
 
 
 @pytest.mark.asyncio
@@ -35,6 +54,39 @@ async def test_broadcast_download_fans_out_to_each_studio():
     assert all(j["repo"] == "mlx-community/Qwen3-4B-Instruct-2507-4bit" for _, j in c.calls)
     assert out["chat"]["ok"] and out["chat"]["job"] == "j1"
     assert out["chat@mac-b"]["ok"]
+
+
+@pytest.mark.asyncio
+async def test_fleet_download_progress_is_durable_and_cancellable(reset):
+    studios = [{
+        "id": "image@mac-b", "host": "10.0.0.2", "port": 47868,
+        "machine": "mac-b", "modality": "image",
+    }]
+    run = broadcast.record_download(
+        "org/model", studios, {"image@mac-b": {"ok": True, "job": "j1"}})
+
+    refreshed = await broadcast.refresh_downloads(_DownloadStatusClient(), studios)
+    item = refreshed[0]["items"][0]
+    assert item["percent"] == 42.5 and item["bytes_observed"] == 425
+    assert broadcast.DOWNLOADS_FILE.exists()
+
+    cancelled = await broadcast.cancel_download(
+        _DownloadStatusClient(), run["id"], "image@mac-b", studios)
+    assert cancelled["items"][0]["state"] == "cancelling"
+
+
+def test_broadcast_download_endpoint_returns_tracked_run(authed, monkeypatch):
+    from backend import main
+
+    async def fanout(client, studios, repo, token=None):
+        return {studio["id"]: {"ok": True, "job": "tracked"} for studio in studios}
+
+    monkeypatch.setattr(main.broadcast, "broadcast_download", fanout)
+    response = authed.post("/api/hub/broadcast/download", json={
+        "repo": "org/model", "studios": ["image"],
+    })
+    assert response.status_code == 200
+    assert response.json()["download"]["items"][0]["job_id"] == "tracked"
 
 
 def test_broadcast_download_endpoint_requires_repo(authed):

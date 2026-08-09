@@ -273,6 +273,11 @@ def set_machine_hardware_profile(machine: str, profile_id: str | None) -> dict |
 
 def machine_hardware_profile(machine: str) -> dict | None:
     profile = hardware_profile(load_machine_profile_ids().get(machine))
+    if profile is None and machine == "local":
+        # A fresh Mac already reports its exact Apple model, chip, and unified
+        # memory. Use that identity immediately; an explicit assignment remains
+        # available as the operator override.
+        profile = matching_hardware_profile(local_hardware())
     return dict(profile) if profile else None
 
 

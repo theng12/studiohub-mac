@@ -78,6 +78,14 @@ def test_local_hardware_matches_apple_profile_and_normalizes_decimal_memory(rese
     assert catalog["local_hardware"]["profile_id"] == "mac-mini-m4-16gb"
 
 
+def test_local_machine_profile_uses_detected_hardware_until_overridden(reset, monkeypatch):
+    monkeypatch.setattr(hardware_profiles, "local_hardware", lambda: {
+        "machine_type": "Mac mini", "chip": "Apple M4", "memory_gb": 16,
+    })
+
+    assert hardware_profiles.machine_hardware_profile("local")["id"] == "mac-mini-m4-16gb"
+
+
 def test_registration_profile_generates_id_and_is_published(authed):
     response = authed.post("/api/hub/registry/add", json={
         "host": "100.9.9.9",

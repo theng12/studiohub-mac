@@ -64,6 +64,25 @@ _generation_installs: dict[str, dict] = {}
 _hub_versions: dict[str, dict] = {}
 
 
+def finish_fleet_job(job: dict) -> None:
+    """Finish a rollout without turning reduced capacity into a fleet outage.
+
+    Individual failed rows stay failed and retryable.  A partially successful
+    rollout is complete-but-degraded; only a rollout where every target failed
+    is a failed operation.
+    """
+    items = job.get("items") or []
+    failed = sum(1 for item in items if item.get("status") == "failed")
+    succeeded = len(items) - failed
+    job.update(
+        status="failed" if failed and not succeeded else "complete",
+        degraded=bool(failed and succeeded),
+        failed_count=failed,
+        succeeded_count=succeeded,
+        finished_at=time.time(),
+    )
+
+
 def _save_state() -> None:
     try:
         _STATE_FILE.write_text(json.dumps(
@@ -109,14 +128,14 @@ def _load_state() -> None:
         for job in [*_updates.values(), *_hub_updates.values(), *_generation_installs.values()]:
             if job.get("status") not in {"queued", "running"}:
                 continue
-            job.update(status="failed", finished_at=time.time(),
-                       restart_interrupted=True)
+            job["restart_interrupted"] = True
             for item in job.get("items", []):
                 if item.get("status") not in {"complete", "current", "failed"}:
                     item.update(
                         status="failed", finished_at=time.time(),
                         detail="Primary Hub restarted during this operation; retry remotely from this Hub",
                     )
+            finish_fleet_job(job)
     except (OSError, ValueError):
         pass
 
@@ -687,7 +706,6 @@ async def _run_updates(monitor, job: dict):
         except Exception as e:
             item.update(status="failed", detail=str(e)[:240], finished_at=time.time())
         _save_state()
-    final_status = "failed" if any(i["status"] == "failed" for i in job["items"]) else "complete"
     # Refresh the source-of-truth rows before exposing a terminal job. This
     # guarantees the next UI poll replaces action history ("Updated") with the
     # real running-vs-published comparison, including for remote Studios.
@@ -695,8 +713,7 @@ async def _run_updates(monitor, job: dict):
         await scan_studio_versions(monitor)
     except Exception as exc:
         job["refresh_warning"] = f"post-update version scan failed: {str(exc)[:160]}"
-    job["status"] = final_status
-    job["finished_at"] = time.time()
+    finish_fleet_job(job)
     _save_state()
 
 
@@ -936,8 +953,7 @@ async def _run_generation_installs(monitor, job: dict) -> None:
             _save_state()
 
     await asyncio.gather(*(run_group(items) for items in groups.values()))
-    job["status"] = "failed" if any(i["status"] == "failed" for i in job["items"]) else "complete"
-    job["finished_at"] = time.time()
+    finish_fleet_job(job)
     _save_state()
 
 
@@ -1070,8 +1086,7 @@ async def _run_hub_updates(job: dict):
     _save_state()
     # peers are independent Macs → update them concurrently; each self-restarts
     await asyncio.gather(*(_update_hub_one(item, job.get("latest")) for item in job["items"]))
-    job["status"] = "failed" if any(i["status"] == "failed" for i in job["items"]) else "complete"
-    job["finished_at"] = time.time()
+    finish_fleet_job(job)
     _save_state()
 
 

@@ -1,9 +1,9 @@
 # Studio Hub KH
 
-Control plane for the KH Studio family. One dashboard — and one canonical API — for
-**Image Studio (47868)**, **Music Studio (47869)**, **Voice Studio (47870)**,
-**Chat Studio (47871)**, **Video Studio (47872)** and the separate
-**Render Studio (47874)** episode-assembly worker.
+Production control plane for **Image Studio (47868)** and **Voice Studio
+(47870)**, with Studio Hub itself on **47873**. Legacy Music, Chat, Video, and
+Render registrations remain compatible when deliberately added, but new fleet
+enrollment defaults to the production Image + Voice pair.
 
 The Hub runs on fixed port **47873** and provides:
 
@@ -24,8 +24,9 @@ The Hub runs on fixed port **47873** and provides:
   review the words, then synchronize the same stable ID, audio hash, and
   transcript to every Voice Studio Mac. Offline machines catch up automatically.
 - **Host-aware registry** — studios on other machines (LAN/Tailscale) can be added
-  with a reusable hardware profile and stable machine ID. The selected profile is
-  published with live resources for routing and GenStudio operating-cost records.
+  with an automatically detected hardware profile and stable machine ID. The profile
+  is published with live resources for routing and GenStudio operating-cost records.
+  Profiles describe capacity and never cap how many machines can be registered.
 - **Site-controller boundary** — the same Hub release can run as a standalone
   Hub, location controller, or agent. GenStudio owns customer jobs, attempts,
   billing, global retries, fencing, and cross-location routing. Optional
@@ -176,8 +177,11 @@ once a restart really begins, the longer window remains available for slow Macs.
 Busy apps receive a durable update-after-current-work request on their own Mac;
 rolling progress survives a Hub restart, transient connections retry with visible
 attempt counts, and a failed subset can be retried centrally without selecting it
-again.
-Updates also contains the same simple version controls for Studios and agent
+again. One unavailable node never blocks healthy targets: the operation completes
+with reduced capacity when any target succeeds, and fails only when every selected
+target fails.
+Updates also contains startup-service checks, generation-dependency maintenance,
+and the same simple version controls for Studios and agent
 Hubs: rescan, compare running with latest, update everything ready, or update
 one row. Studio
 app tabs focus the action on one family; **All apps** targets the fleet. Slow
@@ -187,7 +191,7 @@ The agent-Hub table also reports each Mac's Apple chip and unified RAM and can
 be sorted by availability, machine name, chip generation, or RAM in either
 direction. The selected order is remembered in that browser.
 
-The Remote tab also has **Reinstall generation everywhere**. It is separate
+The Updates tab also has **Reinstall generation everywhere**. It is separate
 from normal updates because it may download large dependencies and restart a
 Studio. Each Mac's own Hub runs its trusted sibling `install_generation.js`
 script; installs are serial per Mac, parallel across independent Macs, active
@@ -302,14 +306,16 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/registry/reload` | Re-read `studios.json` without restarting |
 | `GET /api/hub/metrics?minutes=60` | Time-series (host memory/CPU + per-studio RSS, 15s samples, 24h) |
 | `GET /api/hub/watchdog` · `POST /api/hub/studios/{id}/watchdog` | Auto-restart-if-down per studio (`{"enabled": true}`; 2-min cooldown, auto-off after 5 failed revives) |
-| `POST /api/hub/broadcast/download` | `{repo, studios?}` — start the same model download on many studios |
+| `POST /api/hub/broadcast/download` | `{repo, studios?}` — start and durably track the same model download on many studios |
+| `GET /api/hub/broadcast/downloads` | Read retained per-worker bytes, percent, speed, ETA, completion, and reachability |
+| `DELETE /api/hub/broadcast/downloads/{run}/studios/{studio}` | Cancel one active worker download without stopping the other targets |
 | `GET` / `POST /api/hub/model-baselines` | Read or enable the site-local required-model baseline for Voice Studio workers: Whisper Tiny, Kokoro 82M, VibeVoice Realtime 0.5B 4-bit, and Fish Audio S2 Pro 8-bit |
 | `POST /api/hub/model-baselines/reconcile` | Recheck every required model on every registered Voice Studio now; cache anything missing and retain offline model targets for automatic retry |
 | `POST /api/hub/broadcast/env` | `{key, value, studios?}` — set an env var in studios' ENVIRONMENT files (restart to apply) |
 | `POST /api/hub/jobs` | **Swarm Batch** — submit a batch (envelope below) |
 | `POST /api/hub/execution-assets/voice-references` | Temporarily stage one checksum-bound GenStudio customer voice reference for a site attempt |
 | `DELETE /api/hub/execution-assets/voice-references/{asset_id}` | Remove a staged private reference early; automatic expiry remains the fallback |
-| `GET /api/hub/jobs` · `GET /api/hub/jobs/{batch}` · `DELETE /api/hub/jobs/{batch}` | Track / cancel batches |
+| `GET /api/hub/jobs` · `GET /api/hub/jobs/{batch}` · `DELETE /api/hub/jobs/{batch}` | Track / cancel batches; terminal history remains visible across Hub restarts |
 | `POST /api/hub/jobs/clear` · `POST /api/hub/jobs/{batch}/clear` | Clear terminal generation history and Hub-owned ledger/files only; remote worker output is never removed |
 | `GET /api/hub/assets` · `POST /api/hub/assets/scan` | Asset ledger (query: `q`, `modality`, `studio`, `batch_id`) |
 | `POST /api/hub/assets/upload` | Upload a reference image once → `{asset_id}` (for img2img continuity) |
@@ -751,9 +757,11 @@ that all three release metadata sources identify the same newest release.
 Every Mac keeps running its own studios; one location controller coordinates the
 workers registered at that site. GenStudio will choose between locations:
 
-1. On each other Mac, install whichever Studios it should serve and use **Join
-   an existing location** to enroll its Hub as an agent. Hub detects its hardware
-   profile and the Controller registers its Studio endpoints automatically.
+1. On each other Mac, install Image and Voice and use **Join an existing
+   location** to enroll its Hub as an agent. Hub detects the Mac model, Apple
+   chip, and unified RAM automatically; the Controller registers the production
+   Studio endpoints without a hardware-profile choice. A manual profile remains
+   available only when detection cannot match future hardware.
 2. For an older or offline Hub only, open **Remote → Add another Mac's studios**
    on the Controller. Online discovery reads the Mac family, chip, and RAM from
    its peer Hub; offline setup lets you choose the profile and edit the suggested

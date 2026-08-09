@@ -368,6 +368,22 @@ def test_jobs_submit_list_get_cancel(authed):
     assert authed.get("/api/hub/jobs/does-not-exist").status_code == 404
 
 
+def test_finished_jobs_remain_in_list_after_broker_memory_is_cleared(authed):
+    from backend import broker, ledger
+
+    batch = {
+        "id": "durable-finished", "created_at": 123.0, "modality": "image",
+        "model": "org/model", "cancelled": False,
+        "items": [{"index": 0, "state": "done", "tries": 1}],
+    }
+    ledger.save_batch(batch)
+    broker.batches.pop(batch["id"], None)
+
+    listed = authed.get("/api/hub/jobs").json()["batches"]
+
+    assert [row["id"] for row in listed] == [batch["id"]]
+
+
 def test_genstudio_execution_lease_renews_through_authenticated_api(client, authed):
     from datetime import UTC, datetime, timedelta
 
