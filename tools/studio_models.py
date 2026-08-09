@@ -322,6 +322,21 @@ def download_with_progress(url: str, destination: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def make_portable_readable(root: Path) -> None:
+    """Add read/traverse access without changing ownership or following links.
+
+    SSD payloads are staged by one macOS account but consumed by another. Copy
+    tools preserve restrictive source modes, so a cache created under umask 077
+    would otherwise be unreadable even though every path is location-relative.
+    """
+    root.chmod(root.stat().st_mode | 0o555)
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            continue
+        access = 0o555 if path.is_dir() else 0o444
+        path.chmod(path.stat().st_mode | access)
+
+
 def stage_bootstrap_kit(volume_root: Path, *, plan_only: bool) -> None:
     """Put the clean-Mac installer beside the model payload on the SSD."""
     repo = Path(__file__).resolve().parent.parent
@@ -336,6 +351,9 @@ def stage_bootstrap_kit(volume_root: Path, *, plan_only: bool) -> None:
         return
 
     kit.mkdir(parents=True, exist_ok=True)
+    legacy_logs = kit / "logs"
+    if legacy_logs.is_dir():
+        shutil.rmtree(legacy_logs)
     for source in sources:
         destination = kit / source.name
         shutil.copy2(source, destination)
@@ -358,6 +376,9 @@ def stage_bootstrap_kit(volume_root: Path, *, plan_only: bool) -> None:
         dmg.unlink(missing_ok=True)
         print(f"  downloading signed Pinokio {PINOKIO_VERSION} installer ({PINOKIO_DMG})")
         download_with_progress(PINOKIO_DMG_URL, dmg)
+    make_portable_readable(kit)
+    (volume_root / "READ-ME-FIRST.md").chmod(0o644)
+    (volume_root / ".terranash-fleet-ssd.json").chmod(0o644)
 
 
 def stale_staged_packages(root: Path, wanted: set[Path]) -> list[Path]:
@@ -530,7 +551,10 @@ def do_stage(root: Path, plan_only: bool, keep_non_cloning: bool) -> int:
         except OSError:
             pass
 
-    (root / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2))
+    manifest_path = root / MANIFEST_NAME
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+    make_portable_readable(root)
+    manifest_path.chmod(0o644)
     written = sum(e["bytes"] for s in manifest["studios"].values()
                   for e in s["packages"])
     print(f"\nDone: {written / 1e9:.1f} GB written.\nManifest: {root / MANIFEST_NAME}")

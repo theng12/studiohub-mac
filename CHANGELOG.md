@@ -10,6 +10,24 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.3.4] — 2026-08-09
+
+### Fixed — fleet SSD works across macOS user accounts
+
+- The SSD bootstrap no longer writes logs into its own removable-drive folder,
+  which could be owned by a different numeric user ID. Each Mac now writes to
+  its current user's `~/Library/Logs/TerraNash` directory, with a safe `/tmp`
+  fallback when no writable home is available. Restaging removes the obsolete
+  SSD-local log folder and its machine-specific test paths.
+- A missing `HOME` variable no longer aborts the shell wrapper before Pinokio's
+  localhost control plane can report the configured home. Every user-derived
+  path remains quoted and location-independent, including paths containing
+  spaces, apostrophes, or Unicode.
+- SSD staging now adds cross-account read/traverse permission to the bootstrap
+  kit and model payload without changing ownership or following Hugging Face
+  symlinks. Restrictive source-cache modes can no longer make copied models
+  unreadable to a different account on the destination Mac.
+
 ## [2.3.3] — 2026-08-09
 
 ### Fixed — pterm can find Pinokio's Node runtime

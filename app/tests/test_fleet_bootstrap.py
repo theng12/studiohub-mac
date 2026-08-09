@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 
 
@@ -99,6 +100,60 @@ def test_bootstrap_has_no_hard_coded_volume_path():
     assert "/pinokio/path/node" in wrapper
     assert 'export PATH="${node_path:h}:$PATH"' in wrapper
     assert "sys.version_info < (3, 9)" in wrapper
+    assert 'USER_HOME="${HOME:-}"' in wrapper
+    assert '$USER_HOME/Library/Logs/TerraNash' in wrapper
+    assert '$SCRIPT_DIR/logs' not in wrapper
+    assert '$HOME/.pinokio' not in wrapper
+
+
+def test_pinokio_home_accepts_spaces_apostrophes_and_unicode(tmp_path, monkeypatch):
+    bootstrap = load_tool("fleet_bootstrap.py")
+    user_home = tmp_path / "Ana O'Connor 測試"
+    pinokio_home = user_home / "My Pinokio 安裝"
+    config = user_home / ".pinokio/config.json"
+    config.parent.mkdir(parents=True)
+    config.write_text(json.dumps({"home": str(pinokio_home)}))
+    monkeypatch.setenv("HOME", str(user_home))
+
+    assert bootstrap.resolve_pinokio_home() == pinokio_home.resolve()
+
+
+def test_staged_payload_permissions_are_portable_across_user_ids(tmp_path):
+    models = load_tool("studio_models.py")
+    package = tmp_path / "models--owner--private"
+    blob = package / "blobs" / "model.bin"
+    blob.parent.mkdir(parents=True)
+    blob.write_bytes(b"model")
+    package.chmod(0o700)
+    blob.parent.chmod(0o700)
+    blob.chmod(0o600)
+    link = package / "current"
+    link.symlink_to(blob)
+
+    models.make_portable_readable(package)
+
+    assert package.stat().st_mode & 0o555 == 0o555
+    assert blob.parent.stat().st_mode & 0o555 == 0o555
+    assert blob.stat().st_mode & 0o444 == 0o444
+    assert link.is_symlink()
+
+
+def test_restaging_removes_legacy_ssd_logs(tmp_path, monkeypatch):
+    models = load_tool("studio_models.py")
+    kit = tmp_path / "terranash-bootstrap"
+    legacy_log = kit / "logs/bootstrap-old.log"
+    legacy_log.parent.mkdir(parents=True)
+    legacy_log.write_text("PINOKIO_HOME=/Users/old-account/pinokio")
+    installer = kit / "installers" / models.PINOKIO_DMG
+    installer.parent.mkdir()
+    installer.write_bytes(b"test installer")
+    monkeypatch.setattr(models, "file_sha256", lambda _path: models.PINOKIO_DMG_SHA256)
+
+    models.stage_bootstrap_kit(tmp_path, plan_only=False)
+
+    assert not legacy_log.parent.exists()
+    assert (kit / "Install TerraNash Studios.command").stat().st_mode & 0o555 == 0o555
+    assert (tmp_path / "READ-ME-FIRST.md").stat().st_mode & 0o444 == 0o444
 
 
 def test_ssd_guide_separates_machine_paths_and_stays_short():
@@ -111,6 +166,8 @@ def test_ssd_guide_separates_machine_paths_and_stays_short():
         "## SSD MAINTAINER — main Mac only",
     ):
         assert heading in guide
+    assert "~/Library/Logs/TerraNash" in guide
+    assert "terranash-bootstrap/logs" not in guide
     assert len(guide.splitlines()) < 90
 
 

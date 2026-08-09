@@ -3,6 +3,7 @@ set -u
 set -o pipefail
 
 SCRIPT_DIR="${0:A:h}"
+USER_HOME="${HOME:-}"
 PINOKIO_VERSION="8.0.40"
 PINOKIO_SHA256="3c0f55f769efc2c02e5d0b8bc24e2ee7b0be54d42e6404663887e0cf8d3df3fd"
 PINOKIO_DMG="$SCRIPT_DIR/installers/Pinokio-$PINOKIO_VERSION-arm64.dmg"
@@ -12,10 +13,13 @@ for argument in "$@"; do
   [[ "$argument" == "--dry-run" ]] && TOP_LEVEL_DRY_RUN="true"
 done
 if [[ "$TOP_LEVEL_DRY_RUN" == "true" ]]; then
-  LOG_FILE="/tmp/terranash-bootstrap-dry-run-$(/bin/date +%Y%m%d-%H%M%S).log"
+  LOG_FILE="/tmp/terranash-bootstrap-dry-run-$(/bin/date +%Y%m%d-%H%M%S)-$$.log"
 else
-  mkdir -p "$SCRIPT_DIR/logs"
-  LOG_FILE="$SCRIPT_DIR/logs/bootstrap-$(/bin/date +%Y%m%d-%H%M%S).log"
+  LOG_DIR="${USER_HOME:+$USER_HOME/Library/Logs/TerraNash}"
+  if [[ -z "$LOG_DIR" ]] || ! /bin/mkdir -p "$LOG_DIR" 2>/dev/null || [[ ! -w "$LOG_DIR" ]]; then
+    LOG_DIR="/tmp"
+  fi
+  LOG_FILE="$LOG_DIR/terranash-bootstrap-$(/bin/date +%Y%m%d-%H%M%S)-$$.log"
 fi
 
 finish() {
@@ -95,9 +99,9 @@ stage_zero() {
   local attempts=450
   [[ "$dry_run" == "true" ]] && attempts=1
   while (( count < attempts )); do
-    if [[ -f "$HOME/.pinokio/config.json" ]]; then
+    if [[ -n "$USER_HOME" && -f "$USER_HOME/.pinokio/config.json" ]]; then
       pinokio_home=$(/usr/bin/plutil -extract home raw -o - \
-        "$HOME/.pinokio/config.json" 2>/dev/null || true)
+        "$USER_HOME/.pinokio/config.json" 2>/dev/null || true)
     fi
     if [[ -n "$pinokio_home" ]]; then
       for candidate in "$pinokio_home/bin/npm/bin/pterm" "$pinokio_home/bin/pterm"; do

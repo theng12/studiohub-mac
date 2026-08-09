@@ -47,7 +47,7 @@ as the Controller address: on this Mac, localhost means this Mac itself.
 2. Run **Install TerraNash Studios.command** again.
 3. Completed steps are kept and skipped automatically.
 4. If it fails again, open the newest file in
-   `terranash-bootstrap/logs` and send that file for diagnosis.
+   `~/Library/Logs/TerraNash` and send that file for diagnosis.
 
 If macOS mounted the SSD as `ugreen-terranash 1`, double-clicking from Finder
 still works. For a Terminal command, drag **Install TerraNash Studios.command**

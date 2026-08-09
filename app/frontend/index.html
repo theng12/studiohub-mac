@@ -1121,6 +1121,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.3.4", date: "2026-08-09", items: [
+    "The fleet SSD is now portable across macOS accounts and numeric user IDs: it writes logs into the current user's home and stages models with safe cross-account read access.",
+    "Home and Pinokio paths remain quoted and location-independent, including spaces, apostrophes, and Unicode; a missing <code>HOME</code> falls back to Pinokio discovery and <code>/tmp</code> logging.",
+  ]},
   { v: "2.3.3", date: "2026-08-09", items: [
     "The fleet SSD installer now resolves and exports Pinokio's private Node runtime before calling <code>pterm</code>, fixing <code>env: node: No such file or directory</code> on clean login shells.",
   ]},
