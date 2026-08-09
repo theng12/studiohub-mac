@@ -46,8 +46,8 @@ as the Controller address: on this Mac, localhost means this Mac itself.
 1. Open Pinokio and finish any visible first-run setup.
 2. Run **Install TerraNash Studios.command** again.
 3. Completed steps are kept and skipped automatically.
-4. If it fails again, open the newest file in
-   `~/Library/Logs/TerraNash` and send that file for diagnosis.
+4. If it fails again, return the SSD to the main Mac. Its newest log is saved
+   in `terranash-bootstrap/logs`; a second copy stays on the fleet Mac.
 
 If macOS mounted the SSD as `ugreen-terranash 1`, double-clicking from Finder
 still works. For a Terminal command, drag **Install TerraNash Studios.command**
@@ -58,7 +58,8 @@ this Mac. To keep them, run the installer from Terminal with `--no-prune`.
 
 ## MODELS DID NOT COPY — find the correct log
 
-Do not send macOS `.diag` or `.shutdownStall` files. In Terminal, paste:
+Do not send macOS `.diag` or `.shutdownStall` files. First check the SSD's
+`terranash-bootstrap/logs` folder. For older runs, paste this in Terminal:
 
 ```bash
 find "$HOME/Library/Logs/TerraNash" /private/tmp /Volumes -maxdepth 4 -type f \( -name 'terranash-bootstrap-*.log' -o -name 'bootstrap-*.log' \) -mmin -120 -print 2>/dev/null

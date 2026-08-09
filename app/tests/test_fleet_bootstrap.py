@@ -102,7 +102,7 @@ def test_bootstrap_has_no_hard_coded_volume_path():
     assert "sys.version_info < (3, 9)" in wrapper
     assert 'USER_HOME="${HOME:-}"' in wrapper
     assert '$USER_HOME/Library/Logs/TerraNash' in wrapper
-    assert '$SCRIPT_DIR/logs' not in wrapper
+    assert '$SCRIPT_DIR/logs' in wrapper
     assert '$HOME/.pinokio' not in wrapper
 
 
@@ -151,7 +151,9 @@ def test_restaging_removes_legacy_ssd_logs(tmp_path, monkeypatch):
 
     models.stage_bootstrap_kit(tmp_path, plan_only=False)
 
-    assert not legacy_log.parent.exists()
+    assert legacy_log.parent.is_dir()
+    assert not legacy_log.exists()
+    assert legacy_log.parent.stat().st_mode & 0o7777 == 0o1777
     assert (kit / "Install TerraNash Studios.command").stat().st_mode & 0o555 == 0o555
     assert (tmp_path / "READ-ME-FIRST.md").stat().st_mode & 0o444 == 0o444
 
@@ -167,8 +169,7 @@ def test_ssd_guide_separates_machine_paths_and_stays_short():
         "## SSD MAINTAINER — main Mac only",
     ):
         assert heading in guide
-    assert "~/Library/Logs/TerraNash" in guide
-    assert "terranash-bootstrap/logs" not in guide
+    assert "terranash-bootstrap/logs" in guide
     assert ".shutdownStall" in guide
     assert len(guide.splitlines()) < 90
 

@@ -354,6 +354,8 @@ def stage_bootstrap_kit(volume_root: Path, *, plan_only: bool) -> None:
     legacy_logs = kit / "logs"
     if legacy_logs.is_dir():
         shutil.rmtree(legacy_logs)
+    legacy_logs.mkdir()
+    legacy_logs.chmod(0o1777)
     for source in sources:
         destination = kit / source.name
         shutil.copy2(source, destination)

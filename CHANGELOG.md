@@ -10,6 +10,18 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.3.6] — 2026-08-09
+
+### Fixed — diagnostics return with the fleet SSD
+
+- Real installer runs now stream a second log copy into the SSD's bootstrap
+  kit while retaining the per-user Mac-local log. The pre-created log folder
+  uses macOS's standard shared temporary-directory permissions, so any numeric
+  user ID can create its own log without modifying or deleting another user's.
+- Restaging clears these disposable diagnostic files and recreates the shared
+  folder. Returning the SSD to the main Mac is now sufficient to inspect why a
+  remote installation or model restore stopped.
+
 ## [2.3.5] — 2026-08-09
 
 ### Documentation — model-restore diagnostics travel with the SSD

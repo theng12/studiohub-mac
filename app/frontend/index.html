@@ -1121,6 +1121,9 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.3.6", date: "2026-08-09", items: [
+    "Fleet installer runs now retain a diagnostic copy on the SSD as well as on the target Mac, using a cross-user-safe shared log folder that is cleared whenever the drive is restaged.",
+  ]},
   { v: "2.3.5", date: "2026-08-09", items: [
     "The fleet SSD's <code>READ-ME-FIRST.md</code> now carries the model-restore log search and clearly distinguishes the useful bootstrap log from unrelated macOS diagnostic reports.",
   ]},

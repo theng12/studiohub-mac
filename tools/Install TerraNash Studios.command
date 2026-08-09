@@ -9,6 +9,7 @@ PINOKIO_SHA256="3c0f55f769efc2c02e5d0b8bc24e2ee7b0be54d42e6404663887e0cf8d3df3fd
 PINOKIO_DMG="$SCRIPT_DIR/installers/Pinokio-$PINOKIO_VERSION-arm64.dmg"
 PINOKIO_APP="/Applications/Pinokio.app"
 TOP_LEVEL_DRY_RUN="false"
+SSD_LOG_FILE=""
 for argument in "$@"; do
   [[ "$argument" == "--dry-run" ]] && TOP_LEVEL_DRY_RUN="true"
 done
@@ -20,11 +21,15 @@ else
     LOG_DIR="/tmp"
   fi
   LOG_FILE="$LOG_DIR/terranash-bootstrap-$(/bin/date +%Y%m%d-%H%M%S)-$$.log"
+  if [[ -d "$SCRIPT_DIR/logs" && -w "$SCRIPT_DIR/logs" ]]; then
+    SSD_LOG_FILE="$SCRIPT_DIR/logs/terranash-bootstrap-$(/bin/date +%Y%m%d-%H%M%S)-$$.log"
+  fi
 fi
 
 finish() {
   local exit_code=$1
   printf '\nLog: %s\n' "$LOG_FILE"
+  [[ -n "$SSD_LOG_FILE" ]] && printf 'SSD log copy: %s\n' "$SSD_LOG_FILE"
   printf '\nPress Return to close…'
   read -r
   exit "$exit_code"
@@ -181,5 +186,9 @@ stage_zero() {
   "$python_path" "$SCRIPT_DIR/fleet_bootstrap.py" "$@"
 }
 
-stage_zero "$@" 2>&1 | /usr/bin/tee "$LOG_FILE"
+if [[ -n "$SSD_LOG_FILE" ]]; then
+  stage_zero "$@" 2>&1 | /usr/bin/tee "$LOG_FILE" "$SSD_LOG_FILE"
+else
+  stage_zero "$@" 2>&1 | /usr/bin/tee "$LOG_FILE"
+fi
 finish ${pipestatus[1]}
