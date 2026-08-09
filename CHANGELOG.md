@@ -10,6 +10,19 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.4.7] — 2026-08-09
+
+### Changed — OmniVoice is the default production cloner
+
+- Swarm Batch now puts the downloaded OmniVoice bf16 checkpoint first in the
+  Voice model picker. This matches the owner's production cloning policy while
+  leaving every other installed local model available for deliberate use.
+- A production qualification ran OmniVoice with three synchronized reference
+  voices across the 0000, 0100, and 0200 fleets and the M1/M2/M4 8/16/24 GB
+  tiers. All 11 jobs completed with valid local WAV artifacts and no memory
+  failure; Chatterbox remains available but its earlier results are classified
+  as engineering smoke evidence rather than production qualification.
+
 ## [2.4.6] — 2026-08-09
 
 ### Fixed — live job refresh preserves the clone picker

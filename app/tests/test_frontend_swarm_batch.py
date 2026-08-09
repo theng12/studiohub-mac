@@ -38,6 +38,15 @@ def test_clone_picker_reports_sync_and_limits_supported_models():
     assert "The broker sends this clone only to Macs where its reference is synchronized." in source
 
 
+def test_swarm_batch_prefers_the_production_omnivoice_cloner():
+    source = _source()
+
+    load_models = source[source.index("async function loadJobModels()"):
+                         source.index('$("#j-modality").addEventListener', source.index("async function loadJobModels()"))]
+    assert 'b.repo === "mlx-community/OmniVoice-bfloat16"' in load_models
+    assert 'a.repo === "mlx-community/OmniVoice-bfloat16"' in load_models
+
+
 def test_agent_hub_update_button_does_not_add_a_second_browser_confirmation():
     source = _source()
     start = source.index("async function startHubUpdate(machines = null)")

@@ -1144,6 +1144,9 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.4.7", date: "2026-08-09", items: [
+    "Swarm Batch now puts OmniVoice first whenever it is downloaded, matching the fleet's production voice-cloning policy while keeping other local Voice models available for deliberate selection.",
+  ]},
   { v: "2.4.6", date: "2026-08-09", items: [
     "The cloned-voice picker now has its own unique dashboard identity, so live Voice batch refreshes can no longer replace its options before a clone is submitted.",
   ]},
@@ -3008,7 +3011,8 @@ async function loadJobVoices() {
 async function loadJobModels() {
   const mod = $("#j-modality").value;
   const r = await api(`/api/hub/models?modality=${mod}&downloaded=true`).then(x => x.json()).catch(() => null);
-  $("#j-model").innerHTML = (r?.models || []).map(m => `<option value="${esc(m.repo)}">${esc(m.label)} — on ${esc(m.cached_on.join(", "))}</option>`).join("")
+  const models = (r?.models || []).sort((a, b) => Number(b.repo === "mlx-community/OmniVoice-bfloat16") - Number(a.repo === "mlx-community/OmniVoice-bfloat16"));
+  $("#j-model").innerHTML = models.map(m => `<option value="${esc(m.repo)}">${esc(m.label)} — on ${esc(m.cached_on.join(", "))}</option>`).join("")
     || `<option value="">no downloaded ${mod} models</option>`;
   $("#j-items-label").firstChild.textContent = mod === "voice" ? "Text — one line per item" : "Prompts — one per line";
   $("#j-prompts").placeholder = mod === "voice"
