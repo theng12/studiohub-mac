@@ -1121,6 +1121,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.4.0", date: "2026-08-09", items: [
+    "The fleet SSD now has two numbered commands: install Pinokio and the three Studios first, then copy RAM-qualified models in a separate offline filesystem-only step that never waits for a Studio server to start.",
+    "The model-only step skips complete caches and does not install, update, start, stop, or prune other model caches.",
+  ]},
   { v: "2.3.7", date: "2026-08-09", items: [
     "Existing fleet Macs now migrate old standalone Studio startup services automatically and use the current model-restore tool carried on the SSD, allowing one-click setup to continue into cache restoration.",
   ]},

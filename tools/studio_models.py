@@ -216,6 +216,29 @@ def discover(port: int) -> tuple[Path | None, list[dict]]:
     return hub, models
 
 
+def installed_hub(pinokio_home: Path, studio: str) -> Path | None:
+    """Resolve an installed Studio's HF hub without starting its server."""
+    candidates = (
+        pinokio_home / "api" / studio,
+        pinokio_home / "api" / f"{studio}.git",
+    )
+    target = next((path for path in candidates if path.is_dir()), None)
+    if target is None:
+        return None
+    hf_home = None
+    try:
+        for line in (target / "ENVIRONMENT").read_text().splitlines():
+            if line.strip().startswith("HF_HOME="):
+                hf_home = line.split("=", 1)[1].strip().strip("\"'")
+                break
+    except OSError:
+        pass
+    path = Path(hf_home).expanduser() if hf_home else Path("cache/HF_HOME")
+    if not path.is_absolute():
+        path = target / path
+    return path.resolve() / "hub"
+
+
 def staleness(port: int, hub: Path) -> str | None:
     """Warn when a studio is serving an older build than its checked-out code.
 
@@ -342,9 +365,13 @@ def stage_bootstrap_kit(volume_root: Path, *, plan_only: bool) -> None:
     repo = Path(__file__).resolve().parent.parent
     kit = volume_root / "terranash-bootstrap"
     sources = (
-        repo / "tools/fleet_bootstrap.py",
-        repo / "tools/studio_models.py",
-        repo / "tools/Install TerraNash Studios.command",
+        (repo / "tools/fleet_bootstrap.py", "fleet_bootstrap.py"),
+        (repo / "tools/studio_models.py", "studio_models.py"),
+        (repo / "tools/Install TerraNash Studios.command", ".terranash-bootstrap.command"),
+        (repo / "tools/1 Install Pinokio and Studios.command",
+         "1 Install Pinokio and Studios.command"),
+        (repo / "tools/2 Copy Models to This Mac.command",
+         "2 Copy Models to This Mac.command"),
     )
     print(f"bootstrap: Pinokio {PINOKIO_VERSION} + Hub/Image/Voice installer -> {kit}")
     if plan_only:
@@ -357,8 +384,9 @@ def stage_bootstrap_kit(volume_root: Path, *, plan_only: bool) -> None:
         shutil.rmtree(legacy_logs)
     legacy_logs.mkdir()
     legacy_logs.chmod(0o1777)
-    for source in sources:
-        destination = kit / source.name
+    (kit / "Install TerraNash Studios.command").unlink(missing_ok=True)
+    for source, name in sources:
+        destination = kit / name
         shutil.copy2(source, destination)
         destination.chmod(0o755)
     shutil.copy2(repo / "SSD-COPY-README.md", volume_root / "READ-ME-FIRST.md")
@@ -569,7 +597,8 @@ def do_stage(root: Path, plan_only: bool, keep_non_cloning: bool) -> int:
 
 def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
                force: bool, include_unqualified: bool,
-               keep_non_cloning: bool) -> int:
+               keep_non_cloning: bool,
+               pinokio_home: Path | None = None) -> int:
     manifest_path = root / MANIFEST_NAME
     if not manifest_path.is_file():
         sys.exit(f"no {MANIFEST_NAME} under {root} — is the SSD plugged in?")
@@ -584,12 +613,19 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
 
     for name, meta in STUDIOS.items():
         staged = (manifest.get("studios", {}).get(name) or {}).get("packages", [])
-        hub, models = discover(meta["port"])
+        if not staged:
+            continue
+        if pinokio_home is None:
+            hub, models = discover(meta["port"])
+        else:
+            hub, models = installed_hub(pinokio_home, f"{name}studio-mac"), []
         if hub is None:
             if staged:
                 print(f"{meta['label']}: not installed or not running "
                       f"on :{meta['port']} — skipped\n")
             continue
+        if pinokio_home is not None and not plan_only:
+            hub.mkdir(parents=True, exist_ok=True)
 
         families, local_floors, _all_companions = catalog_index(models)
         companions = needed_companions(name, models, keep_non_cloning)
@@ -606,8 +642,9 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
         # ---- restore
         want, defer, unqualified = [], [], []
         for e in staged:
-            if not stocked(name, e["repo"], fam_of.get(e["repo"], ""),
-                           caps.get(e["repo"], []), companions, keep_non_cloning):
+            if pinokio_home is None and not stocked(
+                    name, e["repo"], fam_of.get(e["repo"], ""),
+                    caps.get(e["repo"], []), companions, keep_non_cloning):
                 continue
             floor = resolve_floor(e["repo"], local_floors, ssd_floors)
             if restore_all:
@@ -758,6 +795,8 @@ def main() -> int:
     r.add_argument("--include-unqualified", action="store_true",
                    help="accepted for compatibility; unmeasured models in a "
                         "stocked family are installed by default now")
+    r.add_argument("--pinokio-home", type=Path,
+                   help="copy directly into installed Studio caches without starting them")
 
     args = ap.parse_args()
     args.root = args.root or find_default_root()
@@ -766,7 +805,8 @@ def main() -> int:
     return do_restore(args.root, plan_only=args.plan, prune=args.prune,
                       restore_all=args.all, force=args.force,
                       include_unqualified=args.include_unqualified,
-                      keep_non_cloning=args.keep_non_cloning)
+                      keep_non_cloning=args.keep_non_cloning,
+                      pinokio_home=args.pinokio_home)
 
 
 if __name__ == "__main__":

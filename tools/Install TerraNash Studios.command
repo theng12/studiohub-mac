@@ -38,9 +38,11 @@ finish() {
 stage_zero() {
   printf '\n== Stage 0: Pinokio runtime ==\n'
   local dry_run="false"
+  local models_only="false"
   local argument
   for argument in "$@"; do
     [[ "$argument" == "--dry-run" ]] && dry_run="true"
+    [[ "$argument" == "--models-only" ]] && models_only="true"
   done
   if [[ "$(/usr/bin/uname -s)" != "Darwin" || "$(/usr/bin/uname -m)" != "arm64" ]]; then
     printf 'FAILED: this fleet kit supports Apple-silicon Macs only.\n' >&2
@@ -53,6 +55,10 @@ stage_zero() {
       "$PINOKIO_APP/Contents/Info.plist" 2>/dev/null || true)
   fi
   if [[ "$current_version" != "$PINOKIO_VERSION" ]]; then
+    if [[ "$models_only" == "true" ]]; then
+      printf 'FAILED: step 1 is incomplete. Run 1 Install Pinokio and Studios.command first.\n' >&2
+      return 1
+    fi
     if [[ "$dry_run" == "true" ]]; then
       printf 'Would verify and install Pinokio %s from the SSD.\n' "$PINOKIO_VERSION"
     else
@@ -95,7 +101,7 @@ stage_zero() {
     printf 'Pinokio %s is already installed.\n' "$current_version"
   fi
 
-  if [[ "$dry_run" != "true" ]]; then
+  if [[ "$dry_run" != "true" && "$models_only" != "true" ]]; then
     /usr/bin/open "$PINOKIO_APP"
     printf 'Waiting for Pinokio first-run setup and bundled tools…\n'
   fi

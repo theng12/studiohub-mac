@@ -407,21 +407,13 @@ def configure_autolaunch(targets: dict[str, Path], *, dry_run: bool) -> None:
             update_environment(path, values)
 
 
-def restore_models(targets: dict[str, Path], model_root: Path, *, pterm: Path,
-                   dry_run: bool, prune: bool) -> None:
+def restore_models(home: Path, model_root: Path, *, dry_run: bool) -> None:
     if not model_root.joinpath("MANIFEST.json").is_file() and not dry_run:
         raise BootstrapError(f"No model manifest found at {model_root}.")
     tool = Path(__file__).resolve().with_name("studio_models.py")
-    command = [sys.executable, str(tool), "restore", "--root", str(model_root)]
-    if prune:
-        command.append("--prune")
+    command = [sys.executable, str(tool), "restore", "--root", str(model_root),
+               "--pinokio-home", str(home)]
     run(command, dry_run=dry_run)
-    for app in APPS[:2]:
-        run([str(pterm), "stop", "start.js", "--ref", app_ref(app["name"])],
-            dry_run=dry_run, check=False)
-        wait_stopped(app["port"], dry_run=dry_run)
-        install_script(pterm, app["name"], "start.js", dry_run=dry_run)
-        wait_health(app["port"], dry_run=dry_run)
 
 
 def local_profile() -> dict:
@@ -467,10 +459,12 @@ def validate_host() -> None:
 
 def parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__)
+    mode = ap.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--apps-only", action="store_true",
+                      help="install Pinokio, Studios, dependencies, and startup settings")
+    mode.add_argument("--models-only", action="store_true",
+                      help="copy RAM-qualified models without starting any Studio")
     ap.add_argument("--dry-run", action="store_true", help="show every step without changing this Mac")
-    ap.add_argument("--controller", help="private LAN/Tailscale Controller address; code is prompted securely")
-    ap.add_argument("--machine-name", help="friendly fleet name (default: this Mac's hostname)")
-    ap.add_argument("--no-prune", action="store_true", help="keep unusable old model caches")
     ap.add_argument("--pinokio-timeout", type=int, default=900,
                     help="seconds to wait for Pinokio first-run setup (default: 900)")
     return ap
@@ -493,6 +487,27 @@ def main(argv: list[str] | None = None) -> int:
         print("  unified memory: unknown")
     print(f"  SSD model source: {model_root}")
 
+    if args.models_only:
+        home = resolve_pinokio_home()
+        if home is None:
+            raise BootstrapError("Pinokio setup is not complete. Run step 1 first.")
+        missing = [
+            spec["title"] for spec in APPS
+            if not (home / "api" / spec["name"]).is_dir()
+            and not (home / "api" / f"{spec['name']}.git").is_dir()
+        ]
+        if missing:
+            raise BootstrapError(
+                f"Missing {', '.join(missing)}. Run step 1 before copying models."
+            )
+        heading("Copy RAM-matched models")
+        print(f"  PINOKIO_HOME: {home}")
+        restore_models(home, model_root, dry_run=args.dry_run)
+        heading("Complete")
+        print("  Model caches are ready. Start the Studios normally in Pinokio.")
+        print("  Safe to run again: complete model packages are skipped.")
+        return 0
+
     heading("Pinokio")
     app = install_pinokio(kit_root, dry_run=args.dry_run)
     install_login_agent(app, dry_run=args.dry_run)
@@ -505,28 +520,13 @@ def main(argv: list[str] | None = None) -> int:
     for spec in APPS:
         ensure_dependencies(pterm, targets[spec["name"]], spec, dry_run=args.dry_run)
 
-    heading("Start workers and restore RAM-matched models")
-    for spec in APPS[:2]:
-        ensure_started(pterm, spec, dry_run=args.dry_run)
-    restore_models(targets, model_root, pterm=pterm, dry_run=args.dry_run,
-                   prune=not args.no_prune)
-
     heading("Configure one Pinokio startup graph")
     configure_autolaunch(targets, dry_run=args.dry_run)
-    ensure_started(pterm, APPS[2], dry_run=args.dry_run)
-
-    enrollment = None
-    if args.controller:
-        heading("Join the Studio Hub Controller")
-        enrollment = enroll_agent(args.controller, args.machine_name, dry_run=args.dry_run)
-        print(f"  role: {enrollment.get('mode', 'agent')}")
 
     heading("Complete")
     print("  Pinokio starts at login.")
-    print("  Pinokio starts Image + Voice first, then Studio Hub.")
-    print("  Models were selected from the SSD using this Mac's unified RAM.")
-    if not args.controller:
-        print("  Fleet role remains Standalone. Rerun with --controller <private-address> to join.")
+    print("  Image Studio, Voice Studio, and Studio Hub are installed.")
+    print("  Next: run step 2 on the SSD to copy this Mac's model caches.")
     print("  Safe to run again: completed installation steps are detected and skipped.")
     return 0
 

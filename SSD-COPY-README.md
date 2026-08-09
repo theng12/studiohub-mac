@@ -1,78 +1,45 @@
 # TerraNash Studio SSD
 
-Choose the section that matches this Mac. Do not run the **SSD Maintainer**
-commands on a new or existing fleet Mac.
+The two jobs are separate. Finish step 1 before step 2 on a new Mac.
 
-## NEW MACHINE — install everything
+## NEW MACHINE — two clicks
 
-1. Finish normal macOS setup and connect the SSD.
-2. Open the SSD in Finder.
-3. Open `terranash-bootstrap`.
-4. Double-click **Install TerraNash Studios.command**.
-5. Enter the Mac administrator password if asked.
-6. Keep Pinokio open and finish any setup it shows. The installer waits for it.
-7. Wait for **Complete**. Then open `http://127.0.0.1:47873`.
+1. Finish normal macOS setup and connect this SSD.
+2. Open `terranash-bootstrap` in Finder.
+3. Double-click **1 Install Pinokio and Studios.command**.
+4. Keep Pinokio open and finish any first-run setup it shows. Wait for
+   **Complete**.
+5. Double-click **2 Copy Models to This Mac.command**. Wait for **Complete**.
 
-This installs Pinokio, Studio Hub, Image Studio, Voice Studio, their generation
-dependencies, and only the SSD models that fit this Mac's RAM. Hub stays
-Standalone; no Controller or Tailscale address is required yet.
+Step 1 installs Pinokio 8.0.40, Studio Hub, Image Studio, Voice Studio, their
+dependencies, and one Pinokio-owned startup graph. It does not start the
+Studios or touch model caches.
+
+Step 2 only copies complete Image and Voice model packages that fit this Mac's
+RAM. It does not install, update, start, stop, or prune other model caches.
 
 ## EXISTING MACHINE — models are missing
 
-1. Connect the SSD.
-2. Open `terranash-bootstrap` in Finder.
-3. Double-click **Install TerraNash Studios.command**.
-4. Wait for **Complete**.
+If Pinokio, Hub, Image, and Voice are already installed, skip step 1. Open
+`terranash-bootstrap` and double-click **2 Copy Models to This Mac.command**.
+Complete packages already on the Mac are skipped.
 
-Healthy installations and complete model caches are skipped. Missing or damaged
-RAM-qualified models are copied, then Image and Voice restart. Any older
-standalone Studio startup services are converted to the one Pinokio startup graph.
+## REPAIR
 
-## JOIN CONTROLLER — do this later
+Rerun only the numbered step that failed. Completed work is detected and
+skipped. Every run saves a log in `terranash-bootstrap/logs` on this SSD and a
+second copy in `~/Library/Logs/TerraNash` on that Mac.
 
-Only use this after the Mac can reach the Controller through Tailscale or the
-private LAN. Replace the address and machine name:
+If a model-copy run fails, return the SSD to the main Mac. Do not send unrelated
+macOS `.diag` or `.shutdownStall` files.
 
-```bash
-"/Volumes/ugreen-terranash/terranash-bootstrap/Install TerraNash Studios.command" \
-  --controller http://CONTROLLER-ADDRESS:47873 \
-  --machine-name "FRIENDLY MACHINE NAME"
-```
+## JOIN CONTROLLER — later
 
-Enter the Controller registration code when prompted. Do not use `localhost`
-as the Controller address: on this Mac, localhost means this Mac itself.
-
-## REPAIR — an earlier run failed
-
-1. Open Pinokio and finish any visible first-run setup.
-2. Run **Install TerraNash Studios.command** again.
-3. Completed steps are kept and skipped automatically.
-4. If it fails again, return the SSD to the main Mac. Its newest log is saved
-   in `terranash-bootstrap/logs`; a second copy stays on the fleet Mac.
-
-If macOS mounted the SSD as `ugreen-terranash 1`, double-clicking from Finder
-still works. For a Terminal command, drag **Install TerraNash Studios.command**
-from Finder into Terminal instead of typing its path.
-
-The normal fleet setup removes old models that are not stocked or cannot run on
-this Mac. To keep them, run the installer from Terminal with `--no-prune`.
-
-## MODELS DID NOT COPY — find the correct log
-
-Do not send macOS `.diag` or `.shutdownStall` files. First check the SSD's
-`terranash-bootstrap/logs` folder. For older runs, paste this in Terminal:
-
-```bash
-find "$HOME/Library/Logs/TerraNash" /private/tmp /Volumes -maxdepth 4 -type f \( -name 'terranash-bootstrap-*.log' -o -name 'bootstrap-*.log' \) -mmin -120 -print 2>/dev/null
-```
-
-Send the newest path it prints. If it prints nothing, rerun **Install TerraNash
-Studios.command**, keep its Terminal window open, and send everything from
-**Start workers and restore RAM-matched models** through the final `Log:` line.
+Both steps keep Hub Standalone. No Tailscale or Controller address is needed.
+After installation, start the Studios normally in Pinokio, open
+`http://127.0.0.1:47873`, and use Hub's Remote workspace when ready.
 
 ## SSD MAINTAINER — main Mac only
-
-Use these commands only on the main Mac that owns the Studio Hub repository:
 
 ```bash
 cd ~/pinokio/api/studiohub-mac
@@ -81,6 +48,6 @@ python3 tools/studio_models.py stage --plan
 python3 tools/studio_models.py stage
 ```
 
-The SSD must use APFS so Hugging Face model symlinks are preserved. If Terminal
-reports **Operation not permitted**, enable System Settings → Privacy &
-Security → Files and Folders → Terminal → Removable Volumes.
+The SSD must use APFS. If Terminal reports **Operation not permitted**, enable
+System Settings → Privacy & Security → Files and Folders → Terminal →
+Removable Volumes.

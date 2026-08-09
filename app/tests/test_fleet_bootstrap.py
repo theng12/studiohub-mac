@@ -86,19 +86,46 @@ def test_restore_uses_ssd_bundled_model_tool(tmp_path, monkeypatch):
         bootstrap, "run",
         lambda command, **_kwargs: commands.append(command),
     )
-    monkeypatch.setattr(bootstrap, "wait_stopped", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(bootstrap, "install_script", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(bootstrap, "wait_health", lambda *_args, **_kwargs: None)
-
-    bootstrap.restore_models(
-        {"studiohub-mac": tmp_path / "old-hub"},
-        tmp_path / "studio-models", pterm=Path("/pinokio/pterm"),
-        dry_run=True, prune=True,
-    )
+    home = tmp_path / "pinokio"
+    bootstrap.restore_models(home, tmp_path / "studio-models", dry_run=True)
 
     expected = Path(bootstrap.__file__).resolve().with_name("studio_models.py")
     assert commands[0][1] == str(expected)
-    assert "old-hub" not in commands[0][1]
+    assert commands[0][-2:] == ["--pinokio-home", str(home)]
+
+
+def test_offline_restore_copies_without_contacting_studio(tmp_path, monkeypatch):
+    models = load_tool("studio_models.py")
+    root = tmp_path / "studio-models"
+    source = root / "voice" / "Family" / "models--owner--voice"
+    (source / "blobs").mkdir(parents=True)
+    (source / "blobs/model.bin").write_bytes(b"model weights")
+    (root / "MANIFEST.json").write_text(json.dumps({
+        "studios": {
+            "voice": {"packages": [{
+                "repo": "owner/voice", "dir": source.name, "family": "Family",
+                "floor_gb": 8, "bytes": models.dir_bytes(source),
+            }]},
+            "image": {"packages": []},
+        },
+    }))
+    home = tmp_path / "Pinokio Home"
+    studio = home / "api/voicestudio-mac"
+    studio.mkdir(parents=True)
+    (studio / "ENVIRONMENT").write_text("HF_HOME=./cache/HF_HOME\n")
+    monkeypatch.setattr(models, "machine_memory_gb", lambda: 16.0)
+    monkeypatch.setattr(
+        models, "discover",
+        lambda _port: (_ for _ in ()).throw(AssertionError("server discovery used")),
+    )
+
+    models.do_restore(
+        root, plan_only=False, prune=False, restore_all=False, force=False,
+        include_unqualified=False, keep_non_cloning=False, pinokio_home=home,
+    )
+
+    copied = studio / "cache/HF_HOME/hub" / source.name / "blobs/model.bin"
+    assert copied.read_bytes() == b"model weights"
 
 
 def test_model_root_prefers_current_label_and_can_find_renamed_manifest(tmp_path):
@@ -149,6 +176,7 @@ def test_bootstrap_has_no_hard_coded_volume_path():
     assert '$USER_HOME/Library/Logs/TerraNash' in wrapper
     assert '$SCRIPT_DIR/logs' in wrapper
     assert '$HOME/.pinokio' not in wrapper
+    assert '[[ "$argument" == "--models-only" ]]' in wrapper
 
 
 def test_pinokio_home_accepts_spaces_apostrophes_and_unicode(tmp_path, monkeypatch):
@@ -199,7 +227,10 @@ def test_restaging_removes_legacy_ssd_logs(tmp_path, monkeypatch):
     assert legacy_log.parent.is_dir()
     assert not legacy_log.exists()
     assert legacy_log.parent.stat().st_mode & 0o7777 == 0o1777
-    assert (kit / "Install TerraNash Studios.command").stat().st_mode & 0o555 == 0o555
+    assert not (kit / "Install TerraNash Studios.command").exists()
+    assert (kit / ".terranash-bootstrap.command").stat().st_mode & 0o555 == 0o555
+    assert (kit / "1 Install Pinokio and Studios.command").is_file()
+    assert (kit / "2 Copy Models to This Mac.command").is_file()
     assert (kit / "studio_models.py").is_file()
     assert (tmp_path / "READ-ME-FIRST.md").stat().st_mode & 0o444 == 0o444
 
@@ -207,17 +238,22 @@ def test_restaging_removes_legacy_ssd_logs(tmp_path, monkeypatch):
 def test_ssd_guide_separates_machine_paths_and_stays_short():
     guide = (ROOT / "SSD-COPY-README.md").read_text()
     for heading in (
-        "## NEW MACHINE — install everything",
+        "## NEW MACHINE — two clicks",
         "## EXISTING MACHINE — models are missing",
-        "## JOIN CONTROLLER — do this later",
-        "## REPAIR — an earlier run failed",
-        "## MODELS DID NOT COPY — find the correct log",
+        "## JOIN CONTROLLER — later",
+        "## REPAIR",
         "## SSD MAINTAINER — main Mac only",
     ):
         assert heading in guide
     assert "terranash-bootstrap/logs" in guide
     assert ".shutdownStall" in guide
     assert len(guide.splitlines()) < 90
+
+
+def test_bootstrap_requires_one_split_mode():
+    bootstrap = load_tool("fleet_bootstrap.py")
+    assert bootstrap.parser().parse_args(["--apps-only"]).apps_only
+    assert bootstrap.parser().parse_args(["--models-only"]).models_only
 
 
 def test_git_url_comparison_ignores_git_suffix():

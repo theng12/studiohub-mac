@@ -10,6 +10,22 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.4.0] — 2026-08-09
+
+### Changed — installation and model copying are separate
+
+- The SSD now presents two numbered one-click commands. Step 1 installs and
+  verifies Pinokio, Hub, Image, Voice, dependencies, and startup settings but
+  does not start a Studio or touch caches. Step 2 only copies RAM-qualified
+  model packages and skips complete destinations; it does not install, update,
+  start, stop, or prune other model caches.
+- Model copying resolves each installed Studio's `HF_HOME` directly from its
+  checkout and runs entirely through the filesystem. Image and Voice no longer
+  need to start or expose catalog APIs before their caches can be restored.
+- The previous combined command is hidden and no longer staged as an operator
+  action. This removes the observed indefinite wait at `pterm start start.js`
+  after an otherwise successful existing-machine migration.
+
 ## [2.3.7] — 2026-08-09
 
 ### Fixed — existing Macs continue into model restore
