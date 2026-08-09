@@ -1121,6 +1121,9 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.1.1", date: "2026-08-09", items: [
+    "The <b>Memory</b> workspace now includes Render Studio. Global policy changes and <b>Release selected now</b> cover all six workers on every registered Mac, while active renders still refuse release safely.",
+  ]},
   { v: "2.1.0", date: "2026-08-09", items: [
     "<b>Agent enrollment is now one step.</b> When a Mac joins a location, the Controller registers its six Studio endpoints from the same private connection, saves its hardware profile and friendly name, and refreshes its address if that machine enrolls again.",
     "Hub now reads this Mac's <b>product family, Apple chip, unified RAM, and hostname</b> to preselect the right hardware profile. Online Controller discovery can read the same facts from a peer Hub, so choosing a profile first is no longer required.",

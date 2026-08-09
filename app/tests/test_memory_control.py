@@ -46,6 +46,8 @@ def test_inventory_uses_authenticated_direct_and_peer_routes():
     monitor = FakeMonitor([
         response(200, {"mode": "performance", "loaded_model": "flux",
                        "process_title": "Image Studio Mac"}),
+        response(200, {"mode": "balanced", "loaded": False,
+                       "process_title": "Render Studio Mac"}),
         response(200, {"mode": "balanced", "loaded_models": ["qwen-tts"],
                        "process_title": "Voice Studio Mac"}),
     ])
@@ -55,30 +57,39 @@ def test_inventory_uses_authenticated_direct_and_peer_routes():
 
     assert data["default_mode"] == DEFAULT_MODE == "balanced"
     assert all("idle_seconds" not in option for option in data["options"])
-    assert [row["id"] for row in data["studios"]] == ["image", "voice@renderbox"]
-    assert data["summary"] == {"total": 2, "ready": 2, "offline": 0,
+    assert [row["id"] for row in data["studios"]] == [
+        "image", "render", "voice@renderbox",
+    ]
+    assert data["summary"] == {"total": 3, "ready": 3, "offline": 0,
                                "update_required": 0}
-    direct, remote = monitor._client.calls
-    assert direct[1] == "http://127.0.0.1:47868/api/memory-policy"
-    assert direct[2]["headers"]["X-Studio-Token"]
+    image, render, remote = monitor._client.calls
+    assert image[1] == "http://127.0.0.1:47868/api/memory-policy"
+    assert image[2]["headers"]["X-Studio-Token"]
+    assert render[1] == "http://127.0.0.1:47874/api/memory-policy"
+    assert render[2]["headers"]["X-Studio-Token"]
     assert remote[1] == "http://10.0.0.8:47873/studio/voice/api/memory-policy"
     assert remote[2]["headers"]["X-Hub-Token"]
 
 
 def test_inventory_explains_offline_and_old_studios():
-    monitor = FakeMonitor([response(404)])
+    monitor = FakeMonitor([
+        response(404),
+        response(200, {"mode": "balanced", "loaded": False}),
+    ])
     monitor.status["voice@renderbox"]["status"] = "down"
 
     data = asyncio.run(FleetMemoryControl(monitor).inventory())
 
     assert data["studios"][0]["state"] == "update_required"
     assert "Run Update" in data["studios"][0]["detail"]
-    assert data["studios"][1]["state"] == "offline"
-    assert len(monitor._client.calls) == 1
+    assert data["studios"][1]["state"] == "ready"
+    assert data["studios"][2]["state"] == "offline"
+    assert len(monitor._client.calls) == 2
 
 
 def test_policy_fanout_keeps_success_when_another_studio_is_busy():
     monitor = FakeMonitor([
+        response(200, {"mode": "memory_saver"}),
         response(200, {"mode": "memory_saver"}),
         response(409, {"detail": "Voice generation is active; memory was not released"}),
     ])
@@ -86,8 +97,10 @@ def test_policy_fanout_keeps_success_when_another_studio_is_busy():
     result = asyncio.run(FleetMemoryControl(monitor).set_mode("memory_saver"))
 
     assert result["ok"] is False
-    assert result["succeeded"] == 1 and result["failed"] == 1
-    assert [row["result"] for row in result["results"]] == ["updated", "busy"]
+    assert result["succeeded"] == 2 and result["failed"] == 1
+    assert [row["result"] for row in result["results"]] == [
+        "updated", "updated", "busy",
+    ]
     assert monitor._client.calls[0][2]["json"] == {"mode": "memory_saver"}
 
 

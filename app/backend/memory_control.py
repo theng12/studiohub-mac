@@ -1,4 +1,4 @@
-"""Fleet controller for the sibling Studios' opt-in model-memory policies."""
+"""Fleet controller for the sibling Studios' opt-in memory policies."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from . import peers
 from .registry import label_for
 
 
-SUPPORTED_MODALITIES = {"image", "chat", "video", "music", "voice"}
+SUPPORTED_MODALITIES = {"image", "chat", "video", "music", "voice", "render"}
 # Hub validates mode names and renders their labels. Each Studio owns and reports
 # the actual idle threshold, so keeping a second table here would risk drift.
 MODES = {
@@ -40,7 +40,7 @@ def _error_detail(response: httpx.Response) -> str:
 
 
 class FleetMemoryControl:
-    """Read and change memory policy without owning any model state itself."""
+    """Read and change memory policy without owning worker state itself."""
 
     def __init__(self, monitor):
         self.monitor = monitor

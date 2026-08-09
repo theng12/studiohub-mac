@@ -66,8 +66,8 @@ select menus keep their dedicated readable option size.
 
 ### Control model memory
 
-Open **Memory** in Studio Hub. Every registered Image, Chat, Video, Music, and
-Voice Studio appears separately, including Studios reached through a peer Hub.
+Open **Memory** in Studio Hub. Every registered Image, Chat, Video, Music, Voice,
+and Render Studio appears separately, including Studios reached through a peer Hub.
 Select the workers you want and choose:
 
 - **Performance** — preserve loaded models for the fastest repeat

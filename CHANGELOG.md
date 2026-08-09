@@ -10,6 +10,17 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.1.1] — 2026-08-09
+
+### Fixed — global memory control now includes Render Studio
+
+- The Memory workspace now discovers, displays, configures, and manually
+  releases Render Studio alongside Image, Music, Voice, Chat, and Video Studio.
+  Render's idle cleanup had the same authenticated memory-policy API as its
+  siblings but was accidentally omitted from Hub's supported modality list.
+- Fleet-wide memory actions now cover all six workers on each registered Mac;
+  active Render jobs retain the same safe busy refusal as every other Studio.
+
 ## [2.1.0] — 2026-08-09
 
 ### Added — one-step Agent enrollment and automatic Mac detection
