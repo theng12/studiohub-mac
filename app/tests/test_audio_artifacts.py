@@ -145,6 +145,25 @@ def test_worker_resource_evidence_rejects_unknown_contracts() -> None:
     assert "resource_usage" not in item
 
 
+def test_image_resource_telemetry_is_retained_through_the_hub_contract() -> None:
+    item = {}
+    broker._record_worker_resource_usage(item, {
+        "resource_telemetry": {
+            "schema": "imagestudio.resource-telemetry",
+            "schema_version": 1,
+            "host": {"minimum_available_gb": 0.75, "private_path": "/secret"},
+            "mlx": {"peak_active_gb": 9.5},
+            "unexpected": {"environment": "secret"},
+        }
+    })
+    assert item["resource_usage"] == {
+        "schema": "imagestudio.resource-telemetry",
+        "schema_version": 1,
+        "host": {"minimum_available_gb": 0.75},
+        "mlx": {"peak_active_gb": 9.5},
+    }
+
+
 @pytest.mark.asyncio
 async def test_voice_result_is_not_terminal_until_artifact_metadata_is_complete(
     reset, monkeypatch

@@ -76,9 +76,10 @@ Select the workers you want and choose:
 - **Memory Saver** — release after 2 idle minutes.
 - **Immediate** — release as soon as current work is finished.
 
-Before you save an explicit choice, each Studio resolves its own safe default;
-Studios below 12 GB use Memory Saver, while Hub's bulk-control draft starts on
-Balanced. Performance is always an explicit operator choice.
+Before you save an explicit choice, new Image and Voice installs and Hub's
+bulk-control draft start on Immediate so another sibling can use the Mac as
+soon as work finishes. Existing saved Studio choices remain authoritative.
+Performance is always an explicit operator choice.
 
 **Release selected now** is the manual equivalent. A Studio with queued or
 running work refuses safely; other selected Studios still complete. Offline

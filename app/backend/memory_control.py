@@ -20,12 +20,11 @@ MODES = {
     "memory_saver": {"label": "Memory Saver"},
     "immediate": {"label": "Immediate"},
 }
-# Every Studio moved its own default off "performance" after 2026-08-07, when 16
-# of 19 fleet machines sat below the memory floor with 1.5-4.4 GB of swap because
-# that mode never releases. Hub cannot size a studio's RAM from here, so it
-# publishes the fleet-wide floor the Studios agree on; each studio still reports
-# its own resolved default in its policy row.
-DEFAULT_MODE = "balanced"
+# A five-machine production pressure run on 2026-08-09 showed that waiting to
+# release an idle model can stall the next sibling Studio even on 16 GB. Hub's
+# bulk draft therefore matches the Image and Voice fresh-install default. Each
+# Studio still owns its saved policy and reports its resolved default.
+DEFAULT_MODE = "immediate"
 REQUEST_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 
 

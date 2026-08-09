@@ -10,6 +10,24 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.4.1] — 2026-08-09
+
+### Changed — production-tested cross-Studio memory default
+
+- Hub's bulk memory-policy draft now starts on **Immediate**, matching fresh
+  Image and Voice installs. Existing saved Studio policies remain authoritative.
+- The five-machine M1/M2/M4 pressure qualification completed all Image and
+  Voice jobs with valid artifacts. On M4 16 GB, Immediate left Image runtime
+  unchanged at about 72 seconds and reduced the following Voice job from 52.7
+  seconds to 4.0 seconds.
+
+### Fixed — Image resource evidence survives broker completion
+
+- Hub now accepts Image Studio's versioned `resource_telemetry` field as well
+  as Voice Studio's `resource_usage`, preserves the originating schema, and
+  applies the same strict section/field whitelist before exposing terminal job
+  evidence. Unknown schemas, paths, and future unapproved fields remain dropped.
+
 ## [2.4.0] — 2026-08-09
 
 ### Changed — installation and model copying are separate

@@ -55,7 +55,7 @@ def test_inventory_uses_authenticated_direct_and_peer_routes():
 
     data = asyncio.run(control.inventory())
 
-    assert data["default_mode"] == DEFAULT_MODE == "balanced"
+    assert data["default_mode"] == DEFAULT_MODE == "immediate"
     assert all("idle_seconds" not in option for option in data["options"])
     assert [row["id"] for row in data["studios"]] == [
         "image", "render", "voice@renderbox",
@@ -175,7 +175,7 @@ def test_memory_dashboard_preserves_an_unsaved_mode_draft():
     assert 'data-mode="balanced"' in dashboard
     assert 'data-mode="memory_saver"' in dashboard
     assert 'data-mode="immediate"' in dashboard
-    assert 'let memoryModeDraft = "balanced";' in dashboard
+    assert 'let memoryModeDraft = "immediate";' in dashboard
     assert 'if (!memorySelectionInitialized)' in dashboard
     assert 'setMemoryModeDraft(memoryModeDraft);' in dashboard
     assert 'if (btn.dataset.tab === "memory") loadFleetMemory();' in dashboard

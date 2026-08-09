@@ -1547,6 +1547,10 @@ _RESOURCE_USAGE_FIELDS = {
         "state", "memory_failure", "restart_scheduled", "model_retained",
     },
 }
+_RESOURCE_USAGE_SCHEMAS = {
+    "imagestudio.resource-telemetry",
+    "voicestudio.resource-telemetry",
+}
 
 
 def _record_worker_resource_usage(item: dict, job: dict) -> None:
@@ -1558,13 +1562,16 @@ def _record_worker_resource_usage(item: dict, job: dict) -> None:
     """
     raw = job.get("resource_usage")
     if not isinstance(raw, dict):
+        raw = job.get("resource_telemetry")
+    if not isinstance(raw, dict):
         return
-    if raw.get("schema") != "voicestudio.resource-telemetry":
+    schema = raw.get("schema")
+    if schema not in _RESOURCE_USAGE_SCHEMAS:
         return
     if raw.get("schema_version") != 1:
         return
     clean = {
-        "schema": "voicestudio.resource-telemetry",
+        "schema": schema,
         "schema_version": 1,
     }
     for section, fields in _RESOURCE_USAGE_FIELDS.items():
