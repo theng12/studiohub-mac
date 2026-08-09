@@ -10,6 +10,18 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.3.1] — 2026-08-09
+
+### Documentation — offline SSD operator commands
+
+- The SSD's top-level `READ-ME-FIRST.md` now begins with copy-and-paste recipes
+  for a no-change preview, completing model caching on an already-installed
+  Mac, caching and enrolling an Agent in one run, and preserving old caches
+  with `--no-prune`.
+- The guide explicitly notes that existing Studio checkouts are verified but
+  not updated by the bootstrap, and explains how to handle macOS mount-name
+  suffixes without returning to the original setup chat.
+
 ## [2.3.0] — 2026-08-09
 
 ### Added — clean-Mac provisioning from the fleet SSD

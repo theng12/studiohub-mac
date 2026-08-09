@@ -13,6 +13,58 @@ absolute paths and native binaries and are not portable. Each Studio rebuilds
 its own environment through its checked-in Pinokio `install.js` and
 `install_generation.js` scripts.
 
+## Quick copy-and-paste commands
+
+These commands are available in this file specifically so they can be copied
+on a fleet Mac without opening the original setup chat.
+
+### Preview only — change nothing
+
+```bash
+"/Volumes/ugreen-terranash/terranash-bootstrap/Install TerraNash Studios.command" --dry-run
+```
+
+### Finish an existing Mac and copy its RAM-matched model cache
+
+Use this when Pinokio, Hub, Image, and Voice are already installed. The
+installer verifies and skips healthy environments, copies only missing or
+damaged RAM-qualified model caches, restarts the workers, and leaves Hub
+Standalone:
+
+```bash
+"/Volumes/ugreen-terranash/terranash-bootstrap/Install TerraNash Studios.command"
+```
+
+### Copy models and join the Controller in the same run
+
+Replace the private Controller address and friendly machine name. The command
+asks for the Controller registration code in a hidden prompt after caching:
+
+```bash
+"/Volumes/ugreen-terranash/terranash-bootstrap/Install TerraNash Studios.command" \
+  --controller http://CONTROLLER-TAILSCALE-IP:47873 \
+  --machine-name "FRIENDLY MACHINE NAME"
+```
+
+### Preserve every old model cache while installing
+
+The normal fleet policy prunes models outside the stocked selection or above
+the Mac's RAM tier. Add `--no-prune` when old caches must be retained:
+
+```bash
+"/Volumes/ugreen-terranash/terranash-bootstrap/Install TerraNash Studios.command" \
+  --no-prune \
+  --controller http://CONTROLLER-TAILSCALE-IP:47873 \
+  --machine-name "FRIENDLY MACHINE NAME"
+```
+
+On an already-installed Mac, update Hub, Image, and Voice from their Pinokio
+**Update** actions first if they might be older. The bootstrap keeps matching
+existing Git checkouts; it verifies their environments but does not pull newer
+Studio code. If macOS mounted the drive with a suffix such as
+`ugreen-terranash 1`, replace the volume name in the command or drag
+**Install TerraNash Studios.command** from Finder into Terminal.
+
 ## Part 1 — prepare or refresh the SSD once
 
 The volume is named `ugreen-terranash`. The tools also recognize the old

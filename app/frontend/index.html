@@ -1121,6 +1121,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.3.1", date: "2026-08-09", items: [
+    "The fleet SSD's top-level <code>READ-ME-FIRST.md</code> now includes copy-and-paste commands for previewing the bootstrap, finishing model caching on an existing Mac, caching and enrolling in one run, and retaining old caches with <code>--no-prune</code>.",
+    "The offline guide now calls out existing-Studio update behavior and macOS volume-name suffixes, so another fleet Mac can be completed without reopening the setup chat.",
+  ]},
   { v: "2.3.0", date: "2026-08-09", items: [
     "The fleet SSD now provisions a <b>clean Apple-silicon Mac</b>: verified Pinokio installer, Hub + Image + Voice repositories, base and generation dependencies, RAM-matched model restore, worker restart, and optional secure Agent enrollment.",
     "Startup is one Pinokio-owned dependency graph. Pinokio opens at macOS login; Hub then launches Image and Voice first and waits for them, without installing three competing Studio launchd services.",
