@@ -23,6 +23,7 @@ def test_swarm_batch_sends_label_and_shared_voice_contract():
 
     assert 'label: $("#j-label").value.trim() || "studiohub-ui"' in source
     assert "voice_library_id: selectedVoice" in source
+    assert 'language: voice?.language || "en"' in source
     assert "ref_transcript: voice.transcript" in source
     assert 'modality === "voice" ? { text: value } : { prompt: value }' in source
 

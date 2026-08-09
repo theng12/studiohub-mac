@@ -10,6 +10,15 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.4.4] — 2026-08-09
+
+### Fixed — shared clones carry their language
+
+- Swarm Batch now passes the selected shared voice's language to Voice Studio.
+  This fixes Chatterbox clone submissions that previously exhausted their
+  retries with a missing-language validation error while preserving the same
+  local-only shared-voice routing and reviewed transcript.
+
 ## [2.4.3] — 2026-08-09
 
 ### Added — labeled style and cloned-voice batches

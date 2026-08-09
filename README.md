@@ -805,7 +805,8 @@ seed, params, batch id) — reproducible by construction.
 For an operator-run qualification, open **Jobs → Swarm Batch**, choose Image or
 Voice and a downloaded model, and add a descriptive batch label. Clone-capable
 Voice models also show synchronized entries from **Voices**; the Hub routes the
-batch only to workers that hold the selected reference. Image art styles remain
+batch only to workers that hold the selected reference and carries that library
+entry's language and reviewed transcript automatically. Image art styles remain
 plain prompt instructions, so one labeled batch can contain a different style
 on each line without introducing a separate style service or cloud dependency.
 

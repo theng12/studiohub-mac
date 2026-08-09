@@ -1144,6 +1144,9 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.4.4", date: "2026-08-09", items: [
+    "Shared-voice Swarm Batches now carry the voice library entry's language into Voice Studio, fixing Chatterbox clone jobs that otherwise stopped with a missing-language validation error.",
+  ]},
   { v: "2.4.3", date: "2026-08-09", items: [
     "Swarm Batch now accepts a clear operator label and exposes ready shared voices whenever a clone-capable Voice model is selected, so fleet qualifications and their returned artifacts remain identifiable.",
     "Voice batches send the selected shared-voice ID and reviewed transcript through the existing local broker path; no cloud route or new dependency was added.",
@@ -3025,6 +3028,7 @@ async function submitBatch() {
   const voice = jobSharedVoices.find(row => row.id === selectedVoice);
   const sharedParams = selectedVoice ? {
     voice_library_id: selectedVoice,
+    language: voice?.language || "en",
     ...(voice?.transcript ? { ref_transcript: voice.transcript } : {}),
   } : {};
   try {
