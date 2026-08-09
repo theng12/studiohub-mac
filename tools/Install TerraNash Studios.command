@@ -90,7 +90,7 @@ stage_zero() {
     /usr/bin/open "$PINOKIO_APP"
     printf 'Waiting for Pinokio first-run setup and bundled tools…\n'
   fi
-  local pinokio_home="" pterm_path="" python_path=""
+  local pinokio_home="" pterm_path="" node_path="" python_path=""
   local count=0
   local attempts=450
   [[ "$dry_run" == "true" ]] && attempts=1
@@ -122,7 +122,27 @@ stage_zero() {
       pterm_path=$(command -v pterm 2>/dev/null || true)
       [[ -x "$pterm_path" ]] || pterm_path=""
     fi
-    if [[ -n "$pterm_path" ]]; then
+    if [[ -z "$node_path" ]]; then
+      node_path=$(/usr/bin/curl -fsS --max-time 2 \
+        http://127.0.0.1:42000/pinokio/path/node 2>/dev/null | \
+        /usr/bin/plutil -extract path raw -o - - 2>/dev/null || true)
+      [[ -x "$node_path" ]] || node_path=""
+    fi
+    if [[ -z "$node_path" && -n "$pinokio_home" ]]; then
+      for candidate in "$pinokio_home/bin/miniforge/bin/node" \
+          "$pinokio_home/bin/miniconda/bin/node"; do
+        if [[ -x "$candidate" ]]; then
+          node_path="$candidate"
+          break
+        fi
+      done
+    fi
+    if [[ -z "$node_path" ]]; then
+      node_path=$(command -v node 2>/dev/null || true)
+      [[ -x "$node_path" ]] || node_path=""
+    fi
+    if [[ -n "$pterm_path" && -n "$node_path" ]]; then
+      export PATH="${node_path:h}:$PATH"
       python_path=$("$pterm_path" which python3 --json 2>/dev/null | \
         /usr/bin/plutil -extract path raw -o - - 2>/dev/null || true)
       [[ -x "$python_path" ]] && break
@@ -143,7 +163,7 @@ stage_zero() {
     /bin/sleep 2
     (( count += 1 ))
   done
-  if [[ -z "$pterm_path" || -z "$python_path" ]]; then
+  if [[ -z "$pterm_path" || -z "$node_path" || -z "$python_path" ]]; then
     if [[ "$dry_run" == "true" ]]; then
       printf 'Would initialize Pinokio, install Hub/Image/Voice and generation dependencies,\n'
       printf 'restore RAM-qualified models, configure ordered autolaunch, and optionally enroll.\n'

@@ -1121,6 +1121,9 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.3.3", date: "2026-08-09", items: [
+    "The fleet SSD installer now resolves and exports Pinokio's private Node runtime before calling <code>pterm</code>, fixing <code>env: node: No such file or directory</code> on clean login shells.",
+  ]},
   { v: "2.3.2", date: "2026-08-09", items: [
     "The fleet SSD installer now waits for both Pinokio's control tool and bundled Python runtime, instead of failing immediately while a normal first-run setup is still preparing Python.",
     "The SSD guide is now a short numbered checklist with separate <b>New Machine</b>, <b>Existing Machine</b>, <b>Join Controller</b>, <b>Repair</b>, and <b>SSD Maintainer</b> paths.",

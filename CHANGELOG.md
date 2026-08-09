@@ -10,6 +10,18 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.3.3] — 2026-08-09
+
+### Fixed — pterm can find Pinokio's Node runtime
+
+- The clean-Mac bootstrap now resolves Pinokio's Node executable from the
+  localhost control plane, the resolved Pinokio home, or the normal command
+  path, then exports that directory before invoking `pterm`.
+- This fixes `env: node: No such file or directory` on Macs whose ordinary
+  login shell does not include Pinokio's private runtime directories. The one
+  exported environment fixes repository download, install, start, stop, and
+  every later `pterm` subprocess without machine-specific paths.
+
 ## [2.3.2] — 2026-08-09
 
 ### Fixed — clean-Mac Pinokio readiness

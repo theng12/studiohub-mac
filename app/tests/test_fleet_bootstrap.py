@@ -96,6 +96,8 @@ def test_bootstrap_has_no_hard_coded_volume_path():
     assert '[[ -x "$python_path" ]] && break' in wrapper
     assert '[[ -n "$pterm_path" ]] && break' not in wrapper
     assert "/pinokio/path/pterm" in wrapper
+    assert "/pinokio/path/node" in wrapper
+    assert 'export PATH="${node_path:h}:$PATH"' in wrapper
     assert "sys.version_info < (3, 9)" in wrapper
 
 
