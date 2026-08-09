@@ -1121,6 +1121,9 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.4.2", date: "2026-08-09", items: [
+    "Short-lived execution voice-reference copies are now treated as disposable runtime data, so they cannot block an otherwise safe Hub update with a dirty-worktree warning.",
+  ]},
   { v: "2.4.1", date: "2026-08-09", items: [
     "New fleet memory controls now start on Immediate, the setting proven to preserve fast cross-Studio switching in the five-machine M1/M2/M4 pressure qualification.",
     "Hub now retains Image Studio's whitelisted resource telemetry in completed job evidence, matching the existing Voice Studio path without exposing worker paths or unknown fields.",

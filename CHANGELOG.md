@@ -10,6 +10,15 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.4.2] — 2026-08-09
+
+### Fixed — disposable execution copies no longer block updates
+
+- Short-lived `execution_assets/` voice-reference copies are now ignored as
+  runtime data. A staged clone reference can no longer make Hub's safe updater
+  report a dirty worktree, while source and configuration changes remain
+  protected by the existing clean-tree check.
+
 ## [2.4.1] — 2026-08-09
 
 ### Changed — production-tested cross-Studio memory default

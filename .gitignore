@@ -43,6 +43,7 @@ machine_hardware_profiles.json
 controller_settings.json
 .controller_database_url
 execution_identity.db
+execution_assets/
 setup_enrollment.db
 setup_enrollment.db-*
 .enrollment_code
