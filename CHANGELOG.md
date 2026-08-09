@@ -10,6 +10,15 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.3.5] — 2026-08-09
+
+### Documentation — model-restore diagnostics travel with the SSD
+
+- The SSD's top-level guide now includes the exact local, `/tmp`, and legacy
+  SSD log search for a model restore that copied nothing, plus the precise
+  Terminal section to preserve when no log exists. It explicitly distinguishes
+  the useful bootstrap log from unrelated macOS `.diag` and shutdown reports.
+
 ## [2.3.4] — 2026-08-09
 
 ### Fixed — fleet SSD works across macOS user accounts

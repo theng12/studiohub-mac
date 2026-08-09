@@ -163,11 +163,13 @@ def test_ssd_guide_separates_machine_paths_and_stays_short():
         "## EXISTING MACHINE — models are missing",
         "## JOIN CONTROLLER — do this later",
         "## REPAIR — an earlier run failed",
+        "## MODELS DID NOT COPY — find the correct log",
         "## SSD MAINTAINER — main Mac only",
     ):
         assert heading in guide
     assert "~/Library/Logs/TerraNash" in guide
     assert "terranash-bootstrap/logs" not in guide
+    assert ".shutdownStall" in guide
     assert len(guide.splitlines()) < 90
 
 

@@ -56,6 +56,18 @@ from Finder into Terminal instead of typing its path.
 The normal fleet setup removes old models that are not stocked or cannot run on
 this Mac. To keep them, run the installer from Terminal with `--no-prune`.
 
+## MODELS DID NOT COPY — find the correct log
+
+Do not send macOS `.diag` or `.shutdownStall` files. In Terminal, paste:
+
+```bash
+find "$HOME/Library/Logs/TerraNash" /private/tmp /Volumes -maxdepth 4 -type f \( -name 'terranash-bootstrap-*.log' -o -name 'bootstrap-*.log' \) -mmin -120 -print 2>/dev/null
+```
+
+Send the newest path it prints. If it prints nothing, rerun **Install TerraNash
+Studios.command**, keep its Terminal window open, and send everything from
+**Start workers and restore RAM-matched models** through the final `Log:` line.
+
 ## SSD MAINTAINER — main Mac only
 
 Use these commands only on the main Mac that owns the Studio Hub repository:
