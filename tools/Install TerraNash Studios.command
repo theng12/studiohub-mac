@@ -90,7 +90,7 @@ stage_zero() {
     /usr/bin/open "$PINOKIO_APP"
     printf 'Waiting for Pinokio first-run setup and bundled tools…\n'
   fi
-  local pinokio_home="" pterm_path=""
+  local pinokio_home="" pterm_path="" python_path=""
   local count=0
   local attempts=450
   [[ "$dry_run" == "true" ]] && attempts=1
@@ -107,24 +107,50 @@ stage_zero() {
         fi
       done
     fi
-    [[ -n "$pterm_path" ]] && break
+    if [[ -z "$pinokio_home" ]]; then
+      pinokio_home=$(/usr/bin/curl -fsS --max-time 2 \
+        http://127.0.0.1:42000/pinokio/home 2>/dev/null | \
+        /usr/bin/plutil -extract path raw -o - - 2>/dev/null || true)
+    fi
+    if [[ -z "$pterm_path" ]]; then
+      pterm_path=$(/usr/bin/curl -fsS --max-time 2 \
+        http://127.0.0.1:42000/pinokio/path/pterm 2>/dev/null | \
+        /usr/bin/plutil -extract path raw -o - - 2>/dev/null || true)
+      [[ -x "$pterm_path" ]] || pterm_path=""
+    fi
+    if [[ -z "$pterm_path" ]]; then
+      pterm_path=$(command -v pterm 2>/dev/null || true)
+      [[ -x "$pterm_path" ]] || pterm_path=""
+    fi
+    if [[ -n "$pterm_path" ]]; then
+      python_path=$("$pterm_path" which python3 --json 2>/dev/null | \
+        /usr/bin/plutil -extract path raw -o - - 2>/dev/null || true)
+      [[ -x "$python_path" ]] && break
+      python_path=""
+      local system_python
+      system_python=$(command -v python3 2>/dev/null || true)
+      if [[ -x "$system_python" ]] && \
+          "$system_python" -c 'import sys; raise SystemExit(sys.version_info < (3, 9))' \
+            >/dev/null 2>&1; then
+        python_path="$system_python"
+        printf 'Pinokio Python is still preparing; using existing Python 3.9+ for setup.\n'
+        break
+      fi
+    fi
+    if [[ "$dry_run" != "true" ]] && (( count > 0 && count % 15 == 0 )); then
+      printf 'Still waiting for Pinokio tools; leave Pinokio open and finish any visible setup…\n'
+    fi
     /bin/sleep 2
     (( count += 1 ))
   done
-  if [[ -z "$pterm_path" ]]; then
+  if [[ -z "$pterm_path" || -z "$python_path" ]]; then
     if [[ "$dry_run" == "true" ]]; then
       printf 'Would initialize Pinokio, install Hub/Image/Voice and generation dependencies,\n'
       printf 'restore RAM-qualified models, configure ordered autolaunch, and optionally enroll.\n'
       return 0
     fi
-    printf 'FAILED: finish the visible Pinokio first-run window, then run this installer again.\n' >&2
-    return 1
-  fi
-
-  local python_path
-  python_path=$("$pterm_path" which python3 2>/dev/null | /usr/bin/tail -1)
-  if [[ ! -x "$python_path" ]]; then
-    printf 'FAILED: Pinokio did not expose its bundled Python runtime.\n' >&2
+    printf 'FAILED: Pinokio tools are not ready. Leave Pinokio open, finish any visible\n' >&2
+    printf 'first-run setup, then run this same SSD installer again. Completed work is kept.\n' >&2
     return 1
   fi
   printf 'PINOKIO_HOME: %s\n' "$pinokio_home"

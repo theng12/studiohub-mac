@@ -10,6 +10,28 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.3.2] — 2026-08-09
+
+### Fixed — clean-Mac Pinokio readiness
+
+- The SSD bootstrap now waits for both `pterm` and Pinokio's Python runtime.
+  Previously it stopped waiting as soon as `pterm` appeared, checked Python
+  once, and failed immediately during normal Pinokio first-run initialization.
+- Runtime discovery now follows Pinokio's supported sources: configured home,
+  localhost control-plane endpoints, then the local command path. The visible
+  wait reports progress every 30 seconds and gives a direct rerun instruction
+  if first-run setup remains incomplete.
+- When Pinokio's Python is still preparing, an already-installed Python 3.9+
+  can run the standard-library-only bootstrap immediately. Clean Macs without
+  system Python continue waiting for Pinokio and need no separate dependency.
+
+### Changed — short SSD instructions
+
+- `READ-ME-FIRST.md` is now a short numbered guide with clearly separated
+  **New Machine**, **Existing Machine**, **Join Controller**, **Repair**, and
+  **SSD Maintainer** sections. Fleet users are no longer led into maintainer
+  staging commands that require a repository checkout.
+
 ## [2.3.1] — 2026-08-09
 
 ### Documentation — offline SSD operator commands

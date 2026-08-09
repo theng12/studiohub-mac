@@ -92,7 +92,24 @@ def test_bootstrap_has_no_hard_coded_volume_path():
     assert "/Volumes/ugreen-terranash" not in source
     assert "${0:A:h}" in wrapper
     assert "/usr/bin/python3" not in wrapper
-    assert "pterm_path\" which python3" in wrapper
+    assert 'pterm_path\" which python3 --json' in wrapper
+    assert '[[ -x "$python_path" ]] && break' in wrapper
+    assert '[[ -n "$pterm_path" ]] && break' not in wrapper
+    assert "/pinokio/path/pterm" in wrapper
+    assert "sys.version_info < (3, 9)" in wrapper
+
+
+def test_ssd_guide_separates_machine_paths_and_stays_short():
+    guide = (ROOT / "SSD-COPY-README.md").read_text()
+    for heading in (
+        "## NEW MACHINE — install everything",
+        "## EXISTING MACHINE — models are missing",
+        "## JOIN CONTROLLER — do this later",
+        "## REPAIR — an earlier run failed",
+        "## SSD MAINTAINER — main Mac only",
+    ):
+        assert heading in guide
+    assert len(guide.splitlines()) < 90
 
 
 def test_git_url_comparison_ignores_git_suffix():
