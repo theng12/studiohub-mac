@@ -1,130 +1,150 @@
-# Copying models to your Macs with the SSD
+# TerraNash fleet SSD — clean Mac setup
 
-Downloading models on every Mac is slow and sometimes fails. This copies them
-from the SSD instead, and clears out models a Mac is too small to run.
+The SSD now provisions a clean Apple-silicon Mac, not just a Mac that already
+has the Studios. It carries:
 
-You do **Part 1 once**, on your main computer. Then **Part 2 at each Mac**.
+- the signed, checksum-pinned Pinokio 8.0.40 Apple-silicon installer;
+- one rerunnable installer for Studio Hub, Image Studio, and Voice Studio;
+- the stocked Voice and Image model caches, with Hugging Face symlinks intact;
+- a manifest containing each model's measured unified-memory floor.
 
-Every command below can be pasted straight into Terminal.
+Python and Conda environments are **not copied between Macs**. They contain
+absolute paths and native binaries and are not portable. Each Studio rebuilds
+its own environment through its checked-in Pinokio `install.js` and
+`install_generation.js` scripts.
 
----
+## Part 1 — prepare or refresh the SSD once
 
-## Part 1 — once, on your main computer
+The volume is named `ugreen-terranash`. The tools also recognize the old
+`UGREEN-1TB` name and can find a uniquely mounted `studio-models/MANIFEST.json`,
+so the display name is no longer a fragile hard-coded dependency.
 
-**Plug the SSD in first.**
-
-### 1. See what will be copied (this changes nothing)
-
-```bash
-cd ~/pinokio/api/studiohub-mac*/ && python3 tools/studio_models.py stage --plan
-```
-
-You should see roughly **50 GB** — about 28 GB of voice models and 23 GB of
-image models. If it says a studio is "not reachable", open that studio in
-Pinokio so it is running, then run the command again.
-
-### 2. Copy them to the SSD
+On the main Mac, start Image Studio and Voice Studio, then run:
 
 ```bash
-cd ~/pinokio/api/studiohub-mac*/ && python3 tools/studio_models.py stage
+cd ~/pinokio/api/studiohub-mac && git pull
+python3 tools/studio_models.py stage --plan
+python3 tools/studio_models.py stage
 ```
 
-This takes a while. It prints each model as it copies. When it finishes it says
-how many GB it wrote.
+The plan changes nothing. The real stage writes this layout:
 
-### 3. Put this guide on the SSD too
+```text
+ugreen-terranash/
+├── .terranash-fleet-ssd.json
+├── READ-ME-FIRST.md
+├── studio-models/
+│   ├── MANIFEST.json
+│   ├── image/
+│   └── voice/
+└── terranash-bootstrap/
+    ├── Install TerraNash Studios.command
+    ├── fleet_bootstrap.py
+    └── installers/
+        └── Pinokio-8.0.40-arm64.dmg
+```
+
+The Pinokio installer is downloaded only when missing or when its SHA-256 no
+longer matches the official release. A verified copy is reused. Packages that
+were dropped from the stocked model set are removed from `studio-models` only
+after the current replacement copy succeeds; unrelated SSD folders are ignored.
+
+If Terminal reports **Operation not permitted**, enable System Settings →
+Privacy & Security → Files and Folders → Terminal → Removable Volumes, then run
+the command again. The SSD must remain APFS so model-cache symlinks are
+preserved.
+
+## Part 2 — install a new Mac
+
+1. Complete normal macOS setup and log into the account that will run the
+   Studios.
+2. Connect the Mac to the same LAN or Tailscale network as its Controller.
+3. Plug in `ugreen-terranash`.
+4. In Finder, open `terranash-bootstrap` and double-click
+   **Install TerraNash Studios.command**.
+5. Enter the Mac administrator password once when `/Applications/Pinokio.app`
+   is installed. If Pinokio shows a first-run window, finish it; the bootstrap
+   waits up to 15 minutes and is safe to rerun.
+
+For an Agent that should join an existing Controller immediately, Terminal can
+run the same file with the Controller's private address:
 
 ```bash
-cp ~/pinokio/api/studiohub-mac*/SSD-COPY-README.md /Volumes/UGREEN-1TB/READ-ME-FIRST.md
+"/Volumes/ugreen-terranash/terranash-bootstrap/Install TerraNash Studios.command" \
+  --controller http://CONTROLLER-TAILSCALE-IP:47873 \
+  --machine-name FRIENDLY-MACHINE-NAME
 ```
 
-Now you can read it at each Mac without needing this chat.
+The Controller registration code is requested in a hidden prompt. It is never
+stored on the SSD, printed, placed in a URL, or added to shell history.
 
----
+## What the installer does, in order
 
-## Part 2 — at each Mac
+1. Verifies this is an Apple-silicon Mac and reports hostname and unified RAM.
+2. Verifies the stocked Pinokio DMG checksum, installs the signed app, and
+   verifies its code signature and Gatekeeper assessment using macOS-native
+   tools. A factory-fresh Mac does not need Xcode or a preinstalled Python.
+3. Adds one user LaunchAgent that opens Pinokio at macOS login. It does not run
+   any Studio directly.
+4. Waits for Pinokio to initialize its own home and bundled Git, Conda, Python,
+   UV, and AI prerequisites. The rest of the bootstrap runs with Pinokio's
+   bundled Python rather than assuming `/usr/bin/python3` exists.
+5. Uses Pinokio's `pterm download` to install the current released Hub, Image,
+   and Voice repositories under the resolved `PINOKIO_HOME/api`—never a guessed
+   username or hard-coded home path.
+6. Runs each app's real `install.js`. It then runs Image and Voice
+   `install_generation.js`, including their own import verification.
+7. Starts Image and Voice, asks their live catalogues where their caches live,
+   and restores only models whose known memory floor fits this Mac. Complete
+   caches are skipped, damaged caches are replaced, and `--prune` removes old
+   models that cannot run on the detected RAM tier.
+8. Restarts Image and Voice so their catalogues rescan the copied caches.
+9. Configures one Pinokio startup graph:
 
-Plug the SSD in. Open Terminal. Run these **three** commands in order.
+   ```text
+   Studio Hub (startup enabled)
+   ├── requires Image Studio (startup entry disabled)
+   └── requires Voice Studio (startup entry disabled)
+   ```
 
-### 1. Get the latest tools
+   Pinokio therefore starts both workers, waits for them to become ready, and
+   then starts Hub. It does not race three independent startup jobs, and it does
+   not install the Studios' separate launchd startup services.
+10. Starts Hub. When `--controller` was supplied, Hub detects this Mac's model,
+    Apple chip, RAM, and matching reusable hardware profile, securely claims the
+    Controller code, becomes an Agent, and registers its Studio endpoints in the
+    same transaction.
 
-```bash
-cd ~/pinokio/api/studiohub-mac*/ && git pull
-```
+If `--controller` is omitted, installation still completes and Hub remains
+**Standalone**. Rerun the same command later with `--controller`; installed
+repos, environments, and complete model caches are detected and skipped.
 
-### 2. See what it plans to do (this changes nothing)
+## Safety and recovery
 
-```bash
-cd ~/pinokio/api/studiohub-mac*/ && python3 tools/studio_models.py restore --plan --prune
-```
+- Run a no-change preview with:
 
-Read the summary at the bottom. It tells you how many models it will add and
-how many it will delete. Nothing has happened yet.
+  ```bash
+  "/Volumes/ugreen-terranash/terranash-bootstrap/Install TerraNash Studios.command" --dry-run
+  ```
 
-### 3. Do it
+- The installer never copies a Conda environment, fleet token, Hub token,
+  enrollment code, database, job history, or machine identity from another Mac.
+- It refuses to overwrite an existing app folder belonging to another Git
+  repository.
+- It keeps every successful step if a later download, install, or enrollment
+  step fails. Fix the named issue and run it again. Every run also leaves a
+  timestamped log under `terranash-bootstrap/logs/`.
+- Use `--no-prune` if this is not a disposable/test machine and old model caches
+  must be preserved for inspection.
+- If the Controller reports no matching hardware profile for a brand-new Apple
+  chip/RAM combination, add that reusable profile once on the Controller, update
+  Hub, and rerun only the enrollment step.
 
-```bash
-cd ~/pinokio/api/studiohub-mac*/ && python3 tools/studio_models.py restore --prune
-```
+## What is deliberately still manual
 
-When it finishes, **restart Voice Studio and Image Studio** in Pinokio so they
-notice the new models.
-
-That's it. Move to the next Mac.
-
----
-
-## What it is actually doing
-
-- It checks how much memory that Mac has, and only installs models that Mac can
-  actually run. You do not tell it anything — it works this out itself.
-- It skips models that are already there and complete, so running it twice is
-  safe and the second run is fast.
-- If a model is there but damaged, it replaces it.
-- `--prune` deletes models that Mac cannot use — around **90 GB** on a machine
-  that has been collecting them, counting both models dropped from the catalogue
-  and models the Mac is too small to run.
-- It also skips and removes voice models that **cannot clone a voice**, since
-  the fleet exists to clone your own voices. Kokoro is kept anyway because it is
-  tiny and handy for quick narration.
-
-### What it will never delete
-
-- Anything a Mac can actually run and that can clone.
-- Kokoro, or the speech-to-text model used to check the others.
-- Shared parts that models you are keeping still depend on.
-- Anything whose memory requirement has not been measured yet.
-
-If you want the non-cloning ones kept after all, add `--keep-non-cloning` to any
-command.
-
-If you would rather not delete anything, just leave `--prune` off:
-
-```bash
-cd ~/pinokio/api/studiohub-mac*/ && python3 tools/studio_models.py restore
-```
-
----
-
-## If something looks wrong
-
-**"no MANIFEST.json — is the SSD plugged in?"**
-The SSD is not mounted, or Part 1 was never finished. Check the SSD appears in
-Finder.
-
-**"cannot store symlinks"**
-The SSD is formatted as exFAT or FAT32. It must be APFS, otherwise the copy
-would silently double in size. Reformatting erases the drive, so ask me first.
-
-**"Operation not permitted"**
-macOS is blocking Terminal from the SSD. Go to System Settings → Privacy &
-Security → Files and Folders, find Terminal, and turn on Removable Volumes.
-
-**"not reachable on :47870" or ":47868"**
-That studio is not running on this Mac. Open it in Pinokio, then re-run. If that
-Mac genuinely does not have that studio installed, this is fine — it just skips
-it.
-
-**A studio is "serving an older build than the code on disk"**
-Restart that studio before doing Part 1. Otherwise it copies out-of-date
-information about which models fit which machines.
+The installer does not disable FileVault, enable automatic login, sign into an
+Apple ID, or change power-loss recovery settings. Those are machine-owner and
+security choices. It also does not bundle Controller credentials on a removable
+drive. Pinokio and Studio code/dependencies still need network access on their
+first install; the large model downloads and Pinokio application download are
+the parts stocked on the SSD.

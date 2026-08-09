@@ -1121,6 +1121,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.3.0", date: "2026-08-09", items: [
+    "The fleet SSD now provisions a <b>clean Apple-silicon Mac</b>: verified Pinokio installer, Hub + Image + Voice repositories, base and generation dependencies, RAM-matched model restore, worker restart, and optional secure Agent enrollment.",
+    "Startup is one Pinokio-owned dependency graph. Pinokio opens at macOS login; Hub then launches Image and Voice first and waits for them, without installing three competing Studio launchd services.",
+    "The old <code>/Volumes/UGREEN-1TB</code> assumption is gone. The current <code>ugreen-terranash</code> label, legacy label, an explicit root, and a uniquely mounted model manifest are recognized; the SSD installer itself is location-relative.",
+  ]},
   { v: "2.2.0", date: "2026-08-09", items: [
     "Hub now performs a <b>coordinated same-Mac memory handoff</b>: before a low-memory generation, render, Chat, or transcription dispatch, idle sibling Studios release their resident state, Hub refreshes RAM, and admission is retried automatically.",
     "Queued or active sibling work is never preempted. Its Studio returns a busy refusal, and a worker-side MemoryGuard race now retries after the same handoff without consuming a generation attempt or quarantining a healthy Mac.",

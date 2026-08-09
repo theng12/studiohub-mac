@@ -10,6 +10,35 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.3.0] — 2026-08-09
+
+### Added — clean-Mac provisioning from the fleet SSD
+
+- `studio_models.py stage` now builds a complete `terranash-bootstrap` kit next
+  to the RAM-qualified Voice and Image model payload. The kit includes a
+  checksum-pinned official Pinokio 8.0.40 Apple-silicon installer and a
+  rerunnable clean-Mac bootstrap for Hub, Image, and Voice.
+- The bootstrap resolves the new Mac's real Pinokio home, installs repositories
+  and base/generation dependencies through Pinokio, restores only models that
+  fit detected unified RAM, restarts the workers, and can securely enroll the
+  Hub as an Agent without storing the Controller code on the removable drive.
+- Pinokio itself starts at macOS login, while Studio startup remains owned by
+  one Pinokio orchestration graph: Hub is enabled and requires Image and Voice.
+  Separate per-Studio launchd services are not installed.
+
+### Fixed — the SSD name is no longer a single hard-coded path
+
+- Model staging/restoration recognizes `ugreen-terranash`, the former
+  `UGREEN-1TB` name, an explicit `TERRANASH_SSD_ROOT`, or a uniquely mounted
+  `studio-models/MANIFEST.json`. The clean-Mac installer derives its model path
+  from its own location, so a macOS `ugreen-terranash 1` mount also works.
+- Refreshing the SSD now removes obsolete `models--*` packages from the tool's
+  owned Voice/Image staging layout after the replacement copy succeeds, rather
+  than leaving dropped model families as unreferenced drive bloat.
+- The SSD guide now documents the complete dependency/install/startup/enrollment
+  flow and explicitly forbids copying non-portable Conda environments or fleet
+  credentials between Macs.
+
 ## [2.2.0] — 2026-08-09
 
 ### Added — coordinated same-Mac memory handoff

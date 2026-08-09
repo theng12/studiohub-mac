@@ -43,7 +43,9 @@ codec is useless.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -56,9 +58,16 @@ STUDIOS = {
     "image": {"port": 47868, "label": "Image Studio"},
 }
 
-DEFAULT_ROOT = Path("/Volumes/UGREEN-1TB/studio-models")
 MANIFEST_NAME = "MANIFEST.json"
 STT_FAMILY = "Whisper (speech-to-text)"
+PINOKIO_VERSION = "8.0.40"
+PINOKIO_DMG = f"Pinokio-{PINOKIO_VERSION}-arm64.dmg"
+PINOKIO_DMG_URL = (
+    f"https://github.com/pinokiocomputer/pinokio/releases/download/"
+    f"v{PINOKIO_VERSION}/{PINOKIO_DMG}"
+)
+PINOKIO_DMG_SHA256 = "3c0f55f769efc2c02e5d0b8bc24e2ee7b0be54d42e6404663887e0cf8d3df3fd"
+PREFERRED_VOLUME_NAMES = ("ugreen-terranash", "UGREEN-1TB")
 
 # The fleet exists to clone the owner's own voices, so it stocks an explicit
 # short list of families rather than everything the catalogue offers. Two rules
@@ -260,6 +269,115 @@ def supports_symlinks(path: Path) -> bool:
                 pass
 
 
+def find_default_root(volumes_root: Path = Path("/Volumes")) -> Path:
+    """Find this fleet SSD without making its display name an API contract."""
+    configured = os.environ.get("TERRANASH_SSD_ROOT", "").strip()
+    if configured:
+        value = Path(configured).expanduser()
+        return value if value.name == "studio-models" else value / "studio-models"
+    for name in PREFERRED_VOLUME_NAMES:
+        candidate = volumes_root / name / "studio-models"
+        if candidate.joinpath(MANIFEST_NAME).is_file() or candidate.parent.is_dir():
+            return candidate
+    try:
+        mounted = list(volumes_root.iterdir())
+    except OSError:
+        mounted = []
+    matches = [volume / "studio-models" for volume in mounted
+               if volume.joinpath("studio-models", MANIFEST_NAME).is_file()]
+    if len(matches) == 1:
+        return matches[0]
+    return volumes_root / PREFERRED_VOLUME_NAMES[0] / "studio-models"
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def download_with_progress(url: str, destination: Path) -> None:
+    temporary = destination.with_name(f".{destination.name}.{os.getpid()}.part")
+    try:
+        with urllib.request.urlopen(url, timeout=60) as response, temporary.open("wb") as out:
+            total = int(response.headers.get("Content-Length") or 0)
+            copied = 0
+            last_percent = -1
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+                copied += len(chunk)
+                percent = int(copied * 100 / total) if total else 0
+                if total and percent // 5 != last_percent // 5:
+                    print(f"    Pinokio installer: {percent}%", flush=True)
+                    last_percent = percent
+        if file_sha256(temporary) != PINOKIO_DMG_SHA256:
+            raise RuntimeError("downloaded Pinokio installer failed its SHA-256 check")
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def stage_bootstrap_kit(volume_root: Path, *, plan_only: bool) -> None:
+    """Put the clean-Mac installer beside the model payload on the SSD."""
+    repo = Path(__file__).resolve().parent.parent
+    kit = volume_root / "terranash-bootstrap"
+    sources = (
+        repo / "tools/fleet_bootstrap.py",
+        repo / "tools/Install TerraNash Studios.command",
+    )
+    print(f"bootstrap: Pinokio {PINOKIO_VERSION} + Hub/Image/Voice installer -> {kit}")
+    if plan_only:
+        print("  would copy the bootstrap scripts, current guide, SSD marker, and signed Pinokio DMG")
+        return
+
+    kit.mkdir(parents=True, exist_ok=True)
+    for source in sources:
+        destination = kit / source.name
+        shutil.copy2(source, destination)
+        destination.chmod(0o755)
+    shutil.copy2(repo / "SSD-COPY-README.md", volume_root / "READ-ME-FIRST.md")
+    (volume_root / ".terranash-fleet-ssd.json").write_text(json.dumps({
+        "schema_version": 1,
+        "model_root": "studio-models",
+        "bootstrap_root": "terranash-bootstrap",
+        "pinokio_version": PINOKIO_VERSION,
+        "studio_hub_version": (repo / "VERSION").read_text().strip(),
+    }, indent=2) + "\n")
+
+    installers = kit / "installers"
+    installers.mkdir(exist_ok=True)
+    dmg = installers / PINOKIO_DMG
+    if dmg.is_file() and file_sha256(dmg) == PINOKIO_DMG_SHA256:
+        print(f"  Pinokio installer already verified: {dmg.name}")
+    else:
+        dmg.unlink(missing_ok=True)
+        print(f"  downloading signed Pinokio {PINOKIO_VERSION} installer ({PINOKIO_DMG})")
+        download_with_progress(PINOKIO_DMG_URL, dmg)
+
+
+def stale_staged_packages(root: Path, wanted: set[Path]) -> list[Path]:
+    """Return obsolete HF packages inside this tool's owned SSD layout only."""
+    stale: list[Path] = []
+    for studio in STUDIOS:
+        studio_root = root / studio
+        if not studio_root.is_dir():
+            continue
+        for family in studio_root.iterdir():
+            if not family.is_dir() or family.is_symlink():
+                continue
+            for package in family.iterdir():
+                if (package.is_dir() and not package.is_symlink()
+                        and package.name.startswith("models--")
+                        and package.relative_to(root) not in wanted):
+                    stale.append(package)
+    return sorted(stale)
+
+
 def is_local(model: dict) -> bool:
     """Cloud entries have no weights to move."""
     return model.get("provider") != "cloud" and model.get("kind") != "cloud"
@@ -359,9 +477,21 @@ def do_stage(root: Path, plan_only: bool, keep_non_cloning: bool) -> int:
         print()
     for n in notes:
         print(f"  note: {n}")
+    wanted = {
+        Path(name) / family / source.name
+        for name, plan in plans.items()
+        for source, _repo, family, _floor in plan["jobs"]
+    }
+    stale = stale_staged_packages(root, wanted)
+    if stale:
+        stale_bytes = sum(dir_bytes(path) for path in stale)
+        print(f"  stale SSD packages to remove: {len(stale)} ({stale_bytes / 1e9:.1f} GB)")
+        for path in stale:
+            print(f"    {path.relative_to(root)}")
     print(f"total: {total / 1e9:.1f} GB -> {root}")
 
     if plan_only:
+        stage_bootstrap_kit(root.parent, plan_only=True)
         print("\n--plan only, nothing written.")
         return 0
 
@@ -372,6 +502,7 @@ def do_stage(root: Path, plan_only: bool, keep_non_cloning: bool) -> int:
             "would dereference the Hugging Face cache and roughly double its "
             "size. Reformat the drive as APFS."
         )
+    stage_bootstrap_kit(root.parent, plan_only=False)
 
     manifest = {"schema_version": 1,
                 "layout": "<studio>/<family>/models--org--name",
@@ -389,6 +520,15 @@ def do_stage(root: Path, plan_only: bool, keep_non_cloning: bool) -> int:
             entries.append({"repo": repo, "dir": src.name, "family": fam,
                             "floor_gb": floor, "bytes": dir_bytes(dst)})
         manifest["studios"][name] = {"packages": entries}
+
+    for package in stale:
+        print(f"[prune SSD] {package.relative_to(root)}")
+        shutil.rmtree(package)
+        family = package.parent
+        try:
+            family.rmdir()
+        except OSError:
+            pass
 
     (root / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2))
     written = sum(e["bytes"] for s in manifest["studios"].values()
@@ -569,13 +709,15 @@ def main() -> int:
     sub = ap.add_subparsers(dest="command", required=True)
 
     s = sub.add_parser("stage", help="copy this Mac's caches onto the SSD")
-    s.add_argument("--root", type=Path, default=DEFAULT_ROOT)
+    s.add_argument("--root", type=Path,
+                   help="SSD model folder (default: auto-detect ugreen-terranash or a manifest)")
     s.add_argument("--plan", action="store_true", help="show the plan, write nothing")
     s.add_argument("--keep-non-cloning", action="store_true",
                    help="also stock voice models that cannot clone (default: skip them)")
 
     r = sub.add_parser("restore", help="install onto this Mac from the SSD")
-    r.add_argument("--root", type=Path, default=DEFAULT_ROOT)
+    r.add_argument("--root", type=Path,
+                   help="SSD model folder (default: auto-detect ugreen-terranash or a manifest)")
     r.add_argument("--plan", action="store_true",
                    help="show the plan, write and delete nothing")
     r.add_argument("--prune", action="store_true",
@@ -591,6 +733,7 @@ def main() -> int:
                         "stocked family are installed by default now")
 
     args = ap.parse_args()
+    args.root = args.root or find_default_root()
     if args.command == "stage":
         return do_stage(args.root, args.plan, args.keep_non_cloning)
     return do_restore(args.root, plan_only=args.plan, prune=args.prune,

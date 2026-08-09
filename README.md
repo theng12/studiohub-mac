@@ -575,6 +575,13 @@ the owner password signs every remembered browser out immediately.
 
 ## Machine modes and fleet setup
 
+For a clean Apple-silicon Mac, the fleet SSD can install Pinokio, Studio Hub,
+Image Studio, Voice Studio, both generation environments, the RAM-qualified
+model set, and the Pinokio-owned startup graph before performing the Agent join.
+Prepare it once with `python3 tools/studio_models.py stage`, then follow
+[`SSD-COPY-README.md`](SSD-COPY-README.md). The permanent Controller registration
+code is prompted securely on the new Mac and is never stored on the SSD.
+
 Open **Remote → Machine mode** and choose the role this Mac should perform. The
 mode is always visible: **Standalone** is orange, **Agent** is green, and
 **Controller** is red. The machine name is a friendly display name only; Site ID
