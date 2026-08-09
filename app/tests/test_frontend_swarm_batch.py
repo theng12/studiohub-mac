@@ -35,3 +35,13 @@ def test_clone_picker_reports_sync_and_limits_supported_models():
     assert "/api/hub/shared-voices" in source
     assert "Macs ready" in source
     assert "The broker sends this clone only to Macs where its reference is synchronized." in source
+
+
+def test_agent_hub_update_button_does_not_add_a_second_browser_confirmation():
+    source = _source()
+    start = source.index("async function startHubUpdate(machines = null)")
+    end = source.index("function updateReadyHubs()", start)
+
+    assert "confirm(" not in source[start:end]
+    assert 'hubUpdateBusy = true' in source[start:end]
+    assert 'renderHubUpdate(job)' in source[start:end]

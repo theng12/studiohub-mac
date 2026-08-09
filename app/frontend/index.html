@@ -1144,6 +1144,9 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.4.5", date: "2026-08-09", items: [
+    "Agent-Hub fleet updates now start directly from the explicitly labeled Update button and keep their existing machine-by-machine progress display, removing a redundant browser confirmation that could strand an otherwise accepted rollout.",
+  ]},
   { v: "2.4.4", date: "2026-08-09", items: [
     "Shared-voice Swarm Batches now carry the voice library entry's language into Voice Studio, fixing Chatterbox clone jobs that otherwise stopped with a missing-language validation error.",
   ]},
@@ -5092,7 +5095,6 @@ async function rescanHubVersions() {
 async function startHubUpdate(machines = null) {
   const one = machines && machines.length === 1;
   const target = one ? mlabel(machines[0]) : "every registered agent Mac";
-  if (!confirm(`Update the Studio Hub on ${target}?\nEach selected Hub pulls the latest, restarts, and comes back on its own. Studios keep running; only the Hubs bounce.`)) return;
   const btn = $("#hubupd-run"), status = $("#hubupd-status");
   hubUpdateBusy = true; btn.disabled = true; btn.setAttribute("aria-busy", "true"); btn.textContent = "Starting Hub update…";
   status.className = "update-progress";

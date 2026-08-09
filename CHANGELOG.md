@@ -10,6 +10,16 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.4.5] — 2026-08-09
+
+### Changed — agent-Hub updates are one deliberate action
+
+- The clearly labeled per-machine and bulk agent-Hub Update buttons now start
+  their existing tracked rollout directly. Removing the second native browser
+  confirmation prevents an accepted update from becoming stranded behind a
+  modal while preserving drain, restart, health verification, and the visible
+  machine-by-machine result.
+
 ## [2.4.4] — 2026-08-09
 
 ### Fixed — shared clones carry their language
