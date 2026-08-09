@@ -10,6 +10,24 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.4.3] — 2026-08-09
+
+### Added — labeled style and cloned-voice batches
+
+- Swarm Batch now accepts an operator-visible label, preserving a clear fleet,
+  style, or voice identity in Jobs and returned artifact provenance.
+- Selecting a clone-capable Voice model reveals the Hub's shared voice library,
+  including per-fleet synchronization counts. The selected voice ID and its
+  reviewed transcript travel through the existing local broker contract, which
+  limits dispatch to workers that hold that reference.
+
+### Changed — clearer generation form feedback
+
+- The Jobs form uses modality-specific Image prompt and Voice text wording,
+  preserves all inputs after a failure, exposes submission state to assistive
+  technology, and reports an actionable message when no shared clone is ready.
+- This release adds no dependency and no cloud route.
+
 ## [2.4.2] — 2026-08-09
 
 ### Fixed — disposable execution copies no longer block updates

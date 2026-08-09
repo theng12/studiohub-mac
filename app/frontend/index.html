@@ -108,6 +108,14 @@
   .jform textarea { min-height: 90px; font-family: ui-monospace, monospace; font-size: 12.5px; width: 100%; margin-bottom: 8px; }
   .jform input, .jform select { margin-bottom: 8px; }
   .jform .go { background: var(--accent); border: none; color: #08131f; font-weight: 600; border-radius: 7px; padding: 8px 18px; cursor: pointer; font: inherit; }
+  .batch-controls { display: grid; grid-template-columns: minmax(130px, .45fr) minmax(220px, 1.55fr); gap: 10px; }
+  .batch-field { display: flex; flex-direction: column; min-width: 0; color: var(--dim); font-size: var(--font-secondary); }
+  .batch-field.full { grid-column: 1 / -1; }
+  .batch-field input, .batch-field select { width: 100%; margin: 4px 0 0; }
+  .batch-help { margin: -2px 0 9px; }
+  .batch-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .batch-actions #j-status { margin: 0; }
+  @media (max-width: 680px) { .batch-controls { grid-template-columns: 1fr; } .batch-field.full { grid-column: auto; } }
   .prog { height: 6px; background: var(--panel2); border-radius: 3px; overflow: hidden; margin-top: 6px; }
   .prog i { display: block; height: 100%; background: var(--up); transition: width .5s; }
   /* per-item live run rows in the Jobs tab */
@@ -544,17 +552,32 @@
   <section id="tab-jobs" class="hide">
     <div class="group-head"><h2>Production jobs</h2><span class="meta">One place for every queue</span></div>
     <div class="card jform section">
-      <div class="top"><span class="emoji">🐝</span><h3>Swarm Batch — one prompt per line</h3></div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <select id="j-modality" style="max-width:150px">
+      <div class="top"><span class="emoji">🐝</span><h3>Swarm Batch — one item per line</h3></div>
+      <div class="batch-controls">
+        <label class="batch-field">Studio
+        <select id="j-modality" aria-label="Studio type">
           <option value="image">image</option><option value="voice">voice</option>
           <option value="music">music</option><option value="video">video</option>
         </select>
-        <select id="j-model" style="flex:1;min-width:220px"><option value="">— pick a downloaded model —</option></select>
+        </label>
+        <label class="batch-field">Downloaded model
+          <select id="j-model" aria-label="Downloaded model"><option value="">— pick a downloaded model —</option></select>
+        </label>
+        <label class="batch-field full">Batch label
+          <input id="j-label" maxlength="120" placeholder="e.g. 0100 · watercolor qualification">
+        </label>
+        <label class="batch-field full" id="j-voice-field" hidden>Cloned voice
+          <select id="j-voice" aria-label="Shared cloned voice"><option value="">— pick a shared voice —</option></select>
+        </label>
       </div>
-      <textarea id="j-prompts" placeholder="a lighthouse at dawn, oil painting&#10;a red fox in the snow&#10;…one prompt per line"></textarea>
-      <button class="go" onclick="submitBatch()">Submit batch</button>
-      <span class="sub" id="j-status" style="margin-left:10px"></span>
+      <p class="sub batch-help" id="j-voice-help" hidden></p>
+      <label class="batch-field full" id="j-items-label">Prompts — one per line
+        <textarea id="j-prompts" aria-label="Batch items" placeholder="a lighthouse at dawn, oil painting&#10;a red fox in the snow&#10;…one prompt per line"></textarea>
+      </label>
+      <div class="batch-actions">
+        <button class="go" id="j-submit" onclick="submitBatch()">Submit batch</button>
+        <span class="sub" id="j-status" role="status" aria-live="polite"></span>
+      </div>
     </div>
 
     <div class="card storage-guard section">
@@ -1121,6 +1144,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.4.3", date: "2026-08-09", items: [
+    "Swarm Batch now accepts a clear operator label and exposes ready shared voices whenever a clone-capable Voice model is selected, so fleet qualifications and their returned artifacts remain identifiable.",
+    "Voice batches send the selected shared-voice ID and reviewed transcript through the existing local broker path; no cloud route or new dependency was added.",
+  ]},
   { v: "2.4.2", date: "2026-08-09", items: [
     "Short-lived execution voice-reference copies are now treated as disposable runtime data, so they cannot block an otherwise safe Hub update with a dirty-worktree warning.",
   ]},
@@ -2943,22 +2970,79 @@ async function loadSpark() {
 }
 
 // ── jobs ──────────────────────────────────────────────────────────────────
+let jobSharedVoices = [];
+function jobModelSupportsCloning(repo) {
+  return /(chatterbox|qwen3-tts.*-base|voxcpm|omnivoice|fish-audio|f5-tts|echo-tts)/i.test(repo || "");
+}
+async function loadJobVoices() {
+  const field = $("#j-voice-field");
+  const help = $("#j-voice-help");
+  const select = $("#j-voice");
+  const needsVoice = $("#j-modality").value === "voice" && jobModelSupportsCloning($("#j-model").value);
+  field.hidden = !needsVoice;
+  help.hidden = !needsVoice;
+  if (!needsVoice) { select.value = ""; return; }
+  help.textContent = "Loading shared voices…";
+  const result = await api("/api/hub/shared-voices").then(x => x.json()).catch(() => null);
+  jobSharedVoices = result?.voices || [];
+  select.innerHTML = '<option value="">— pick a shared voice —</option>' + jobSharedVoices.map(voice => {
+    const synced = Number(voice.sync?.synced || 0);
+    const total = Number(voice.sync?.total || 0);
+    const ready = synced > 0;
+    return `<option value="${esc(voice.id)}"${ready ? "" : " disabled"}>${esc(voice.name)} — ${synced}/${total} Macs ready</option>`;
+  }).join("");
+  const readyCount = jobSharedVoices.filter(voice => Number(voice.sync?.synced || 0) > 0).length;
+  help.textContent = readyCount
+    ? "The broker sends this clone only to Macs where its reference is synchronized."
+    : "No shared voices are ready. Add one in Voices, wait for synchronization, then return here.";
+}
 async function loadJobModels() {
   const mod = $("#j-modality").value;
   const r = await api(`/api/hub/models?modality=${mod}&downloaded=true`).then(x => x.json()).catch(() => null);
   $("#j-model").innerHTML = (r?.models || []).map(m => `<option value="${esc(m.repo)}">${esc(m.label)} — on ${esc(m.cached_on.join(", "))}</option>`).join("")
     || `<option value="">no downloaded ${mod} models</option>`;
+  $("#j-items-label").firstChild.textContent = mod === "voice" ? "Text — one line per item" : "Prompts — one per line";
+  $("#j-prompts").placeholder = mod === "voice"
+    ? "The fleet is ready for production.\nEach line becomes a separate audio file."
+    : "a lighthouse at dawn, oil painting\na red fox in the snow\n…one prompt per line";
+  await loadJobVoices();
 }
-$("#j-modality").addEventListener("input", loadJobModels);
+$("#j-modality").addEventListener("change", loadJobModels);
+$("#j-model").addEventListener("change", loadJobVoices);
 async function submitBatch() {
   const prompts = $("#j-prompts").value.split("\n").map(s => s.trim()).filter(Boolean);
   const model = $("#j-model").value;
-  if (!prompts.length || !model) { $("#j-status").textContent = "need a model and at least one prompt"; return; }
+  const modality = $("#j-modality").value;
+  const selectedVoice = $("#j-voice").value;
+  if (!prompts.length || !model) { $("#j-status").textContent = "Choose a model and enter at least one item."; return; }
+  if (modality === "voice" && jobModelSupportsCloning(model) && !selectedVoice) {
+    $("#j-status").textContent = "Choose a synchronized shared voice for this clone model.";
+    return;
+  }
+  const button = $("#j-submit");
+  button.disabled = true; button.setAttribute("aria-busy", "true");
   $("#j-status").textContent = "submitting…";
-  const r = await api("/api/hub/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modality: $("#j-modality").value, model, items: prompts.map(p => ({ prompt: p })) }) });
-  const d = await r.json();
-  $("#j-status").textContent = r.ok ? `batch ${d.batch_id} queued (${d.items} items)` : (d.detail || "failed");
-  loadBatches();
+  const voice = jobSharedVoices.find(row => row.id === selectedVoice);
+  const sharedParams = selectedVoice ? {
+    voice_library_id: selectedVoice,
+    ...(voice?.transcript ? { ref_transcript: voice.transcript } : {}),
+  } : {};
+  try {
+    const r = await api("/api/hub/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      modality, model, label: $("#j-label").value.trim() || "studiohub-ui",
+      sharedParams,
+      items: prompts.map(value => modality === "voice" ? { text: value } : { prompt: value }),
+    }) });
+    const d = await r.json().catch(() => ({}));
+    $("#j-status").textContent = r.ok
+      ? `batch ${d.batch_id} queued (${d.items} items)`
+      : (d.detail || d.error || "Batch could not be submitted. Check the model and try again.");
+    if (r.ok) loadBatches();
+  } catch (_) {
+    $("#j-status").textContent = "The Hub could not be reached. Your batch inputs were kept; try again.";
+  } finally {
+    button.disabled = false; button.removeAttribute("aria-busy");
+  }
 }
 function fmtDur(s) {
   if (s == null || isNaN(s)) return "—";
