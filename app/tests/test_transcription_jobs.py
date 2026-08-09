@@ -148,6 +148,46 @@ class _Response:
                 "segments": [], "vtt": "WEBVTT"}
 
 
+class _CapacityResponse:
+    status_code = 503
+    text = "MemoryGuardError: not enough memory"
+
+    def json(self):
+        return {"detail": self.text}
+
+
+@pytest.mark.asyncio
+async def test_memory_guard_handoff_requeues_without_consuming_transcription_attempt(
+        reset, monitor, monkeypatch):
+    batch = await _create_direct(1)
+    voice = next(studio for studio in monitor.registry if studio["id"] == "voice")
+    monitor.status[voice["id"]] = {"status": "up"}
+    calls = []
+
+    async def availability(_studio):
+        return {"available": True,
+                "models": [{"repo": "mlx/whisper", "cached": True}]}
+
+    async def handoff(_client, studio):
+        calls.append(studio["id"])
+        return {"attempted": 1, "released": 1, "busy": [], "failed": [],
+                "deferred": False}
+
+    async def post(*_args, **_kwargs):
+        return _CapacityResponse()
+
+    monkeypatch.setattr(monitor, "get_transcription", availability)
+    monkeypatch.setattr(monitor._client, "post", post)
+    monkeypatch.setattr(broker, "release_idle_siblings", handoff)
+
+    assert await jobs.dispatch_once(monitor) == 1
+    await asyncio.gather(*list(jobs._item_tasks.values()))
+
+    item = batch["items"][0]
+    assert calls and item["state"] == "queued" and item["tries"] == 0
+    assert broker.machine_protection_snapshot() == {}
+
+
 def _add_remote_voice(monitor, machine="mac-b"):
     local = next(s for s in monitor.registry if s["id"] == "voice")
     remote = {**local, "id": f"voice@{machine}", "machine": machine, "host": "10.0.0.2"}

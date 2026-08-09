@@ -42,8 +42,9 @@ def _error_detail(response: httpx.Response) -> str:
 class FleetMemoryControl:
     """Read and change memory policy without owning worker state itself."""
 
-    def __init__(self, monitor):
+    def __init__(self, monitor, client=None):
         self.monitor = monitor
+        self.client = client or monitor._client
 
     def targets(self) -> list[dict[str, Any]]:
         return sorted(
@@ -72,7 +73,7 @@ class FleetMemoryControl:
     async def _request(self, studio: dict[str, Any], method: str, path: str,
                        payload: dict[str, Any] | None = None) -> httpx.Response:
         url, headers = peers.studio_request(studio, path)
-        return await self.monitor._client.request(
+        return await self.client.request(
             method, url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT,
         )
 

@@ -10,6 +10,26 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.2.0] — 2026-08-09
+
+### Added — coordinated same-Mac memory handoff
+
+- Before dispatching generation, render, Chat, or transcription work into low
+  available memory, Hub now asks the other Studios on that physical Mac to
+  release idle model, accelerator, and finished-worker state. It then refreshes
+  local or peer-Mac RAM telemetry and reruns admission before assigning the job.
+- Each sibling's existing authenticated release endpoint remains authoritative:
+  queued or active direct work returns a busy refusal and is never preempted.
+  Concurrent scheduler lanes reuse the same recent result instead of repeatedly
+  clearing one machine.
+- A worker-side MemoryGuard race now triggers the same handoff and a short retry
+  without consuming a generation attempt or quarantining a healthy machine.
+
+### Fixed — remote reservations stay remote
+
+- A remote worker's live free-memory reservation no longer reduces the local
+  Hub Mac's admission capacity while that remote job is running.
+
 ## [2.1.1] — 2026-08-09
 
 ### Fixed — global memory control now includes Render Studio

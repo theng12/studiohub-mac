@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import time
 
 import httpx
 import pytest
@@ -250,6 +251,10 @@ class _PeerRouteResponse:
     def json(self):
         return self._payload
 
+    @property
+    def is_success(self):
+        return 200 <= self.status_code < 300
+
 
 class _PeerRouteClient:
     def __init__(self):
@@ -296,6 +301,61 @@ class _MemoryGuardClient:
             "id": "worker-memory", "state": "error",
             "error": "MemoryGuardError: needs ~5.6GB, ~2.7GB free",
         }})
+
+    async def request(self, *_args, **_kwargs):
+        return _PeerRouteResponse({"busy": False, "loaded_model": None})
+
+
+class _MemoryReleaseClient:
+    def __init__(self):
+        self.calls = []
+
+    async def request(self, _method, url, **_kwargs):
+        self.calls.append(url)
+        return _PeerRouteResponse({"busy": False, "loaded_model": None,
+                                   "loaded_models": [], "loaded_pipeline": None})
+
+
+@pytest.mark.asyncio
+async def test_coordinated_handoff_releases_only_idle_same_machine_siblings(reset):
+    monitor = broker._monitor()
+    target = next(studio for studio in monitor.registry if studio["id"] == "voice")
+    broker._busy.add("image")
+    client = _MemoryReleaseClient()
+
+    result = await broker.release_idle_siblings(client, target)
+
+    assert result == {
+        "attempted": 5, "released": 4, "busy": ["image"],
+        "failed": [], "deferred": False,
+    }
+    assert len(client.calls) == 4
+    assert all(url.endswith("/api/memory/release") for url in client.calls)
+    assert not any(":47870/" in url for url in client.calls)
+    repeated = await broker.release_idle_siblings(client, target)
+    assert repeated["deferred"] is True and repeated["busy"] == ["image"]
+    assert len(client.calls) == 4
+
+
+@pytest.mark.asyncio
+async def test_low_memory_handoff_rechecks_ram_before_admission(reset, monkeypatch):
+    monitor = broker._monitor()
+    target = next(studio for studio in monitor.registry if studio["id"] == "voice")
+    snapshots = iter([
+        {"total_gb": 8, "available_gb": 1.0},
+        {"total_gb": 8, "available_gb": 3.0},
+    ])
+    monkeypatch.setattr(broker, "_host_for_studio", lambda _studio: next(snapshots))
+    client = _MemoryReleaseClient()
+
+    decision, note = await broker.prepare_machine_memory(
+        client, target, "voice/model",
+        {"repo": "voice/model", "min_unified_memory_gb": 8,
+         "min_free_memory_gb": 2.0},
+    )
+
+    assert decision == "run" and note is None
+    assert len(client.calls) == 5
 
 
 @pytest.mark.asyncio
@@ -941,6 +1001,48 @@ def test_remote_memory_gate_uses_peer_host_snapshot(reset, monkeypatch):
     host = broker._host_for_studio(studio)
     decision, note = broker._memory_gate({"min_total": 8, "size": 4.0}, host)
     assert decision == "run" and note is None
+
+
+@pytest.mark.asyncio
+async def test_remote_dispatch_does_not_reserve_local_memory(reset, monkeypatch):
+    monitor = broker._monitor()
+    local = next(studio for studio in monitor.registry if studio["id"] == "image")
+    remote = {**local, "id": "image@mac-b", "machine": "mac-b",
+              "host": "10.0.0.2"}
+    monitor.registry.append(remote)
+    monitor.status[local["id"]] = {"status": "down"}
+    monitor.status[remote["id"]] = {"status": "up"}
+    entry = {"repo": "a/b", "cache": {"state": "cached"},
+             "min_unified_memory_gb": 8, "min_free_memory_gb": 3.0}
+    monitor._catalog_cache[remote["id"]] = (time.time(), {"models": [entry]})
+    monkeypatch.setattr(
+        broker.peers, "cached",
+        lambda machine: {"host": {"total_gb": 8, "available_gb": 4.0}},
+    )
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def run_item(_client, _batch, item, studio):
+        started.set()
+        await finish.wait()
+        broker._busy.discard(studio["id"])
+        item["state"] = "done"
+        broker._wakeup.set()
+
+    monkeypatch.setattr(broker, "_run_item", run_item)
+    broker.submit_batch({
+        "modality": "image", "model": "a/b", "items": [{"prompt": "remote"}],
+    })
+    dispatcher = asyncio.create_task(broker._dispatch_loop())
+    try:
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        assert broker._reserved["gb"] == 0.0
+    finally:
+        finish.set()
+        await asyncio.sleep(0)
+        dispatcher.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await dispatcher
 
 
 def test_restore_batches_requeues_running(reset):

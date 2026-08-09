@@ -87,6 +87,13 @@ only those workers and retry. Policies are persisted by each Studio, not the
 Hub, and therefore survive Hub restarts and continue working when a remote Hub
 is temporarily unavailable.
 
+When a queued generation, render, Chat, or transcription job cannot meet its
+live free-memory floor, Hub automatically asks the other Studios on that same
+Mac to release idle resident state. It refreshes the Mac's RAM telemetry and
+reruns admission before assigning the job. A sibling with queued or active work
+refuses the handoff, so this switches idle models without preempting work or
+changing the operator's saved memory mode.
+
 After dependency installation and the next Studio restart, macOS Activity
 Monitor shows `Image Studio Mac`, `Chat Studio Mac`, `Video Studio Mac`,
 `Music Studio Mac`, `Voice Studio Mac`, and `Studio Hub Mac` instead of a generic

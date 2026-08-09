@@ -431,6 +431,14 @@ async def dispatch_once(monitor) -> int:
                 continue
             for studio in await _eligible_studios(monitor, batch["model"], item):
                 machine = studio.get("machine", "local")
+                availability = await monitor.get_transcription(studio)
+                entry = next((row for row in (availability or {}).get("models", [])
+                              if row.get("repo") == batch["model"]),
+                             {"repo": batch["model"]})
+                decision, _note = await broker.prepare_machine_memory(
+                    monitor._client, studio, batch["model"], entry)
+                if decision != "run":
+                    continue
                 owner = f"transcription:{batch['id']}:{item['index']}"
                 if not broker.acquire_external_machine(machine, owner):
                     continue
@@ -507,6 +515,10 @@ async def _run_item(monitor, batch: dict, item: dict, studio: dict, owner: str) 
     except Exception as exc:
         transient = isinstance(exc, (httpx.HTTPError, OSError)) or getattr(exc, "transient", False)
         message = str(exc) or type(exc).__name__
+        capacity = broker._is_capacity_failure(message)
+        if capacity:
+            await broker.release_idle_siblings(monitor._client, studio)
+            item["tries"] = max(0, item["tries"] - 1)
         machine = studio.get("machine", "local")
         history = item.setdefault("attempt_history", [])
         history.append({
@@ -514,7 +526,7 @@ async def _run_item(monitor, batch: dict, item: dict, studio: dict, owner: str) 
             "error": message[:240], "at": round(time.time(), 3),
         })
         del history[:-8]
-        if transient:
+        if transient and not capacity:
             # Availability is a cache of a lightweight endpoint. A real
             # transcription connection failure is stronger evidence, so force
             # a fresh check and route the next attempt to a different machine.

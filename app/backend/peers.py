@@ -222,6 +222,11 @@ def cached(machine: str) -> dict | None:
     return entry[1] if entry else None
 
 
+def invalidate(machine: str) -> None:
+    """Force the next resource refresh to re-read one peer Mac."""
+    _cache.pop(machine, None)
+
+
 def forget_machine(machine: str) -> None:
     """Drop a removed machine's peer-resource snapshot immediately."""
     _cache.pop(machine, None)

@@ -61,6 +61,41 @@ class _Response:
         return payload
 
 
+class _CapacityResponse:
+    status_code = 503
+    text = "MemoryGuardError: not enough memory"
+
+
+@pytest.mark.asyncio
+async def test_memory_guard_handoff_requeues_without_consuming_chat_attempt(
+        reset, monitor, monkeypatch):
+    batch, _ = jobs.create_batch(_payload())
+    _add_chat_workers(monitor, 1)
+    calls = []
+
+    async def catalog(_studio):
+        return {"models": [{"repo": MODEL, "cache": {"state": "cached"}}]}
+
+    async def handoff(_client, studio):
+        calls.append(studio["id"])
+        return {"attempted": 1, "released": 1, "busy": [], "failed": [],
+                "deferred": False}
+
+    async def post(*_args, **_kwargs):
+        return _CapacityResponse()
+
+    monkeypatch.setattr(monitor, "get_catalog", catalog)
+    monkeypatch.setattr(monitor._client, "post", post)
+    monkeypatch.setattr(broker, "release_idle_siblings", handoff)
+
+    assert await jobs.dispatch_once(monitor) == 1
+    await asyncio.gather(*list(jobs._pack_tasks.values()))
+
+    pack = batch["packs"][0]
+    assert calls and pack["state"] == "queued" and pack["tries"] == 0
+    assert pack["retry_at"] is not None
+
+
 def _genstudio_payload() -> dict:
     revision = "7f0dc925e0d0afb0322d96f9255cfddf2ba5636e"
     payload = _payload(1, 1)

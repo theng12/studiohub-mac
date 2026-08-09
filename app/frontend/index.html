@@ -1121,6 +1121,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.2.0", date: "2026-08-09", items: [
+    "Hub now performs a <b>coordinated same-Mac memory handoff</b>: before a low-memory generation, render, Chat, or transcription dispatch, idle sibling Studios release their resident state, Hub refreshes RAM, and admission is retried automatically.",
+    "Queued or active sibling work is never preempted. Its Studio returns a busy refusal, and a worker-side MemoryGuard race now retries after the same handoff without consuming a generation attempt or quarantining a healthy Mac.",
+    "Remote-worker memory reservations no longer reduce the Controller Mac's local admission capacity.",
+  ]},
   { v: "2.1.1", date: "2026-08-09", items: [
     "The <b>Memory</b> workspace now includes Render Studio. Global policy changes and <b>Release selected now</b> cover all six workers on every registered Mac, while active renders still refuse release safely.",
   ]},

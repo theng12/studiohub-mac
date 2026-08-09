@@ -504,6 +504,15 @@ async def dispatch_once(monitor) -> int:
         batch["queue_note"] = None
         for studio, pack in zip(eligible, queued):
             machine = studio.get("machine", "local")
+            catalog = await monitor.get_catalog(studio)
+            entry = next((item for item in (catalog or {}).get("models", [])
+                          if item.get("repo") == batch["model"]
+                          or batch["model"] in (item.get("aliases") or [])), {})
+            decision, note = await broker.prepare_machine_memory(
+                monitor._client, studio, batch["model"], entry)
+            if decision != "run":
+                batch["queue_note"] = f"{studio['id']}: {note}"
+                continue
             owner = f"chat:{batch['id']}:{pack['index']}"
             if not broker.acquire_external_machine(machine, owner):
                 continue
@@ -595,9 +604,14 @@ async def _run_pack(monitor, batch: dict, pack: dict, studio: dict, owner: str) 
             pack.update(state="cancelled", error="cancelled", finished_at=time.time())
     except Exception as exc:
         transient = isinstance(exc, (httpx.HTTPError, OSError, ValueError)) or getattr(exc, "transient", False)
+        capacity = broker._is_capacity_failure(str(exc))
+        if capacity:
+            handoff = await broker.release_idle_siblings(monitor._client, studio)
+            pack["tries"] = max(0, pack["tries"] - 1)
         if transient and pack["tries"] < MAX_TRIES and not batch.get("cancelled"):
-            delay = TRANSIENT_RETRY_DELAYS[min(pack["tries"] - 1,
-                                               len(TRANSIENT_RETRY_DELAYS) - 1)]
+            delay = (3 if capacity and handoff["released"] else
+                     TRANSIENT_RETRY_DELAYS[min(max(0, pack["tries"] - 1),
+                                                len(TRANSIENT_RETRY_DELAYS) - 1)])
             pack.update(state="queued", studio=None,
                         retry_at=time.time() + delay,
                         error=f"try {pack['tries']} failed; retrying in {delay}s: {exc}")

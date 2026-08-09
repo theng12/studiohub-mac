@@ -32,6 +32,7 @@ import httpx
 
 from . import (artifact_metadata, cloud_guard, execution_assets,
                execution_identity, ledger, peers, shared_voices)
+from .memory_control import FleetMemoryControl, SUPPORTED_MODALITIES
 from .peers import studio_request
 from .monitor import is_cached
 from .registry import base_url, machine_enabled, studio_enabled
@@ -145,6 +146,7 @@ RECOVERY_WINDOW_S = 120.0  # cover a full slow M1 generation after a dropped con
 RETRY_DELAYS_S = (3.0, 10.0)
 INFRA_RETRY_DELAYS_S = (5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 300.0)
 CAPACITY_RETRY_S = 30.0
+HANDOFF_RETRY_S = 15.0
 FAILED_WORKER_AVOID_S = 90.0
 MACHINE_FAILURE_THRESHOLD = 2
 MACHINE_COOLDOWN_S = 120.0
@@ -164,6 +166,7 @@ _external_machine_leases: dict[str, str] = {}
 # This is intentionally process-local: after a Hub restart every worker must
 # answer health again before it becomes eligible, which is a clean circuit reset.
 _machine_protection: dict[str, dict] = {}
+_handoff_state: dict[str, dict] = {}
 _wakeup = asyncio.Event()
 # Sum of live-free-memory admission floors reserved by in-flight LOCAL
 # dispatches. The physical-machine lease normally prevents overlap; this also
@@ -236,6 +239,93 @@ def _host_for_studio(studio: dict) -> dict | None:
     peer = peers.cached(machine) or {}
     host = peer.get("host")
     return host if isinstance(host, dict) else None
+
+
+async def release_idle_siblings(client: httpx.AsyncClient, target: dict) -> dict:
+    """Ask idle sibling Studios on the target Mac to release resident state.
+
+    Worker endpoints own the final safety check: queued or active direct work
+    returns 409 and is never preempted. A short machine cooldown prevents three
+    independent scheduler lanes from repeatedly clearing the same Mac.
+    """
+    from . import chat_jobs, transcription_jobs
+
+    machine = target.get("machine", "local")
+    now = time.monotonic()
+    previous = _handoff_state.get(machine) or {}
+    if now - float(previous.get("at") or 0.0) < HANDOFF_RETRY_S:
+        return {**previous["result"], "deferred": True}
+    _handoff_state[machine] = {
+        "at": now,
+        "result": {"attempted": 0, "released": 0,
+                   "busy": ["handoff_in_progress"], "failed": []},
+    }
+    known_busy = set(_busy) | set(chat_jobs.busy_studios) | set(
+        transcription_jobs.busy_studios)
+    siblings = [
+        studio for studio in _monitor().registry
+        if studio.get("machine", "local") == machine
+        and studio.get("id") != target.get("id")
+        and studio.get("modality") in SUPPORTED_MODALITIES
+    ]
+
+    releasable = [studio["id"] for studio in siblings if studio["id"] not in known_busy]
+    operation = (await FleetMemoryControl(_monitor(), client).release(releasable)
+                 if releasable else {"results": []})
+    results = operation["results"]
+    still_loaded = {
+        row["id"] for row in results if row.get("ok")
+        and any((row.get("policy") or {}).get(field) for field in (
+            "loaded_model", "loaded_models", "loaded_pipeline"))
+    }
+    result = {
+        "attempted": len(siblings),
+        "released": sum(row.get("ok") and row["id"] not in still_loaded
+                        for row in results),
+        "busy": [studio["id"] for studio in siblings if studio["id"] in known_busy]
+                + [row["id"] for row in results if row.get("result") == "busy"],
+        "failed": [row["id"] for row in results
+                   if (not row.get("ok") and row.get("result") != "busy")
+                   or row["id"] in still_loaded],
+        "deferred": False,
+    }
+    _handoff_state[machine] = {"at": now, "result": result}
+    logging.getLogger("studiohub.broker").info(
+        "memory handoff machine=%s target=%s released=%d busy=%s failed=%s",
+        machine, target.get("id"), result["released"], result["busy"], result["failed"])
+    return result
+
+
+async def prepare_machine_memory(client: httpx.AsyncClient, studio: dict,
+                                 model: str, entry: dict) -> tuple[str, str | None]:
+    """Run admission, coordinated idle handoff, then one fresh admission check."""
+    mem = _admission_requirements(model, entry)
+    if mem is None:
+        return "run", None
+    is_local = studio.get("machine", "local") == "local"
+    host = _host_for_studio(studio)
+    if not host:
+        return "run", None  # the worker's own MemoryGuard remains authoritative
+    decision, note = _memory_gate(mem, host, _reserved["gb"] if is_local else 0.0)
+    if decision != "wait":
+        return decision, note
+
+    handoff = await release_idle_siblings(client, studio)
+    if handoff["busy"]:
+        return "wait", "waiting for active sibling work on this machine"
+    if not handoff["released"]:
+        return decision, note
+    if not is_local:
+        peers.invalidate(studio.get("machine", "local"))
+        await peers.refresh(_monitor().registry, client)
+    refreshed = _host_for_studio(studio)
+    if not refreshed:
+        return "wait", "idle sibling memory released; waiting for fresh RAM telemetry"
+    decision, note = _memory_gate(
+        mem, refreshed, _reserved["gb"] if is_local else 0.0)
+    if decision == "wait":
+        note = f"released {handoff['released']} idle sibling(s); {note}"
+    return decision, note
 
 
 def _studio_total_memory_gb(studio: dict) -> float:
@@ -1363,16 +1453,15 @@ async def _dispatch_loop():
                     # admission policy used immediately before dispatch.
                     mem = _admission_requirements(b["model"], entry)
                     reserve = 0.0
-                    host = _host_for_studio(studio) if mem is not None else None
-                    if mem is not None and host:
-                        decision, note = _memory_gate(
-                            mem, host, _reserved["gb"] if is_local else 0.0)
+                    if mem is not None:
+                        decision, note = await prepare_machine_memory(
+                            client, studio, b["model"], entry)
                         if decision != "run":
                             # skip → another (maybe bigger/remote) studio may take
                             # it; wait → defer. NEVER errors the whole batch.
                             b["governor_note"] = f"{studio['id']}: {note}"
                             continue
-                        reserve = _required_free_memory(mem)
+                        reserve = _required_free_memory(mem) if is_local else 0.0
                     # Eligibility was calculated before the catalog/memory awaits.
                     # Recheck the physical lease so a transcription that claimed
                     # this Mac in the meantime never overlaps generation/render.
@@ -1679,10 +1768,11 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             # Memory pressure is a capacity wait, not a consumed generation
             # attempt. Avoid this Mac briefly so another healthy worker can
             # steal the item; if none can, keep it queued until memory clears.
+            handoff = await release_idle_siblings(client, studio)
             item["tries"] = max(0, int(item.get("tries") or 0) - 1)
             item["state"] = "queued"
             item["error"] = f"waiting for capacity: {message}"
-            item["retry_at"] = now + CAPACITY_RETRY_S
+            item["retry_at"] = now + (3.0 if handoff["released"] else CAPACITY_RETRY_S)
             item.setdefault("capacity_wait_started_at", now)
             item.setdefault("avoid_machines", {})[
                 studio.get("machine", "local")
