@@ -10,6 +10,18 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.3.7] — 2026-08-09
+
+### Fixed — existing Macs continue into model restore
+
+- The fleet bootstrap now invokes each Studio's checked-in `unservice.js` when
+  it detects the older standalone startup service, verifies the marker is gone,
+  and continues into dependency verification and model restore. Existing fleet
+  Macs no longer stop with a manual Pinokio-menu instruction.
+- The current model restore tool now travels inside the SSD bootstrap kit and
+  runs from there. An older installed Studio Hub checkout can no longer supply
+  missing or stale restore code during an otherwise current SSD installation.
+
 ## [2.3.6] — 2026-08-09
 
 ### Fixed — diagnostics return with the fleet SSD

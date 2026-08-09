@@ -343,6 +343,7 @@ def stage_bootstrap_kit(volume_root: Path, *, plan_only: bool) -> None:
     kit = volume_root / "terranash-bootstrap"
     sources = (
         repo / "tools/fleet_bootstrap.py",
+        repo / "tools/studio_models.py",
         repo / "tools/Install TerraNash Studios.command",
     )
     print(f"bootstrap: Pinokio {PINOKIO_VERSION} + Hub/Image/Voice installer -> {kit}")

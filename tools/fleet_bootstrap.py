@@ -284,11 +284,16 @@ def python_imports(target: Path, imports: str) -> bool:
 
 
 def ensure_dependencies(pterm: Path, target: Path, app: dict, *, dry_run: bool) -> None:
-    if (target / "service/.installed").exists() and not dry_run:
-        raise BootstrapError(
-            f"{app['title']} has its separate startup service installed. Uninstall that "
-            "service from its Pinokio menu before converting this Mac to Pinokio-owned startup."
-        )
+    service_marker = target / "service/.installed"
+    if service_marker.exists():
+        if not (target / "unservice.js").is_file() and not dry_run:
+            raise BootstrapError(
+                f"{app['title']} has a startup service but no unservice.js repair action."
+            )
+        print(f"  Converting {app['title']} from its old startup service to Pinokio startup…")
+        install_script(pterm, app["name"], "unservice.js", dry_run=dry_run)
+        if not dry_run and service_marker.exists():
+            raise BootstrapError(f"{app['title']} startup-service removal did not complete.")
     base_import = (
         "import fastapi, httpx, psutil, uvicorn"
         if app["name"] == "studiohub-mac"
@@ -406,7 +411,7 @@ def restore_models(targets: dict[str, Path], model_root: Path, *, pterm: Path,
                    dry_run: bool, prune: bool) -> None:
     if not model_root.joinpath("MANIFEST.json").is_file() and not dry_run:
         raise BootstrapError(f"No model manifest found at {model_root}.")
-    tool = targets["studiohub-mac"] / "tools/studio_models.py"
+    tool = Path(__file__).resolve().with_name("studio_models.py")
     command = [sys.executable, str(tool), "restore", "--root", str(model_root)]
     if prune:
         command.append("--prune")

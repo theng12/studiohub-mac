@@ -25,7 +25,8 @@ Standalone; no Controller or Tailscale address is required yet.
 4. Wait for **Complete**.
 
 Healthy installations and complete model caches are skipped. Missing or damaged
-RAM-qualified models are copied, then Image and Voice restart.
+RAM-qualified models are copied, then Image and Voice restart. Any older
+standalone Studio startup services are converted to the one Pinokio startup graph.
 
 ## JOIN CONTROLLER — do this later
 

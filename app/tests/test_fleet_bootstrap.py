@@ -56,6 +56,51 @@ def test_environment_update_replaces_values_without_duplicates(tmp_path):
     assert "PINOKIO_SCRIPT_AUTOLAUNCH_ENABLED=false" in value
 
 
+def test_existing_startup_service_is_converted_automatically(tmp_path, monkeypatch):
+    bootstrap = load_tool("fleet_bootstrap.py")
+    target = tmp_path / "imagestudio-mac"
+    marker = target / "service/.installed"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("installed")
+    (target / "unservice.js").write_text("module.exports = {}")
+    calls = []
+
+    def run_script(_pterm, name, script, *, dry_run):
+        calls.append((name, script, dry_run))
+        marker.unlink()
+
+    monkeypatch.setattr(bootstrap, "install_script", run_script)
+    monkeypatch.setattr(bootstrap, "python_imports", lambda *_args: True)
+    bootstrap.ensure_dependencies(
+        Path("/pinokio/pterm"), target, bootstrap.APPS[0], dry_run=False,
+    )
+
+    assert calls == [("imagestudio-mac", "unservice.js", False)]
+    assert not marker.exists()
+
+
+def test_restore_uses_ssd_bundled_model_tool(tmp_path, monkeypatch):
+    bootstrap = load_tool("fleet_bootstrap.py")
+    commands = []
+    monkeypatch.setattr(
+        bootstrap, "run",
+        lambda command, **_kwargs: commands.append(command),
+    )
+    monkeypatch.setattr(bootstrap, "wait_stopped", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(bootstrap, "install_script", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(bootstrap, "wait_health", lambda *_args, **_kwargs: None)
+
+    bootstrap.restore_models(
+        {"studiohub-mac": tmp_path / "old-hub"},
+        tmp_path / "studio-models", pterm=Path("/pinokio/pterm"),
+        dry_run=True, prune=True,
+    )
+
+    expected = Path(bootstrap.__file__).resolve().with_name("studio_models.py")
+    assert commands[0][1] == str(expected)
+    assert "old-hub" not in commands[0][1]
+
+
 def test_model_root_prefers_current_label_and_can_find_renamed_manifest(tmp_path):
     models = load_tool("studio_models.py")
     current = tmp_path / "ugreen-terranash"
@@ -155,6 +200,7 @@ def test_restaging_removes_legacy_ssd_logs(tmp_path, monkeypatch):
     assert not legacy_log.exists()
     assert legacy_log.parent.stat().st_mode & 0o7777 == 0o1777
     assert (kit / "Install TerraNash Studios.command").stat().st_mode & 0o555 == 0o555
+    assert (kit / "studio_models.py").is_file()
     assert (tmp_path / "READ-ME-FIRST.md").stat().st_mode & 0o444 == 0o444
 
 
