@@ -10,6 +10,14 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.4.6] — 2026-08-09
+
+### Fixed — live job refresh preserves the clone picker
+
+- The Swarm Batch cloned-voice select now uses an identity distinct from the
+  existing Voice batch results container. Live Jobs refreshes can no longer
+  replace shared-voice options while an operator is preparing a clone batch.
+
 ## [2.4.5] — 2026-08-09
 
 ### Changed — agent-Hub updates are one deliberate action

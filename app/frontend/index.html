@@ -567,7 +567,7 @@
           <input id="j-label" maxlength="120" placeholder="e.g. 0100 · watercolor qualification">
         </label>
         <label class="batch-field full" id="j-voice-field" hidden>Cloned voice
-          <select id="j-voice" aria-label="Shared cloned voice"><option value="">— pick a shared voice —</option></select>
+          <select id="j-clone-voice" aria-label="Shared cloned voice"><option value="">— pick a shared voice —</option></select>
         </label>
       </div>
       <p class="sub batch-help" id="j-voice-help" hidden></p>
@@ -1144,6 +1144,9 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.4.6", date: "2026-08-09", items: [
+    "The cloned-voice picker now has its own unique dashboard identity, so live Voice batch refreshes can no longer replace its options before a clone is submitted.",
+  ]},
   { v: "2.4.5", date: "2026-08-09", items: [
     "Agent-Hub fleet updates now start directly from the explicitly labeled Update button and keep their existing machine-by-machine progress display, removing a redundant browser confirmation that could strand an otherwise accepted rollout.",
   ]},
@@ -2983,7 +2986,7 @@ function jobModelSupportsCloning(repo) {
 async function loadJobVoices() {
   const field = $("#j-voice-field");
   const help = $("#j-voice-help");
-  const select = $("#j-voice");
+  const select = $("#j-clone-voice");
   const needsVoice = $("#j-modality").value === "voice" && jobModelSupportsCloning($("#j-model").value);
   field.hidden = !needsVoice;
   help.hidden = !needsVoice;
@@ -3019,7 +3022,7 @@ async function submitBatch() {
   const prompts = $("#j-prompts").value.split("\n").map(s => s.trim()).filter(Boolean);
   const model = $("#j-model").value;
   const modality = $("#j-modality").value;
-  const selectedVoice = $("#j-voice").value;
+  const selectedVoice = $("#j-clone-voice").value;
   if (!prompts.length || !model) { $("#j-status").textContent = "Choose a model and enter at least one item."; return; }
   if (modality === "voice" && jobModelSupportsCloning(model) && !selectedVoice) {
     $("#j-status").textContent = "Choose a synchronized shared voice for this clone model.";

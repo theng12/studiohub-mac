@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -14,7 +15,7 @@ def test_swarm_batch_has_operator_label_and_accessible_clone_picker():
 
     assert 'id="j-label"' in source
     assert 'id="j-voice-field" hidden' in source
-    assert 'id="j-voice" aria-label="Shared cloned voice"' in source
+    assert 'id="j-clone-voice" aria-label="Shared cloned voice"' in source
     assert 'id="j-status" role="status" aria-live="polite"' in source
 
 
@@ -45,3 +46,9 @@ def test_agent_hub_update_button_does_not_add_a_second_browser_confirmation():
     assert "confirm(" not in source[start:end]
     assert 'hubUpdateBusy = true' in source[start:end]
     assert 'renderHubUpdate(job)' in source[start:end]
+
+
+def test_dashboard_ids_are_unique_so_live_refreshes_do_not_replace_controls():
+    ids = re.findall(r'\bid="([^"]+)"', _source())
+
+    assert len(ids) == len(set(ids))
