@@ -11,6 +11,8 @@ process RSS + host memory pressure is the honest picture.
 """
 
 from functools import lru_cache
+import json
+import socket
 import subprocess
 
 import psutil
@@ -36,10 +38,36 @@ def apple_chip_name() -> str | None:
         return None
 
 
+@lru_cache(maxsize=1)
+def apple_machine_type() -> str | None:
+    """Return the Mac product family used by the hardware-profile catalog."""
+    try:
+        result = subprocess.run(
+            ["system_profiler", "SPHardwareDataType", "-json"],
+            capture_output=True, text=True, timeout=5,
+        )
+        rows = json.loads(result.stdout or "{}").get("SPHardwareDataType", [])
+        value = rows[0].get("machine_name") if rows else None
+        return str(value).strip() or None
+    except (json.JSONDecodeError, subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def hardware_identity() -> dict:
+    """Stable local hardware facts suitable for profile matching."""
+    return {
+        "machine_name": socket.gethostname().split(".", 1)[0],
+        "machine_type": apple_machine_type(),
+        "chip": apple_chip_name(),
+        "memory_gb": round(psutil.virtual_memory().total / (1024 ** 3)),
+    }
+
+
 def host_stats() -> dict:
     vm = psutil.virtual_memory()
     stats = {
         "chip": apple_chip_name(),
+        "machine_type": apple_machine_type(),
         "total_gb": round(vm.total / 1e9, 2),
         "used_gb": round(vm.used / 1e9, 2),
         "available_gb": round(vm.available / 1e9, 2),

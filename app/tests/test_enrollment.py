@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from backend import control_plane, enrollment, hardware_profiles, peers
+from backend import control_plane, enrollment, hardware_profiles, peers, registry
 
 
 def _controller():
@@ -175,6 +175,31 @@ def test_claim_endpoint_requires_controller_and_private_source(app, token):
     assert "fleet_token" in claimed.json()
 
 
+def test_claim_endpoint_registers_agent_hardware_and_studios(app):
+    _controller()
+    issued = enrollment.create_enrollment_code()
+    private = TestClient(app, client=("100.70.0.8", 50000))
+
+    response = private.post("/api/hub/enrollment/claim", json={
+        "code": issued["code"],
+        "machine": "macmini-m4-16gb-render-01-hub",
+        "machine_name": "Render 01",
+        "hardware_profile_id": "mac-mini-m4-16gb",
+        "modalities": ["image", "voice"],
+    })
+
+    assert response.status_code == 200
+    registration = response.json()["registration"]
+    assert registration["host"] == "100.70.0.8"
+    assert registration["registered"] == 2
+    assert registration["hardware_profile"]["id"] == "mac-mini-m4-16gb"
+    registered = [row for row in registry.load_registry()
+                  if row["machine"] == registration["machine"]]
+    assert {row["modality"] for row in registered} == {"image", "voice"}
+    assert {row["host"] for row in registered} == {"100.70.0.8"}
+    assert registry.label_for(registration["machine"]) == "Render 01"
+
+
 def test_enrollment_info_is_private_read_only_and_contains_no_secret(app):
     _controller()
     issued = enrollment.create_enrollment_code()
@@ -238,8 +263,12 @@ def test_agent_join_endpoint_requires_local_or_owner_access(app, token, monkeypa
     )
     assert fleet_only.status_code == 403
 
-    async def claim_remote(controller_url, code):
+    async def claim_remote(controller_url, code, registration=None):
         assert controller_url == "100.70.0.2"
+        assert registration["hardware_profile_id"] == "mac-mini-m4-16gb"
+        assert set(registration["modalities"]) == {
+            "image", "music", "voice", "chat", "video", "render",
+        }
         return {
             "site_id": "location-a", "site_name": "Location A",
             "controller_id": "controller-a", "fleet_token": "new-site-token-123",
@@ -287,12 +316,15 @@ def test_new_controller_setup_assigns_hardware_and_keeps_authority_local(reset):
 
 @pytest.mark.asyncio
 async def test_loopback_join_configures_agent_and_clears_code(app, monkeypatch):
-    async def claim_remote(controller_url, code):
+    async def claim_remote(controller_url, code, registration=None):
         assert controller_url == "http://100.70.0.2:47873"
         assert code == "one-time-code"
+        assert registration["machine_name"] == "Voice Worker 0001"
         return {
             "site_id": "location-a", "site_name": "Location A",
             "controller_id": "controller-a", "fleet_token": "new-site-fleet-token",
+            "registration": {"machine": registration["machine"],
+                             "host": "100.70.0.8", "registered": 6},
         }
 
     monkeypatch.setattr(enrollment, "claim_remote", claim_remote)
@@ -312,6 +344,8 @@ async def test_loopback_join_configures_agent_and_clears_code(app, monkeypatch):
     assert peers.fleet_token() == "new-site-fleet-token"
     assert hardware_profiles.machine_hardware_profile("local")["id"] == "mac-mini-m2-8gb"
     assert control_plane.public_settings()["machine_name"] == "Voice Worker 0001"
+    assert body["controller_registration"]["registered"] == 6
+    assert "Controller registered this Mac and its Studios" in body["checklist"]
 
 
 def test_controller_mode_creates_credentials_and_keeps_display_name_cosmetic(authed):
@@ -410,7 +444,7 @@ def test_dashboard_exposes_explicit_machine_modes_and_plain_controller_credentia
     dashboard = (Path(__file__).parents[1] / "frontend" / "index.html").read_text()
 
     assert 'id="machine-mode-card"' in dashboard
-    assert 'id="mode-header" class="machine-mode-badge standalone"' in dashboard
+    assert 'id="mode-header" class="machine-mode-badge">Loading' in dashboard
     assert 'data-machine-mode="standalone"' in dashboard
     assert 'data-machine-mode="agent"' in dashboard
     assert 'data-machine-mode="controller"' in dashboard
@@ -423,3 +457,5 @@ def test_dashboard_exposes_explicit_machine_modes_and_plain_controller_credentia
     assert "function saveMachineMode()" in dashboard
     assert "function copyMachineHubToken()" in dashboard
     assert 'visible.textContent = r.token' in dashboard
+    assert "if (sum.control_plane) renderController(sum.control_plane, false);" in dashboard
+    assert 'manualFleetMaintenance.append($("#" + id))' in dashboard

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import httpx
+
 from backend import hardware_profiles, registry
 
 
@@ -60,6 +62,22 @@ def test_catalog_suggests_stable_incrementing_machine_ids(reset):
     assert profile["suggested_machine_id"] == "macmini-m2-8gb-003"
 
 
+def test_local_hardware_matches_apple_profile_and_normalizes_decimal_memory(reset, monkeypatch):
+    match = hardware_profiles.matching_hardware_profile({
+        "machine_type": "Mac mini", "chip": "Apple M4", "total_gb": 17.18,
+    })
+    assert match["id"] == "mac-mini-m4-16gb"
+
+    monkeypatch.setattr(
+        "backend.resources.hardware_identity",
+        lambda: {"machine_name": "render-01", "machine_type": "Mac mini",
+                 "chip": "Apple M4", "memory_gb": 16},
+    )
+    catalog = hardware_profiles.hardware_profile_catalog({"local"})
+    assert catalog["local_hardware"]["machine_name"] == "render-01"
+    assert catalog["local_hardware"]["profile_id"] == "mac-mini-m4-16gb"
+
+
 def test_registration_profile_generates_id_and_is_published(authed):
     response = authed.post("/api/hub/registry/add", json={
         "host": "100.9.9.9",
@@ -79,6 +97,48 @@ def test_registration_profile_generates_id_and_is_published(authed):
     machine = authed.get("/api/hub/resources").json()["machines"][payload["machine"]]
     assert studio["hardware_profile_id"] == "mac-mini-m2-8gb"
     assert machine["hardware_profile"]["memory_gb"] == 8
+
+
+def test_discovery_detects_remote_hardware_without_profile(authed, monkeypatch):
+    class Response:
+        is_success = True
+
+        def __init__(self, payload):
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+
+        async def get(self, url, **kwargs):
+            if url.endswith(":47873/api/hub/resources?local_only=true"):
+                return Response({"host": {
+                    "machine_name": "voice-01", "machine_type": "Mac mini",
+                    "chip": "Apple M4", "total_gb": 17.18,
+                }})
+            if url.endswith(":47870/api/health"):
+                return Response({"ok": True})
+            if url.endswith(":47870/api/version"):
+                return Response({"title": "Voice Studio KH"})
+            raise httpx.ConnectError("offline")
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: Client())
+
+    response = authed.post("/api/hub/registry/discover", json={
+        "host": "100.9.9.6",
+    })
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["machine"] == "macmini-m4-16gb-001"
+    assert payload["hardware_profile"]["id"] == "mac-mini-m4-16gb"
+    assert payload["detected_hardware"]["machine_name"] == "voice-01"
+    assert payload["found"] == [{
+        "port": 47870, "modality": "voice", "title": "Voice Studio KH",
+    }]
 
 
 def test_existing_machine_profile_can_change_and_clears_on_removal(authed):
@@ -115,4 +175,7 @@ def test_dashboard_requires_and_manages_hardware_profiles():
     assert 'id="hp-type"' in dashboard
     assert "function selectRegistrationHardware" in dashboard
     assert "async function assignMachineHardware" in dashboard
-    assert 'choose the machine\'s hardware profile' in dashboard
+    assert "Auto-detect from online Hub" in dashboard
+    assert "they never limit machine count" in dashboard
+    assert 'id="hp-units"' not in dashboard
+    assert "profile.assigned_units}/${profile.planned_units" not in dashboard

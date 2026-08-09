@@ -286,8 +286,18 @@ def add_user_entries(entries: list[dict]) -> int:
     for entry in entries:
         endpoint = (entry.get("host"), entry.get("port"))
         duplicate_endpoint = all(endpoint) and endpoint in endpoints
-        if entry.get("id") and entry["id"] not in by_id and not duplicate_endpoint:
-            by_id[entry["id"]] = entry
+        studio_id = entry.get("id")
+        if studio_id in by_id:
+            old_endpoint = (by_id[studio_id].get("host"),
+                            by_id[studio_id].get("port"))
+            if duplicate_endpoint and endpoint != old_endpoint:
+                continue
+            by_id[studio_id] = {**by_id[studio_id], **entry}
+            endpoints.discard(old_endpoint)
+            if all(endpoint):
+                endpoints.add(endpoint)
+        elif studio_id and not duplicate_endpoint:
+            by_id[studio_id] = entry
             if all(endpoint):
                 endpoints.add(endpoint)
             added += 1

@@ -518,13 +518,17 @@ def _validated_claim(value: dict) -> dict:
     }
 
 
-async def claim_remote(controller_url: str, code: str) -> dict:
+async def claim_remote(controller_url: str, code: str,
+                       registration: dict | None = None) -> dict:
     base_url = validate_private_controller_url(controller_url)
+    payload = {"code": str(code or "").strip()}
+    if registration:
+        payload.update(registration)
     async with httpx.AsyncClient(follow_redirects=False, trust_env=False) as client:
         try:
             response = await client.post(
                 f"{base_url}/api/hub/enrollment/claim",
-                json={"code": str(code or "").strip()},
+                json=payload,
                 timeout=10.0,
             )
         except httpx.HTTPError as exc:
@@ -542,7 +546,9 @@ async def claim_remote(controller_url: str, code: str) -> dict:
                 "do not use its Hub token or fleet token."
             )
         raise ValueError(detail)
-    return _validated_claim(payload)
+    return {**_validated_claim(payload),
+            **({"registration": payload["registration"]}
+               if isinstance(payload.get("registration"), dict) else {})}
 
 
 def configure_joined_agent(controller_url: str, hardware_profile_id: str,

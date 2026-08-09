@@ -10,6 +10,38 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.1.0] — 2026-08-09
+
+### Added — one-step Agent enrollment and automatic Mac detection
+
+- Joining a location now registers that Mac's six Studio endpoints on the
+  Controller in the same authenticated claim. The Controller uses the
+  connection's private source address, saves the friendly name and hardware
+  profile, and refreshes an existing machine's address on re-enrollment.
+- Hub reads the local Mac product family, Apple chip, unified RAM, and hostname
+  to preselect its hardware profile. Controller-side discovery can read the same
+  facts from an online peer Hub and assign a stable machine ID without making the
+  operator choose a profile first.
+
+### Fixed — fleet role and hardware-profile UX
+
+- The header role badge is now rendered from the first live summary instead of
+  remaining **Standalone** until Remote was opened.
+- Hardware-profile inventory targets are no longer shown as assignment quotas.
+  Profiles classify hardware for routing and cost records; they never limit how
+  many machines can register. Custom-profile setup no longer asks for a planned
+  unit count.
+- Leaving the Agent display name blank now uses the Mac's hostname instead of
+  showing the internal `local` identifier.
+
+### Changed — shorter Remote operations
+
+- Manual Studio and Agent-Hub rolling updates now live with automatic update
+  controls on **Updates**. Remote keeps machine roles, registration, startup,
+  generation dependencies, alerts, gateway, and per-Studio fleet switches.
+- The fallback **Add another Mac** form is explicitly for older or offline Hubs;
+  online discovery defaults to hardware auto-detection.
+
 ## [2.0.1] — 2026-08-09
 
 ### Changed — memory-mode thresholds have one source of truth

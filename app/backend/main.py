@@ -30,7 +30,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from pydantic import BaseModel, Field
 
 from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, cloud_guard, control_plane, enrollment, execution_assets, execution_identity, fleet_ops, fleet_storage, gateway, hardware_profiles, hf_credentials, job_storage, memory_admission, model_exposure,
-               ledger, metrics, peers, recipes, shared_voices, startup_services, transcription_jobs,
+               ledger, metrics, peers, recipes, registry, shared_voices, startup_services, transcription_jobs,
                voice_qualification)
 from .auto_update import UpdateError
 from .auto_update_config import create_updater
@@ -161,6 +161,10 @@ class SimpleControllerSetupBody(BaseModel):
 
 class EnrollmentCodeBody(BaseModel):
     code: str = Field(min_length=1, max_length=256)
+    machine: str | None = Field(default=None, max_length=100)
+    machine_name: str | None = Field(default=None, max_length=120)
+    hardware_profile_id: str | None = Field(default=None, max_length=64)
+    modalities: list[str] | None = None
 
 
 class ControllerProbeBody(BaseModel):
@@ -606,7 +610,32 @@ def claim_agent_enrollment(request: Request, body: EnrollmentCodeBody):
     if not enrollment.private_request_host(request.client.host if request.client else None):
         raise HTTPException(403, "Agent enrollment is available only over a private LAN or Tailscale link.")
     try:
-        return enrollment.claim_enrollment_code(body.code)
+        claim = enrollment.claim_enrollment_code(body.code)
+        if body.machine:
+            host, machine, profile_id = _registration_identity({
+                "host": request.client.host,
+                "machine": body.machine,
+                "hardware_profile_id": body.hardware_profile_id,
+            })
+            modalities = (body.modalities if body.modalities is not None
+                          else list(registry.MODALITY_PORT))
+            unknown = sorted(set(modalities) - set(registry.MODALITY_PORT))
+            if unknown:
+                raise ValueError(f"unknown modalities: {unknown}")
+            added = registry.add_user_entries(
+                registry.build_machine_entries(host, machine, modalities))
+            monitor.reload_registry()
+            profile = hardware_profiles.set_machine_hardware_profile(
+                machine, profile_id) if profile_id else None
+            if body.machine_name:
+                registry.set_label(machine, body.machine_name)
+            claim["registration"] = {
+                "machine": machine,
+                "host": host,
+                "registered": added,
+                "hardware_profile": profile,
+            }
+        return claim
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 
@@ -626,11 +655,28 @@ async def join_existing_location(request: Request, body: AgentJoinBody):
     if not _can_configure_this_hub(request):
         raise HTTPException(403, "Open this Hub locally or sign in as its owner before changing its location.")
     try:
-        claim = await enrollment.claim_remote(body.controller_url, body.enrollment_code)
-        return enrollment.configure_joined_agent(
-            body.controller_url, body.hardware_profile_id, claim,
-            machine_name=body.machine_name,
+        local_hardware = hardware_profiles.local_hardware()
+        machine_name = (str(body.machine_name or "").strip()
+                        or str(local_hardware.get("machine_name") or "").strip()
+                        or None)
+        agent_id = enrollment.suggested_local_hub_id(body.hardware_profile_id)
+        claim = await enrollment.claim_remote(
+            body.controller_url, body.enrollment_code,
+            registration={
+                "machine": agent_id,
+                "machine_name": machine_name,
+                "hardware_profile_id": body.hardware_profile_id,
+                "modalities": [row["modality"] for row in registry.DEFAULT_STUDIOS],
+            },
         )
+        result = enrollment.configure_joined_agent(
+            body.controller_url, body.hardware_profile_id, claim,
+            machine_name=machine_name,
+        )
+        if claim.get("registration"):
+            result["controller_registration"] = claim["registration"]
+            result["checklist"].insert(1, "Controller registered this Mac and its Studios")
+        return result
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 
@@ -2908,9 +2954,26 @@ async def discover_machine(body: dict):
     from .registry import FAMILY_PORTS, MODALITY_EMOJI, add_user_entries
 
     host, machine, profile_id = _registration_identity(body)
+    machine_was_supplied = bool(str(body.get("machine") or "").strip())
     known = {(s["host"], s["port"]) for s in monitor.registry}
-    found, entries = [], []
+    found, entries, detected_hardware = [], [], None
     async with httpx.AsyncClient() as client:
+        if not profile_id:
+            try:
+                peer = await client.get(
+                    f"http://{host}:{peers.DEFAULT_HUB_PORT}/api/hub/resources?local_only=true",
+                    headers={"X-Hub-Token": peers.fleet_token()}, timeout=4.0,
+                )
+                if peer.is_success:
+                    detected_hardware = peer.json().get("host")
+                    matched = hardware_profiles.matching_hardware_profile(detected_hardware)
+                    if matched:
+                        profile_id = matched["id"]
+                        if not machine_was_supplied:
+                            machine = hardware_profiles.suggested_machine_id(
+                                profile_id, _registered_machine_ids())
+            except (httpx.HTTPError, ValueError):
+                pass
         for port, modality in FAMILY_PORTS.items():
             try:
                 r = await client.get(f"http://{host}:{port}/api/health", timeout=4.0)
@@ -2937,6 +3000,7 @@ async def discover_machine(body: dict):
     return {"host": host, "machine": machine, "found": found,
             "registered": added,
             "hardware_profile": profile,
+            "detected_hardware": detected_hardware,
             "note": None if found else
             "nothing answered — is the machine on and reachable over Tailscale?"}
 

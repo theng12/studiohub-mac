@@ -16,10 +16,10 @@ The Hub runs on fixed port **47873** and provides:
 - **Resource monitor** — host unified-memory pressure + per-studio process memory
   (RSS) and CPU, resolved port → PID → process tree. It also watches Pinokio's
   Caddy proxy for abnormal memory/file-descriptor growth caused by port conflicts.
-- **Fleet model-memory control** — keep models loaded for speed by default, or
-  opt individual local/remote Studios into 10-minute, 2-minute, or immediate
-  idle release. A manual release button unloads idle models without stopping an
-  app or interrupting active work.
+- **Fleet model-memory control** — choose retained, 10-minute, 2-minute, or
+  immediate idle release for individual local/remote Studios. Each Studio starts
+  from its own memory-safe default; a manual release button unloads idle models
+  without stopping an app or interrupting active work.
 - **Shared voice library** — upload and transcribe one cloning reference in Hub,
   review the words, then synchronize the same stable ID, audio hash, and
   transcript to every Voice Studio Mac. Offline machines catch up automatically.
@@ -70,11 +70,15 @@ Open **Memory** in Studio Hub. Every registered Image, Chat, Video, Music, and
 Voice Studio appears separately, including Studios reached through a peer Hub.
 Select the workers you want and choose:
 
-- **Performance (default)** — preserve loaded models for the fastest repeat
+- **Performance** — preserve loaded models for the fastest repeat
   generation. Nothing unloads automatically.
 - **Balanced** — release model and accelerator caches after 10 idle minutes.
 - **Memory Saver** — release after 2 idle minutes.
 - **Immediate** — release as soon as current work is finished.
+
+Before you save an explicit choice, each Studio resolves its own safe default;
+Studios below 12 GB use Memory Saver, while Hub's bulk-control draft starts on
+Balanced. Performance is always an explicit operator choice.
 
 **Release selected now** is the manual equivalent. A Studio with queued or
 running work refuses safely; other selected Studios still complete. Offline
@@ -144,8 +148,8 @@ defer or failure reason, release notes, and Retry are shown in the same card.
 
 Studio Hub checks every app's canonical GitHub `VERSION` file once per minute,
 independently of the registered app's own scheduled updater. The visible
-Updates and Remote views refresh automatically, retain last-known release
-versions through temporary GitHub failures, and never use an older worker cache
+Updates view refreshes automatically, retains last-known release
+versions through temporary GitHub failures, and never uses an older worker cache
 as the fleet target. You can change every app independently, **Check all**,
 update one app, or **Update idle apps**. Fleet updates run one at a time,
 reconnect through the expected restart connection drop, and require the updated
@@ -165,8 +169,9 @@ Busy apps receive a durable update-after-current-work request on their own Mac;
 rolling progress survives a Hub restart, transient connections retry with visible
 attempt counts, and a failed subset can be retried centrally without selecting it
 again.
-Remote uses the same simple version controls for Studios and agent Hubs: rescan,
-compare running with latest, update everything ready, or update one row. Studio
+Updates also contains the same simple version controls for Studios and agent
+Hubs: rescan, compare running with latest, update everything ready, or update
+one row. Studio
 app tabs focus the action on one family; **All apps** targets the fleet. Slow
 agent Hubs get four bounded connection attempts before they are reported offline,
 and remote operation history remains visible across a primary-Hub restart.
@@ -230,7 +235,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/setup/controller` | Local simple setup for the first Mac at a new location; assigns identity and local hardware while forcing PostgreSQL off |
 | `GET` · `POST` · `DELETE /api/hub/enrollment-codes` | Read, generate/rotate, or revoke the controller's permanent reusable enrollment code; owner access is required to reveal or change it |
 | `GET /api/hub/enrollment/info` | Private read-only controller identity, version, role, and enrollment-readiness check; contains no credentials |
-| `POST /api/hub/enrollment/claim` | Private LAN/Tailscale claim of the permanent code; returns the minimum site identity and current site fleet credential |
+| `POST /api/hub/enrollment/claim` | Private LAN/Tailscale claim of the permanent code; optionally accepts machine/profile/modalities to register that Agent from its private source address and returns the site identity, fleet credential, and registration result |
 | `POST /api/hub/setup/check-controller` | Read-only validation of a pasted private controller address; accepted locally or from an owner-authenticated browser |
 | `POST /api/hub/setup/join` | Guided worker setup using a private controller address, permanent enrollment code, and local hardware profile; accepted locally or from an owner-authenticated browser |
 | `GET /api/hub/startup-services` | Audit sibling Studio launchd service and watchdog readiness on this Hub and authenticated peer Hubs |
@@ -581,15 +586,17 @@ owner rotates or revokes it; it is not a replacement for the Hub token.
 
 On each worker Mac, choose **Agent** and enter:
 
-1. A friendly Agent machine name and this Mac's hardware profile.
+1. Confirm the automatically detected hardware profile. A friendly machine name
+   is optional; Hub uses the Mac hostname when it is blank.
 2. The Controller's private LAN/Tailscale address. Paste an HTTP/HTTPS URL,
    Tailscale IP, or MagicDNS hostname; direct HTTP addresses without a port use
    47873 automatically.
 3. The Controller's permanent registration code.
 
 The Agent receives its site identity and fleet token automatically, retains them
-locally, and then reports that it is connected and ready for jobs. Do not paste
-the fleet token manually during normal Agent enrollment.
+locally, and registers its Studio endpoints on the Controller in that same step.
+Do not paste the fleet token or add the online Mac again on the Controller during
+normal Agent enrollment.
 
 ### Standalone
 
@@ -730,10 +737,12 @@ Every Mac keeps running its own studios; one location controller coordinates the
 workers registered at that site. GenStudio will choose between locations:
 
 1. On each other Mac, install whichever Studios it should serve and use **Join
-   an existing location** to enroll its Hub as an agent.
-2. On the controller Hub, open **Remote → Add another Mac's studios**, choose its
-   hardware profile, and enter its Tailscale IP. Studio Hub suggests a stable ID
-   such as `macmini-m2-8gb-001`; you may edit it before saving. Two ways to add:
+   an existing location** to enroll its Hub as an agent. Hub detects its hardware
+   profile and the Controller registers its Studio endpoints automatically.
+2. For an older or offline Hub only, open **Remote → Add another Mac's studios**
+   on the Controller. Online discovery reads the Mac family, chip, and RAM from
+   its peer Hub; offline setup lets you choose the profile and edit the suggested
+   stable ID. Two fallback paths remain:
    - **Discover & Add** — probes the machine now and registers whatever answers
      (machine must be online).
      `POST /api/hub/registry/discover {host, machine, hardware_profile_id}`.
@@ -745,9 +754,11 @@ workers registered at that site. GenStudio will choose between locations:
    automatically.
 
 The built-in list covers the approved Mac mini M1/M2/M4, MacBook M4, and iMac
-M1/M3 memory classes. Use **Add another hardware profile to this list** for a
-future machine class. Existing machines can be assigned or corrected directly
-in **Registered machines** without re-registering their Studios.
+M1/M3 memory classes. Profiles classify hardware for routing and operating-cost
+records; their historical planned-unit values are inventory targets and never
+limit how many machines can register. Use **Add another hardware profile to this
+list** for a future machine class. Existing machines can be assigned or corrected
+directly in **Registered machines** without re-registering their Studios.
 
 Use each Studio switch in **Remote → Registered machines** to dedicate a Mac to
 only the job types you want. For example, pause Voice, Chat, and Render while

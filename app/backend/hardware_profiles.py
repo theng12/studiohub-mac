@@ -196,6 +196,40 @@ def hardware_profile(profile_id: str | None) -> dict | None:
     )
 
 
+def matching_hardware_profile(hardware: dict | None) -> dict | None:
+    """Match reported Apple hardware to a reusable profile without guessing."""
+    if not isinstance(hardware, dict):
+        return None
+    machine_type = str(hardware.get("machine_type") or "").strip().lower()
+    chip = str(hardware.get("chip") or "").strip().upper().removeprefix("APPLE ")
+    memory = hardware.get("memory_gb")
+    if memory is None and hardware.get("total_gb") is not None:
+        try:
+            memory = round(float(hardware["total_gb"]) * 1e9 / (1024 ** 3))
+        except (TypeError, ValueError):
+            memory = None
+    try:
+        memory = int(memory)
+    except (TypeError, ValueError):
+        return None
+    matches = [profile for profile in load_hardware_profiles()
+               if profile["machine_type"].lower() == machine_type
+               and profile["chip"] == chip and profile["memory_gb"] == memory]
+    return dict(matches[0]) if len(matches) == 1 else None
+
+
+def local_hardware() -> dict:
+    from .resources import hardware_identity
+
+    identity = hardware_identity()
+    profile = matching_hardware_profile(identity)
+    return {
+        **identity,
+        "profile_id": profile["id"] if profile else None,
+        "profile_name": profile["display_name"] if profile else None,
+    }
+
+
 def add_custom_hardware_profile(value: dict) -> dict:
     global _custom_cache
     profile = _validate_profile(value, custom=True)
@@ -278,4 +312,8 @@ def hardware_profile_catalog(known_machines: set[str]) -> dict:
                 "suggested_machine_id": suggested_machine_id(profile["id"], known_machines),
             }
         )
-    return {"profiles": profiles, "assignments": assignments}
+    return {
+        "profiles": profiles,
+        "assignments": assignments,
+        "local_hardware": local_hardware(),
+    }

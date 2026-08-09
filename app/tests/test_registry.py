@@ -53,6 +53,16 @@ def test_duplicate_network_endpoint_is_not_registered_twice(reset):
     assert "image@renamed-mac" not in ids and "voice@renamed-mac" not in ids
 
 
+def test_reenrolling_same_machine_updates_its_address(reset):
+    original = reg.build_machine_entries("100.1.1.1", "mac-b", ["image", "voice"])
+    moved = reg.build_machine_entries("100.1.1.2", "mac-b", ["image", "voice"])
+
+    assert reg.add_user_entries(original) == 2
+    assert reg.add_user_entries(moved) == 0
+    remote = [row for row in reg.load_registry() if row["machine"] == "mac-b"]
+    assert {row["host"] for row in remote} == {"100.1.1.2"}
+
+
 def test_remove_single_studio(reset):
     reg.add_user_entries(reg.build_machine_entries(
         "100.1.1.1", "mac-b", ["image", "music", "video"]))
