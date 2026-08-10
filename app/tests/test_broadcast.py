@@ -1,3 +1,4 @@
+import httpx
 import pytest
 
 from backend import broadcast
@@ -41,6 +42,11 @@ class _DownloadStatusClient:
         return _FakeResp(200, {"job": {"id": "j1", "state": "cancelling"}})
 
 
+class _UnavailableDownloadStatusClient:
+    async def get(self, url, headers=None, timeout=None):
+        raise httpx.ConnectError("worker is sleeping")
+
+
 @pytest.mark.asyncio
 async def test_broadcast_download_fans_out_to_each_studio():
     studios = [
@@ -73,6 +79,30 @@ async def test_fleet_download_progress_is_durable_and_cancellable(reset):
     cancelled = await broadcast.cancel_download(
         _DownloadStatusClient(), run["id"], "image@mac-b", studios)
     assert cancelled["items"][0]["state"] == "cancelling"
+
+
+@pytest.mark.asyncio
+async def test_unreachable_worker_preserves_last_known_download_progress(reset):
+    studios = [{
+        "id": "image@mac-b", "host": "10.0.0.2", "port": 47868,
+        "machine": "mac-b", "modality": "image",
+    }]
+    broadcast.record_download(
+        "org/model", studios, {"image@mac-b": {"ok": True, "job": "j1"}})
+    observed = await broadcast.refresh_downloads(_DownloadStatusClient(), studios)
+    before = observed[0]["items"][0]
+    assert before["percent"] == 42.5 and before["bytes_observed"] == 425
+
+    unavailable = await broadcast.refresh_downloads(
+        _UnavailableDownloadStatusClient(), studios)
+    after = unavailable[0]["items"][0]
+
+    assert after["state"] == "running"
+    assert after["percent"] == 42.5
+    assert after["bytes_observed"] == 425 and after["bytes_total"] == 1000
+    assert after["speed_bps"] == 50 and after["eta_seconds"] == 11
+    assert after["reachable"] is False
+    assert after["detail"].startswith("worker unavailable")
 
 
 def test_broadcast_download_endpoint_returns_tracked_run(authed, monkeypatch):

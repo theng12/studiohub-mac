@@ -1152,6 +1152,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.5.1", date: "2026-08-10", items: [
+    "Completed Image jobs now return the actual resolved seed, dimensions, steps, runtime revision, worker identity, and stable machine identity so GenStudio can preserve reproducible execution evidence.",
+    "Image models with an explicit runtime-revision mismatch or an unready worker are now excluded from new routing and explain why in the private capability snapshot.",
+    "Temporary worker loss keeps the last known model-download progress, and fleet API consumers are reminded to inspect complete-plus-degraded rollout results instead of treating them as all-green.",
+  ]},
   { v: "2.5.0", date: "2026-08-09", items: [
     "Fleet releases now continue across healthy nodes and finish with a visible reduced-capacity result when only some machines fail; only an all-target failure blocks the release.",
     "Completed Image and Voice batches remain in Jobs after a Hub restart, and fleet model downloads now retain progress, completion, errors, and per-worker cancellation.",

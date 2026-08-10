@@ -186,6 +186,12 @@ def _model_capability(model: dict, studio: dict, worker: dict) -> dict:
     installed = bool(model.get("hub_cached"))
     runtime_compatible = model.get("runtime_compatible") is not False
     subsystem_ready = model.get("hub_ready") is not False
+    qualified_revision_match = model.get("qualified_revision_match")
+    if type(qualified_revision_match) is not bool:
+        qualified_revision_match = None
+    execution_ready = model.get("execution_ready")
+    if type(execution_ready) is not bool:
+        execution_ready = None
     admission = None
     memory_ready = None
     if memory_admission.applies_to(modality):
@@ -209,8 +215,12 @@ def _model_capability(model: dict, studio: dict, worker: dict) -> dict:
                          "observed_available_memory_gb": None,
                          "eligible_now": None}
     catalog_stale = bool(model.get("hub_catalog_stale"))
-    model_ready = (runtime_compatible and subsystem_ready and not catalog_stale
-                   and installed and memory_ready is not False)
+    model_ready = (
+        runtime_compatible and subsystem_ready and not catalog_stale and installed
+        and memory_ready is not False
+        and qualified_revision_match is not False
+        and execution_ready is not False
+    )
     available_now = bool(worker["available_capacity"]["slots"] and model_ready)
     if not worker["online"]:
         reason = "worker_offline"
@@ -226,6 +236,10 @@ def _model_capability(model: dict, studio: dict, worker: dict) -> dict:
         reason = "worker_not_ready"
     elif catalog_stale:
         reason = "catalog_stale"
+    elif qualified_revision_match is False:
+        reason = "runtime_revision_mismatch"
+    elif execution_ready is False:
+        reason = "worker_execution_unready"
     elif not runtime_compatible:
         reason = "runtime_incompatible"
     elif not subsystem_ready:
@@ -297,6 +311,8 @@ def _model_capability(model: dict, studio: dict, worker: dict) -> dict:
             "runtime_compatible": runtime_compatible,
             "revision_pinning_ready": revision is not None,
             "subsystem_ready": subsystem_ready,
+            "qualified_revision_match": qualified_revision_match,
+            "execution_ready": execution_ready,
             "available_now": available_now,
             "reason": reason,
         },

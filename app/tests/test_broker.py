@@ -381,6 +381,39 @@ async def test_connection_drop_recovers_completed_worker_without_duplicate(reset
 
 
 @pytest.mark.asyncio
+async def test_image_terminal_result_relays_reproducible_worker_evidence(reset):
+    submitted = broker.submit_batch({
+        "modality": "image", "model": "org/image-model",
+        "items": [{"prompt": "a quiet Cambodian garden", "seed": -1}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="running", studio="image@mac-b", studio_job_id="worker-1")
+    studio = {
+        "id": "image@mac-b", "modality": "image", "machine": "mac-b",
+        "host": "127.0.0.1", "port": 47868,
+    }
+
+    await broker._record_worker_success(object(), batch, item, studio, {
+        "id": "worker-1", "state": "done", "output_path": "/tmp/result.png",
+        "output_url": "/api/generate/jobs/worker-1/image",
+        "media_type": "image/png", "bytes": 1234, "sha256": "a" * 64,
+        "duration_seconds": 8.5, "width": 1344, "height": 768, "steps": 4,
+        "resolved_seed": 429496729, "runtime_revision": "imagestudio-mac@1.29.4",
+        "worker_id": "image-worker-12", "machine_id": "worker-hostname",
+    }, {}, 0.0)
+
+    terminal = broker.terminal_result(batch, item)
+    assert terminal["width"] == 1344 and terminal["height"] == 768
+    assert terminal["steps"] == 4
+    assert terminal["resolved_seed"] == 429496729
+    assert terminal["runtime_revision"] == "imagestudio-mac@1.29.4"
+    assert terminal["worker_id"] == "image-worker-12"
+    assert terminal["machine_id"] == "mac-b"
+    assert broker.public_item(batch, item)["seed"] == 429496729
+
+
+@pytest.mark.asyncio
 async def test_generation_uses_connected_peer_hub_route(reset, monkeypatch):
     """The broker must not bypass peers.studio_request for remote workers.
 

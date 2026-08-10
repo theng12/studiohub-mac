@@ -196,12 +196,20 @@ GenStudio decides whether its routing policy requires an immutable revision.
 - The worker and machine are not drained, in maintenance, quarantined, or busy.
 - The local model is installed.
 - The runtime and subsystem report compatibility/readiness.
+- When a sibling publishes them, `qualified_revision_match` and
+  `execution_ready` are not false. These additive booleans are also relayed in
+  `availability` for diagnostics. A revision mismatch reports
+  `runtime_revision_mismatch`; other explicit worker execution unavailability
+  reports `worker_execution_unready`.
 - The audited catalogue observation is not stale.
 - The exact model contract remains present in the last-good GenStudio fleet
   catalog accepted by this controller.
 
 An unavailable model includes a stable reason such as `worker_offline`,
 `physical_machine_busy`, `worker_maintenance`, or `model_not_installed`.
+Older sibling versions that omit `qualified_revision_match` and
+`execution_ready` publish both as `null`; omission alone never makes a
+previously compatible model unavailable.
 
 ## Privacy and authority boundary
 

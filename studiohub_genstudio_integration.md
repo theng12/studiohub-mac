@@ -246,6 +246,11 @@ them or turn them into global ownership state.
 - Hosted models are never advertised or accepted by Studio Hub.
 - Maintenance, drains, quarantines, worker busy state, and shared-machine busy
   state are already reflected in `available_now`.
+- `availability.qualified_revision_match` and
+  `availability.execution_ready` are additive worker observations. Studio Hub
+  already folds an explicit false value into `available_now`; GenStudio should
+  retain them as diagnostics rather than implement a competing readiness rule.
+  A `null` value means the sibling version did not publish that observation.
 - `catalog_observation.stale=true` makes that model unavailable. Preserve the
   evidence for diagnostics, but never route new work from it.
 - `model_supply` is a convenience aggregate derived from the detailed workers.

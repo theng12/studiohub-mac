@@ -10,6 +10,37 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.5.1] — 2026-08-10
+
+### Fixed — complete Image execution evidence reaches GenStudio
+
+- Completed Image jobs now retain and publish width, height, inference steps,
+  the resolved seed, Image Studio runtime revision, worker ID, and the Hub's
+  stable physical-machine ID. A random seed therefore remains reproducible,
+  and GenStudio no longer has to derive a machine by splitting a worker name.
+- The schema-v2 capability snapshot now publishes Image Studio's
+  `qualified_revision_match` and `execution_ready` observations. An explicit
+  false value makes that model unavailable for new routing with a stable
+  diagnostic reason; older sibling catalogues that omit the additive fields
+  retain their existing behavior.
+- A regression test now proves that a temporarily sleeping or unreachable Mac
+  preserves its last-known model-download bytes, percentage, speed, and ETA
+  instead of becoming a false failure.
+
+### Compatibility
+
+- Since Studio Hub 2.5.0, a rollout with both successful and failed targets
+  returns `status="complete"` with `degraded=true`; only an all-target failure
+  returns `status="failed"`. API consumers must inspect `degraded`, counts, and
+  per-target items rather than treating `status == "complete"` as an all-green
+  result. This release does not change that resilient fleet behavior.
+
+### Safety
+
+- The contract additions are read-only evidence. They do not change billing,
+  global job ownership, model files, memory policy, or the rule that one
+  unavailable node cannot block healthy fleet targets.
+
 ## [2.5.0] — 2026-08-09
 
 ### Added — durable fleet operations

@@ -214,6 +214,38 @@ def test_private_capability_snapshot_contract_is_versioned_and_truthful(
     assert transcription["availability"]["available_now"] is True
 
 
+def test_image_revision_mismatch_is_published_and_blocks_new_routing(
+        authed, monitor):
+    _seed_capability_site(monitor)
+    source = monitor._catalog_cache["image"][1]["models"][0]
+    source["qualified_revision_match"] = False
+    source["execution_ready"] = False
+
+    payload = authed.get("/api/hub/capabilities").json()
+    model = _model(_worker(payload, "image"), "image.text_to_image")
+
+    assert model["availability"]["qualified_revision_match"] is False
+    assert model["availability"]["execution_ready"] is False
+    assert model["availability"]["available_now"] is False
+    assert model["availability"]["reason"] == "runtime_revision_mismatch"
+
+
+def test_image_execution_unready_is_published_and_blocks_new_routing(
+        authed, monitor):
+    _seed_capability_site(monitor)
+    source = monitor._catalog_cache["image"][1]["models"][0]
+    source["qualified_revision_match"] = True
+    source["execution_ready"] = False
+
+    payload = authed.get("/api/hub/capabilities").json()
+    model = _model(_worker(payload, "image"), "image.text_to_image")
+
+    assert model["availability"]["qualified_revision_match"] is True
+    assert model["availability"]["execution_ready"] is False
+    assert model["availability"]["available_now"] is False
+    assert model["availability"]["reason"] == "worker_execution_unready"
+
+
 def test_candidate_hardware_is_sanitized_before_capability_publication(
         authed, monitor):
     _seed_capability_site(monitor)

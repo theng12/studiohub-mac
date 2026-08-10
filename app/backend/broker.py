@@ -1090,6 +1090,13 @@ def terminal_result(b: dict, item: dict) -> dict | None:
         "long_form_strategy": item.get("long_form_strategy"),
         "chunk_total": item.get("chunk_total"),
         "resource_usage": item.get("resource_usage"),
+        "width": item.get("width"),
+        "height": item.get("height"),
+        "steps": item.get("steps"),
+        "resolved_seed": item.get("resolved_seed"),
+        "runtime_revision": item.get("runtime_revision"),
+        "worker_id": item.get("worker_id"),
+        "machine_id": item.get("machine"),
     }
 
 
@@ -1155,6 +1162,26 @@ async def _record_worker_success(client: httpx.AsyncClient, b: dict, item: dict,
     item["encoder"] = job.get("encoder")
     item["model_revision"] = job.get("model_revision")
     item["voice_revision"] = job.get("voice_revision")
+    item["machine"] = str(studio.get("machine") or "local")[:500]
+    worker_id = job.get("worker_id")
+    item["worker_id"] = (
+        str(worker_id).strip()[:500] if worker_id is not None
+        else str(studio.get("id") or "unknown")[:500]
+    )
+    runtime_revision = job.get("runtime_revision")
+    if isinstance(runtime_revision, str) and runtime_revision.strip():
+        item["runtime_revision"] = runtime_revision.strip()[:500]
+    if b["modality"] == "image":
+        for field in ("width", "height", "steps"):
+            value = job.get(field)
+            if type(value) is int and value >= 0:
+                item[field] = value
+        resolved_seed = job.get("resolved_seed")
+        if type(resolved_seed) is int:
+            item["resolved_seed"] = resolved_seed
+            # Completed public items historically expose ``seed``. Make that
+            # existing field reproducible when the worker resolved a random seed.
+            item["seed"] = resolved_seed
     if b["modality"] == "voice":
         item["voice_library_id"] = body.get("voice_library_id")
         item["preset_speaker"] = body.get("preset_speaker")

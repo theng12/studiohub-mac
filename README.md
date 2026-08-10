@@ -383,6 +383,21 @@ or internal route during migration:
 3. Or poll `GET /api/hub/jobs/{batch_id}` — this survives Hub restarts
    (batches are persisted in `hub.db`; in-flight items are safely re-queued).
 
+### Terminal Image result (reproducible evidence)
+
+Completed Image items include a path-free `terminal_result` with the stable Hub
+artifact URL plus `width`, `height`, `steps`, `resolved_seed`,
+`runtime_revision`, `worker_id`, and `machine_id`. `machine_id` is Studio Hub's
+registered physical-machine identity, so it joins directly to the schema-v2
+capability snapshot and never depends on parsing the worker name. For completed
+items the legacy top-level `seed` also contains the resolved seed, preserving
+existing GenStudio consumers while making a worker-selected random seed
+reproducible.
+
+The Hub copies only these allowlisted facts from the authenticated worker. It
+does not expose a worker path, prompt, credential, or GenStudio customer job or
+attempt identity.
+
 ### Terminal voice result (billable audio)
 
 Completed job items include a path-free `terminal_result` envelope. For a
