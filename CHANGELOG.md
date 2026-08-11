@@ -10,6 +10,22 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.6.1] — 2026-08-11
+
+### Fixed — one protected macOS process cannot stale fleet monitoring
+
+- Caddy resource inspection no longer asks `psutil` to prefetch every process's
+  command line. macOS can deny that metadata for an unrelated protected
+  process, which previously aborted the whole Hub monitor poll cycle.
+- Each candidate is now inspected inside the existing fault boundary, including
+  the macOS `SystemError` raised by `KERN_PROCARGS2`, so Hub skips only that
+  process and continues refreshing Studio and fleet health.
+
+### Safety
+
+- This changes monitoring only. It does not restart workers, change dispatch,
+  memory policy, models, job admission, or the degraded-success release rule.
+
 ## [2.6.0] — 2026-08-11
 
 ### Added — failed Image jobs keep actionable fleet evidence

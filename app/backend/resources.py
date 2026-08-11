@@ -156,10 +156,13 @@ def proxy_stats() -> dict:
     generation workers of memory.
     """
     rows = []
-    for candidate in psutil.process_iter(["pid", "name", "cmdline"]):
+    # Asking process_iter() to prefetch cmdline for every process makes the
+    # iterator itself fail on macOS when one unrelated process denies
+    # KERN_PROCARGS2. Inspect each candidate inside the guarded block instead.
+    for candidate in psutil.process_iter():
         try:
-            name = (candidate.info.get("name") or "").lower()
-            cmd = candidate.info.get("cmdline") or []
+            name = (candidate.name() or "").lower()
+            cmd = candidate.cmdline() or []
             executable = (cmd[0].rsplit("/", 1)[-1].lower() if cmd else "")
             if name != "caddy" and executable != "caddy":
                 continue
@@ -170,7 +173,7 @@ def proxy_stats() -> dict:
                 "cpu": process.cpu_percent(interval=None),
                 "fds": process.num_fds() if hasattr(process, "num_fds") else None,
             })
-        except (psutil.Error, OSError):
+        except (psutil.Error, OSError, SystemError):
             continue
     rss = sum(row["rss"] for row in rows)
     fds = sum(row["fds"] or 0 for row in rows)

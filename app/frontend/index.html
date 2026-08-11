@@ -1158,6 +1158,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.6.1", date: "2026-08-11", items: [
+    "A protected macOS process can no longer interrupt an entire fleet-health poll; Hub skips only the unreadable process and keeps Studio status current.",
+    "This is a monitoring-only hardening release and does not change jobs, dispatch, memory policy, or model files.",
+  ]},
   { v: "2.6.0", date: "2026-08-11", items: [
     "Failed Image jobs now retain their machine, worker, model/runtime revisions, execution time, stable error code, and safe resource evidence for fleet troubleshooting.",
     "Jobs has one case-insensitive search across durable Image, Voice, and Render history by Hub batch ID, operator label, or model, and the search survives live refreshes.",
