@@ -22,6 +22,7 @@ import base64
 import hashlib
 import json
 import logging
+import math
 import re
 import threading
 import time
@@ -1033,17 +1034,26 @@ async def _post_item_webhook(client: httpx.AsyncClient, b: dict, item: dict):
         return
     item["_item_notified"] = True
     sid = item.get("studio") or ""
+    safe_item = public_item(b, item)
     try:
         await client.post(url, json={
             "batch_id": b["id"], "label": b.get("label"),
             "index": item["index"], "state": item["state"],
-            "studio": sid, "machine": sid.split("@", 1)[1] if "@" in sid else "local",
+            "studio": sid,
+            "machine": safe_item.get("machine") or (
+                sid.split("@", 1)[1] if "@" in sid else "local"
+            ),
+            "worker_id": safe_item.get("worker_id"),
+            "model_revision": safe_item.get("model_revision"),
+            "runtime_revision": safe_item.get("runtime_revision"),
             "artifact_url": hub_artifact_url(b, item),
             "asset_id": item.get("asset_id"),
             "runtime_s": item.get("runtime_s", item.get("duration_s")),
             "duration_s": item.get("runtime_s", item.get("duration_s")),  # legacy alias
             "terminal_result": terminal_result(b, item),
-            "error": item.get("error"),
+            "error_code": safe_item.get("error_code"),
+            "error": safe_item.get("error"),
+            "resource_usage": safe_item.get("resource_usage"),
             # running batch tally so the client can show n/N without a poll
             "done": sum(1 for i in b["items"] if i["state"] == "done"),
             "total": len(b["items"]),
@@ -1061,8 +1071,20 @@ def hub_artifact_url(b: dict, item: dict) -> str | None:
 
 def terminal_result(b: dict, item: dict) -> dict | None:
     """Safe result envelope for customer-facing consumers such as GenStudio."""
-    if item.get("state") != "done":
+    state = item.get("state")
+    if state != "done":
         return None
+    evidence = {
+        "runtime_s": item.get("runtime_s", item.get("duration_s")),
+        # Kept only for callers that predate runtime_s. It is runtime, never
+        # decoded media duration.
+        "duration_s": item.get("runtime_s", item.get("duration_s")),
+        "model_revision": item.get("model_revision"),
+        "runtime_revision": item.get("runtime_revision"),
+        "worker_id": item.get("worker_id"),
+        "machine_id": item.get("machine"),
+        "resource_usage": item.get("resource_usage"),
+    }
     return {
         "status": "succeeded",
         "asset_id": item.get("asset_id"),
@@ -1075,11 +1097,6 @@ def terminal_result(b: dict, item: dict) -> dict | None:
         "audio_duration_ms": item.get("audio_duration_ms"),
         "sample_rate_hz": item.get("sample_rate_hz"),
         "channels": item.get("channels"),
-        "runtime_s": item.get("runtime_s", item.get("duration_s")),
-        # Kept only for callers that predate runtime_s. It is runtime, never
-        # decoded media duration.
-        "duration_s": item.get("runtime_s", item.get("duration_s")),
-        "model_revision": item.get("model_revision"),
         "voice_revision": item.get("voice_revision"),
         "voice_library_id": item.get("voice_library_id"),
         "preset_speaker": item.get("preset_speaker"),
@@ -1089,14 +1106,11 @@ def terminal_result(b: dict, item: dict) -> dict | None:
         "reference_duration_s": item.get("reference_duration_s"),
         "long_form_strategy": item.get("long_form_strategy"),
         "chunk_total": item.get("chunk_total"),
-        "resource_usage": item.get("resource_usage"),
         "width": item.get("width"),
         "height": item.get("height"),
         "steps": item.get("steps"),
         "resolved_seed": item.get("resolved_seed"),
-        "runtime_revision": item.get("runtime_revision"),
-        "worker_id": item.get("worker_id"),
-        "machine_id": item.get("machine"),
+        **evidence,
     }
 
 
@@ -1107,7 +1121,50 @@ def public_item(b: dict, item: dict) -> dict:
     if item.get("state") == "done":
         result["artifact_url"] = hub_artifact_url(b, item)
         result["terminal_result"] = terminal_result(b, item)
+    elif item.get("state") in {"error", "cancelled"}:
+        if result.get("error_code") is not None:
+            result["error_code"] = _sanitize_public_error_code(result["error_code"])
+        if result.get("error") is not None:
+            result["error"] = _sanitize_public_error(result["error"])
     return result
+
+
+_PUBLIC_AUTHORIZATION_RE = re.compile(
+    r'''(?i)["']?\bauthorization\b["']?\s*[:=]\s*["']?'''
+    r'''(?:bearer\s+)?[^"'\s,;}]+["']?'''
+)
+_PUBLIC_ERROR_CODE_RE = re.compile(r"[A-Za-z0-9._:-]{1,128}")
+_PUBLIC_BEARER_RE = re.compile(r"(?i)\bbearer\s+[^\s,;]+")
+_PUBLIC_CREDENTIAL_RE = re.compile(
+    r'''(?i)["']?\b(x-hub-token|api[_-]?key|token|secret|password)\b'''
+    r'''["']?\s*[:=]\s*["']?[^"'\s,;}]+["']?'''
+)
+_PUBLIC_FILE_URI_RE = re.compile(
+    r'''(?i)file:///(?:Users|Volumes|Library|Applications|System|Network|private|tmp|var|opt|home|usr|etc|dev|bin|sbin|cores)/[^\s,;}\]"']+'''
+)
+_PUBLIC_LOCAL_PATH_RE = re.compile(
+    r'''(?<![A-Za-z0-9:])/(?:Users|Volumes|Library|Applications|System|Network|private|tmp|var|opt|home|usr|etc|dev|bin|sbin|cores)/[^\s,;}\]"']+'''
+)
+_PUBLIC_HOME_PATH_RE = re.compile(r'''(?<![A-Za-z0-9])~/[^\s,;}\]"']+''')
+
+
+def _sanitize_public_error(value: object) -> str:
+    """Bound worker detail and remove common credentials and local Mac paths."""
+    text = str(value)
+    text = _PUBLIC_AUTHORIZATION_RE.sub("Authorization=[redacted]", text)
+    text = _PUBLIC_BEARER_RE.sub("Bearer [redacted]", text)
+    text = _PUBLIC_CREDENTIAL_RE.sub(
+        lambda match: f"{match.group(1)}=[redacted]", text,
+    )
+    text = _PUBLIC_FILE_URI_RE.sub("[local path]", text)
+    text = _PUBLIC_LOCAL_PATH_RE.sub("[local path]", text)
+    text = _PUBLIC_HOME_PATH_RE.sub("[local path]", text)
+    return text[:1000]
+
+
+def _sanitize_public_error_code(value: object) -> str:
+    code = str(value).strip()[:128]
+    return code if _PUBLIC_ERROR_CODE_RE.fullmatch(code) else "WORKER_TERMINAL_ERROR"
 
 
 async def _cache_voice_artifact_metadata(client: httpx.AsyncClient, item: dict,
@@ -1160,17 +1217,8 @@ async def _record_worker_success(client: httpx.AsyncClient, b: dict, item: dict,
     # normalized by public_item(), which returns the stable Hub proxy URL.
     item["artifact_url"] = worker_url
     item["encoder"] = job.get("encoder")
-    item["model_revision"] = job.get("model_revision")
+    _record_worker_identity(item, studio, job)
     item["voice_revision"] = job.get("voice_revision")
-    item["machine"] = str(studio.get("machine") or "local")[:500]
-    worker_id = job.get("worker_id")
-    item["worker_id"] = (
-        str(worker_id).strip()[:500] if worker_id is not None
-        else str(studio.get("id") or "unknown")[:500]
-    )
-    runtime_revision = job.get("runtime_revision")
-    if isinstance(runtime_revision, str) and runtime_revision.strip():
-        item["runtime_revision"] = runtime_revision.strip()[:500]
     if b["modality"] == "image":
         for field in ("width", "height", "steps"):
             value = job.get(field)
@@ -1496,6 +1544,7 @@ async def _dispatch_loop():
                         continue
                     b["governor_note"] = None
                     item = queued.pop(compatible_index)
+                    _clear_worker_attempt_evidence(item)
                     item["state"] = "running"
                     item["retry_at"] = None
                     item["studio"] = studio["id"]
@@ -1578,6 +1627,66 @@ _RESOURCE_USAGE_SCHEMAS = {
     "imagestudio.resource-telemetry",
     "voicestudio.resource-telemetry",
 }
+_RESOURCE_TEXT_FIELDS = {
+    "host": {"pressure_level_start", "peak_pressure_level", "pressure_level_end"},
+    "outcome": {"state"},
+}
+_RESOURCE_BOOL_FIELDS = {
+    "mlx": {"supported"},
+    "outcome": {"memory_failure", "restart_scheduled", "model_retained"},
+}
+_RESOURCE_INTEGER_FIELDS = {
+    "sampling": {"samples"},
+    "worker": {"peak_process_count"},
+    "host": {"peak_pressure_raw", "swap_in_delta_bytes", "swap_out_delta_bytes"},
+}
+_PRESSURE_LEVELS = frozenset({
+    "normal", "warning", "urgent", "critical", "unknown", "unavailable",
+})
+_OUTCOME_STATES = frozenset({"done", "error", "cancelled"})
+_ATTEMPT_EVIDENCE_FIELDS = (
+    "machine", "worker_id", "model_revision", "runtime_revision",
+    "resource_usage", "error_code", "runtime_s", "duration_s", "finished_at",
+)
+
+
+def _clear_worker_attempt_evidence(item: dict) -> None:
+    """A retry must report only the worker that owns the new attempt."""
+    for field in _ATTEMPT_EVIDENCE_FIELDS:
+        item.pop(field, None)
+    item["error"] = None
+
+
+def _record_worker_identity(item: dict, studio: dict, job: dict) -> None:
+    """Keep bounded worker identity for both successful and failed attempts."""
+    item["machine"] = str(studio.get("machine") or "local")[:500]
+    worker_id = job.get("worker_id")
+    item["worker_id"] = (
+        str(worker_id).strip()[:500] if worker_id is not None
+        else str(studio.get("id") or "unknown")[:500]
+    )
+    for field in ("model_revision", "runtime_revision"):
+        value = job.get(field)
+        if isinstance(value, str) and value.strip():
+            item[field] = value.strip()[:500]
+
+
+def _record_worker_failure(item: dict, studio: dict, job: dict, t_start: float) -> None:
+    """Retain the authenticated worker evidence needed to diagnose a failure."""
+    _record_worker_identity(item, studio, job)
+    _record_worker_resource_usage(item, job)
+    code = job.get("error_code")
+    if code is not None:
+        item["error_code"] = _sanitize_public_error_code(code)
+    runtime = job.get("runtime_s", job.get("generation_seconds", job.get("duration_seconds")))
+    try:
+        runtime = float(runtime) if runtime is not None else round(time.time() - t_start, 2)
+    except (TypeError, ValueError):
+        runtime = round(time.time() - t_start, 2)
+    if not math.isfinite(runtime) or runtime < 0:
+        runtime = max(0.0, round(time.time() - t_start, 2))
+    item["runtime_s"] = runtime
+    item["duration_s"] = runtime
 
 
 def _record_worker_resource_usage(item: dict, job: dict) -> None:
@@ -1595,7 +1704,7 @@ def _record_worker_resource_usage(item: dict, job: dict) -> None:
     schema = raw.get("schema")
     if schema not in _RESOURCE_USAGE_SCHEMAS:
         return
-    if raw.get("schema_version") != 1:
+    if type(raw.get("schema_version")) is not int or raw.get("schema_version") != 1:
         return
     clean = {
         "schema": schema,
@@ -1605,12 +1714,31 @@ def _record_worker_resource_usage(item: dict, job: dict) -> None:
         values = raw.get(section)
         if not isinstance(values, dict):
             continue
-        clean[section] = {
-            key: value for key, value in values.items()
-            if key in fields and (
-                value is None or isinstance(value, (str, int, float, bool))
-            )
-        }
+        sanitized = {}
+        for key, value in values.items():
+            if key not in fields:
+                continue
+            if value is None:
+                sanitized[key] = None
+            elif key in _RESOURCE_BOOL_FIELDS.get(section, set()):
+                if isinstance(value, bool):
+                    sanitized[key] = value
+            elif key in _RESOURCE_INTEGER_FIELDS.get(section, set()):
+                if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                    sanitized[key] = value
+            elif key in _RESOURCE_TEXT_FIELDS.get(section, set()):
+                if isinstance(value, str) and (
+                    (section == "host" and value in _PRESSURE_LEVELS)
+                    or (section == "outcome" and value in _OUTCOME_STATES)
+                ):
+                    sanitized[key] = value
+            elif isinstance(value, (int, float)) and not isinstance(value, bool):
+                numeric = float(value)
+                if math.isfinite(numeric) and (
+                    numeric >= 0 or key == "swap_used_delta_gb"
+                ):
+                    sanitized[key] = value
+        clean[section] = sanitized
     item["resource_usage"] = clean
 
 
@@ -1739,6 +1867,7 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
         if r.status_code >= 400:
             raise _worker_http_error(r)
         job = r.json()["job"]
+        _record_worker_identity(item, studio, job)
         _record_worker_resource_usage(item, job)
         item["studio_job_id"] = job["id"]
         if _expire_genstudio_batch(b) or b["cancelled"]:
@@ -1768,6 +1897,7 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             if jr.status_code >= 400:
                 raise _worker_http_error(jr)
             j = jr.json()["job"]
+            _record_worker_identity(item, studio, j)
             _record_worker_resource_usage(item, j)
             state = j.get("state")
             if state in ("queued", "running"):
@@ -1776,6 +1906,7 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
                 item["chunk_total"] = j.get("chunk_total")
                 continue
             if j.get("error") or state in ("error", "cancelled"):
+                _record_worker_failure(item, studio, j, t_start)
                 raise _worker_terminal_error(
                     j.get("error") or f"studio job {state}"
                 )
@@ -1847,6 +1978,13 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             item["retry_at"] = None
     finally:
         if item["state"] in ("done", "error", "cancelled"):
+            item.setdefault("machine", str(studio.get("machine") or "local")[:500])
+            item.setdefault("worker_id", str(studio.get("id") or "unknown")[:500])
+            if item["state"] == "error":
+                item.setdefault("error_code", "WORKER_TERMINAL_ERROR")
+            runtime = round(time.time() - t_start, 2)
+            item.setdefault("runtime_s", runtime)
+            item.setdefault("duration_s", item["runtime_s"])
             item.setdefault("finished_at", time.time())
             item["last_progress_at"] = item["finished_at"]
         _busy.discard(studio["id"])

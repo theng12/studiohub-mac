@@ -611,6 +611,12 @@
       <button data-job-kind="transcription" onclick="selectJobKind('transcription')">Transcription <span class="numbadge" id="job-count-transcription">0</span></button>
       <button data-job-kind="chat" onclick="selectJobKind('chat')">Chat <span class="numbadge" id="job-count-chat">0</span></button>
     </div>
+    <div class="controls">
+      <label class="grp" for="generation-batch-search">Find generation batch
+        <input id="generation-batch-search" aria-label="Find generation batch by ID, label, or model" placeholder="Hub batch ID, label, or model" oninput="setGenerationBatchSearch(this.value)">
+      </label>
+      <span class="sub">Filters Image, Voice, and Render history without hiding durable records.</span>
+    </div>
 
     <div class="job-panel" data-job-panel="image">
     <div class="group-head"><h2>Image batches</h2><span class="meta" id="image-stats">Swarm queue</span></div>
@@ -1152,6 +1158,12 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.6.0", date: "2026-08-11", items: [
+    "Failed Image jobs now retain their machine, worker, model/runtime revisions, execution time, stable error code, and safe resource evidence for fleet troubleshooting.",
+    "Jobs has one case-insensitive search across durable Image, Voice, and Render history by Hub batch ID, operator label, or model, and the search survives live refreshes.",
+    "Live status can no longer replace SQLite-backed generation history with only in-memory rows; finished batches remain stable without flickering after restart.",
+    "Image and Voice Studio do not need an update for this Hub-only release, and successful result envelopes remain compatible.",
+  ]},
   { v: "2.5.1", date: "2026-08-10", items: [
     "Completed Image jobs now return the actual resolved seed, dimensions, steps, runtime revision, worker identity, and stable machine identity so GenStudio can preserve reproducible execution evidence.",
     "Image models with an explicit runtime-revision mismatch or an unready worker are now excluded from new routing and explain why in the private capability snapshot.",
@@ -3155,7 +3167,7 @@ function fmtBytes(bytes) {
   return (n / 1024 ** 3).toFixed(2) + " GB";
 }
 function resourceUsageHTML(resource) {
-  if (!resource || resource.schema !== "voicestudio.resource-telemetry") return "—";
+  if (!resource || !["imagestudio.resource-telemetry", "voicestudio.resource-telemetry"].includes(resource.schema)) return "—";
   const host = resource.host || {}, worker = resource.worker || {}, mlx = resource.mlx || {};
   const values = [];
   if (worker.peak_rss_gb != null) values.push(`worker peak ${Number(worker.peak_rss_gb).toFixed(2)} GB`);
@@ -3165,8 +3177,8 @@ function resourceUsageHTML(resource) {
   if (mlx.reported_peak_gb != null) values.push(`MLX peak ${Number(mlx.reported_peak_gb).toFixed(2)} GB`);
   return values.length ? values.join("<br>") : "Sampling…";
 }
-// render the Jobs tab from a list of batch summaries (used by both the fetch
-// path and the live SSE summary, so the tab updates without switching away)
+// Render generation history only from the durable jobs endpoint. The live SSE
+// summary intentionally contains process-memory work, not completed history.
 // ── jobs list: sort + pagination + collapse-preservation (shared) ──────────
 // Keep <details> open across the live SSE re-render — keyed by a stable id, so
 // an expanded batch stays expanded until the user collapses it.
@@ -3180,6 +3192,7 @@ const jobsView = {
   tx: { sort: "recent", page: 0, per: 10 }, chat: { sort: "recent", page: 0, per: 10 },
 };
 let _txData = null, _genData = null, _chatData = null;
+let generationBatchQuery = "";
 let activeJobKind = localStorage.getItem("hub_job_kind") || "image";
 if (!["image", "voice", "render", "transcription", "chat"].includes(activeJobKind)) activeJobKind = "image";
 const generationItemCache = new Map();
@@ -3228,6 +3241,21 @@ function updateJobCounts() {
   $("#job-count-chat").textContent = (_chatData?.batches || []).length;
 }
 
+function filterGenerationBatches(batches, modality, query) {
+  const needle = String(query || "").trim().toLowerCase();
+  return (batches || []).filter(batch => batch.modality === modality && (
+    !needle || [batch.id, batch.label, batch.model].some(value =>
+      String(value || "").toLowerCase().includes(needle))
+  ));
+}
+function setGenerationBatchSearch(value) {
+  generationBatchQuery = String(value || "");
+  ["image", "voice", "render"].forEach(modality => { jobsView[modality].page = 0; });
+  renderGenerationBatches("image");
+  renderGenerationBatches("voice");
+  renderGenerationBatches("render");
+}
+
 function renderBatches(batches) {
   _genData = { batches: batches || [] };
   renderGenerationBatches("image");
@@ -3237,9 +3265,13 @@ function renderBatches(batches) {
 }
 function renderGenerationBatches(modality) {
   const el = $("#j-" + modality); if (!el) return;
-  const all = (_genData?.batches || []).filter(batch => batch.modality === modality);
+  const totalForModality = (_genData?.batches || []).filter(batch => batch.modality === modality).length;
+  const all = filterGenerationBatches(_genData?.batches, modality, generationBatchQuery);
   const queueLabel = modality === "render" ? "Remote Render Studio queue" : "Swarm queue";
-  $("#" + modality + "-stats").textContent = `${all.length} batch${all.length === 1 ? "" : "es"} · ${queueLabel}`;
+  const countLabel = generationBatchQuery.trim()
+    ? `${all.length} of ${totalForModality} batches`
+    : `${all.length} batch${all.length === 1 ? "" : "es"}`;
+  $("#" + modality + "-stats").textContent = `${countLabel} · ${queueLabel}`;
   const sorted = sortBatches(all, jobsView[modality].sort);
   const { rows: list, pages, total } = pageSlice(modality, sorted);
   el.innerHTML = (total ? pagerHTML(modality, total, pages) : "") + list.map(b => {
@@ -5476,7 +5508,6 @@ function applySummary(sum) {
   // every tab that can be driven straight from the summary updates live — no
   // need to switch away and back for fresh data.
   if (vis("resources")) renderResources(sum);
-  if (vis("jobs")) renderBatches(sum.jobs);
   if (vis("remote")) {
     renderMachines(); renderFleetStatus();
   }

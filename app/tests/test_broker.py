@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import math
 import time
 
 import httpx
@@ -306,6 +307,33 @@ class _MemoryGuardClient:
         return _PeerRouteResponse({"busy": False, "loaded_model": None})
 
 
+class _TerminalFailureClient:
+    async def post(self, *_args, **_kwargs):
+        return _PeerRouteResponse({"job": {
+            "id": "worker-failed", "state": "queued",
+            "runtime_revision": "imagestudio-mac@1.29.4",
+            "worker_id": "image-worker-12",
+        }})
+
+    async def get(self, *_args, **_kwargs):
+        return _PeerRouteResponse({"job": {
+            "id": "worker-failed", "state": "error",
+            "error_code": "MODEL_LOAD_FAILED",
+            "error": "ModelLoadError: cached revision is incomplete",
+            "duration_seconds": 2.75,
+            "runtime_revision": "imagestudio-mac@1.29.4",
+            "worker_id": "image-worker-12",
+            "resource_telemetry": {
+                "schema": "imagestudio.resource-telemetry",
+                "schema_version": 1,
+                "outcome": {
+                    "state": "error", "memory_failure": False,
+                    "restart_scheduled": False, "model_retained": False,
+                },
+            },
+        }})
+
+
 class _MemoryReleaseClient:
     def __init__(self):
         self.calls = []
@@ -413,6 +441,110 @@ async def test_image_terminal_result_relays_reproducible_worker_evidence(reset):
     assert broker.public_item(batch, item)["seed"] == 429496729
 
 
+def test_success_terminal_result_does_not_invent_worker_revision_from_request(reset):
+    batch = {
+        "id": "done-batch", "modality": "image", "model": "org/model",
+        "shared_params": {"model_revision": "requested-revision"},
+    }
+    item = {"index": 0, "state": "done"}
+
+    assert broker.terminal_result(batch, item)["model_revision"] is None
+
+
+@pytest.mark.asyncio
+async def test_image_failure_retains_bounded_worker_execution_evidence(reset, monkeypatch):
+    submitted = broker.submit_batch({
+        "modality": "image", "model": "org/image-model",
+        "items": [{"prompt": "a quiet Cambodian garden"}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="running", tries=3, studio="image@mac-b")
+    studio = {
+        "id": "image@mac-b", "modality": "image", "machine": "mac-b",
+        "host": "127.0.0.1", "port": 47868,
+    }
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(broker.asyncio, "sleep", no_sleep)
+    await broker._run_item(_TerminalFailureClient(), batch, item, studio)
+
+    public = broker.public_item(batch, item)
+    assert public["state"] == "error"
+    assert "terminal_result" not in public
+    assert public["error_code"] == "MODEL_LOAD_FAILED"
+    assert public["error"] == "ModelLoadError: cached revision is incomplete"
+    assert public["machine"] == "mac-b"
+    assert public["worker_id"] == "image-worker-12"
+    assert public["runtime_revision"] == "imagestudio-mac@1.29.4"
+    assert public["runtime_s"] == 2.75
+    assert public["resource_usage"]["outcome"]["state"] == "error"
+
+
+def test_public_failure_code_and_detail_are_bounded(reset):
+    batch = {
+        "id": "failed-batch", "modality": "image", "model": "org/model",
+        "shared_params": {},
+    }
+    item = {
+        "index": 0, "state": "error", "error_code": "C" * 200,
+        "error": "D" * 1500,
+    }
+
+    failure = broker.public_item(batch, item)
+
+    assert len(failure["error_code"]) == 128
+    assert len(failure["error"]) == 1000
+
+    item["error_code"] = "token=worker-secret"
+    assert broker.public_item(batch, item)["error_code"] == "WORKER_TERMINAL_ERROR"
+    item["error_code"] = "/Users/alice/private"
+    assert broker.public_item(batch, item)["error_code"] == "WORKER_TERMINAL_ERROR"
+
+
+def test_public_failure_detail_redacts_local_paths_and_credentials(reset):
+    batch = {
+        "id": "failed-batch", "modality": "image", "model": "org/model",
+        "shared_params": {},
+    }
+    item = {
+        "index": 0, "state": "error",
+        "error": (
+            "load failed at /Users/alice/.cache/models/private/model.safetensors; "
+            "Authorization: Bearer auth-secret token=token-secret "
+            "api_key: api-secret; /Library/Application Support/private; "
+            '{"api_key":"json-secret"}; ' "{'token': 'repr-secret'}"
+        ),
+    }
+
+    detail = broker.public_item(batch, item)["error"]
+
+    assert "/Users/alice" not in detail
+    assert "auth-secret" not in detail
+    assert "token-secret" not in detail
+    assert "api-secret" not in detail
+    assert "json-secret" not in detail
+    assert "repr-secret" not in detail
+    assert "/Library/" not in detail
+    assert detail.count("[redacted]") >= 5
+
+
+@pytest.mark.parametrize("reported", [float("nan"), float("inf"), -1])
+def test_failed_worker_runtime_rejects_nonfinite_or_negative_values(reset, reported):
+    item = {}
+    broker._record_worker_failure(
+        item,
+        {"id": "image@mac-b", "machine": "mac-b"},
+        {"duration_seconds": reported},
+        time.time() - 1,
+    )
+
+    assert math.isfinite(item["runtime_s"])
+    assert item["runtime_s"] >= 0
+
+
 @pytest.mark.asyncio
 async def test_generation_uses_connected_peer_hub_route(reset, monkeypatch):
     """The broker must not bypass peers.studio_request for remote workers.
@@ -473,6 +605,7 @@ async def test_authentication_failure_is_terminal_without_retry(reset):
     await broker._run_item(_RejectedClient(401), batch, item, studio)
 
     assert item["state"] == "error"
+    assert item["error_code"] == "WORKER_TERMINAL_ERROR"
     assert item["tries"] == 1 and item["retry_at"] is None
 
 
@@ -555,6 +688,35 @@ async def test_item_webhook_fires_once_on_terminal(reset):
     assert url == "http://cb"
     assert payload["index"] == 0 and payload["machine"] == "mac-b"
     assert payload["state"] == "done" and payload["total"] == 1 and payload["done"] == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_item_webhook_uses_sanitized_public_error(reset):
+    submitted = broker.submit_batch({
+        "modality": "image", "model": "a/b", "itemWebhook": "http://cb",
+        "items": [{"prompt": "x"}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(
+        state="error", studio="image@mac-b",
+        error="failed at /Users/alice/.cache/model; token=worker-secret",
+        error_code="MODEL_LOAD_FAILED", machine="mac-b", worker_id="image-worker-b",
+        model_revision="model-rev", runtime_revision="image@1.29.4", runtime_s=2.5,
+        resource_usage={
+            "schema": "imagestudio.resource-telemetry", "schema_version": 1,
+        },
+    )
+    client = _CapClient()
+
+    await broker._post_item_webhook(client, batch, item)
+
+    detail = client.posts[0][1]["error"]
+    assert "/Users/alice" not in detail
+    assert "worker-secret" not in detail
+    assert client.posts[0][1]["error_code"] == "MODEL_LOAD_FAILED"
+    assert client.posts[0][1]["worker_id"] == "image-worker-b"
+    assert client.posts[0][1]["runtime_revision"] == "image@1.29.4"
 
 
 @pytest.mark.asyncio
@@ -1076,6 +1238,61 @@ async def test_remote_dispatch_does_not_reserve_local_memory(reset, monkeypatch)
         dispatcher.cancel()
         with pytest.raises(asyncio.CancelledError):
             await dispatcher
+
+
+@pytest.mark.asyncio
+async def test_dispatch_to_second_worker_clears_previous_attempt_evidence(reset, monkeypatch):
+    monitor = broker._monitor()
+    local = next(studio for studio in monitor.registry if studio["id"] == "image")
+    second = {**local, "id": "image@mac-b", "machine": "mac-b", "host": "10.0.0.2"}
+    monitor.registry.append(second)
+    monitor.status[local["id"]] = {"status": "down"}
+    monitor.status[second["id"]] = {"status": "up"}
+    entry = {
+        "repo": "a/b", "cache": {"state": "cached"},
+        "min_unified_memory_gb": 8, "min_free_memory_gb": 3.0,
+    }
+    monitor._catalog_cache[second["id"]] = (time.time(), {"models": [entry]})
+    monkeypatch.setattr(
+        broker.peers, "cached",
+        lambda machine: {"host": {"total_gb": 8, "available_gb": 4.0}},
+    )
+    dispatched = asyncio.Event()
+    observed = {}
+
+    async def capture_attempt(_client, _batch, item, studio):
+        observed.update(item)
+        observed["assigned_studio"] = studio["id"]
+        broker._busy.discard(studio["id"])
+        item["state"] = "done"
+        dispatched.set()
+
+    monkeypatch.setattr(broker, "_run_item", capture_attempt)
+    submitted = broker.submit_batch({
+        "modality": "image", "model": "a/b", "items": [{"prompt": "retry"}],
+    })
+    item = broker.batches[submitted["batch_id"]]["items"][0]
+    item.update({
+        "machine": "mac-a", "worker_id": "image@mac-a",
+        "model_revision": "old-model", "runtime_revision": "old-runtime",
+        "error_code": "OLD_FAILURE", "runtime_s": 8.5, "duration_s": 8.5,
+        "resource_usage": {"schema": "imagestudio.resource-telemetry"},
+    })
+
+    dispatcher = asyncio.create_task(broker._dispatch_loop())
+    try:
+        await asyncio.wait_for(dispatched.wait(), timeout=1.0)
+    finally:
+        dispatcher.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await dispatcher
+
+    assert observed["assigned_studio"] == "image@mac-b"
+    for field in (
+        "machine", "worker_id", "model_revision", "runtime_revision",
+        "error_code", "runtime_s", "duration_s", "resource_usage",
+    ):
+        assert field not in observed
 
 
 def test_restore_batches_requeues_running(reset):

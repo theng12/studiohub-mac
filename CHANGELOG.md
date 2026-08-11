@@ -10,6 +10,41 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.6.0] — 2026-08-11
+
+### Added — failed Image jobs keep actionable fleet evidence
+
+- Failed worker items now retain the registered machine, worker identity, model
+  and runtime revisions, execution time, stable error code, and whitelisted
+  resource telemetry already reported by Image Studio. Polling and item-webhook
+  error evidence is bounded and redacts credentials and worker-local paths;
+  retries cannot inherit evidence from the previous Mac.
+- Jobs now has one shared search for durable Image, Voice, and Render history by
+  Hub batch ID, operator label, or model. Search is case-insensitive, survives
+  live refreshes, and resets pagination so a matching historical batch is not
+  hidden on another page.
+
+### Fixed — live status no longer replaces durable generation history
+
+- The two-second live summary stream no longer overwrites the SQLite-backed
+  Jobs list with only the broker's in-memory rows. The durable three-second Jobs
+  refresh remains authoritative, so finished history stays visible without
+  flickering after restart.
+- Image resource telemetry now uses the same safe Jobs evidence renderer as
+  Voice telemetry.
+
+### Compatibility
+
+- Successful `terminal_result` envelopes and existing Hub endpoints are
+  unchanged. Image Studio already publishes this failure evidence, so no Image
+  or Voice Studio update is required for this release.
+
+### Safety
+
+- This release does not change dispatch, memory policy, model files, job
+  admission, billing, or fleet degraded-success behavior. One unavailable node
+  still cannot block healthy fleet targets.
+
 ## [2.5.1] — 2026-08-10
 
 ### Fixed — complete Image execution evidence reaches GenStudio

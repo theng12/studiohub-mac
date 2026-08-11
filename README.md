@@ -550,8 +550,9 @@ await fetch(`${HUB}/api/hub/jobs`, {
   showing exactly which machines have each one downloaded. "Downloaded" means *cached on at
   least one machine* — a model can be on your media server but not this Mac.
 - **Resources** — this Mac's unified-memory bar + hour sparkline, per-studio process memory.
-- **Jobs / Assets** — Swarm Batch submit + progress, per-attempt local resource
-  evidence for Voice jobs, and a searchable asset ledger.
+- **Jobs / Assets** — Swarm Batch submit + progress, durable Image/Voice/Render
+  batch search by Hub ID, label, or model, per-attempt local failure/resource
+  evidence, and a searchable asset ledger.
 - **Remote** — reachable URLs + token, **Discover & Add** a machine, and a permanent
   **Registered machines** list. Registration starts with a reusable hardware
   profile and suggested stable ID; profiles remain editable later. Each Studio

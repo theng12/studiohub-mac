@@ -164,6 +164,27 @@ def test_image_resource_telemetry_is_retained_through_the_hub_contract() -> None
     }
 
 
+def test_worker_resource_evidence_rejects_nonfinite_and_unbounded_text() -> None:
+    item = {}
+    broker._record_worker_resource_usage(item, {
+        "resource_telemetry": {
+            "schema": "imagestudio.resource-telemetry", "schema_version": 1,
+            "host": {
+                "minimum_available_gb": float("nan"),
+                "maximum_used_gb": float("inf"),
+                "peak_pressure_level": "x" * 2000,
+                "available_gb_end": 1.25,
+            },
+            "outcome": {"state": "error", "memory_failure": False},
+        }
+    })
+
+    assert item["resource_usage"]["host"] == {"available_gb_end": 1.25}
+    assert item["resource_usage"]["outcome"] == {
+        "state": "error", "memory_failure": False,
+    }
+
+
 @pytest.mark.asyncio
 async def test_voice_result_is_not_terminal_until_artifact_metadata_is_complete(
     reset, monkeypatch

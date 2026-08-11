@@ -20,7 +20,9 @@ def test_dashboard_includes_render_studio():
     assert 'return compact ? "LLM" : "LLM working"' in dashboard
     assert 'Priority #${rank}' in dashboard
     assert 'loadActiveJobQueues();' in dashboard
-    assert 'if (vis("jobs")) renderBatches(sum.jobs);' in dashboard
+    apply_summary = dashboard[dashboard.index("function applySummary(sum)"):
+                              dashboard.index("async function pollOnce()")]
+    assert "renderBatches(sum.jobs)" not in apply_summary
     assert 'const JOB_QUEUE_REFRESH_MS = 3000;' in dashboard
     assert 'if (vis("jobs") && !document.hidden) loadActiveJobQueues();' in dashboard
     assert 'document.addEventListener("visibilitychange"' in dashboard
@@ -380,8 +382,13 @@ def test_finished_jobs_remain_in_list_after_broker_memory_is_cleared(authed):
     broker.batches.pop(batch["id"], None)
 
     listed = authed.get("/api/hub/jobs").json()["batches"]
+    summary = authed.get("/api/hub/summary").json()["jobs"]
+    exact = authed.get(f"/api/hub/jobs/{batch['id']}").json()
 
     assert [row["id"] for row in listed] == [batch["id"]]
+    assert summary == []
+    assert exact["id"] == batch["id"]
+    assert exact["items"][0]["state"] == "done"
 
 
 def test_genstudio_execution_lease_renews_through_authenticated_api(client, authed):

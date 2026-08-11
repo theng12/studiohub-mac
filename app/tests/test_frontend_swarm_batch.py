@@ -1,4 +1,6 @@
+import json
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -8,6 +10,31 @@ FRONTEND = ROOT / "app/frontend/index.html"
 
 def _source() -> str:
     return FRONTEND.read_text()
+
+
+def _run_generation_helpers(expression: str):
+    source = _source()
+    marker = "function filterGenerationBatches("
+    assert marker in source
+    start = source.index(marker)
+    end = source.index("function renderBatches(", start)
+    script = source[start:end] + f"\nconsole.log(JSON.stringify({expression}));"
+    result = subprocess.run(
+        ["node", "-e", script], check=True, capture_output=True, text=True,
+    )
+    return json.loads(result.stdout)
+
+
+def _run_resource_helper(expression: str):
+    source = _source()
+    start = source.index("function resourceUsageHTML(")
+    end = source.index("// Render generation history", start)
+    script = "const esc = value => String(value);\n" + source[start:end]
+    script += f"\nconsole.log(JSON.stringify({expression}));"
+    result = subprocess.run(
+        ["node", "-e", script], check=True, capture_output=True, text=True,
+    )
+    return json.loads(result.stdout)
 
 
 def test_swarm_batch_has_operator_label_and_accessible_clone_picker():
@@ -61,3 +88,37 @@ def test_dashboard_ids_are_unique_so_live_refreshes_do_not_replace_controls():
     ids = re.findall(r'\bid="([^"]+)"', _source())
 
     assert len(ids) == len(set(ids))
+
+
+def test_generation_batch_lookup_is_case_insensitive_and_modality_scoped():
+    result = _run_generation_helpers("""
+      filterGenerationBatches([
+        {id: '3765742cde', modality: 'voice', model: 'OmniVoice', label: '0100'},
+        {id: '26c99af3d6', modality: 'image', model: 'FLUX2 Klein', label: 'Tsh'},
+        {id: 'other', modality: 'image', model: 'FLUX2 Klein', label: 'Pps'}
+      ], 'image', '26C99')
+    """)
+
+    assert result == [
+        {"id": "26c99af3d6", "modality": "image",
+         "model": "FLUX2 Klein", "label": "Tsh"},
+    ]
+    source = _source()
+    assert 'id="generation-batch-search"' in source
+    assert 'aria-label="Find generation batch by ID, label, or model"' in source
+
+
+def test_image_resource_evidence_is_visible_in_generation_details():
+    rendered = _run_resource_helper("""
+      resourceUsageHTML({
+        schema: 'imagestudio.resource-telemetry',
+        worker: {peak_rss_gb: 5.25},
+        host: {minimum_available_gb: 1.5, peak_pressure_level: 'warn'},
+        mlx: {reported_peak_gb: 4.75}
+      })
+    """)
+
+    assert "worker peak 5.25 GB" in rendered
+    assert "lowest free 1.50 GB" in rendered
+    assert "pressure warn" in rendered
+    assert "MLX peak 4.75 GB" in rendered
