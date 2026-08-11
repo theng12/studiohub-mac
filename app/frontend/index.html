@@ -1014,7 +1014,7 @@
         <button class="btn primary" id="hubupd-run" onclick="updateReadyHubs()" disabled>Update ready Hubs</button>
       </div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        Updates the <b>Studio Hub itself</b> on every reachable agent Mac. Each peer Hub pulls the latest, restarts, and comes back on its own via its startup service. <b>Rescan versions</b> re-checks what each Hub is on; the last-known version is remembered even after a restart.
+        Updates the <b>Studio Hub itself</b> on every reachable agent Mac. The first agent is the canary; after it finishes healthy or failed, remaining agents update one at a time. A failed Mac stays visible without blocking later Macs. <b>Rescan versions</b> re-checks what each Hub is on; the last-known version is remembered even after a restart.
       </p>
       <div class="machine-sortbar" aria-label="Agent Hub machine sorting">
         <label>Sort machines
@@ -1158,6 +1158,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.6.2", date: "2026-08-11", items: [
+    "Agent Hubs now update one at a time: the first eligible agent is the canary and must reach a healthy or failed result before the next Mac begins.",
+    "A failed or offline agent remains visible without blocking later machines, and the existing GenStudio maintenance API and controller-last sequence are unchanged.",
+  ]},
   { v: "2.6.1", date: "2026-08-11", items: [
     "A protected macOS process can no longer interrupt an entire fleet-health poll; Hub skips only the unreadable process and keeps Studio status current.",
     "This is a monitoring-only hardening release and does not change jobs, dispatch, memory policy, or model files.",

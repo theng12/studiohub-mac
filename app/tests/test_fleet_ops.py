@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 import httpx
@@ -607,6 +608,48 @@ async def test_start_hub_updates_builds_job(monkeypatch, monitor):
     with pytest.raises(ValueError, match="unknown"):
         fleet_ops.start_hub_updates(monitor, "9.9.9", ["does-not-exist"])
     fleet_ops._hub_updates.clear()
+
+
+@pytest.mark.asyncio
+async def test_agent_hub_updates_run_canary_first_then_continue_after_failure(monkeypatch):
+    active = 0
+    max_active = 0
+    order = []
+
+    async def update_one(item, latest):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        order.append(item["machine"])
+        try:
+            await asyncio.sleep(0)
+            if item["machine"] == "mac-a":
+                raise RuntimeError("unexpected restart poll failure")
+            item.update(status="complete", detail=f"healthy on v{latest}")
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(fleet_ops, "_update_hub_one", update_one)
+    job = {
+        "id": "rolling-1",
+        "status": "queued",
+        "latest": "2.6.2",
+        "items": [
+            {"machine": "mac-a", "status": "queued"},
+            {"machine": "mac-b", "status": "queued"},
+            {"machine": "mac-c", "status": "queued"},
+        ],
+    }
+
+    await fleet_ops._run_hub_updates(job)
+
+    assert order == ["mac-a", "mac-b", "mac-c"]
+    assert max_active == 1
+    assert job["items"][0]["status"] == "failed"
+    assert "unexpected restart poll failure" in job["items"][0]["detail"]
+    assert [item["status"] for item in job["items"][1:]] == ["complete", "complete"]
+    assert job["status"] == "complete"
+    assert job["degraded"] is True
 
 
 @pytest.mark.asyncio

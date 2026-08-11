@@ -1084,8 +1084,17 @@ def start_hub_updates(monitor, latest: str | None, machines: list[str] | None = 
 async def _run_hub_updates(job: dict):
     job["status"] = "running"
     _save_state()
-    # peers are independent Macs → update them concurrently; each self-restarts
-    await asyncio.gather(*(_update_hub_one(item, job.get("latest")) for item in job["items"]))
+    # The first agent is the canary.  Wait for each Hub to reach a terminal
+    # state before touching the next Mac so a bad release cannot fan out
+    # concurrently across the site.  _update_hub_one records failures instead
+    # of raising, so a failed or offline agent reduces capacity without blocking
+    # later agents.
+    for item in job["items"]:
+        try:
+            await _update_hub_one(item, job.get("latest"))
+        except Exception as exc:
+            item.update(status="failed", detail=str(exc)[:240], finished_at=time.time())
+        _save_state()
     finish_fleet_job(job)
     _save_state()
 

@@ -10,6 +10,23 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.6.2] — 2026-08-11
+
+### Changed — agent Hubs now roll out behind a canary
+
+- A site controller now updates agent Hubs one at a time in stable job order.
+  The first eligible agent is the canary and must reach a terminal result before
+  the next Mac begins; a healthy result verifies the release before wider use.
+- A failed or unreachable agent remains a visible per-machine failure while
+  later agents continue, preserving the existing reduced-capacity release rule.
+
+### Compatibility
+
+- The agent-Hub maintenance API, durable job IDs, item states, authentication,
+  and GenStudio polling contract are unchanged. GenStudio still initiates the
+  global run, each Studio Hub controls only its site, and the controller remains
+  the final update phase.
+
 ## [2.6.1] — 2026-08-11
 
 ### Fixed — one protected macOS process cannot stale fleet monitoring
