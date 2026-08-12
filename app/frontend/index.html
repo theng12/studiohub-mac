@@ -1158,8 +1158,12 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.6.4", date: "2026-08-12", items: [
+    "Controllers now repair an existing local placeholder from the unambiguous TerraNash hostname in its stable enrollment ID, so terranash-0209 displays correctly without re-enrollment or an Agent Hub update.",
+    "The repair is limited to the fleet's terranash-* convention so Hub never guesses another machine's name; identity, routing, credentials, jobs, models, and rolling updates do not change.",
+  ]},
   { v: "2.6.3", date: "2026-08-12", items: [
-    "Newly enrolled Macs now use their real hostname automatically instead of appearing as local; already-connected placeholder names are repaired from the Agent Hub's hardware report.",
+    "Newly enrolled Macs now use their real hostname automatically instead of appearing as local.",
     "Remote machine sorting now follows the friendly names shown on screen, while stable machine IDs, registration, routing, and rolling updates remain unchanged.",
   ]},
   { v: "2.6.2", date: "2026-08-11", items: [

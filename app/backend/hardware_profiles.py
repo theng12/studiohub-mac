@@ -196,6 +196,18 @@ def hardware_profile(profile_id: str | None) -> dict | None:
     )
 
 
+def generated_terranash_hostname(machine: str, profile: dict | None) -> str | None:
+    """Recover an unambiguous TerraNash hostname from a generated Hub ID."""
+    prefix = str((profile or {}).get("machine_prefix") or "").strip()
+    if not prefix:
+        return None
+    match = re.fullmatch(
+        rf"{re.escape(prefix)}-(terranash-[a-z0-9-]+)-[0-9a-f]{{8}}-hub",
+        str(machine),
+    )
+    return match.group(1) if match else None
+
+
 def matching_hardware_profile(hardware: dict | None) -> dict | None:
     """Match reported Apple hardware to a reusable profile without guessing."""
     if not isinstance(hardware, dict):

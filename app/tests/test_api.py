@@ -288,9 +288,9 @@ def test_registry_add_rename_remove(authed):
     assert authed.request("DELETE", "/api/hub/registry/machines/mac-z").json()["removed"] == 2
 
 
-def test_remote_placeholder_name_uses_reported_mac_hostname(authed):
+def test_remote_placeholder_name_uses_stable_enrollment_hostname(authed):
     import time
-    from backend import peers, registry as reg
+    from backend import hardware_profiles, peers, registry as reg
 
     machine = "macmini-m4-16gb-terranash-0209-49f38d3b-hub"
     response = authed.post("/api/hub/registry/add", json={
@@ -301,8 +301,9 @@ def test_remote_placeholder_name_uses_reported_mac_hostname(authed):
     reg.set_label(machine, "local")
     peers._cache[machine] = (time.time(), {
         "reachable": True, "status": "connected", "studios": {},
-        "host": {"machine_name": "terranash-0209", "chip": "Apple M4", "total_gb": 17.18},
+        "host": {"chip": "Apple M4", "total_gb": 17.18},
     })
+    hardware_profiles.set_machine_hardware_profile(machine, "mac-mini-m4-16gb")
 
     studios = authed.get("/api/hub/studios").json()["studios"]
 

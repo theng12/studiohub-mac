@@ -862,8 +862,11 @@ def studios():
         if machine != "local" and machine_label.casefold() == "local":
             reported = (peers.cached(machine) or {}).get("host") or {}
             reported_name = str(reported.get("machine_name") or "").strip()
-            if reported_name and reported_name.casefold() != "local":
-                machine_label = reported_name
+            generated_name = hardware_profiles.generated_terranash_hostname(
+                machine, hardware_profile)
+            candidate = reported_name or generated_name
+            if candidate and candidate.casefold() != "local":
+                machine_label = candidate
         out.append({**s, "url": base_url(s),
                     "machine_label": machine_label, **st,
                     "enabled": studio_enabled(machine, s["id"]),

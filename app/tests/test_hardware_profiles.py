@@ -78,6 +78,20 @@ def test_local_hardware_matches_apple_profile_and_normalizes_decimal_memory(rese
     assert catalog["local_hardware"]["profile_id"] == "mac-mini-m4-16gb"
 
 
+def test_generated_terranash_hostname_never_guesses_ambiguous_profile_names():
+    profile = hardware_profiles.hardware_profile("mac-mini-m4-16gb")
+
+    assert hardware_profiles.generated_terranash_hostname(
+        "macmini-m4-16gb-terranash-0209-49f38d3b-hub", profile,
+    ) == "terranash-0209"
+    assert hardware_profiles.generated_terranash_hostname(
+        "macmini-m4-16gb-worker-49f38d3b-hub", profile,
+    ) is None
+    assert hardware_profiles.generated_terranash_hostname(
+        "macmini-m4-16gb-foo-49f38d3b-hub", profile,
+    ) is None
+
+
 def test_local_machine_profile_uses_detected_hardware_until_overridden(reset, monkeypatch):
     monkeypatch.setattr(hardware_profiles, "local_hardware", lambda: {
         "machine_type": "Mac mini", "chip": "Apple M4", "memory_gb": 16,
