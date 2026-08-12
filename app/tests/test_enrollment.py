@@ -324,6 +324,7 @@ def test_join_auto_detects_local_hardware_and_registers_only_production_studios(
 
     assert response.status_code == 200
     assert captured["hardware_profile_id"] == "mac-mini-m4-16gb"
+    assert captured["machine_name"] == "worker-auto"
     assert captured["modalities"] == ["image", "voice"]
 
 
@@ -388,6 +389,12 @@ def test_controller_mode_creates_credentials_and_keeps_display_name_cosmetic(aut
     assert peers.fleet_token()
     status = enrollment.enrollment_credential_status(include_code=True)
     assert status["active"] is True and status["permanent"] is True and status["code"]
+
+
+def test_unrenamed_mac_uses_hostname_as_its_setup_name(reset, monkeypatch):
+    monkeypatch.setattr(control_plane.socket, "gethostname", lambda: "terranash-0209.local")
+
+    assert control_plane.public_settings()["machine_name"] == "terranash-0209"
 
 
 def test_join_failure_rolls_back_every_local_setting(reset, monkeypatch):

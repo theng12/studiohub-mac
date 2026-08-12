@@ -1,4 +1,6 @@
+import json
 from pathlib import Path
+import subprocess
 
 
 def test_dashboard_includes_render_studio():
@@ -284,6 +286,58 @@ def test_registry_add_rename_remove(authed):
     assert next(s for s in studios if s["id"] == "voice@mac-z")["enabled"] is True
     # remove
     assert authed.request("DELETE", "/api/hub/registry/machines/mac-z").json()["removed"] == 2
+
+
+def test_remote_placeholder_name_uses_reported_mac_hostname(authed):
+    import time
+    from backend import peers, registry as reg
+
+    machine = "macmini-m4-16gb-terranash-0209-49f38d3b-hub"
+    response = authed.post("/api/hub/registry/add", json={
+        "host": "100.89.30.5", "machine": machine,
+        "modalities": ["image", "voice"],
+    })
+    assert response.status_code == 200
+    reg.set_label(machine, "local")
+    peers._cache[machine] = (time.time(), {
+        "reachable": True, "status": "connected", "studios": {},
+        "host": {"machine_name": "terranash-0209", "chip": "Apple M4", "total_gb": 17.18},
+    })
+
+    studios = authed.get("/api/hub/studios").json()["studios"]
+
+    assert {row["machine_label"] for row in studios if row["machine"] == machine} == {
+        "terranash-0209"
+    }
+
+
+def test_remote_machine_name_sort_uses_visible_labels():
+    dashboard = (Path(__file__).parents[1] / "frontend" / "index.html").read_text()
+    start = dashboard.index("function compareMachineEntries(")
+    end = dashboard.index("function renderMachines()", start)
+    helper = dashboard[start:end]
+    script = """
+const labels = {"a-hidden-id": "Zulu", "z-hidden-id": "Alpha", local: "Controller"};
+const mlabel = machine => labels[machine] || machine;
+const machSort = "status";
+""" + helper + """
+const rows = [{m: "a-hidden-id", up: 2}, {m: "z-hidden-id", up: 2}];
+console.log(JSON.stringify({
+  name: rows.slice().sort((a, b) => compareMachineEntries(a, b, "name")).map(row => row.m),
+  studios: rows.slice().sort((a, b) => compareMachineEntries(a, b, "studios")).map(row => row.m),
+  status: rows.slice().sort((a, b) => compareMachineEntries(a, b, "status")).map(row => row.m),
+  local: [...rows, {m: "local", up: 0}].sort((a, b) => compareMachineEntries(a, b, "name")).map(row => row.m),
+}));
+"""
+    result = subprocess.run(
+        ["node", "-e", script], check=True, capture_output=True, text=True,
+    )
+    sorted_rows = json.loads(result.stdout)
+
+    assert sorted_rows["name"] == ["z-hidden-id", "a-hidden-id"]
+    assert sorted_rows["studios"] == sorted_rows["name"]
+    assert sorted_rows["status"] == sorted_rows["name"]
+    assert sorted_rows["local"][0] == "local"
 
 
 def test_studio_scheduler_toggle_is_reported_without_interrupting_work(authed):

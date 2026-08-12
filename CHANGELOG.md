@@ -10,6 +10,26 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.6.3] — 2026-08-12
+
+### Fixed — enrolled Macs keep their real names and sort predictably
+
+- A Mac without an explicit friendly name now uses its hostname in setup
+  instead of exposing the internal `local` routing key. New agent enrollment
+  therefore registers names such as `terranash-0209` automatically.
+- Existing remote agents that were already saved as `local` now display the
+  hostname from their authenticated Hub hardware report. Their stable machine
+  IDs, Studio registrations, fleet credentials, and routing remain unchanged.
+- Remote machine sorting now compares the visible friendly names rather than
+  hidden stable IDs, including name order and tie-breaking for health and
+  Studio-count sorts.
+
+### Compatibility
+
+- No enrollment, registry, maintenance, or GenStudio API shape changed. This is
+  a display/setup-default repair and does not restart workers, alter jobs, or
+  change the rolling-update sequence.
+
 ## [2.6.2] — 2026-08-11
 
 ### Changed — agent Hubs now roll out behind a canary

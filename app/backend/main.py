@@ -858,8 +858,14 @@ def studios():
         st = monitor.status.get(s["id"], {})
         machine = s.get("machine", "local")
         hardware_profile = hardware_profiles.machine_hardware_profile(machine)
+        machine_label = labels.get(machine, machine)
+        if machine != "local" and machine_label.casefold() == "local":
+            reported = (peers.cached(machine) or {}).get("host") or {}
+            reported_name = str(reported.get("machine_name") or "").strip()
+            if reported_name and reported_name.casefold() != "local":
+                machine_label = reported_name
         out.append({**s, "url": base_url(s),
-                    "machine_label": labels.get(machine, machine), **st,
+                    "machine_label": machine_label, **st,
                     "enabled": studio_enabled(machine, s["id"]),
                     "machine_enabled": machine_enabled(machine),
                     "hardware_profile_id": (hardware_profile or {}).get("id")})

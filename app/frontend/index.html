@@ -1158,6 +1158,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.6.3", date: "2026-08-12", items: [
+    "Newly enrolled Macs now use their real hostname automatically instead of appearing as local; already-connected placeholder names are repaired from the Agent Hub's hardware report.",
+    "Remote machine sorting now follows the friendly names shown on screen, while stable machine IDs, registration, routing, and rolling updates remain unchanged.",
+  ]},
   { v: "2.6.2", date: "2026-08-11", items: [
     "Agent Hubs now update one at a time: the first eligible agent is the canary and must reach a healthy or failed result before the next Mac begins.",
     "A failed or offline agent remains visible without blocking later machines, and the existing GenStudio maintenance API and controller-last sequence are unchanged.",
@@ -5352,6 +5356,13 @@ function peerBadge(m) {
   }
   return `<br><span class="pill ${cls}">${txt}</span>${ram}`;
 }
+function compareMachineEntries(a, b, sort = machSort) {
+  if (a.m === "local") return -1; if (b.m === "local") return 1;
+  const compareNames = () => mlabel(a.m).localeCompare(mlabel(b.m));
+  if (sort === "name") return compareNames();
+  if (sort === "studios") return b.up - a.up || compareNames();
+  return (b.up > 0) - (a.up > 0) || b.up - a.up || compareNames();
+}
 function renderMachines() {
   const sum = lastSummary; if (!sum || !sum.studios) return;
   const byM = {};
@@ -5367,12 +5378,7 @@ function renderMachines() {
     return { m, list, production, health, host: list[0].host, up, total: health.length,
       enabled, profile, attention: !enabled || up < health.length || peerState !== "connected" || !profile };
   });
-  entries.sort((a, b) => {
-    if (a.m === "local") return -1; if (b.m === "local") return 1;
-    if (machSort === "name") return a.m.localeCompare(b.m);
-    if (machSort === "studios") return b.up - a.up || a.m.localeCompare(b.m);
-    return (b.up > 0) - (a.up > 0) || b.up - a.up || a.m.localeCompare(b.m); // status: any-online first
-  });
+  entries.sort((a, b) => compareMachineEntries(a, b));
   const visible = machFilter === "attention" ? entries.filter(entry => entry.attention) : entries;
   const settings = sum.control_plane?.settings || controllerData?.settings || {};
   const healthy = entries.filter(entry => !entry.attention).length;

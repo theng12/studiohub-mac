@@ -119,12 +119,15 @@ def _database_endpoint(value: str | None) -> str | None:
 def public_settings() -> dict:
     settings = load_settings()
     url = database_url()
+    machine_name = label_for("local")
+    if machine_name == "local":
+        machine_name = socket.gethostname().split(".", 1)[0] or "local"
     return {
         **settings,
-        # The local machine key is deliberately stable ("local").  Its label
-        # is the operator-facing name only, so renaming a Controller or Agent
-        # never changes any routing, enrollment, or fleet identity.
-        "machine_name": label_for("local"),
+        # The local machine key is deliberately stable ("local"). The real
+        # hostname is the default operator-facing name; an explicit rename
+        # remains cosmetic and never changes routing or fleet identity.
+        "machine_name": machine_name,
         "database_configured": bool(url),
         "database_endpoint": _database_endpoint(url),
         "database_source": (
