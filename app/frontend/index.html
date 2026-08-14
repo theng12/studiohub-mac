@@ -1158,6 +1158,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.7.1", date: "2026-08-14", items: [
+    "SSD staging now excludes genuinely partial catalog packages and omits safe zero-byte Hugging Face transfer placeholders from otherwise complete portable caches.",
+    "A repeat run cleans an affected SSD package atomically without changing valid weights or unrelated models and voices.",
+  ]},
   { v: "2.7.0", date: "2026-08-14", items: [
     "The fleet SSD now stages every complete cached Image/Voice model plus SHA-256-bound shared voices, while each Mac still receives only models allowed by its RAM tier.",
     "Repeated staging skips unchanged packages and preserves older SSD payloads and logs; voice ID conflicts are protected rather than overwritten.",

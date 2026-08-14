@@ -10,6 +10,18 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.7.1] — 2026-08-14
+
+### Fixed — SSD staging excludes partial transfer residue
+
+- Staging now skips a catalog package whose Studio still reports it partial.
+  Safe zero-byte Hugging Face `.incomplete` placeholders beside an already
+  verified package are omitted from the portable copy, so they do not multiply
+  across fleet Macs.
+- A repeated stage detects and atomically refreshes an older SSD package that
+  still contains those placeholders while leaving its valid weight blobs and
+  every unrelated package untouched.
+
 ## [2.7.0] — 2026-08-14
 
 ### Added — additive offline fleet model and voice kit

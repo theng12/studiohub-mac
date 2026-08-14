@@ -333,7 +333,7 @@ def test_stage_includes_every_cached_local_catalog_model(tmp_path, monkeypatch, 
         "family_label": "Future family",
         "provider": "local",
         "min_unified_memory_gb": 16,
-        "cache": {},
+        "cache": {"state": "cached"},
     }]
     monkeypatch.setattr(
         models,
@@ -346,6 +346,36 @@ def test_stage_includes_every_cached_local_catalog_model(tmp_path, monkeypatch, 
     models.do_stage(tmp_path / "ssd", plan_only=True, keep_non_cloning=False)
 
     assert "Voice Studio: 1 packages" in capsys.readouterr().out
+
+
+def test_stage_excludes_a_catalog_package_that_is_still_partial(
+    tmp_path, monkeypatch, capsys
+):
+    models = load_tool("studio_models.py")
+    hub = tmp_path / "hub"
+    package = hub / "models--owner--partial"
+    package.mkdir(parents=True)
+    (package / "weights.bin.incomplete").write_bytes(b"unfinished")
+    catalog = [{
+        "repo": "owner/partial",
+        "family": "future-family",
+        "family_label": "Future family",
+        "provider": "local",
+        "cache": {"state": "partial"},
+    }]
+    monkeypatch.setattr(
+        models,
+        "discover",
+        lambda port: (hub, catalog)
+        if port == models.STUDIOS["voice"]["port"]
+        else (None, []),
+    )
+    monkeypatch.setattr(models, "discover_fleet_voices", lambda: [])
+    monkeypatch.setattr(models, "stage_bootstrap_kit", lambda *_args, **_kwargs: None)
+
+    models.do_stage(tmp_path / "ssd", plan_only=True, keep_non_cloning=False)
+
+    assert "Voice Studio: 0 packages" in capsys.readouterr().out
 
 
 def test_incremental_package_copy_skips_identical_and_replaces_changed(tmp_path):
@@ -363,6 +393,19 @@ def test_incremental_package_copy_skips_identical_and_replaces_changed(tmp_path)
     (source / "blobs/model.bin").write_bytes(b"second payload")
     assert models.copy_package_if_changed(source, destination) == "replace"
     assert (destination / "blobs/model.bin").read_bytes() == b"second payload"
+
+
+def test_package_copy_omits_stale_zero_byte_incomplete_placeholders(tmp_path):
+    models = load_tool("studio_models.py")
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    (source / "blobs").mkdir(parents=True)
+    (source / "blobs/model.bin").write_bytes(b"complete")
+    (source / "blobs/model.bin.old.incomplete").write_bytes(b"")
+
+    assert models.copy_package_if_changed(source, destination) == "copy"
+    assert not list(destination.rglob("*.incomplete"))
+    assert models.copy_package_if_changed(source, destination) == "intact"
 
 
 def test_voice_restore_is_idempotent_and_refuses_same_id_with_other_audio(tmp_path):

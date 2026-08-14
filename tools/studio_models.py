@@ -255,10 +255,19 @@ def bytes_sha256(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
-def package_signature(root: Path) -> tuple[tuple[str, str, int | str], ...]:
+def package_signature(
+    root: Path, *, omit_zero_incomplete: bool = False
+) -> tuple[tuple[str, str, int | str], ...]:
     """Cheap structural identity for content-addressed HF cache packages."""
     rows: list[tuple[str, str, int | str]] = []
     for path in sorted(root.rglob("*")):
+        if (
+            omit_zero_incomplete
+            and path.name.endswith(".incomplete")
+            and path.is_file()
+            and path.stat().st_size == 0
+        ):
+            continue
         relative = str(path.relative_to(root))
         if path.is_symlink():
             rows.append((relative, "link", os.readlink(path)))
@@ -271,7 +280,8 @@ def package_signature(root: Path) -> tuple[tuple[str, str, int | str], ...]:
 
 def copy_package_if_changed(source: Path, destination: Path) -> str:
     """Atomically add or refresh one package without recopying identical data."""
-    if destination.is_dir() and package_signature(source) == package_signature(destination):
+    source_signature = package_signature(source, omit_zero_incomplete=True)
+    if destination.is_dir() and source_signature == package_signature(destination):
         return "intact"
     action = "replace" if destination.exists() else "copy"
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -279,7 +289,18 @@ def copy_package_if_changed(source: Path, destination: Path) -> str:
     temporary = destination.parent / f".{destination.name}.{token}.staging"
     backup = destination.parent / f".{destination.name}.{token}.backup"
     try:
-        shutil.copytree(source, temporary, symlinks=True)
+        def ignore_zero_incomplete(directory: str, names: list[str]) -> set[str]:
+            base = Path(directory)
+            return {
+                name for name in names
+                if name.endswith(".incomplete")
+                and (base / name).is_file()
+                and (base / name).stat().st_size == 0
+            }
+
+        shutil.copytree(
+            source, temporary, symlinks=True, ignore=ignore_zero_incomplete
+        )
         if destination.exists():
             destination.replace(backup)
         try:
@@ -525,6 +546,22 @@ def catalog_index(models: list[dict]) -> tuple[dict, dict, set]:
     return families, floors, companions
 
 
+def catalog_cache_states(models: list[dict]) -> dict[str, str]:
+    states: dict[str, str] = {}
+    for model in models:
+        cache_info = model.get("cache") or {}
+        state = cache_info.get("state")
+        if state:
+            states[model["repo"]] = state
+        for companion in cache_info.get("companions") or []:
+            repo = companion.get("repo")
+            companion_state = companion.get("state")
+            if repo and companion_state:
+                if states.get(repo) != "cached" or companion_state == "cached":
+                    states[repo] = companion_state
+    return states
+
+
 def resolve_floor(repo: str, *sources: dict) -> float | None:
     """Highest floor any source knows.
 
@@ -553,12 +590,16 @@ def do_stage(root: Path, plan_only: bool, keep_non_cloning: bool) -> int:
         if stale:
             notes.append(f"{meta['label']} {stale}")
         families, floors, _all_companions = catalog_index(models)
+        cache_states = catalog_cache_states(models)
         jobs = []
         for src in sorted(hub.iterdir()):
             if not src.is_dir() or src.name.startswith("."):
                 continue
             repo = dirname_to_repo(src.name)
             if repo is None:
+                continue
+            if cache_states.get(repo) not in (None, "cached"):
+                notes.append(f"{meta['label']} skipped partial package {repo}")
                 continue
             fam = families.get(repo)
             if fam is None:
