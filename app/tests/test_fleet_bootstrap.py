@@ -211,7 +211,7 @@ def test_staged_payload_permissions_are_portable_across_user_ids(tmp_path):
     assert link.is_symlink()
 
 
-def test_restaging_removes_legacy_ssd_logs(tmp_path, monkeypatch):
+def test_restaging_preserves_legacy_ssd_logs(tmp_path, monkeypatch):
     models = load_tool("studio_models.py")
     kit = tmp_path / "terranash-bootstrap"
     legacy_log = kit / "logs/bootstrap-old.log"
@@ -225,7 +225,7 @@ def test_restaging_removes_legacy_ssd_logs(tmp_path, monkeypatch):
     models.stage_bootstrap_kit(tmp_path, plan_only=False)
 
     assert legacy_log.parent.is_dir()
-    assert not legacy_log.exists()
+    assert legacy_log.read_text() == "PINOKIO_HOME=/Users/old-account/pinokio"
     assert legacy_log.parent.stat().st_mode & 0o7777 == 0o1777
     assert not (kit / "Install TerraNash Studios.command").exists()
     assert (kit / ".terranash-bootstrap.command").stat().st_mode & 0o555 == 0o555
@@ -261,3 +261,151 @@ def test_git_url_comparison_ignores_git_suffix():
     assert bootstrap.normalize_git_url("https://github.com/theng12/studiohub-mac.git") == (
         bootstrap.normalize_git_url("https://github.com/theng12/studiohub-mac/")
     )
+
+
+def test_bootstrap_reuses_matching_legacy_git_checkout(tmp_path, monkeypatch):
+    bootstrap = load_tool("fleet_bootstrap.py")
+    home = tmp_path / "pinokio"
+    legacy = home / "api/voicestudio-mac.git"
+    (legacy / ".git").mkdir(parents=True)
+    (legacy / ".git/config").write_text(
+        '[remote "origin"]\n\turl = https://github.com/theng12/voicestudio-mac.git\n'
+    )
+    commands = []
+    monkeypatch.setattr(bootstrap, "run", lambda command, **kwargs: commands.append(command))
+
+    target = bootstrap.ensure_repo(
+        Path("/pinokio/pterm"), home, bootstrap.APPS[1], dry_run=False
+    )
+
+    assert target == legacy
+    assert commands == []
+
+
+def test_legacy_checkout_name_is_used_for_scripts_and_startup_graph(
+    tmp_path, monkeypatch
+):
+    bootstrap = load_tool("fleet_bootstrap.py")
+    target = tmp_path / "voicestudio-mac.git"
+    target.mkdir()
+    calls = []
+    monkeypatch.setattr(
+        bootstrap,
+        "install_script",
+        lambda _pterm, name, script, **kwargs: calls.append((name, script)),
+    )
+    monkeypatch.setattr(bootstrap, "python_imports", lambda *_args: False)
+
+    bootstrap.ensure_dependencies(
+        Path("/pinokio/pterm"), target, bootstrap.APPS[1], dry_run=True
+    )
+
+    assert calls == [
+        ("voicestudio-mac.git", "install.js"),
+        ("voicestudio-mac.git", "install_generation.js"),
+    ]
+
+    targets = {
+        "imagestudio-mac": tmp_path / "imagestudio-mac.git",
+        "voicestudio-mac": target,
+        "studiohub-mac": tmp_path / "studiohub-mac",
+    }
+    for path in targets.values():
+        path.mkdir(exist_ok=True)
+    bootstrap.configure_autolaunch(targets, dry_run=False)
+
+    hub_environment = (targets["studiohub-mac"] / "ENVIRONMENT").read_text()
+    assert (
+        "PINOKIO_SCRIPT_REQUIRES=imagestudio-mac.git,voicestudio-mac.git"
+        in hub_environment
+    )
+
+
+def test_stage_includes_every_cached_local_catalog_model(tmp_path, monkeypatch, capsys):
+    models = load_tool("studio_models.py")
+    hub = tmp_path / "hub"
+    package = hub / "models--owner--internal-candidate"
+    package.mkdir(parents=True)
+    (package / "weights.bin").write_bytes(b"candidate")
+    catalog = [{
+        "repo": "owner/internal-candidate",
+        "family": "future-family",
+        "family_label": "Future family",
+        "provider": "local",
+        "min_unified_memory_gb": 16,
+        "cache": {},
+    }]
+    monkeypatch.setattr(
+        models,
+        "discover",
+        lambda port: (hub, catalog) if port == models.STUDIOS["voice"]["port"] else (None, []),
+    )
+    monkeypatch.setattr(models, "discover_fleet_voices", lambda: [])
+    monkeypatch.setattr(models, "stage_bootstrap_kit", lambda *_args, **_kwargs: None)
+
+    models.do_stage(tmp_path / "ssd", plan_only=True, keep_non_cloning=False)
+
+    assert "Voice Studio: 1 packages" in capsys.readouterr().out
+
+
+def test_incremental_package_copy_skips_identical_and_replaces_changed(tmp_path):
+    models = load_tool("studio_models.py")
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    (source / "blobs").mkdir(parents=True)
+    (source / "blobs/model.bin").write_bytes(b"first")
+
+    assert models.copy_package_if_changed(source, destination) == "copy"
+    original_inode = (destination / "blobs/model.bin").stat().st_ino
+    assert models.copy_package_if_changed(source, destination) == "intact"
+    assert (destination / "blobs/model.bin").stat().st_ino == original_inode
+
+    (source / "blobs/model.bin").write_bytes(b"second payload")
+    assert models.copy_package_if_changed(source, destination) == "replace"
+    assert (destination / "blobs/model.bin").read_bytes() == b"second payload"
+
+
+def test_voice_restore_is_idempotent_and_refuses_same_id_with_other_audio(tmp_path):
+    models = load_tool("studio_models.py")
+    staged = tmp_path / "staged"
+    destination = tmp_path / "voices"
+    voice_id = "stable-voice"
+    audio = b"owner voice bytes"
+    digest = models.bytes_sha256(audio)
+    source = staged / voice_id
+    source.mkdir(parents=True)
+    (source / "reference.wav").write_bytes(audio)
+    (source / "metadata.json").write_text(json.dumps({
+        "id": voice_id,
+        "fleet_managed": True,
+        "audio_extension": ".wav",
+        "audio_sha256": digest,
+    }))
+    entry = {"id": voice_id, "dir": voice_id, "audio_sha256": digest}
+
+    assert models.restore_voice(source, destination, entry) == "copy"
+    assert models.restore_voice(source, destination, entry) == "intact"
+
+    (destination / voice_id / "reference.wav").write_bytes(b"local replacement")
+    assert models.restore_voice(source, destination, entry) == "conflict"
+    assert (destination / voice_id / "reference.wav").read_bytes() == b"local replacement"
+
+
+def test_voice_restore_rejects_unsafe_manifest_identity(tmp_path):
+    models = load_tool("studio_models.py")
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "metadata.json").write_text("{}")
+
+    try:
+        models.restore_voice(
+            source,
+            tmp_path / "voices",
+            {"id": "../../escape", "dir": "../../escape", "audio_sha256": "a" * 64},
+        )
+    except ValueError as exc:
+        assert "safe" in str(exc)
+    else:
+        raise AssertionError("unsafe voice ID was accepted")
+
+    assert not (tmp_path / "escape").exists()

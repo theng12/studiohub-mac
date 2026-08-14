@@ -1158,6 +1158,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.7.0", date: "2026-08-14", items: [
+    "The fleet SSD now stages every complete cached Image/Voice model plus SHA-256-bound shared voices, while each Mac still receives only models allowed by its RAM tier.",
+    "Repeated staging skips unchanged packages and preserves older SSD payloads and logs; voice ID conflicts are protected rather than overwritten.",
+    "Older Pinokio folders ending in .git are reused for installs and startup instead of creating duplicate Studio apps.",
+  ]},
   { v: "2.6.4", date: "2026-08-12", items: [
     "Controllers now repair an existing local placeholder from the unambiguous TerraNash hostname in its stable enrollment ID, so terranash-0209 displays correctly without re-enrollment or an Agent Hub update.",
     "The repair is limited to the fleet's terranash-* convention so Hub never guesses another machine's name; identity, routing, credentials, jobs, models, and rolling updates do not change.",

@@ -15,14 +15,15 @@ Step 1 installs Pinokio 8.0.40, Studio Hub, Image Studio, Voice Studio, their
 dependencies, and one Pinokio-owned startup graph. It does not start the
 Studios or touch model caches.
 
-Step 2 only copies complete Image and Voice model packages that fit this Mac's
-RAM. It does not install, update, start, stop, or prune other model caches.
+Step 2 copies complete Image and Voice model packages that fit this Mac's RAM,
+plus the shared saved voices used by the fleet. It does not install, update,
+start, stop, or prune other model caches. A conflicting local voice is kept.
 
 ## EXISTING MACHINE — models are missing
 
 If Pinokio, Hub, Image, and Voice are already installed, skip step 1. Open
 `terranash-bootstrap` and double-click **2 Copy Models to This Mac.command**.
-Complete packages already on the Mac are skipped.
+Complete packages and matching saved voices already on the Mac are skipped.
 
 ## REPAIR
 
@@ -47,6 +48,9 @@ git pull
 python3 tools/studio_models.py stage --plan
 python3 tools/studio_models.py stage
 ```
+
+Staging is additive. Unchanged packages are not recopied, and older SSD models,
+voices, and logs stay in place if one Studio is offline during maintenance.
 
 The SSD must use APFS. If Terminal reports **Operation not permitted**, enable
 System Settings → Privacy & Security → Files and Folders → Terminal →

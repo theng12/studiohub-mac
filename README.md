@@ -600,7 +600,9 @@ the owner password signs every remembered browser out immediately.
 
 For a clean Apple-silicon Mac, the fleet SSD can install Pinokio, Studio Hub,
 Image Studio, Voice Studio, both generation environments, the RAM-qualified
-model set, and the Pinokio-owned startup graph before performing the Agent join.
+model set, SHA-256-bound shared voice references, and the Pinokio-owned startup
+graph before performing the Agent join. Staging is additive: unchanged packages
+are skipped and an offline Studio cannot erase previously staged payloads.
 Prepare it once with `python3 tools/studio_models.py stage`, then follow
 [`SSD-COPY-README.md`](SSD-COPY-README.md). The permanent Controller registration
 code is prompted securely on the new Mac and is never stored on the SSD.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Stage every studio's model cache onto an SSD, then restore and prune it on
-each fleet Mac in one pass.
+"""Stage every Studio model cache and fleet voice onto an SSD, then restore
+RAM-qualified payloads on each fleet Mac in one pass.
 
     # on the machine that already has the models (plug the SSD in first)
     python3 tools/studio_models.py stage --plan
@@ -29,16 +29,17 @@ Three things it gets right that a naive copy does not:
    and the home directory differs too. A path constant would have been wrong on
    every Mac it was carried to.
 
-3. **A stale local catalogue cannot cause a wrong delete.** Memory floors are
+3. **A stale local catalogue cannot cause a wrong delete.** Staging is additive,
+   and memory floors are
    resolved as the highest value any source knows, because a machine running an
    older studio reports a floor of `None` for a model that has since been
    measured. Taking that at face value would have deleted a perfectly good Fish
    Audio cache off a 16 GB worker.
 
-Pruning only ever removes a model whose floor is *known* and higher than this
-Mac's memory -- something this machine physically cannot run. Companions
-(codecs, tokenizers) are never pruned; they are small and a model without its
-codec is useless.
+Pruning is explicit and only removes a model whose floor is *known* and higher
+than this Mac's memory -- something this machine physically cannot run.
+Companions (codecs, tokenizers) are never pruned; they are small and a model
+without its codec is useless. Shared voices are never pruned.
 """
 from __future__ import annotations
 
@@ -46,11 +47,13 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 
 STUDIOS = {
@@ -69,110 +72,11 @@ PINOKIO_DMG_URL = (
 PINOKIO_DMG_SHA256 = "3c0f55f769efc2c02e5d0b8bc24e2ee7b0be54d42e6404663887e0cf8d3df3fd"
 PREFERRED_VOLUME_NAMES = ("ugreen-terranash", "UGREEN-1TB")
 
-# The fleet exists to clone the owner's own voices, so it stocks an explicit
-# short list of families rather than everything the catalogue offers. Two rules
-# combine:
-#
-#   1. the family must be on this list, and
-#   2. within it, the model must actually be able to clone.
-#
-# Rule 2 is what keeps Qwen3-TTS's two Base checkpoints while dropping its
-# CustomVoice and VoiceDesign siblings, which are preset- and design-only.
-#
-# This is a stocking policy, not a catalogue change -- every model stays visible
-# and installable in Voice Studio. It only decides what is carried to, kept on,
-# and reclaimed from the fleet. Pass --keep-non-cloning to ignore it entirely.
-CLONE_CAPABILITY = "voice-cloning"
-STOCKED_VOICE_FAMILIES = frozenset({
-    "omnivoice",        # the only strong cloner that fits the 8 GB majority
-    "arktts",           # Audio8 TTS Preview
-    "fish-audio-mlx",   # Fish Audio S2 Pro
-    "chatterbox-mlx",   # Turbo and 8-bit only -- see BLOCKED_MODELS
-    "echo-tts",         # Echo-TTS
-})
-# qwen3-tts was stocked here until 2026-08-07, on rule 2 (its two Base
-# checkpoints clone; CustomVoice and VoiceDesign do not). The owner has since
-# disqualified the whole family: it is too large for the 8 GB machines that are
-# most of the fleet, it hallucinates, and it eats memory. OmniVoice replaced it
-# on every node -- it clones, fits 8 GB, and he rates it on par with Fish. The
-# sibling audit had reached the same conclusion independently, reporting Base as
-# `conditional` and CustomVoice as `failed`, so nothing was exposed to GenStudio
-# either. Dropping the family here stops it being carried to and kept on the
-# fleet; it stays visible and installable in Voice Studio.
-
-# Individual checkpoints dropped despite their family being stocked. A family is
-# usually the right unit, but a single bad variant should not force the whole
-# family out.
-BLOCKED_MODELS = {
-    # Emitted 48 s of audio for a 15 s passage and only 23% of the reference
-    # vocabulary came back through Whisper -- "Morning light settled across the
-    # quiet harbor. P imitate the seven," then noise. Failed twice, producing
-    # different garbage each time. Its siblings are fine: Turbo is the fastest
-    # model measured on the fleet, and 8-bit is correct.
-    "mlx-community/chatterbox-4bit":
-        "drops and hallucinates text (23% transcribe-back over two runs)",
-}
-# Kept although they cannot clone, because they earn their place another way.
-NON_CLONING_FAMILIES = frozenset({
-    "kokoro-mlx",       # 0.34 GB, useful for quick preset narration
-})
-
-# Image models are stocked by family only -- there is no cloning distinction to
-# apply. Every other family is 16 or 24 GB with a footprint measured in tens of
-# gigabytes, which does not fit alongside everything else on a 256 GB machine.
-STOCKED_IMAGE_FAMILIES = frozenset({
-    # FLUX.2 klein is the whole image catalogue for the fleet, and the only
-    # family with a model that fits 8 GB. Z-Image and ERNIE were stocked until
-    # they were actually run: the Onyx Z-Image quantizations are packed in a
-    # format neither the diffusers nor the mflux loader can unpack, and ERNIE
-    # has no MLX path at all. Neither had ever produced an image on any machine.
-    "flux2-klein",
-})
-
-
-def stocked(studio: str, repo: str, family: str, capabilities: list[str],
-            companions: set[str], keep_non_cloning: bool) -> bool:
-    """Should this model be carried to and kept on the fleet?
-
-    `companions` must be the codecs still needed by models that survive this
-    policy, not every companion in the catalogue -- see `needed_companions`.
-    """
-    if keep_non_cloning:
-        return True
-    if repo in companions:
-        return True
-    if repo in BLOCKED_MODELS:
-        return False
-    if studio == "image":
-        return family in STOCKED_IMAGE_FAMILIES
-    if studio != "voice":
-        return True
-    # Whisper is speech-to-text, not a voice family, and every checkpoint stays:
-    # it is what the transcribe-back check uses to prove the other models
-    # actually said the words they were given.
-    if "whisper" in repo.lower():
-        return True
-    if family in NON_CLONING_FAMILIES:
-        return True
-    return family in STOCKED_VOICE_FAMILIES and CLONE_CAPABILITY in capabilities
-
-
-def needed_companions(studio: str, models: list[dict],
-                      keep_non_cloning: bool) -> set[str]:
-    """Codecs and tokenizers still required once the policy is applied.
-
-    A companion is only worth carrying while some model that uses it survives.
-    Orpheus's SNAC codec is the case that made this necessary: dropping every
-    Orpheus variant as non-cloning left its codec behind as an orphan that the
-    "never prune a companion" rule would have preserved forever.
-    """
+def needed_companions(models: list[dict]) -> set[str]:
+    """Return every companion used by a local catalog model."""
     needed: set[str] = set()
     for m in models:
         if not is_local(m):
-            continue
-        parent_kept = stocked(studio, m["repo"], m.get("family") or "",
-                              m.get("capabilities") or [], set(), keep_non_cloning)
-        if not parent_kept:
             continue
         for c in (m.get("cache") or {}).get("companions") or []:
             needed.add(c["repo"])
@@ -216,6 +120,22 @@ def discover(port: int) -> tuple[Path | None, list[dict]]:
     return hub, models
 
 
+def discover_fleet_voices(port: int = STUDIOS["voice"]["port"]) -> list[dict]:
+    payload = api(port, "/api/voices", timeout=15) or {}
+    voices = payload.get("voices")
+    if not isinstance(voices, list):
+        return []
+    return [voice for voice in voices
+            if isinstance(voice, dict) and voice.get("fleet_managed") is True]
+
+
+def download_voice_audio(port: int, voice_id: str) -> bytes:
+    with urllib.request.urlopen(
+        f"http://127.0.0.1:{port}/api/voices/{voice_id}/audio", timeout=60
+    ) as response:
+        return response.read(25_000_001)
+
+
 def installed_hub(pinokio_home: Path, studio: str) -> Path | None:
     """Resolve an installed Studio's HF hub without starting its server."""
     candidates = (
@@ -237,6 +157,16 @@ def installed_hub(pinokio_home: Path, studio: str) -> Path | None:
     if not path.is_absolute():
         path = target / path
     return path.resolve() / "hub"
+
+
+def installed_studio(pinokio_home: Path, studio: str) -> Path | None:
+    for candidate in (
+        pinokio_home / "api" / studio,
+        pinokio_home / "api" / f"{studio}.git",
+    ):
+        if candidate.is_dir():
+            return candidate
+    return None
 
 
 def staleness(port: int, hub: Path) -> str | None:
@@ -321,6 +251,148 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def bytes_sha256(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def package_signature(root: Path) -> tuple[tuple[str, str, int | str], ...]:
+    """Cheap structural identity for content-addressed HF cache packages."""
+    rows: list[tuple[str, str, int | str]] = []
+    for path in sorted(root.rglob("*")):
+        relative = str(path.relative_to(root))
+        if path.is_symlink():
+            rows.append((relative, "link", os.readlink(path)))
+        elif path.is_dir():
+            rows.append((relative, "dir", 0))
+        else:
+            rows.append((relative, "file", path.stat().st_size))
+    return tuple(rows)
+
+
+def copy_package_if_changed(source: Path, destination: Path) -> str:
+    """Atomically add or refresh one package without recopying identical data."""
+    if destination.is_dir() and package_signature(source) == package_signature(destination):
+        return "intact"
+    action = "replace" if destination.exists() else "copy"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    token = uuid.uuid4().hex
+    temporary = destination.parent / f".{destination.name}.{token}.staging"
+    backup = destination.parent / f".{destination.name}.{token}.backup"
+    try:
+        shutil.copytree(source, temporary, symlinks=True)
+        if destination.exists():
+            destination.replace(backup)
+        try:
+            temporary.replace(destination)
+        except Exception:
+            if backup.exists() and not destination.exists():
+                backup.replace(destination)
+            raise
+        if backup.exists():
+            shutil.rmtree(backup)
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary)
+        if backup.exists() and destination.exists():
+            shutil.rmtree(backup)
+    return action
+
+
+def _voice_reference(directory: Path, metadata: dict) -> Path | None:
+    extension = str(metadata.get("audio_extension") or "")
+    expected = directory / f"reference{extension}"
+    if extension and expected.is_file():
+        return expected
+    return next((path for path in sorted(directory.glob("reference.*")) if path.is_file()), None)
+
+
+def validate_voice_entry(entry: dict) -> tuple[str, str]:
+    voice_id = str(entry.get("id") or "")
+    digest = str(entry.get("audio_sha256") or "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", voice_id):
+        raise ValueError("voice ID is not safe for portable storage")
+    if str(entry.get("dir") or voice_id) != voice_id:
+        raise ValueError("voice directory must match its stable ID")
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError(f"voice {voice_id} has no stable SHA-256")
+    return voice_id, digest
+
+
+def restore_voice(source: Path, voices_dir: Path, entry: dict) -> str:
+    """Restore a stable fleet voice without ever overwriting a conflicting ID."""
+    voice_id, expected = validate_voice_entry(entry)
+    source_meta = json.loads((source / "metadata.json").read_text())
+    source_audio = _voice_reference(source, source_meta)
+    if source_audio is None or file_sha256(source_audio) != expected:
+        raise ValueError(f"staged voice {entry.get('id')} failed its SHA-256 check")
+    destination = voices_dir / voice_id
+    if destination.exists():
+        try:
+            current_meta = json.loads((destination / "metadata.json").read_text())
+        except (OSError, ValueError):
+            return "conflict"
+        current_audio = _voice_reference(destination, current_meta)
+        if (
+            current_meta.get("fleet_managed") is True
+            and current_audio is not None
+            and file_sha256(current_audio) == expected
+        ):
+            return "intact"
+        return "conflict"
+    copy_package_if_changed(source, destination)
+    return "copy"
+
+
+def stage_voice(root: Path, voice: dict) -> tuple[str, dict]:
+    """Add one fleet-managed Voice Studio reference to the SSD."""
+    voice_id = str(voice.get("id") or "")
+    digest = str(voice.get("audio_sha256") or "")
+    extension = str(voice.get("audio_extension") or "")
+    if not re.fullmatch(r"\.[A-Za-z0-9]{1,8}", extension):
+        raise ValueError(f"voice {voice_id} has an unsafe audio extension")
+
+    entry = {
+        "id": voice_id,
+        "dir": voice_id,
+        "name": str(voice.get("name") or voice_id),
+        "audio_extension": extension,
+        "audio_sha256": digest,
+    }
+    validate_voice_entry(entry)
+    destination = root / "voices" / voice_id
+    if destination.is_dir():
+        try:
+            metadata = json.loads((destination / "metadata.json").read_text())
+        except (OSError, ValueError):
+            return "conflict", entry
+        reference = _voice_reference(destination, metadata)
+        if reference is not None and file_sha256(reference) == digest:
+            return "intact", entry
+        return "conflict", entry
+
+    audio = download_voice_audio(STUDIOS["voice"]["port"], voice_id)
+    if len(audio) > 25_000_000 or bytes_sha256(audio) != digest:
+        raise ValueError(f"voice {voice_id} download failed its SHA-256 check")
+    temporary_root = root / f".voice-{uuid.uuid4().hex}.staging"
+    source = temporary_root / voice_id
+    try:
+        source.mkdir(parents=True)
+        metadata = {
+            key: value for key, value in voice.items()
+            if key not in {"audio_url", "audio_filename", "transcript"}
+        }
+        (source / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
+        (source / f"reference{extension}").write_bytes(audio)
+        transcript = str(voice.get("transcript") or "").strip()
+        if transcript:
+            (source / "transcript.txt").write_text(transcript + "\n")
+        action = copy_package_if_changed(source, destination)
+    finally:
+        if temporary_root.exists():
+            shutil.rmtree(temporary_root)
+    return action, entry
+
+
 def download_with_progress(url: str, destination: Path) -> None:
     temporary = destination.with_name(f".{destination.name}.{os.getpid()}.part")
     try:
@@ -380,9 +452,7 @@ def stage_bootstrap_kit(volume_root: Path, *, plan_only: bool) -> None:
 
     kit.mkdir(parents=True, exist_ok=True)
     legacy_logs = kit / "logs"
-    if legacy_logs.is_dir():
-        shutil.rmtree(legacy_logs)
-    legacy_logs.mkdir()
+    legacy_logs.mkdir(exist_ok=True)
     legacy_logs.chmod(0o1777)
     (kit / "Install TerraNash Studios.command").unlink(missing_ok=True)
     for source, name in sources:
@@ -470,6 +540,10 @@ def resolve_floor(repo: str, *sources: dict) -> float | None:
 
 def do_stage(root: Path, plan_only: bool, keep_non_cloning: bool) -> int:
     plans, notes = {}, []
+    try:
+        previous_manifest = json.loads((root / MANIFEST_NAME).read_text())
+    except (OSError, ValueError):
+        previous_manifest = {}
     for name, meta in STUDIOS.items():
         hub, models = discover(meta["port"])
         if hub is None or not hub.is_dir():
@@ -479,19 +553,12 @@ def do_stage(root: Path, plan_only: bool, keep_non_cloning: bool) -> int:
         if stale:
             notes.append(f"{meta['label']} {stale}")
         families, floors, _all_companions = catalog_index(models)
-        companions = needed_companions(name, models, keep_non_cloning)
-        caps = {m["repo"]: (m.get("capabilities") or []) for m in models}
-        fam_of = {m["repo"]: (m.get("family") or "") for m in models}
-        jobs, unstocked = [], []
+        jobs = []
         for src in sorted(hub.iterdir()):
             if not src.is_dir() or src.name.startswith("."):
                 continue
             repo = dirname_to_repo(src.name)
             if repo is None:
-                continue
-            if not stocked(name, repo, fam_of.get(repo, ""), caps.get(repo, []),
-                           companions, keep_non_cloning):
-                unstocked.append((repo, dir_bytes(src)))
                 continue
             fam = families.get(repo)
             if fam is None:
@@ -500,7 +567,7 @@ def do_stage(root: Path, plan_only: bool, keep_non_cloning: bool) -> int:
                 else:
                     continue  # not in this studio's catalogue; don't ship junk
             jobs.append((src, repo, fam.replace("/", "-"), floors.get(repo)))
-        plans[name] = {"hub": hub, "jobs": jobs, "unstocked": unstocked}
+        plans[name] = {"hub": hub, "jobs": jobs}
 
     if not plans:
         for n in notes:
@@ -518,28 +585,12 @@ def do_stage(root: Path, plan_only: bool, keep_non_cloning: bool) -> int:
             by_fam[fam] = by_fam.get(fam, 0) + dir_bytes(src)
         for fam, b in sorted(by_fam.items(), key=lambda kv: -kv[1]):
             print(f"    {fam[:44]:46} {b / 1e9:6.2f} GB")
-        if p["unstocked"]:
-            gb = sum(b for _, b in p["unstocked"]) / 1e9
-            why = ("family not stocked" if name == "image"
-                   else "family not stocked, or cannot clone")
-            print(f"    not stocked — {why} ({gb:.2f} GB, "
-                  f"--keep-non-cloning to include):")
-            for repo, b in sorted(p["unstocked"], key=lambda kv: -kv[1]):
-                print(f"      {repo[:50]:52} {b / 1e9:5.2f} GB")
         print()
     for n in notes:
         print(f"  note: {n}")
-    wanted = {
-        Path(name) / family / source.name
-        for name, plan in plans.items()
-        for source, _repo, family, _floor in plan["jobs"]
-    }
-    stale = stale_staged_packages(root, wanted)
-    if stale:
-        stale_bytes = sum(dir_bytes(path) for path in stale)
-        print(f"  stale SSD packages to remove: {len(stale)} ({stale_bytes / 1e9:.1f} GB)")
-        for path in stale:
-            print(f"    {path.relative_to(root)}")
+    voices = discover_fleet_voices()
+    print(f"Fleet voices: {len(voices)} stable references")
+    print("  existing SSD packages and voices not seen today are preserved")
     print(f"total: {total / 1e9:.1f} GB -> {root}")
 
     if plan_only:
@@ -556,31 +607,49 @@ def do_stage(root: Path, plan_only: bool, keep_non_cloning: bool) -> int:
         )
     stage_bootstrap_kit(root.parent, plan_only=False)
 
-    manifest = {"schema_version": 1,
+    manifest = {"schema_version": 2,
                 "layout": "<studio>/<family>/models--org--name",
-                "studios": {}}
+                "studios": {}, "voices": []}
     for name, p in plans.items():
-        entries = []
+        entries_by_repo = {
+            entry["repo"]: entry
+            for entry in (
+                (previous_manifest.get("studios", {}).get(name) or {}).get("packages", [])
+            )
+            if isinstance(entry, dict) and entry.get("repo")
+        }
         for i, (src, repo, fam, floor) in enumerate(p["jobs"], 1):
             dst_dir = root / name / fam
             dst_dir.mkdir(parents=True, exist_ok=True)
             dst = dst_dir / src.name
-            if dst.exists():
-                shutil.rmtree(dst)
-            print(f"[{name} {i}/{len(p['jobs'])}] {fam}/{src.name}")
-            shutil.copytree(src, dst, symlinks=True)   # symlinks=True is the point
-            entries.append({"repo": repo, "dir": src.name, "family": fam,
-                            "floor_gb": floor, "bytes": dir_bytes(dst)})
-        manifest["studios"][name] = {"packages": entries}
+            action = copy_package_if_changed(src, dst)
+            print(f"[{name} {i}/{len(p['jobs'])}] {action:7} {fam}/{src.name}")
+            entries_by_repo[repo] = {
+                "repo": repo, "dir": src.name, "family": fam,
+                "floor_gb": floor, "bytes": dir_bytes(dst),
+            }
+        manifest["studios"][name] = {
+            "packages": sorted(entries_by_repo.values(), key=lambda entry: entry["repo"])
+        }
+    for name in STUDIOS:
+        if name not in manifest["studios"]:
+            manifest["studios"][name] = (
+                previous_manifest.get("studios", {}).get(name) or {"packages": []}
+            )
 
-    for package in stale:
-        print(f"[prune SSD] {package.relative_to(root)}")
-        shutil.rmtree(package)
-        family = package.parent
-        try:
-            family.rmdir()
-        except OSError:
-            pass
+    voice_entries = {
+        entry["id"]: entry
+        for entry in previous_manifest.get("voices", [])
+        if isinstance(entry, dict) and entry.get("id")
+    }
+    for i, voice in enumerate(voices, 1):
+        action, entry = stage_voice(root, voice)
+        print(f"[voice {i}/{len(voices)}] {action:8} {entry['name']} ({entry['id']})")
+        if action != "conflict":
+            voice_entries[entry["id"]] = entry
+        else:
+            print("  protected: the SSD already has different audio under this stable ID")
+    manifest["voices"] = sorted(voice_entries.values(), key=lambda entry: entry["id"])
 
     manifest_path = root / MANIFEST_NAME
     manifest_path.write_text(json.dumps(manifest, indent=2))
@@ -588,7 +657,8 @@ def do_stage(root: Path, plan_only: bool, keep_non_cloning: bool) -> int:
     manifest_path.chmod(0o644)
     written = sum(e["bytes"] for s in manifest["studios"].values()
                   for e in s["packages"])
-    print(f"\nDone: {written / 1e9:.1f} GB written.\nManifest: {root / MANIFEST_NAME}")
+    print(f"\nDone: {written / 1e9:.1f} GB indexed, "
+          f"{len(manifest['voices'])} voices.\nManifest: {root / MANIFEST_NAME}")
     print("\nOn each fleet Mac:\n    python3 tools/studio_models.py restore --plan")
     return 0
 
@@ -609,6 +679,7 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
     print(f"source  : {root}\n")
 
     copied = replaced = intact = skipped = pruned = 0
+    voices_copied = voices_intact = voice_conflicts = 0
     pruned_bytes = 0
 
     for name, meta in STUDIOS.items():
@@ -628,11 +699,8 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
             hub.mkdir(parents=True, exist_ok=True)
 
         families, local_floors, _all_companions = catalog_index(models)
-        companions = needed_companions(name, models, keep_non_cloning)
+        companions = needed_companions(models)
         caps = {m["repo"]: (m.get("capabilities") or []) for m in models}
-        # Family *id*, not the display label `families` carries -- the stocking
-        # lists are keyed by id.
-        fam_of = {m["repo"]: (m.get("family") or "") for m in models}
         ssd_floors = {e["repo"]: e.get("floor_gb") for e in staged}
         state_of = {m["repo"]: (m.get("cache") or {}).get("state")
                     for m in models}
@@ -642,10 +710,6 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
         # ---- restore
         want, defer, unqualified = [], [], []
         for e in staged:
-            if pinokio_home is None and not stocked(
-                    name, e["repo"], fam_of.get(e["repo"], ""),
-                    caps.get(e["repo"], []), companions, keep_non_cloning):
-                continue
             floor = resolve_floor(e["repo"], local_floors, ssd_floors)
             if restore_all:
                 want.append((e, floor))
@@ -732,10 +796,6 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
                 repo = dirname_to_repo(d.name)
                 if repo is None or repo in companions:
                     continue  # never prune a codec/tokenizer
-                if not stocked(name, repo, fam_of.get(repo, ""),
-                               caps.get(repo, []), companions, keep_non_cloning):
-                    victims.append((d, repo, None, dir_bytes(d)))
-                    continue
                 floor = resolve_floor(repo, local_floors, ssd_floors)
                 if floor is not None and floor > ram:
                     victims.append((d, repo, floor, dir_bytes(d)))
@@ -743,9 +803,7 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
                 if floor:
                     why = f"needs {floor:>2.0f} GB"
                 else:
-                    # "cannot clone" is a voice-only reason; on the image side a
-                    # model is dropped because its family is not stocked.
-                    why = "not stocked" if name == "image" else "cannot clone"
+                    why = "unqualified"
                 print(f"  prune {repo[:48]:50} {why:>12}  {b / 1e9:5.2f} GB")
                 pruned += 1
                 pruned_bytes += b
@@ -755,9 +813,44 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
                 print("  nothing to prune")
         print()
 
+    staged_voices = manifest.get("voices") or []
+    if staged_voices:
+        if pinokio_home is not None:
+            voice_studio = installed_studio(pinokio_home, "voicestudio-mac")
+        else:
+            voice_hub, _models = discover(STUDIOS["voice"]["port"])
+            voice_studio = voice_hub.parents[2] if voice_hub is not None else None
+        if voice_studio is None:
+            print("Fleet voices: Voice Studio is not installed — skipped\n")
+        else:
+            voices_dir = voice_studio / "app/voices"
+            print(f"Fleet voices  ({voices_dir})")
+            for entry in staged_voices:
+                voice_id, _digest = validate_voice_entry(entry)
+                source = root / "voices" / voice_id
+                if not source.is_dir():
+                    continue
+                if plan_only:
+                    destination = voices_dir / str(entry["id"])
+                    action = "inspect" if destination.exists() else "copy"
+                else:
+                    action = restore_voice(source, voices_dir, entry)
+                print(f"  {action:8} {entry.get('name') or entry['id']}")
+                if action == "copy":
+                    voices_copied += 1
+                elif action == "intact":
+                    voices_intact += 1
+                elif action == "conflict":
+                    voice_conflicts += 1
+                    print("    protected: local audio under this stable ID was not overwritten")
+            print()
+
     verb = "would " if plan_only else ""
     print(f"{verb}copy {copied} new, {verb}replace {replaced}, "
           f"{intact} already complete, {skipped} above this Mac's memory.")
+    if staged_voices:
+        print(f"Fleet voices: {voices_copied} copied, {voices_intact} already complete, "
+              f"{voice_conflicts} protected conflicts.")
     if prune:
         print(f"{verb}prune {pruned} unusable models, freeing {pruned_bytes / 1e9:.1f} GB.")
     if plan_only:
@@ -777,7 +870,7 @@ def main() -> int:
                    help="SSD model folder (default: auto-detect ugreen-terranash or a manifest)")
     s.add_argument("--plan", action="store_true", help="show the plan, write nothing")
     s.add_argument("--keep-non-cloning", action="store_true",
-                   help="also stock voice models that cannot clone (default: skip them)")
+                   help="accepted for compatibility; all cached catalog models are staged")
 
     r = sub.add_parser("restore", help="install onto this Mac from the SSD")
     r.add_argument("--root", type=Path,
@@ -791,7 +884,7 @@ def main() -> int:
     r.add_argument("--force", action="store_true",
                    help="replace local copies even when already complete")
     r.add_argument("--keep-non-cloning", action="store_true",
-                   help="also keep voice models that cannot clone (default: prune them)")
+                   help="accepted for compatibility; only explicit RAM pruning is applied")
     r.add_argument("--include-unqualified", action="store_true",
                    help="accepted for compatibility; unmeasured models in a "
                         "stocked family are installed by default now")

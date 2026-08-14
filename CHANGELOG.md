@@ -10,6 +10,31 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.7.0] — 2026-08-14
+
+### Added — additive offline fleet model and voice kit
+
+- SSD staging now carries every complete local Image and Voice catalog package
+  already cached on the maintainer Mac, plus the exact stable-ID, SHA-256-bound
+  fleet voice references needed for repeatable cloning tests. Machine restore
+  still applies each model's published RAM floor.
+- Repeated staging skips structurally identical Hugging Face packages instead
+  of recopying tens of gigabytes. Packages and bootstrap logs absent from the
+  current scan are preserved, so one offline Studio cannot erase the SSD's
+  previously good payload.
+- Voice restore skips an identical managed ID/hash and protects any differing
+  local audio instead of overwriting it. No voice, model, or customer file is
+  pruned unless the operator explicitly runs restore with `--prune`.
+
+### Fixed — historical Pinokio checkout names no longer duplicate Studios
+
+- The installer now reuses either `studio-name` or the older
+  `studio-name.git` checkout when its Git origin matches. Dependency installs
+  and the startup graph use the detected folder names, preventing a second app
+  download on older fleet Macs.
+- Refreshing the SSD bootstrap kit preserves its diagnostic logs and remains
+  independent of the macOS username.
+
 ## [2.6.4] — 2026-08-12
 
 ### Fixed — existing placeholder names repair without an agent update

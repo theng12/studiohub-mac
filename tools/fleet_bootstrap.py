@@ -256,7 +256,14 @@ def app_ref(name: str) -> str:
 
 
 def ensure_repo(pterm: Path, home: Path, app: dict, *, dry_run: bool) -> Path:
-    target = home / "api" / app["name"]
+    canonical = home / "api" / app["name"]
+    legacy = home / "api" / f'{app["name"]}.git'
+    if canonical.exists() and legacy.exists():
+        print(
+            f"  {app['title']} has both {canonical.name} and {legacy.name}; "
+            "using the canonical checkout and leaving the older folder untouched."
+        )
+    target = canonical if canonical.exists() else legacy if legacy.exists() else canonical
     if target.exists():
         if not (target / ".git").is_dir():
             raise BootstrapError(f"{target} exists but is not a Git checkout.")
@@ -284,6 +291,7 @@ def python_imports(target: Path, imports: str) -> bool:
 
 
 def ensure_dependencies(pterm: Path, target: Path, app: dict, *, dry_run: bool) -> None:
+    installed_name = target.name
     service_marker = target / "service/.installed"
     if service_marker.exists():
         if not (target / "unservice.js").is_file() and not dry_run:
@@ -291,7 +299,7 @@ def ensure_dependencies(pterm: Path, target: Path, app: dict, *, dry_run: bool) 
                 f"{app['title']} has a startup service but no unservice.js repair action."
             )
         print(f"  Converting {app['title']} from its old startup service to Pinokio startup…")
-        install_script(pterm, app["name"], "unservice.js", dry_run=dry_run)
+        install_script(pterm, installed_name, "unservice.js", dry_run=dry_run)
         if not dry_run and service_marker.exists():
             raise BootstrapError(f"{app['title']} startup-service removal did not complete.")
     base_import = (
@@ -302,7 +310,7 @@ def ensure_dependencies(pterm: Path, target: Path, app: dict, *, dry_run: bool) 
     base_ok = python_imports(target, base_import)
     if not base_ok:
         print(f"  Installing {app['title']} base environment…")
-        install_script(pterm, app["name"], "install.js", dry_run=dry_run)
+        install_script(pterm, installed_name, "install.js", dry_run=dry_run)
         if not dry_run and not python_imports(target, base_import):
             raise BootstrapError(f"{app['title']} base dependency verification failed.")
     else:
@@ -312,7 +320,7 @@ def ensure_dependencies(pterm: Path, target: Path, app: dict, *, dry_run: bool) 
     generation_ok = not marker or python_imports(target, generation_import)
     if marker and not generation_ok:
         print(f"  Installing {app['title']} generation environment…")
-        install_script(pterm, app["name"], "install_generation.js", dry_run=dry_run)
+        install_script(pterm, installed_name, "install_generation.js", dry_run=dry_run)
         if not dry_run and not python_imports(target, generation_import):
             raise BootstrapError(f"{app['title']} generation dependency verification failed.")
     elif marker:
@@ -401,6 +409,12 @@ def update_environment(path: Path, values: dict[str, str]) -> None:
 
 def configure_autolaunch(targets: dict[str, Path], *, dry_run: bool) -> None:
     for name, values in AUTOLAUNCH.items():
+        values = dict(values)
+        if name == "studiohub-mac":
+            values["PINOKIO_SCRIPT_REQUIRES"] = ",".join(
+                targets[studio].name
+                for studio in ("imagestudio-mac", "voicestudio-mac")
+            )
         path = targets[name] / "ENVIRONMENT"
         print(f"  {name}: {', '.join(f'{k}={v}' for k, v in values.items())}")
         if not dry_run:
