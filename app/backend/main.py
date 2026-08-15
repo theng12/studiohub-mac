@@ -276,12 +276,7 @@ def _reconcile_managed_registry() -> int:
     service = release_reconciler
     if service is None:
         return 0
-    supplemented = service.reconcile_registry()
-    if supplemented:
-        activation = service.state_snapshot()["activation"]
-        if activation is not None:
-            service.schedule(activation["release_id"])
-    return supplemented
+    return service.wake_registry()
 
 
 async def _request_managed_release_catalog(operation_id: str) -> dict[str, Any]:
@@ -1032,13 +1027,15 @@ def rename_machine(machine: str, body: dict):
 
 
 @app.post("/api/hub/registry/machines/{machine}/enabled")
-def set_machine_enabled_ep(machine: str, body: dict):
+async def set_machine_enabled_ep(machine: str, body: dict):
     """Enable/disable a machine in the fleet. A disabled machine stays
     registered and monitored but the broker sends it no jobs — use it to quiesce
     a machine before updating/restarting it. Body: {"enabled": <bool>}."""
     from .registry import set_machine_enabled
     enabled = bool(body.get("enabled", True))
     set_machine_enabled(machine, enabled)
+    if enabled:
+        _reconcile_managed_registry()
     return {"ok": True, "machine": machine, "enabled": enabled}
 
 

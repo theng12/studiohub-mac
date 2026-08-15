@@ -515,7 +515,7 @@ class SparseMonitor:
     ]
 
 
-def test_not_installed_is_the_only_noncurrent_completion_exception(tmp_path):
+def test_not_installed_component_can_complete_without_attestation(tmp_path):
     from backend.release_reconciliation import ReleaseReconciler
 
     service = ReleaseReconciler(
@@ -1063,6 +1063,314 @@ async def test_canary_agents_are_serial_then_controller_is_last(tmp_path):
         "local:image", "local:voice", "local:hub",
     ]
     assert job["state"] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_disabled_machine_is_excluded_from_release_inventory_and_execution(
+    tmp_path, monkeypatch,
+):
+    from backend import registry
+
+    monkeypatch.setattr(
+        registry, "machine_enabled", lambda machine: machine != "mac-b",
+    )
+    calls = []
+
+    async def remote_bundle(machine, _body, _existing_job_id):
+        calls.append(machine)
+        return {
+            "job_id": f"agent-{machine}",
+            "components": [_exact_result(name) for name in ("hub", "image", "voice")],
+        }
+
+    service, manifest = _execution_service(
+        tmp_path,
+        remote_bundle_runner=remote_bundle,
+        component_runner=lambda *_args, **_kwargs: [
+            _exact_result("image"), _exact_result("voice"),
+        ],
+        hub_runner=lambda *_args, **_kwargs: _exact_result("hub"),
+    )
+
+    job = await service.run(manifest["release_id"])
+
+    assert set(job["machines"]) == {"local", "mac-a"}
+    assert calls == ["mac-a"]
+    assert job["state"] == "complete"
+
+
+def test_studio_level_off_does_not_exclude_enabled_machine_from_release_inventory(
+    tmp_path, monkeypatch,
+):
+    from backend import registry
+
+    monkeypatch.setattr(registry, "machine_enabled", lambda _machine: True)
+    monkeypatch.setattr(registry, "studio_enabled", lambda *_args: False)
+    service, _manifest_value = _execution_service(tmp_path)
+    job_id = service.state_snapshot()["activation"]["job_id"]
+
+    inventory = service.job_snapshot(job_id)["machines"]
+
+    assert inventory["mac-a"]["components"]["image"]["installed"] is True
+    assert inventory["mac-a"]["components"]["voice"]["installed"] is True
+
+
+@pytest.mark.asyncio
+async def test_reenabled_machine_is_deterministically_supplemented(
+    tmp_path, monkeypatch,
+):
+    from backend import registry
+
+    disabled = {"mac-b"}
+    monkeypatch.setattr(
+        registry, "machine_enabled", lambda machine: machine not in disabled,
+    )
+    calls = []
+
+    async def remote_bundle(machine, _body, _existing_job_id):
+        calls.append(machine)
+        return {
+            "job_id": f"agent-{machine}",
+            "components": [_exact_result(name) for name in ("hub", "image", "voice")],
+        }
+
+    service, manifest = _execution_service(
+        tmp_path,
+        remote_bundle_runner=remote_bundle,
+        component_runner=lambda *_args, **_kwargs: [
+            _exact_result("image"), _exact_result("voice"),
+        ],
+        hub_runner=lambda *_args, **_kwargs: _exact_result("hub"),
+    )
+    base = await service.run(manifest["release_id"])
+    assert base["state"] == "complete"
+    assert "mac-b" not in base["machines"]
+
+    calls.clear()
+    disabled.clear()
+    assert service.reconcile_registry() == 1
+    supplemented = await service.run(manifest["release_id"])
+
+    assert supplemented["supersedes_job_id"] == base["id"]
+    assert supplemented["machines"]["mac-b"]["state"] == "current"
+    assert calls == ["mac-b"]
+
+
+@pytest.mark.asyncio
+async def test_machine_disabled_after_activation_is_durably_excluded_then_rejoins(
+    tmp_path, monkeypatch,
+):
+    from backend import registry
+
+    disabled = set()
+    monkeypatch.setattr(
+        registry, "machine_enabled", lambda machine: machine not in disabled,
+    )
+    calls = []
+
+    async def remote_bundle(machine, _body, _existing_job_id):
+        calls.append(machine)
+        if machine == "mac-a":
+            disabled.add("mac-b")
+        return {
+            "job_id": f"agent-{machine}",
+            "components": [_exact_result(name) for name in ("hub", "image", "voice")],
+        }
+
+    service, manifest = _execution_service(
+        tmp_path,
+        remote_bundle_runner=remote_bundle,
+        component_runner=lambda *_args, **_kwargs: [
+            _exact_result("image"), _exact_result("voice"),
+        ],
+        hub_runner=lambda *_args, **_kwargs: _exact_result("hub"),
+    )
+    activated_job_id = service.state_snapshot()["activation"]["job_id"]
+    assert "mac-b" in service.job_snapshot(activated_job_id)["machines"]
+
+    base = await service.run(manifest["release_id"])
+
+    assert calls == ["mac-a"]
+    assert base["state"] == "complete"
+    assert base["machines"]["mac-b"]["state"] == "excluded"
+    assert {
+        row["state"] for row in base["machines"]["mac-b"]["components"].values()
+    } == {"excluded_disabled"}
+
+    disabled.clear()
+    assert service.reconcile_registry() == 1
+    supplemented = await service.run(manifest["release_id"])
+
+    assert supplemented["supersedes_job_id"] == base["id"]
+    assert supplemented["machines"]["mac-b"]["state"] == "current"
+    assert calls == ["mac-a", "mac-b"]
+
+
+@pytest.mark.asyncio
+async def test_post_activation_exclusion_is_not_reported_as_canary(
+    tmp_path, monkeypatch,
+):
+    from backend import registry
+
+    disabled = set()
+    monkeypatch.setattr(
+        registry, "machine_enabled", lambda machine: machine not in disabled,
+    )
+    calls = []
+
+    async def remote_bundle(machine, _body, _existing_job_id):
+        calls.append(machine)
+        return {
+            "job_id": f"agent-{machine}",
+            "components": [_exact_result(name) for name in ("hub", "image", "voice")],
+        }
+
+    service, manifest = _execution_service(
+        tmp_path,
+        remote_bundle_runner=remote_bundle,
+        component_runner=lambda *_args, **_kwargs: [
+            _exact_result("image"), _exact_result("voice"),
+        ],
+        hub_runner=lambda *_args, **_kwargs: _exact_result("hub"),
+    )
+    disabled.add("mac-a")
+
+    await service.run(manifest["release_id"])
+
+    assert calls == ["mac-b"]
+    assert service.capability_evidence()["canary_machine_id"] == "mac-b"
+
+
+@pytest.mark.asyncio
+async def test_reenable_during_active_lease_runs_immediate_post_pass_supplement(
+    tmp_path, monkeypatch,
+):
+    from backend import registry
+
+    disabled = {"mac-b"}
+    monkeypatch.setattr(
+        registry, "machine_enabled", lambda machine: machine not in disabled,
+    )
+    mac_a_started = asyncio.Event()
+    allow_mac_a = asyncio.Event()
+    calls = []
+
+    async def remote_bundle(machine, _body, _existing_job_id):
+        calls.append(machine)
+        if machine == "mac-a":
+            mac_a_started.set()
+            await allow_mac_a.wait()
+        return {
+            "job_id": f"agent-{machine}",
+            "components": [_exact_result(name) for name in ("hub", "image", "voice")],
+        }
+
+    service, manifest = _execution_service(
+        tmp_path,
+        remote_bundle_runner=remote_bundle,
+        component_runner=lambda *_args, **_kwargs: [
+            _exact_result("image"), _exact_result("voice"),
+        ],
+        hub_runner=lambda *_args, **_kwargs: _exact_result("hub"),
+    )
+    initial_job_id = service.state_snapshot()["activation"]["job_id"]
+    assert "mac-b" not in service.job_snapshot(initial_job_id)["machines"]
+
+    base_task = service.schedule(manifest["release_id"])
+    await mac_a_started.wait()
+    disabled.clear()
+
+    assert service.wake_registry() == 0
+    allow_mac_a.set()
+    base = await base_task
+    assert base["state"] == "complete"
+
+    async def supplemented():
+        while True:
+            active = service.state_snapshot()["activation"]
+            job = service.job_snapshot(active["job_id"])
+            if job["id"] != base["id"] and job["state"] == "complete":
+                return job
+            await asyncio.sleep(0)
+
+    supplemental = await asyncio.wait_for(supplemented(), timeout=2)
+
+    assert supplemental["release_id"] == base["release_id"]
+    assert supplemental["supersedes_job_id"] == base["id"]
+    assert supplemental["machines"]["mac-b"]["state"] == "current"
+    assert calls == ["mac-a", "mac-b"]
+
+
+@pytest.mark.asyncio
+async def test_foreign_lease_registry_wake_waits_then_runs_once(
+    tmp_path, monkeypatch,
+):
+    from backend import registry
+    from backend.release_reconciliation import ReleaseReconciler
+
+    disabled = {"mac-b"}
+    monkeypatch.setattr(
+        registry, "machine_enabled", lambda machine: machine not in disabled,
+    )
+    state_path = tmp_path / "release_reconciliation.json"
+    calls = []
+
+    async def remote_bundle(machine, _body, _existing_job_id):
+        calls.append(machine)
+        return {
+            "job_id": f"agent-{machine}",
+            "components": [_exact_result(name) for name in ("hub", "image", "voice")],
+        }
+
+    options = {
+        "state_path": state_path,
+        "clock": Clock(),
+        "peer_reader": lambda _machine: {
+            "reachable": True, "auth": True, "status": "connected",
+        },
+        "lease_seconds": 30,
+        "heartbeat_seconds": 5,
+        "poll_seconds": 0.001,
+        "owner_alive": lambda _pid: True,
+        "remote_bundle_runner": remote_bundle,
+        "component_runner": lambda *_args, **_kwargs: [
+            _exact_result("image"), _exact_result("voice"),
+        ],
+        "hub_runner": lambda *_args, **_kwargs: _exact_result("hub"),
+    }
+    owner_a = ReleaseReconciler(
+        ExecutionMonitor(), owner_id="owner-a", pid=101, **options,
+    )
+    manifest = _manifest()
+    owner_a.replace_intent(manifest)
+    owner_a.activate(manifest["release_id"], genstudio_run_reference=None)
+    assert owner_a.resume_pending() == 1
+
+    owner_b = ReleaseReconciler(
+        ExecutionMonitor(), owner_id="owner-b", pid=202, **options,
+    )
+    disabled.clear()
+
+    assert owner_b.wake_registry() == 0
+    wake = owner_b._registry_recovery_task
+    assert wake is not None
+    assert owner_b.wake_registry() == 0
+    assert owner_b._registry_recovery_task is wake
+    await asyncio.sleep(0.01)
+    assert wake.done() is False
+    assert owner_b.reconcile_registry() == 0
+
+    assert owner_a.release_adoption() is True
+    await asyncio.wait_for(asyncio.shield(wake), timeout=2)
+
+    active = owner_b.state_snapshot()["activation"]
+    completed = owner_b.job_snapshot(active["job_id"])
+    assert completed["release_id"] == manifest["release_id"]
+    assert completed["supplement_generation"] == 1
+    assert completed["machines"]["mac-b"]["state"] == "current"
+    assert completed["state"] == "complete"
+    assert calls == ["mac-a", "mac-b"]
+    assert owner_b._registry_recovery_task is None
 
 
 @pytest.mark.asyncio
@@ -1735,7 +2043,8 @@ async def test_expired_agent_owner_is_fenced_after_takeover(tmp_path):
 @pytest.mark.parametrize("error_code", sorted(set([
     "offline", "busy", "auth_rejected", "updater_unavailable",
     "transport_unavailable", "health_mismatch", "update_refused",
-    "invalid_evidence", "unknown_failure", "manifest_mismatch", "sha_mismatch",
+    "identity_mismatch", "invalid_evidence", "unknown_failure",
+    "manifest_mismatch", "sha_mismatch",
 ])))
 @pytest.mark.asyncio
 async def test_nonapproved_agent_block_codes_remain_target_local(tmp_path, error_code):
@@ -2033,9 +2342,10 @@ async def test_remote_replay_requires_adopted_acknowledgement(tmp_path, monkeypa
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("identity", [
-    {"role": "controller", "site_id": "site-a", "controller_id": "mac-a"},
-    {"role": "agent", "site_id": "site-b", "controller_id": "mac-a"},
-    {"role": "agent", "site_id": "site-a", "controller_id": "mac-b"},
+    {"role": "controller", "site_id": "site-a", "controller_id": "controller-a"},
+    {"role": "agent", "site_id": "site-b", "controller_id": "controller-a"},
+    {"role": "agent", "site_id": "site-a", "controller_id": "controller-a"},
+    {"role": "agent", "site_id": "site-a", "controller_id": "mac-z"},
     {"role": "agent", "site_id": "site-a"},
 ])
 async def test_remote_admission_identity_mismatch_is_quarantined(
@@ -2094,6 +2404,95 @@ async def test_remote_admission_identity_mismatch_is_quarantined(
 
 
 @pytest.mark.asyncio
+async def test_remote_admission_and_poll_accept_real_joined_agent_identity(
+    tmp_path, monkeypatch, reset,
+):
+    from backend import control_plane, enrollment, release_reconciliation
+
+    monkeypatch.setattr(enrollment, "suggested_local_hub_id", lambda _profile: "mac-a")
+    joined = enrollment.configure_joined_agent(
+        "http://100.70.0.2:47873",
+        "mac-mini-m2-8gb",
+        {
+            "site_id": "terranash-kts",
+            "site_name": "KTS",
+            "controller_id": "terranash-0200",
+            "fleet_token": "site-fleet-token-123",
+        },
+    )["settings"]
+    assert joined["role"] == "agent"
+    assert joined["controller_id"] == "mac-a"
+    control_plane.save_settings({
+        "role": "controller",
+        "site_id": "terranash-kts",
+        "site_name": "KTS",
+        "controller_id": "terranash-0200",
+    })
+    service, manifest = _execution_service(
+        tmp_path,
+        identity_reader=control_plane.public_settings,
+    )
+    job_id = service.state_snapshot()["activation"]["job_id"]
+    machine = service.job_snapshot(job_id)["machines"]["mac-a"]
+    child = release_reconciliation._agent_job_id(machine["operation_id"])
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            del args
+
+        async def post(self, *_args, **_kwargs):
+            return Response({
+                "job_id": child,
+                "adopted": False,
+                "role": joined["role"],
+                "site_id": joined["site_id"],
+                "controller_id": joined["controller_id"],
+            })
+
+        async def get(self, *_args, **_kwargs):
+            return Response({
+                "job_id": child,
+                "state": "complete",
+                "components": [
+                    _exact_result(name) for name in ("hub", "image", "voice")
+                ],
+                "role": joined["role"],
+                "site_id": joined["site_id"],
+                "controller_id": joined["controller_id"],
+            })
+
+    monkeypatch.setattr(release_reconciliation.httpx, "AsyncClient", Client)
+    body = {
+        "release_id": manifest["release_id"],
+        "operation_id": machine["operation_id"],
+        "components": deepcopy(manifest["components"]),
+    }
+
+    result = await service._request_remote_bundle("mac-a", body, None)
+
+    assert result["state"] == "complete"
+    assert result["job_id"] == child
+
+
+@pytest.mark.asyncio
 async def test_remote_poll_identity_change_is_quarantined_after_child_persist(
     tmp_path, monkeypatch,
 ):
@@ -2141,7 +2540,7 @@ async def test_remote_poll_identity_change_is_quarantined_after_child_persist(
         async def get(self, *_args, **_kwargs):
             return Response({
                 "job_id": child, "state": "complete", "components": {},
-                "role": "agent", "site_id": "site-a", "controller_id": "mac-z",
+                "role": "agent", "site_id": "site-a", "controller_id": "controller-a",
             })
 
     monkeypatch.setattr(release_reconciliation.httpx, "AsyncClient", Client)

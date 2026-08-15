@@ -40,6 +40,15 @@ def test_updates_has_distinct_status_only_managed_release_card():
     assert all(token not in card for token in ("<button", "<input", "<select", "onclick="))
 
 
+def test_complete_managed_release_explanation_is_exclusion_aware():
+    source = FRONTEND.read_text()
+
+    assert "const hasExcludedManagedWork" in source
+    assert "Every participating managed component is on the exact approved commit." in source
+    assert "Machine-wide-Off components were excluded" in source
+    assert "remain non-routable until that machine is re-enabled" in source
+
+
 def test_managed_release_card_has_bounded_responsive_content():
     source = FRONTEND.read_text()
 

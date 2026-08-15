@@ -10,6 +10,31 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.8.1] — 2026-08-15
+
+### Fixed — controlled-canary release eligibility and agent identity
+
+- Durable release inventory now excludes a machine only when its authoritative
+  machine-wide registry switch is disabled. An excluded machine is not
+  contacted and cannot hold the site release open; turning the machine back on
+  immediately reconciles it into the active immutable release, including when
+  another Hub process still owns the current execution lease. The Updates card
+  distinguishes exact participating components from excluded machine-wide-Off
+  work. Per-Studio Off controls remain independent and do not remove an enabled
+  machine from the managed release.
+- Remote managed-update admission and polling now require an agent to report
+  the controller's configured `site_id` and its own enrolled stable machine ID.
+  This matches the supported enrollment flow and quarantines wrong-role,
+  wrong-site, wrong-machine, or incomplete identities on that target without
+  stopping later machines.
+
+### Compatibility and safety
+
+- This patch changes no release manifest, ordinary updater setting, dependency,
+  launcher, model, or customer-work behavior. Existing machine-disable routing
+  controls remain authoritative, and re-enabled machines resume through the
+  same deterministic registry-supplementation path.
+
 ## [2.8.0] — 2026-08-15
 
 ### Added — durable exact-release reconciliation

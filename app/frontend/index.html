@@ -1172,6 +1172,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.8.1", date: "2026-08-15", items: [
+    "Managed releases now leave a whole-machine-disabled Mac untouched and nonblocking, show that exclusion truthfully, then add it to the same immutable release automatically when you turn that machine back on.",
+    "Agent identity checks now match the location site and each enrolled Mac's stable machine ID, so valid controller/agent layouts proceed while wrong or incomplete identities stay quarantined to that Mac.",
+    "Per-Studio Off controls remain separate from the whole-machine switch, and ordinary update schedules, dependencies, launchers, models, and customer work are unchanged.",
+  ]},
   { v: "2.8.0", date: "2026-08-15", items: [
     "GenStudio can now give each location one immutable Hub/Image/Voice release; Hub resumes it after restarts and verifies the exact approved version and Git commit before restoring capacity.",
     "Rollouts are serial: the first reachable agent is the canary, remaining machines follow one by one, and the controller Hub updates last. Offline or busy machines stay pending without blocking healthy capacity.",
@@ -4474,6 +4479,7 @@ function managedReleaseState(value) {
     checking: ["gen", "Checking"], updating: ["gen", "Updating"], restarting: ["gen", "Restarting"],
     verifying: ["gen", "Verifying"], current: ["ok", "Current"], retryable_failure: ["warn", "Retry scheduled"],
     auth_blocked: ["err", "Authentication blocked"], release_blocked: ["err", "Release blocked"],
+    excluded_disabled: ["", "Machine off · excluded"],
     not_installed: ["", "Not installed"], acknowledged: ["ok", "Requested"], requesting: ["gen", "Requesting"]
   };
   return states[value] || ["", String(value || "Pending").replaceAll("_", " ")];
@@ -4499,6 +4505,7 @@ function managedReleaseJob(data) {
 function managedReleaseCanary(job) {
   if (!job || !job.machines) return null;
   return Object.values(job.machines).filter(machine => machine.id !== "local")
+    .filter(machine => machine.state !== "excluded")
     .filter(machine => machine.host_evidence && machine.host_evidence.reachable === true && machine.host_evidence.auth !== false)
     .sort((a, b) => String(a.id).localeCompare(String(b.id)))[0]?.id || null;
 }
@@ -4527,6 +4534,9 @@ function renderManagedRelease(data) {
   badge.className = `pill ${tone}`; badge.textContent = label;
   status.textContent = `Managed release ${label.toLowerCase()}.`;
   const canary = managedReleaseCanary(job);
+  const hasExcludedManagedWork = Object.values(job?.machines || {}).some(machine =>
+    machine.state === "excluded" || Object.values(machine.components || {})
+      .some(component => component.state === "excluded_disabled"));
   const releaseLabel = `${manifest.release_id.slice(0, 19)}…`;
   target.innerHTML = [
     ["Target", releaseLabel, manifest.release_id],
@@ -4541,7 +4551,9 @@ function renderManagedRelease(data) {
     : state === "degraded"
       ? "Pending machines do not block healthy machines or other locations. Offline, busy, or unreachable Macs stay scheduled and rejoin automatically."
       : state === "complete"
-        ? "Every installed managed component is on the exact approved commit. Catalog reconciliation has been requested separately."
+        ? hasExcludedManagedWork
+          ? "Every participating managed component is on the exact approved commit. Machine-wide-Off components were excluded and remain non-routable until that machine is re-enabled. Catalog reconciliation has been requested separately."
+          : "Every installed managed component is on the exact approved commit. Catalog reconciliation has been requested separately."
         : data.activation
           ? "The Hub is updating one machine bundle at a time. The controller is last, and individual offline or busy machines remain pending."
           : "The exact release is stored and waiting for GenStudio to activate this location.";

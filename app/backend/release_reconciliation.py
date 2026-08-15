@@ -25,13 +25,12 @@ from typing import Any, Callable, Iterator
 
 import httpx
 
-from . import peers
+from . import peers, registry
 from .fleet_auto_updates import run_managed_components
-from .registry import DATA_DIR
 
 
-STATE_FILE = DATA_DIR / "release_reconciliation.json"
-LOCK_FILE = DATA_DIR / "release_reconciliation.json.lock"
+STATE_FILE = registry.DATA_DIR / "release_reconciliation.json"
+LOCK_FILE = registry.DATA_DIR / "release_reconciliation.json.lock"
 DUE_SCAN_INTERVAL_SECONDS = 15 * 60
 RETRY_DELAYS = (60, 300, 900, 3600, 14_400, 86_400)
 ADOPTION_LEASE_SECONDS = 5 * 60
@@ -59,7 +58,7 @@ SITE_STATES = {
 COMPONENT_STATES = {
     "not_installed", "pending_offline", "pending_busy", "checking", "updating",
     "restarting", "verifying", "current", "retryable_failure", "auth_blocked",
-    "release_blocked",
+    "release_blocked", "excluded_disabled",
 }
 TERMINAL_SITE_STATES = {"complete", "blocked_release"}
 RETRYABLE_COMPONENT_STATES = {
@@ -457,6 +456,7 @@ def _row_is_current(row: dict[str, Any]) -> bool:
 def _job_is_converged(job: dict[str, Any]) -> bool:
     return all(
         (not row["installed"] and row["state"] == "not_installed")
+        or row["state"] == "excluded_disabled"
         or (row["installed"] and _row_is_current(row))
         for machine in job["machines"].values()
         for row in machine["components"].values()
@@ -469,7 +469,10 @@ def _machine_summary(machine: dict[str, Any]) -> str:
            for row in rows):
         return "degraded"
     if all((not row["installed"] and row["state"] == "not_installed")
+           or row["state"] == "excluded_disabled"
            or (row["installed"] and _row_is_current(row)) for row in rows):
+        if any(row["state"] == "excluded_disabled" for row in rows):
+            return "excluded"
         return "current"
     return "running"
 
@@ -663,7 +666,9 @@ def _validate_state(value: object) -> dict[str, Any]:
                     raise ValueError("machine operation identity is not deterministic")
                 if machine["agent_job_id"] is not None:
                     _identifier(machine["agent_job_id"], "agent_job_id", opaque=True)
-                if machine["state"] not in {"queued", "running", "degraded", "current"}:
+                if machine["state"] not in {
+                    "queued", "running", "degraded", "current", "excluded",
+                }:
                     raise ValueError("machine state is invalid")
                 if machine["host_evidence"] != _host_evidence(machine["host_evidence"]):
                     raise ValueError("host evidence is invalid")
@@ -849,6 +854,7 @@ class ReleaseReconciler:
         self._site_tasks: dict[str, asyncio.Task] = {}
         self._lifecycle_tasks: set[asyncio.Task] = set()
         self._peer_recovery_tasks: dict[str, asyncio.Task] = {}
+        self._registry_recovery_task: asyncio.Task | None = None
         self._due_task: asyncio.Task | None = None
         with self._locked():
             self._state = self._load_disk()
@@ -891,6 +897,7 @@ class ReleaseReconciler:
         self._agent_tasks.clear()
         self._lifecycle_tasks.clear()
         self._peer_recovery_tasks.clear()
+        self._registry_recovery_task = None
 
     def schedule(self, release_id: str) -> asyncio.Task:
         """Schedule one adopted release and keep it inside service lifecycle."""
@@ -926,6 +933,77 @@ class ReleaseReconciler:
 
         task.add_done_callback(finished)
         return due or supplemented
+
+    def wake_registry(self) -> int:
+        """Reconcile fleet changes now or immediately after the active pass."""
+        supplemented = self.reconcile_registry()
+        state = self._read()
+        activation = state["activation"]
+        if supplemented:
+            if activation is not None:
+                self.schedule(activation["release_id"])
+            return supplemented
+        if activation is None:
+            return 0
+        job = self._find_job(state, activation["job_id"])
+        if job["state"] in TERMINAL_SITE_STATES or job["adoption_lease"] is None:
+            return 0
+        current = self._registry_recovery_task
+        if current is not None and not current.done():
+            return 0
+        task = asyncio.create_task(self._resume_reconciled_registry())
+        self._registry_recovery_task = task
+        self._lifecycle_tasks.add(task)
+
+        def finished(done: asyncio.Task) -> None:
+            if self._registry_recovery_task is done:
+                self._registry_recovery_task = None
+            self._lifecycle_tasks.discard(done)
+            self._consume_background_result(done)
+
+        task.add_done_callback(finished)
+        return 0
+
+    async def _resume_reconciled_registry(self) -> None:
+        await asyncio.sleep(0)
+        while True:
+            state = self._read()
+            activation = state["activation"]
+            if activation is None:
+                return
+            release_id = activation["release_id"]
+            job = self._find_job(state, activation["job_id"])
+            if job["adoption_lease"] is not None:
+                active = self._site_tasks.get(release_id)
+                if active is not None and not active.done():
+                    await asyncio.gather(asyncio.shield(active), return_exceptions=True)
+                else:
+                    if self.resume_pending() == 1:
+                        generation = self._site_generation(activation["job_id"])
+                        self.release_adoption(
+                            activation["job_id"], generation=generation,
+                        )
+                        continue
+                    await asyncio.sleep(min(self._poll_seconds, 1.0))
+                continue
+            if self.reconcile_registry():
+                stale = self._site_tasks.get(release_id)
+                if stale is not None:
+                    if not stale.done():
+                        await asyncio.gather(
+                            asyncio.shield(stale), return_exceptions=True,
+                        )
+                    if self._site_tasks.get(release_id) is stale:
+                        self._site_tasks.pop(release_id, None)
+                if self.resume_pending() == 1:
+                    await self.run(release_id)
+                return
+            refreshed = self._read()
+            current = refreshed["activation"]
+            if current is None or current["release_id"] != release_id:
+                return
+            if self._find_job(refreshed, current["job_id"])["adoption_lease"] is None:
+                return
 
     async def _resume_recovered_peer(self) -> None:
         await asyncio.sleep(0)
@@ -1140,9 +1218,13 @@ class ReleaseReconciler:
     def _machines(
         self, manifest: dict[str, Any], *, operation_generation: int = 0,
     ) -> dict[str, Any]:
-        installed: dict[str, set[str]] = {"local": set()}
+        installed: dict[str, set[str]] = (
+            {"local": set()} if registry.machine_enabled("local") else {}
+        )
         for studio in self.monitor.registry:
             machine = _identifier(studio.get("machine", "local"), "stable machine id")
+            if not registry.machine_enabled(machine):
+                continue
             installed.setdefault(machine, set())
             if studio.get("modality") in {"image", "voice"}:
                 installed[machine].add(studio["modality"])
@@ -1277,7 +1359,10 @@ class ReleaseReconciler:
                     continue
                 installed = {
                     name for name, row in observed["components"].items()
-                    if row["installed"] and not existing["components"][name]["installed"]
+                    if row["installed"] and (
+                        not existing["components"][name]["installed"]
+                        or existing["components"][name]["state"] == "excluded_disabled"
+                    )
                 }
                 if installed:
                     changed[machine_id] = installed
@@ -1506,7 +1591,7 @@ class ReleaseReconciler:
                 if job["catalog"]["state"] != "acknowledged":
                     raise ValueError("catalog reconciliation is not acknowledged")
                 for machine in job["machines"].values():
-                    machine["state"] = "current"
+                    machine["state"] = _machine_summary(machine)
                 job.update(
                     state="complete", finished_at=now, next_retry=None,
                     adoption_lease=None,
@@ -2106,7 +2191,10 @@ class ReleaseReconciler:
         return lease["generation"]
 
     def _ordered_machines(self, job: dict[str, Any]) -> list[str]:
-        remote = sorted(machine for machine in job["machines"] if machine != "local")
+        remote = sorted(
+            machine for machine in job["machines"]
+            if machine != "local" and job["machines"][machine]["state"] != "excluded"
+        )
         reachable = []
         for machine in remote:
             try:
@@ -2118,7 +2206,12 @@ class ReleaseReconciler:
         if reachable:
             canary = reachable[0]
             remote = [canary, *(machine for machine in remote if machine != canary)]
-        return [*remote, "local"] if "local" in job["machines"] else remote
+        return (
+            [*remote, "local"]
+            if "local" in job["machines"]
+            and job["machines"]["local"]["state"] != "excluded"
+            else remote
+        )
 
     @staticmethod
     async def _await(value: Any) -> Any:
@@ -2145,8 +2238,6 @@ class ReleaseReconciler:
             and isinstance(expected.get("site_id"), str)
             and response.get("role") == "agent"
             and response.get("site_id") == expected["site_id"]
-            # Enrollment uses the agent Hub's durable controller_id as the
-            # controller registry's stable machine ID.
             and response.get("controller_id") == machine
         )
 
@@ -2431,10 +2522,46 @@ class ReleaseReconciler:
                     fence=fence,
                 )
 
+    def _exclude_machine_if_disabled(
+        self, job_id: str, machine: str, *, fence: int,
+    ) -> bool:
+        if registry.machine_enabled(machine):
+            return False
+
+        def mutate(state: dict[str, Any]) -> bool:
+            job = self._find_job(state, job_id)
+            self._require_site_fence(job, fence)
+            if job["state"] in TERMINAL_SITE_STATES:
+                return True
+            machine_row = job["machines"].get(machine)
+            if machine_row is None:
+                return True
+            for row in machine_row["components"].values():
+                if row["installed"] and row["state"] != "current":
+                    row.update(
+                        state="excluded_disabled",
+                        observed_version=None,
+                        observed_commit=None,
+                        error_code=None,
+                        detail=None,
+                        next_retry=None,
+                    )
+            machine_row["state"] = _machine_summary(machine_row)
+            _refresh_job(job)
+            return True
+
+        return self._write(mutate)
+
+    def _sync_disabled_machines(self, job_id: str, *, fence: int) -> None:
+        for machine in self.job_snapshot(job_id)["machines"]:
+            self._exclude_machine_if_disabled(job_id, machine, fence=fence)
+
     async def _run_remote_machine(
         self, job_id: str, machine: str, manifest: dict[str, Any], *, fence: int,
     ) -> bool:
         self._assert_site_fence(job_id, fence)
+        if self._exclude_machine_if_disabled(job_id, machine, fence=fence):
+            return False
         try:
             peer = self._peer_reader(machine) or {}
         except Exception:
@@ -2532,6 +2659,8 @@ class ReleaseReconciler:
     ) -> bool:
         self._assert_site_fence(job_id, fence)
         machine = "local"
+        if self._exclude_machine_if_disabled(job_id, machine, fence=fence):
+            return False
         row = self.job_snapshot(job_id)["machines"][machine]
         local_registry = [studio for studio in self.monitor.registry
                           if studio.get("machine", "local") == "local"]
@@ -2568,6 +2697,8 @@ class ReleaseReconciler:
                 )
         hub = self.job_snapshot(job_id)["machines"][machine]["components"]["hub"]
         if hub["state"] in eligible:
+            if self._exclude_machine_if_disabled(job_id, machine, fence=fence):
+                return False
             if (self._loaded_version == hub["expected_version"]
                     and self._loaded_commit == hub["expected_commit"]):
                 self.record_component(
@@ -2694,11 +2825,14 @@ class ReleaseReconciler:
     async def _execute(
         self, job_id: str, manifest: dict[str, Any], *, fence: int,
     ) -> dict[str, Any]:
+        self._sync_disabled_machines(job_id, fence=fence)
         job = self.job_snapshot(job_id)
         for machine in self._ordered_machines(job):
             self._assert_site_fence(job_id, fence)
             if self.job_snapshot(job_id)["state"] in TERMINAL_SITE_STATES:
                 break
+            if self._exclude_machine_if_disabled(job_id, machine, fence=fence):
+                continue
             blocked = (
                 await self._run_local_machine(job_id, manifest, fence=fence)
                 if machine == "local"
@@ -2907,7 +3041,10 @@ class ReleaseReconciler:
             }
 
         canary = None
-        for machine_id in sorted(machine for machine in machines if machine != "local"):
+        for machine_id in sorted(
+            machine for machine in machines
+            if machine != "local" and machines[machine]["state"] != "excluded"
+        ):
             try:
                 peer = self._peer_reader(machine_id) or {}
             except Exception:

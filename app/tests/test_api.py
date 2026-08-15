@@ -649,16 +649,9 @@ def test_registry_add_immediately_supplements_active_managed_release(
     calls = []
 
     class ReleaseService:
-        def reconcile_registry(self):
-            calls.append("reconciled")
+        def wake_registry(self):
+            calls.append("wake_registry")
             return 1
-
-        def state_snapshot(self):
-            return {"activation": {"release_id": "sha256:" + "a" * 64}}
-
-        def schedule(self, release_id):
-            asyncio.get_running_loop()
-            calls.append(("scheduled", release_id))
 
     service = ReleaseService()
     monkeypatch.setattr(main, "release_reconciler", service)
@@ -670,10 +663,35 @@ def test_registry_add_immediately_supplements_active_managed_release(
     })
 
     assert response.status_code == 200
-    assert calls == [
-        "reconciled",
-        ("scheduled", "sha256:" + "a" * 64),
-    ]
+    assert calls == ["wake_registry"]
+
+
+def test_machine_reenable_immediately_reconciles_active_managed_release(
+    authed, monkeypatch,
+):
+    from backend import main
+
+    calls = []
+
+    class ReleaseService:
+        def wake_registry(self):
+            calls.append("wake_registry")
+            return 1
+
+    monkeypatch.setattr(main, "release_reconciler", ReleaseService())
+
+    disabled = authed.post(
+        "/api/hub/registry/machines/local/enabled", json={"enabled": False},
+    )
+    assert disabled.status_code == 200
+    assert calls == []
+
+    response = authed.post(
+        "/api/hub/registry/machines/local/enabled", json={"enabled": True},
+    )
+
+    assert response.status_code == 200
+    assert calls == ["wake_registry"]
 
 
 def test_remote_placeholder_name_uses_stable_enrollment_hostname(authed):

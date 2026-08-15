@@ -227,7 +227,10 @@ Site states are `pending`, `queued`, `running`, `waiting_busy`, `degraded`,
 `blocked_release`, and `complete`. Component states are `not_installed`,
 `pending_offline`, `pending_busy`, `checking`, `updating`, `restarting`,
 `verifying`, `current`, `retryable_failure`, `auth_blocked`, and
-`release_blocked`. `complete` and `blocked_release` are terminal;
+`release_blocked`. A component that was already queued when its authoritative
+whole-machine switch turned off is durably `excluded_disabled`; the machine is
+not contacted, does not hold the site open, and becomes pending again when the
+machine is re-enabled. `complete` and `blocked_release` are terminal;
 `degraded` remains retryable and survives controller restart.
 
 When managed intent is active, a model is routable only when its machine Hub
