@@ -1,3 +1,4 @@
+import hashlib
 import json
 import time
 
@@ -5,6 +6,119 @@ from starlette.testclient import TestClient
 
 from backend import (auth, broker, capabilities, control_plane,
                      hardware_profiles, model_exposure, peers, registry)
+
+
+def _managed_release_evidence(*, image_state="current", voice_state="current",
+                              hub_state="current", observed_image=None,
+                              site_state="running"):
+    release_id = "sha256:" + "d" * 64
+
+    def component(name, state, expected_version, expected_commit, observed=None):
+        observed = observed or (
+            {"version": expected_version, "commit": expected_commit}
+            if state == "current" else {"version": None, "commit": None}
+        )
+        return {
+            "component": name,
+            "desired_release_id": release_id,
+            "expected_version": expected_version,
+            "expected_commit": expected_commit,
+            "observed_version": observed["version"],
+            "observed_commit": observed["commit"],
+            "state": state,
+            "next_retry": 1_700_000_060.0 if "pending" in state else None,
+            "converged": state == "current" and observed == {
+                "version": expected_version, "commit": expected_commit,
+            },
+        }
+
+    components = {
+        "hub": component("hub", hub_state, "2.8.0", "a" * 40),
+        "image": component(
+            "image", image_state, "1.30.1", "b" * 40,
+            observed=observed_image,
+        ),
+        "voice": component("voice", voice_state, "2.3.0", "c" * 40),
+    }
+    return {
+        "desired": {
+            "release_id": release_id,
+            "sequence": 7,
+            "created_at": "2026-08-15T00:00:00Z",
+            "received_at": 1_700_000_000.0,
+            "components": {
+                key: {
+                    "expected_version": row["expected_version"],
+                    "expected_commit": row["expected_commit"],
+                }
+                for key, row in components.items()
+            },
+        },
+        "activation": {
+            "release_id": release_id,
+            "job_id": "release-job-test",
+            "activated_at": 1_700_000_001.0,
+        },
+        "site_state": site_state,
+        "next_retry": 1_700_000_060.0 if site_state == "degraded" else None,
+        "controller": components["hub"],
+        "machines": {
+            "local": {
+                "desired_release_id": release_id,
+                "state": site_state,
+                "next_retry": 1_700_000_060.0 if site_state == "degraded" else None,
+                "converged": all(row["converged"] for row in components.values()),
+                "components": components,
+            },
+        },
+        "catalog": {
+            "state": "pending",
+            "requested_at": None,
+            "acknowledged_at": None,
+            "requested_revision": None,
+            "requested_models": None,
+            "next_retry": None,
+        },
+    }
+
+
+class _ReleaseEvidenceService:
+    def __init__(self, evidence):
+        self.evidence = evidence
+
+    def capability_evidence(self):
+        return self.evidence
+
+
+def _release_manifest():
+    value = {
+        "schema": "genstudio.studio-fleet-release-intent",
+        "schema_version": 1,
+        "sequence": 7,
+        "created_at": "2026-08-15T00:00:00Z",
+        "components": {
+            "hub": {
+                "repository": "theng12/studiohub-mac",
+                "version": "2.8.0",
+                "commit": "a" * 40,
+            },
+            "image": {
+                "repository": "theng12/imagestudio-mac",
+                "version": "1.30.1",
+                "commit": "b" * 40,
+                "installed_only": True,
+            },
+            "voice": {
+                "repository": "theng12/voicestudio-mac",
+                "version": "2.3.0",
+                "commit": "c" * 40,
+                "installed_only": True,
+            },
+        },
+    }
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    value["release_id"] = "sha256:" + hashlib.sha256(canonical).hexdigest()
+    return value
 
 
 def _candidate(model_id, revision, operation, *, controls=None,
@@ -158,7 +272,7 @@ def test_private_capability_snapshot_contract_is_versioned_and_truthful(
 
     assert response.status_code == 200
     assert payload["schema"] == "studiohub.site-capabilities"
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert payload["observed_at"].endswith("Z")
     assert payload["site_id"] == "site-a"
     assert payload["controller"] == {
@@ -168,6 +282,7 @@ def test_private_capability_snapshot_contract_is_versioned_and_truthful(
         "online": True,
         "ready": True,
         "drained": False,
+        "managed_release": None,
     }
     assert payload["authority"] == {
         "global": "genstudio",
@@ -212,6 +327,156 @@ def test_private_capability_snapshot_contract_is_versioned_and_truthful(
     assert tts["controls"]["languages"] == ["en", "km"]
     assert tts["output_limits"] == {"sample_rate_hz": 24_000}
     assert transcription["availability"]["available_now"] is True
+
+
+def test_pending_managed_release_quarantines_worker(
+        authed, monitor, monkeypatch):
+    from backend import main
+
+    _seed_capability_site(monitor)
+    evidence = _managed_release_evidence(
+        image_state="pending_offline", site_state="degraded",
+    )
+    monkeypatch.setattr(
+        main, "release_reconciler", _ReleaseEvidenceService(evidence),
+    )
+
+    payload = authed.get("/api/hub/capabilities").json()
+    image = _worker(payload, "image")
+    model = _model(image, "image.text_to_image")
+
+    assert payload["schema_version"] == 3
+    assert payload["managed_release"]["desired"]["release_id"] == evidence["desired"]["release_id"]
+    assert payload["controller"]["managed_release"] == evidence["controller"]
+    assert payload["machines"][0]["managed_release"] == evidence["machines"]["local"]
+    assert image["managed_release"] == evidence["machines"]["local"]["components"]["image"]
+    assert model["availability"]["available_now"] is False
+    assert model["availability"]["reason"] == "managed_release_pending"
+
+
+def test_release_reconciler_capability_evidence_is_bounded_and_sanitized(
+        monitor, tmp_path):
+    from backend.release_reconciliation import ReleaseReconciler
+
+    _seed_capability_site(monitor)
+    service = ReleaseReconciler(
+        monitor,
+        state_path=tmp_path / "release-reconciliation.json",
+        loaded_version="2.7.1",
+        loaded_commit="f" * 40,
+    )
+    manifest = _release_manifest()
+    service.replace_intent(manifest)
+    job = service.activate(manifest["release_id"], genstudio_run_reference=None)
+    service.record_component(
+        job["id"], "local", "image", state="pending_offline",
+        next_retry=service._clock() + 60,
+    )
+
+    evidence = service.capability_evidence()
+
+    assert evidence["desired"] == {
+        "release_id": manifest["release_id"],
+        "sequence": 7,
+        "created_at": "2026-08-15T00:00:00Z",
+        "received_at": evidence["desired"]["received_at"],
+        "components": {
+            "hub": {"expected_version": "2.8.0", "expected_commit": "a" * 40},
+            "image": {"expected_version": "1.30.1", "expected_commit": "b" * 40},
+            "voice": {"expected_version": "2.3.0", "expected_commit": "c" * 40},
+        },
+    }
+    assert evidence["controller"]["observed_version"] == "2.7.1"
+    assert evidence["controller"]["observed_commit"] == "f" * 40
+    assert evidence["machines"]["local"]["components"]["image"]["state"] == "pending_offline"
+    assert evidence["machines"]["local"]["components"]["image"]["next_retry"] is not None
+    assert evidence["catalog"]["state"] == "pending"
+    assert "repository" not in json.dumps(evidence)
+    assert "detail" not in json.dumps(evidence)
+    assert "error_code" not in json.dumps(evidence)
+
+
+def test_release_reconciler_omits_unattested_loaded_identity(monitor, tmp_path):
+    from backend.release_reconciliation import ReleaseReconciler
+
+    _seed_capability_site(monitor)
+    service = ReleaseReconciler(
+        monitor,
+        state_path=tmp_path / "release-reconciliation.json",
+        loaded_version="not-semver/private/path",
+        loaded_commit="unknown",
+    )
+    service.replace_intent(_release_manifest())
+
+    evidence = service.capability_evidence()
+
+    assert evidence["controller"]["observed_version"] is None
+    assert evidence["controller"]["observed_commit"] is None
+
+
+def test_blocked_managed_release_quarantines_worker_with_blocked_reason(
+        authed, monitor, monkeypatch):
+    from backend import main
+
+    _seed_capability_site(monitor)
+    evidence = _managed_release_evidence(
+        hub_state="release_blocked", site_state="blocked_release",
+    )
+    monkeypatch.setattr(
+        main, "release_reconciler", _ReleaseEvidenceService(evidence),
+    )
+
+    model = _model(
+        _worker(authed.get("/api/hub/capabilities").json(), "voice"),
+        "voice.tts",
+    )
+
+    assert model["availability"]["available_now"] is False
+    assert model["availability"]["reason"] == "managed_release_blocked"
+
+
+def test_mismatched_managed_release_quarantines_worker_with_mismatch_reason(
+        authed, monitor, monkeypatch):
+    from backend import main
+
+    _seed_capability_site(monitor)
+    evidence = _managed_release_evidence(
+        image_state="checking",
+        observed_image={"version": "1.29.9", "commit": "e" * 40},
+    )
+    monkeypatch.setattr(
+        main, "release_reconciler", _ReleaseEvidenceService(evidence),
+    )
+
+    model = _model(
+        _worker(authed.get("/api/hub/capabilities").json(), "image"),
+        "image.text_to_image",
+    )
+
+    assert model["availability"]["available_now"] is False
+    assert model["availability"]["reason"] == "managed_release_mismatch"
+
+
+def test_current_managed_release_preserves_existing_availability_reason(
+        authed, monitor, monkeypatch):
+    from backend import main
+
+    _seed_capability_site(monitor)
+    source = monitor._catalog_cache["image"][1]["models"][0]
+    source["qualified_revision_match"] = False
+    monkeypatch.setattr(
+        main,
+        "release_reconciler",
+        _ReleaseEvidenceService(_managed_release_evidence(site_state="complete")),
+    )
+
+    model = _model(
+        _worker(authed.get("/api/hub/capabilities").json(), "image"),
+        "image.text_to_image",
+    )
+
+    assert model["availability"]["available_now"] is False
+    assert model["availability"]["reason"] == "runtime_revision_mismatch"
 
 
 def test_image_revision_mismatch_is_published_and_blocks_new_routing(

@@ -35,3 +35,18 @@ def test_update_uses_canonical_script_stop_uri():
         r'method:\s*"script\.stop",\s*params:\s*\{\s*uri:\s*"start\.js"',
         update,
     )
+
+
+def test_managed_release_contract_is_documented():
+    readme = (ROOT / "README.md").read_text()
+    capability_contract = (ROOT / "CAPABILITY_CONTRACT.md").read_text()
+
+    assert "/api/hub/maintenance/release-intent" in readme
+    assert "schema version 3" in capability_contract.lower()
+
+
+def test_managed_release_examples_pin_published_sibling_merge_commits():
+    integration = (ROOT / "studiohub_genstudio_integration.md").read_text()
+
+    assert "7e6b25a73ff7e8ad4b0c1e838a697341c97eb51b" in integration
+    assert "bf13bdf7d9688da87ec6e3a5e89961245beeede0" in integration

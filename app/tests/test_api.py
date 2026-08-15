@@ -1,6 +1,69 @@
+import asyncio
+import hashlib
 import json
+from copy import deepcopy
 from pathlib import Path
+import re
 import subprocess
+
+import pytest
+
+
+RELEASE_COMPONENTS = {
+    "hub": {
+        "repository": "theng12/studiohub-mac",
+        "version": "2.8.0",
+        "commit": "a" * 40,
+    },
+    "image": {
+        "repository": "theng12/imagestudio-mac",
+        "version": "1.30.1",
+        "commit": "b" * 40,
+        "installed_only": True,
+    },
+    "voice": {
+        "repository": "theng12/voicestudio-mac",
+        "version": "2.3.0",
+        "commit": "c" * 40,
+        "installed_only": True,
+    },
+}
+
+
+def _release_manifest() -> dict:
+    manifest = {
+        "schema": "genstudio.studio-fleet-release-intent",
+        "schema_version": 1,
+        "sequence": 1,
+        "created_at": "2026-08-15T00:00:00Z",
+        "components": deepcopy(RELEASE_COMPONENTS),
+    }
+    canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+    manifest["release_id"] = "sha256:" + hashlib.sha256(canonical).hexdigest()
+    return manifest
+
+
+def _managed_bundle() -> dict:
+    manifest = _release_manifest()
+    return {
+        "release_id": manifest["release_id"],
+        "operation_id": "managed-test-operation",
+        "components": manifest["components"],
+    }
+
+
+def _release_service(monkeypatch, tmp_path):
+    from backend import main
+    from backend.release_reconciliation import ReleaseReconciler
+
+    service = ReleaseReconciler(
+        main.monitor,
+        state_path=tmp_path / "release_reconciliation.json",
+        loaded_version=main._app_version(),
+        loaded_commit=main.APP_COMMIT,
+    )
+    monkeypatch.setattr(main, "release_reconciler", service, raising=False)
+    return service
 
 
 def test_dashboard_includes_render_studio():
@@ -78,8 +141,298 @@ def test_job_storage_cap_defaults_to_safe_fleet_policy_and_is_configurable(authe
 def test_health_and_version(client):
     h = client.get("/api/health").json()
     assert h["ok"] is True and "app_version" in h
+    assert re.fullmatch(r"[0-9a-f]{40}", h["app_commit"])
     v = client.get("/api/version").json()
     assert v["title"] == "Studio Hub KH"
+    assert re.fullmatch(r"[0-9a-f]{40}", v["app_commit"])
+
+
+def test_managed_update_route_advertises_capability_and_threads_full_tuple(authed, monkeypatch):
+    from backend import main
+
+    request = {
+        "after_current": True,
+        "target_commit": "a" * 40,
+        "target_version": "2.8.0",
+        "operation_id": "hub-op-1",
+    }
+    calls = []
+    monkeypatch.setattr(main.auto_updater, "trigger_update", lambda **kwargs: calls.append(kwargs) or {"state": "deferred"})
+
+    status = authed.get("/api/auto-update/status")
+    response = authed.post("/api/auto-update/update", json=request)
+
+    assert status.json()["capabilities"] == {"managed_exact_commit": True}
+    assert response.status_code == 200
+    assert calls == [request]
+
+
+@pytest.mark.asyncio
+async def test_managed_hub_runner_preserves_clean_checkout_health_failure(monkeypatch):
+    from backend import main
+
+    monkeypatch.setattr(main.auto_updater, "trigger_update", lambda **kwargs: {
+        "state": "failed",
+        "details": [
+            "The updated app did not attest to the expected commit and version."
+        ],
+    })
+
+    result = await main._run_managed_hub_update(
+        {"commit": "a" * 40, "version": "2.8.0"}, "hub-op-clean-failure",
+    )
+
+    assert result == {
+        "component": "hub",
+        "state": "retryable_failure",
+        "error_code": "clean_checkout_health_failure",
+    }
+
+
+def test_release_intent_requires_machine_auth_and_controller_role(
+    client, authed, monkeypatch, tmp_path,
+):
+    from backend import control_plane
+
+    _release_service(monkeypatch, tmp_path)
+    manifest = _release_manifest()
+
+    assert client.put(
+        "/api/hub/maintenance/release-intent", json=manifest,
+    ).status_code == 401
+    assert authed.put(
+        "/api/hub/maintenance/release-intent", json=manifest,
+    ).status_code == 409
+
+    control_plane.save_settings({
+        "role": "controller",
+        "site_id": "site-a",
+        "site_name": "Site A",
+        "controller_id": "controller-a",
+    })
+    accepted = authed.put("/api/hub/maintenance/release-intent", json=manifest)
+    assert accepted.status_code == 200
+    assert accepted.json()["release_id"] == manifest["release_id"]
+    assert accepted.json()["site_id"] == "site-a"
+    assert accepted.json()["controller_id"] == "controller-a"
+
+
+def test_activation_replay_adopts_one_job(authed, monkeypatch, tmp_path):
+    from backend import control_plane
+
+    service = _release_service(monkeypatch, tmp_path)
+    manifest = _release_manifest()
+    control_plane.save_settings({
+        "role": "controller",
+        "site_id": "site-a",
+        "site_name": "Site A",
+        "controller_id": "controller-a",
+    })
+    assert authed.put(
+        "/api/hub/maintenance/release-intent", json=manifest,
+    ).status_code == 200
+
+    async def no_execution(_release_id):
+        return None
+
+    monkeypatch.setattr(service, "run", no_execution)
+    path = f"/api/hub/maintenance/release-intent/{manifest['release_id']}/activate"
+    first = authed.post(path)
+    second = authed.post(path)
+
+    assert first.status_code == second.status_code == 202
+    assert first.json()["job_id"] == second.json()["job_id"]
+    polled = authed.get(
+        f"/api/hub/maintenance/release-jobs/{first.json()['job_id']}"
+    ).json()
+    assert {
+        key: polled[key] for key in ("role", "site_id", "controller_id")
+    } == {
+        "role": "controller",
+        "site_id": "site-a",
+        "controller_id": "controller-a",
+    }
+
+
+def test_release_writes_require_header_machine_token_and_local_role(
+    app, token, monkeypatch, tmp_path,
+):
+    from starlette.testclient import TestClient
+    from backend import auth, control_plane
+
+    service = _release_service(monkeypatch, tmp_path)
+    manifest = _release_manifest()
+    owner = TestClient(app)
+    owner.cookies.set(auth.SESSION_COOKIE_NAME, auth.create_browser_session())
+    machine = TestClient(app, headers={"X-Hub-Token": token})
+
+    control_plane.save_settings({
+        "role": "controller",
+        "site_id": "site-a",
+        "site_name": "Site A",
+        "controller_id": "controller-a",
+    })
+    assert owner.put(
+        "/api/hub/maintenance/release-intent", json=manifest,
+    ).status_code in {401, 403}
+    assert machine.put(
+        "/api/hub/maintenance/release-intent", json=manifest,
+    ).status_code == 200
+
+    async def no_execution(_release_id):
+        return None
+
+    monkeypatch.setattr(service, "run", no_execution)
+    activate = f"/api/hub/maintenance/release-intent/{manifest['release_id']}/activate"
+    assert machine.post(activate, json={}).status_code == 202
+    assert machine.post(
+        "/api/hub/maintenance/managed-update", json=_managed_bundle(),
+    ).status_code == 403
+
+    control_plane.save_settings({
+        "role": "agent",
+        "site_id": "site-a",
+        "site_name": "Site A",
+        "controller_id": "controller-a",
+    })
+    child = service.admit_managed_update(_managed_bundle())
+    polled = machine.get(
+        f"/api/hub/maintenance/managed-update/{child['job_id']}"
+    ).json()
+    assert {
+        key: polled[key] for key in ("role", "site_id", "controller_id")
+    } == {
+        "role": "agent",
+        "site_id": "site-a",
+        "controller_id": "controller-a",
+    }
+    monkeypatch.setattr(
+        service,
+        "admit_and_schedule_managed_update",
+        lambda bundle: {"job_id": "agent-test", "adopted": False},
+    )
+    assert owner.post(
+        "/api/hub/maintenance/managed-update", json=_managed_bundle(),
+    ).status_code in {401, 403}
+    assert machine.post(
+        "/api/hub/maintenance/managed-update", json=_managed_bundle(),
+    ).status_code == 202
+    assert machine.put(
+        "/api/hub/maintenance/release-intent", json=manifest,
+    ).status_code == 403
+
+
+def test_release_write_rejects_missing_invalid_and_cross_origin_credentials(
+    app, token, monkeypatch, tmp_path,
+):
+    from starlette.testclient import TestClient
+    from backend import control_plane
+
+    _release_service(monkeypatch, tmp_path)
+    control_plane.save_settings({
+        "role": "controller",
+        "site_id": "site-a",
+        "site_name": "Site A",
+        "controller_id": "controller-a",
+    })
+    manifest = _release_manifest()
+    client = TestClient(app)
+    machine = TestClient(app, headers={"X-Hub-Token": token})
+
+    assert client.put(
+        "/api/hub/maintenance/release-intent", json=manifest,
+    ).status_code == 401
+    assert client.put(
+        "/api/hub/maintenance/release-intent",
+        headers={"X-Hub-Token": "bad"},
+        json=manifest,
+    ).status_code == 401
+    assert machine.put(
+        "/api/hub/maintenance/release-intent",
+        headers={"Origin": "https://attacker.invalid"},
+        json=manifest,
+    ).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_release_reconciler_lifecycle_adopts_and_stops_due_scanner(
+    monkeypatch, tmp_path,
+):
+    from backend import main
+    from backend.release_reconciliation import ReleaseReconciler
+
+    service = ReleaseReconciler(
+        main.monitor,
+        state_path=tmp_path / "release_reconciliation.json",
+    )
+    manifest = _release_manifest()
+    service.replace_intent(manifest)
+    service.activate(manifest["release_id"], genstudio_run_reference=None)
+    executed = []
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def run(release_id):
+        executed.append(release_id)
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setattr(service, "run", run)
+    resumed = await service.start()
+    await asyncio.wait_for(started.wait(), timeout=1)
+    due_task = service._due_task
+    await service.stop()
+
+    assert resumed == {"managed_updates": 0, "release_jobs": 1}
+    assert executed == [manifest["release_id"]]
+    assert cancelled.is_set()
+    assert due_task is not None and due_task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_recovered_peer_wakes_one_release_pass_without_duplicate_execution(
+    monkeypatch, tmp_path,
+):
+    from backend.release_reconciliation import ReleaseReconciler
+
+    class Monitor:
+        registry = [
+            {"id": "voice", "modality": "voice", "machine": "local"},
+            {"id": "voice@mac-a", "modality": "voice", "machine": "mac-a"},
+            {"id": "voice@mac-b", "modality": "voice", "machine": "mac-b"},
+        ]
+
+    service = ReleaseReconciler(
+        Monitor(), state_path=tmp_path / "release_reconciliation.json",
+    )
+    manifest = _release_manifest()
+    service.replace_intent(manifest)
+    job_id = service.activate(
+        manifest["release_id"], genstudio_run_reference=None,
+    )["id"]
+    service.record_component(job_id, "mac-a", "voice", state="pending_offline")
+    service.record_component(job_id, "mac-b", "voice", state="pending_offline")
+    calls = []
+    started = asyncio.Event()
+
+    async def run(release_id):
+        calls.append(release_id)
+        started.set()
+        return service.job_snapshot(job_id)
+
+    monkeypatch.setattr(service, "run", run)
+    assert service.wake_peer("mac-b") == 1
+    assert service.wake_peer("mac-b") == 1
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    snapshot = service.job_snapshot(job_id)
+    assert calls == [manifest["release_id"]]
+    assert snapshot["machines"]["mac-b"]["components"]["voice"]["state"] == "checking"
+    assert snapshot["machines"]["mac-a"]["components"]["voice"]["state"] == "pending_offline"
+    await service.stop()
 
 
 def test_reported_version_is_snapshot_of_loaded_process(tmp_path, monkeypatch):
@@ -286,6 +639,41 @@ def test_registry_add_rename_remove(authed):
     assert next(s for s in studios if s["id"] == "voice@mac-z")["enabled"] is True
     # remove
     assert authed.request("DELETE", "/api/hub/registry/machines/mac-z").json()["removed"] == 2
+
+
+def test_registry_add_immediately_supplements_active_managed_release(
+    authed, monkeypatch,
+):
+    from backend import main
+
+    calls = []
+
+    class ReleaseService:
+        def reconcile_registry(self):
+            calls.append("reconciled")
+            return 1
+
+        def state_snapshot(self):
+            return {"activation": {"release_id": "sha256:" + "a" * 64}}
+
+        def schedule(self, release_id):
+            asyncio.get_running_loop()
+            calls.append(("scheduled", release_id))
+
+    service = ReleaseService()
+    monkeypatch.setattr(main, "release_reconciler", service)
+
+    response = authed.post("/api/hub/registry/add", json={
+        "host": "100.64.0.90",
+        "machine": "managed-agent-90",
+        "modalities": ["image", "voice"],
+    })
+
+    assert response.status_code == 200
+    assert calls == [
+        "reconciled",
+        ("scheduled", "sha256:" + "a" * 64),
+    ]
 
 
 def test_remote_placeholder_name_uses_stable_enrollment_hostname(authed):

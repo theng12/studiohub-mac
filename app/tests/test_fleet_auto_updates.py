@@ -6,7 +6,7 @@ import time
 import httpx
 import pytest
 
-from backend import fleet_ops
+from backend import fleet_auto_updates, fleet_ops
 from backend.fleet_auto_updates import FleetAutoUpdates
 
 
@@ -169,6 +169,18 @@ async def test_interrupted_job_is_persisted_and_resumed(monkeypatch, tmp_path):
     await asyncio.wait_for(completed.wait(), timeout=1)
 
 
+def test_resume_does_not_adopt_legacy_fleet_ops_history(monkeypatch, tmp_path):
+    monkeypatch.setitem(fleet_ops._hub_updates, "legacy", {
+        "id": "legacy", "status": "failed", "restart_interrupted": True,
+        "items": [],
+    })
+    coordinator = FleetAutoUpdates(
+        FakeMonitor(), FakeHubUpdater(), state_path=tmp_path / "fleet-jobs.json"
+    )
+
+    assert coordinator.resume_pending() == 0
+
+
 def test_failed_apps_can_be_retried_as_a_new_job(monkeypatch):
     coordinator = FleetAutoUpdates(FakeMonitor(), FakeHubUpdater())
     old = _job("voice@a", "chat@b")
@@ -263,6 +275,307 @@ def test_inventory_shows_one_canonical_row_per_repository():
     assert [row["id"] for row in rows] == ["hub@local", "voice", "chat@b", "render"]
     render = next(row for row in rows if row["id"] == "render")
     assert render["settings_url"].endswith("/#automatic-updates")
+
+
+def test_managed_selector_keeps_every_installed_image_and_voice():
+    monitor = FakeMonitor()
+    monitor.registry = [
+        {"id": "image@a", "title": "Image A", "modality": "image",
+         "host": "10.0.0.8", "port": 47868, "machine": "a"},
+        {"id": "voice@a", "title": "Voice A", "modality": "voice",
+         "host": "10.0.0.8", "port": 47870, "machine": "a"},
+        {"id": "image@b", "title": "Image B", "modality": "image",
+         "host": "10.0.0.9", "port": 47868, "machine": "b"},
+        {"id": "voice@b", "title": "Voice B", "modality": "voice",
+         "host": "10.0.0.9", "port": 47870, "machine": "b"},
+        {"id": "chat@a", "title": "Chat A", "modality": "chat",
+         "host": "10.0.0.8", "port": 47869, "machine": "a"},
+    ]
+    manifest = {"components": {
+        "image": {"repository": "theng12/imagestudio-mac", "version": "1.30.1",
+                  "commit": "a" * 40, "installed_only": True},
+        "voice": {"repository": "theng12/voicestudio-mac", "version": "2.3.0",
+                  "commit": "b" * 40, "installed_only": True},
+    }}
+
+    targets = fleet_auto_updates.managed_targets(monitor, manifest)
+
+    assert {row["id"] for row in targets} == {"image@a", "voice@a", "image@b", "voice@b"}
+    assert {(row["modality"], row["repository"], row["target_version"], row["target_commit"])
+            for row in targets} == {
+                ("image", "theng12/imagestudio-mac", "1.30.1", "a" * 40),
+                ("voice", "theng12/voicestudio-mac", "2.3.0", "b" * 40),
+            }
+
+
+@pytest.mark.asyncio
+async def test_managed_component_runner_posts_frozen_tuple_and_attests_exact_health(monkeypatch):
+    monitor = FakeMonitor()
+    monitor.registry = [{"id": "image@a", "title": "Image A", "modality": "image",
+                         "host": "10.0.0.8", "port": 47868, "machine": "a"}]
+    manifest = {"components": {
+        "image": {"repository": "theng12/imagestudio-mac", "version": "1.30.1",
+                  "commit": "a" * 40, "installed_only": True},
+        "voice": {"repository": "theng12/voicestudio-mac", "version": "2.3.0",
+                  "commit": "b" * 40, "installed_only": True},
+    }}
+    posted = []
+
+    class Response:
+        status_code = 200
+        def __init__(self, payload): self.payload = payload
+        def json(self): return self.payload
+        def raise_for_status(self): return None
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, url, **kwargs):
+            if url.endswith("/api/auto-update/status"):
+                return Response({"state": "succeeded",
+                                 "capabilities": {"managed_exact_commit": True}})
+            if url.endswith("/api/health"):
+                return Response({"ok": True, "app_version": "1.30.1", "app_commit": "a" * 40})
+            raise AssertionError(url)
+        async def post(self, url, **kwargs):
+            posted.append(kwargs["json"])
+            return Response({"state": "updating"})
+
+    monkeypatch.setattr(fleet_auto_updates.httpx, "AsyncClient", lambda **kwargs: Client())
+    results = await fleet_auto_updates.run_managed_components(
+        monitor, manifest, operation_id="release-12-machine-a", poll_seconds=0, update_timeout=1,
+    )
+
+    assert results[0]["state"] == "current"
+    assert results[0]["operation_id"]
+    assert len(results[0]["operation_id"]) <= 128
+    assert posted == [{"after_current": True, "target_commit": "a" * 40,
+                       "target_version": "1.30.1", "operation_id": results[0]["operation_id"]}]
+
+
+@pytest.mark.asyncio
+async def test_managed_component_runner_marks_capability_missing_retryable(monkeypatch):
+    monitor = FakeMonitor()
+    monitor.registry = [{"id": "voice@a", "title": "Voice A", "modality": "voice",
+                         "host": "10.0.0.8", "port": 47870, "machine": "a"}]
+    manifest = {"components": {
+        "image": {"repository": "theng12/imagestudio-mac", "version": "1.30.1",
+                  "commit": "a" * 40, "installed_only": True},
+        "voice": {"repository": "theng12/voicestudio-mac", "version": "2.3.0",
+                  "commit": "b" * 40, "installed_only": True},
+    }}
+    posts = []
+
+    class Response:
+        status_code = 200
+        def json(self): return {"state": "idle", "capabilities": {}}
+        def raise_for_status(self): return None
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, *args, **kwargs): return Response()
+        async def post(self, *args, **kwargs): posts.append(True)
+
+    monkeypatch.setattr(fleet_auto_updates.httpx, "AsyncClient", lambda **kwargs: Client())
+    results = await fleet_auto_updates.run_managed_components(
+        monitor, manifest, operation_id="release-12-machine-a", poll_seconds=0, update_timeout=1,
+    )
+
+    assert results[0]["state"] == "retryable_failure"
+    assert results[0]["next_retry"] is not None
+    assert "exact component updater unavailable" in results[0]["detail"]
+    assert posts == []
+
+
+@pytest.mark.asyncio
+async def test_managed_component_runner_replays_lost_post_and_rejects_wrong_commit(monkeypatch):
+    monitor = FakeMonitor()
+    monitor.registry = [{"id": "image@a", "title": "Image A", "modality": "image",
+                         "host": "10.0.0.8", "port": 47868, "machine": "a"}]
+    manifest = {"components": {
+        "image": {"repository": "theng12/imagestudio-mac", "version": "1.30.1",
+                  "commit": "a" * 40, "installed_only": True},
+        "voice": {"repository": "theng12/voicestudio-mac", "version": "2.3.0",
+                  "commit": "b" * 40, "installed_only": True},
+    }}
+    posts = []
+
+    class Response:
+        status_code = 200
+        def __init__(self, payload): self.payload = payload
+        def json(self): return self.payload
+        def raise_for_status(self): return None
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, url, **kwargs):
+            if url.endswith("/api/auto-update/status"):
+                return Response({"state": "succeeded",
+                                 "capabilities": {"managed_exact_commit": True}})
+            if url.endswith("/api/health"):
+                return Response({"ok": True, "app_version": "1.30.1", "app_commit": "b" * 40})
+            raise AssertionError(url)
+        async def post(self, url, **kwargs):
+            posts.append(kwargs["json"])
+            if len(posts) == 1:
+                raise httpx.ReadTimeout("response lost after admission")
+            return Response({"state": "updating"})
+
+    monkeypatch.setattr(fleet_auto_updates.httpx, "AsyncClient", lambda **kwargs: Client())
+    results = await fleet_auto_updates.run_managed_components(
+        monitor, manifest, operation_id="release-12-machine-a", poll_seconds=0, update_timeout=1,
+    )
+
+    assert posts[0] == posts[1]
+    assert results[0]["state"] == "retryable_failure"
+    assert results[0]["next_retry"] is not None
+    assert "attestation mismatch" in results[0]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_managed_component_runner_preserves_clean_checkout_health_failure(monkeypatch):
+    monitor = FakeMonitor()
+    monitor.registry = [{"id": "image@a", "title": "Image A", "modality": "image",
+                         "host": "10.0.0.8", "port": 47868, "machine": "a"}]
+    manifest = {"components": {
+        "image": {"repository": "theng12/imagestudio-mac", "version": "1.30.1",
+                  "commit": "a" * 40, "installed_only": True},
+        "voice": {"repository": "theng12/voicestudio-mac", "version": "2.3.0",
+                  "commit": "b" * 40, "installed_only": True},
+    }}
+    polls = 0
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def json(self):
+            return self.payload
+
+        def raise_for_status(self):
+            return None
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            del args
+
+        async def get(self, url, **kwargs):
+            del url, kwargs
+            nonlocal polls
+            polls += 1
+            if polls == 1:
+                return Response({
+                    "state": "idle",
+                    "capabilities": {"managed_exact_commit": True},
+                })
+            return Response({
+                "state": "failed",
+                "capabilities": {"managed_exact_commit": True},
+                "details": [
+                    "The updated app did not attest to the expected commit and version."
+                ],
+            })
+
+        async def post(self, *args, **kwargs):
+            del args, kwargs
+            return Response({"state": "updating"})
+
+    monkeypatch.setattr(fleet_auto_updates.httpx, "AsyncClient", lambda **kwargs: Client())
+
+    results = await fleet_auto_updates.run_managed_components(
+        monitor, manifest, operation_id="release-12-machine-a",
+        poll_seconds=0, update_timeout=1,
+    )
+
+    assert results[0]["state"] == "retryable_failure"
+    assert results[0]["error_code"] == "clean_checkout_health_failure"
+    assert "clean checkout health" in results[0]["detail"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code, expected", [(401, "auth_blocked"), (403, "auth_blocked"),
+                                                     (404, "retryable_failure"), (409, "retryable_failure")])
+async def test_managed_component_http_errors_stay_target_local(monkeypatch, status_code, expected):
+    monitor = FakeMonitor()
+    monitor.registry = [{"id": "image@a", "title": "Image A", "modality": "image",
+                         "host": "10.0.0.8", "port": 47868, "machine": "a"}]
+    manifest = {"components": {
+        "image": {"repository": "theng12/imagestudio-mac", "version": "1.30.1",
+                  "commit": "a" * 40, "installed_only": True},
+        "voice": {"repository": "theng12/voicestudio-mac", "version": "2.3.0",
+                  "commit": "b" * 40, "installed_only": True},
+    }}
+
+    class Response:
+        def raise_for_status(self):
+            request = httpx.Request("GET", "http://10.0.0.8:47868/api/auto-update/status")
+            raise httpx.HTTPStatusError("rejected", request=request,
+                                        response=httpx.Response(status_code, request=request))
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, *args, **kwargs): return Response()
+
+    monkeypatch.setattr(fleet_auto_updates.httpx, "AsyncClient", lambda **kwargs: Client())
+    results = await fleet_auto_updates.run_managed_components(
+        monitor, manifest, operation_id="release-12-machine-a", poll_seconds=0, update_timeout=1,
+    )
+
+    assert results[0]["state"] == expected
+    assert results[0]["next_retry"] is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("malformed", [[], "bad", None])
+async def test_managed_component_malformed_json_is_retryable_and_later_target_runs(monkeypatch, malformed):
+    monitor = FakeMonitor()
+    monitor.registry = [
+        {"id": "image@a", "title": "Image A", "modality": "image",
+         "host": "10.0.0.8", "port": 47868, "machine": "a"},
+        {"id": "voice@a", "title": "Voice A", "modality": "voice",
+         "host": "10.0.0.8", "port": 47870, "machine": "a"},
+    ]
+    manifest = {"components": {
+        "image": {"repository": "theng12/imagestudio-mac", "version": "1.30.1",
+                  "commit": "a" * 40, "installed_only": True},
+        "voice": {"repository": "theng12/voicestudio-mac", "version": "2.3.0",
+                  "commit": "b" * 40, "installed_only": True},
+    }}
+
+    class Response:
+        status_code = 200
+        def __init__(self, payload): self.payload = payload
+        def json(self): return self.payload
+        def raise_for_status(self): return None
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, url, **kwargs):
+            if ":47868/" in url:
+                return Response(malformed)
+            if url.endswith("/api/auto-update/status"):
+                return Response({"state": "succeeded",
+                                 "capabilities": {"managed_exact_commit": True}})
+            if url.endswith("/api/health"):
+                return Response({"ok": True, "app_version": "2.3.0", "app_commit": "b" * 40})
+            raise AssertionError(url)
+        async def post(self, url, **kwargs): return Response({"state": "updating"})
+
+    monkeypatch.setattr(fleet_auto_updates.httpx, "AsyncClient", lambda **kwargs: Client())
+    results = await fleet_auto_updates.run_managed_components(
+        monitor, manifest, operation_id="release-12-machine-a", poll_seconds=0, update_timeout=1,
+    )
+
+    assert [result["state"] for result in results] == ["retryable_failure", "current"]
 
 
 def test_update_idle_api_starts_from_the_async_server_loop(authed, monkeypatch):

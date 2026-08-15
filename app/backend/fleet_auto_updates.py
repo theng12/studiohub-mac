@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import re
 import time
 import uuid
 from pathlib import Path
@@ -17,6 +19,16 @@ from .registry import base_url
 TERMINAL_ITEM_STATES = {"complete", "current", "scheduled", "failed"}
 APP_ORDER = {"hub": 0, "voice": 1, "chat": 2, "image": 3, "music": 4,
              "video": 5, "render": 6}
+MANAGED_COMPONENT_REPOSITORIES = {
+    "image": "theng12/imagestudio-mac",
+    "voice": "theng12/voicestudio-mac",
+}
+_MANAGED_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+_MANAGED_VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
+_CLEAN_CHECKOUT_HEALTH_DETAILS = {
+    "The loaded app does not attest to the requested commit and version.",
+    "The updated app did not attest to the expected commit and version.",
+}
 
 
 def _version_key(value: object) -> tuple[int, int, int] | None:
@@ -32,6 +44,232 @@ def _latest_version(*values: object) -> str | None:
     candidates = [(key, str(value)) for value in values
                   if (key := _version_key(value)) is not None]
     return max(candidates, default=(None, None))[1]
+
+
+def managed_targets(monitor, manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return every installed Image/Voice target with its frozen release tuple.
+
+    ``targets()`` intentionally deduplicates the normal automatic-update
+    inventory. Managed release work must retain every installed instance.
+    """
+    components = manifest.get("components") if isinstance(manifest, dict) else None
+    if not isinstance(components, dict):
+        raise ValueError("managed release manifest must contain components")
+    frozen: dict[str, dict[str, str]] = {}
+    for modality, repository in MANAGED_COMPONENT_REPOSITORIES.items():
+        component = components.get(modality)
+        if not isinstance(component, dict):
+            raise ValueError(f"managed release is missing {modality}")
+        version = component.get("version")
+        commit = component.get("commit")
+        if (component.get("repository") != repository
+                or component.get("installed_only") is not True
+                or not isinstance(version, str) or not _MANAGED_VERSION_RE.fullmatch(version)
+                or not isinstance(commit, str) or not _MANAGED_COMMIT_RE.fullmatch(commit)):
+            raise ValueError(f"managed {modality} target is invalid")
+        frozen[modality] = {
+            "repository": repository,
+            "target_version": version,
+            "target_commit": commit,
+        }
+    rows = []
+    for studio in monitor.registry:
+        modality = str(studio.get("modality") or "")
+        if modality not in frozen:
+            continue
+        root = base_url(studio)
+        rows.append({
+            "id": studio["id"], "kind": "studio", "modality": modality,
+            "title": studio.get("title", studio["id"]),
+            "machine": studio.get("machine", "local"), "url": root,
+            "settings_url": root + "/#/settings", "studio": studio,
+            **frozen[modality],
+        })
+    return sorted(rows, key=lambda row: (str(row["machine"]), row["modality"], row["id"]))
+
+
+def _managed_operation_id(seed: str, target: dict[str, Any]) -> str:
+    if not isinstance(seed, str) or not seed or len(seed) > 128:
+        raise ValueError("managed operation_id must be a bounded non-empty string")
+    identity = "\0".join(str(target[key]) for key in (
+        "machine", "modality", "repository", "target_version", "target_commit",
+    ))
+    return "managed-" + hashlib.sha256(f"{seed}\0{identity}".encode()).hexdigest()
+
+
+def _managed_result(target: dict[str, Any], state: str, detail: str, *,
+                    next_retry: float | None = None,
+                    error_code: str | None = None) -> dict[str, Any]:
+    result = {
+        **{key: target[key] for key in (
+            "id", "machine", "modality", "repository", "target_version",
+            "target_commit", "operation_id",
+        )},
+        "state": state,
+        "detail": str(detail).replace("\n", " ")[:220],
+        "next_retry": next_retry,
+    }
+    if error_code is not None:
+        result["error_code"] = error_code
+    return result
+
+
+def _retryable_component_result(target: dict[str, Any], detail: str, *,
+                                error_code: str | None = None) -> dict[str, Any]:
+    return _managed_result(target, "retryable_failure", detail,
+                           next_retry=time.time() + 60, error_code=error_code)
+
+
+def managed_failure_code(status: object) -> str | None:
+    """Normalize only updater-owned, stable failure evidence.
+
+    Image and Voice 1.30.1/2.3.0 predate the structured field, so their two
+    exact health-verification messages remain a deliberately closed legacy
+    mapping. Arbitrary remote error text never becomes release-block evidence.
+    """
+    if not isinstance(status, dict):
+        return None
+    if status.get("failure_class") == "clean_checkout_health_failure":
+        return "clean_checkout_health_failure"
+    details = status.get("details")
+    if isinstance(details, list) and any(
+        isinstance(detail, str) and detail in _CLEAN_CHECKOUT_HEALTH_DETAILS
+        for detail in details
+    ):
+        return "clean_checkout_health_failure"
+    return None
+
+
+def _auth_component_result(target: dict[str, Any], detail: str) -> dict[str, Any]:
+    return _managed_result(target, "auth_blocked", detail, next_retry=time.time() + 60)
+
+
+def _component_http_result(target: dict[str, Any], exc: httpx.HTTPStatusError) -> dict[str, Any]:
+    code = exc.response.status_code
+    if code in {401, 403}:
+        return _auth_component_result(target, f"component updater authentication rejected (HTTP {code})")
+    return _retryable_component_result(target, f"component updater unavailable or refused update (HTTP {code})")
+
+
+def _json_object(response: httpx.Response) -> dict[str, Any]:
+    value = response.json()
+    if not isinstance(value, dict):
+        raise ValueError("response JSON must be an object")
+    return value
+
+
+async def _run_managed_component(target: dict[str, Any], *, poll_seconds: float,
+                                 update_timeout: float) -> dict[str, Any]:
+    """Run one exact sibling update without touching ordinary update controls."""
+    headers = peers.studio_headers(target["studio"])
+    payload = {"after_current": True, "target_commit": target["target_commit"],
+               "target_version": target["target_version"],
+               "operation_id": target["operation_id"]}
+    deadline = time.monotonic() + update_timeout
+    transport_errors = (httpx.TransportError, httpx.TimeoutException)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=8.0)) as client:
+        # Capability may only be observed after an old sibling has recovered;
+        # transport loss is therefore retryable rather than a fake capability
+        # decision.
+        while time.monotonic() < deadline:
+            try:
+                status = await client.get(target["url"] + "/api/auto-update/status", headers=headers)
+                status.raise_for_status()
+                state = _json_object(status)
+                if (state.get("capabilities") or {}).get("managed_exact_commit") is not True:
+                    return _retryable_component_result(
+                        target, "exact component updater unavailable: managed_exact_commit is required",
+                    )
+                break
+            except transport_errors:
+                await asyncio.sleep(poll_seconds)
+            except httpx.HTTPStatusError as exc:
+                return _component_http_result(target, exc)
+            except (ValueError, TypeError, AttributeError):
+                return _retryable_component_result(target, "remote updater returned invalid status")
+        else:
+            return _retryable_component_result(target, "component unavailable before managed update")
+
+        # The sibling admits this operation durably before replying. Replaying
+        # this unchanged body after a dropped response adopts that admission.
+        admitted = False
+        while time.monotonic() < deadline:
+            try:
+                response = await client.post(target["url"] + "/api/auto-update/update",
+                                             headers=headers, json=payload)
+                response.raise_for_status()
+                _json_object(response)
+                admitted = True
+                break
+            except transport_errors:
+                await asyncio.sleep(poll_seconds)
+            except httpx.HTTPStatusError as exc:
+                return _component_http_result(target, exc)
+            except (ValueError, TypeError, AttributeError):
+                return _retryable_component_result(target, "component returned invalid managed-update response")
+        if not admitted:
+            return _retryable_component_result(target, "component did not acknowledge managed update")
+
+        while time.monotonic() < deadline:
+            try:
+                status = await client.get(target["url"] + "/api/auto-update/status", headers=headers)
+                status.raise_for_status()
+                state = _json_object(status)
+                if (state.get("capabilities") or {}).get("managed_exact_commit") is not True:
+                    return _retryable_component_result(
+                        target, "exact component updater unavailable: managed_exact_commit is required",
+                    )
+                if state.get("state") == "failed":
+                    failure_code = managed_failure_code(state)
+                    return _retryable_component_result(
+                        target,
+                        "clean checkout health verification failed"
+                        if failure_code else "exact component updater reported failure",
+                        error_code=failure_code,
+                    )
+                if state.get("state") != "succeeded":
+                    await asyncio.sleep(poll_seconds)
+                    continue
+                health = await client.get(target["url"] + "/api/health", headers=headers)
+                health.raise_for_status()
+                observed = _json_object(health)
+                version = str(observed.get("app_version") or "")
+                commit = str(observed.get("app_commit") or "")
+                if (observed.get("ok") is True and version == target["target_version"]
+                        and commit == target["target_commit"]):
+                    return _managed_result(target, "current",
+                                           f"healthy on exact v{version} commit {commit}")
+                return _retryable_component_result(
+                    target, "exact component health attestation mismatch",
+                )
+            except transport_errors:
+                await asyncio.sleep(poll_seconds)
+            except httpx.HTTPStatusError as exc:
+                return _component_http_result(target, exc)
+            except (ValueError, TypeError, AttributeError):
+                return _retryable_component_result(target, "component returned invalid managed-update evidence")
+    return _retryable_component_result(target, "component did not become healthy before deadline")
+
+
+async def run_managed_components(monitor, manifest: dict[str, Any], *, operation_id: str,
+                                 poll_seconds: float = 3.0,
+                                 update_timeout: float = 20 * 60) -> list[dict[str, Any]]:
+    """Execute installed Image/Voice exact targets serially for a later reconciler."""
+    targets = [dict(target, operation_id=_managed_operation_id(operation_id, target))
+               for target in managed_targets(monitor, manifest)]
+    results = []
+    for target in targets:
+        try:
+            results.append(await _run_managed_component(
+                target, poll_seconds=poll_seconds, update_timeout=update_timeout,
+            ))
+        except Exception:
+            # A malformed or locally broken sibling must not prevent the next
+            # installed target from supplying its independent exact evidence.
+            results.append(_retryable_component_result(
+                target, "component runner could not obtain managed-update evidence",
+            ))
+    return results
 
 
 class FleetAutoUpdates:

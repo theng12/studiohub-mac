@@ -15,6 +15,7 @@ import hashlib
 import json
 import re
 import secrets
+import subprocess
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -29,18 +30,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import (alerts, artifact_metadata, auth, broadcast, broker, chat_jobs, cloud_guard, control_plane, enrollment, execution_assets, execution_identity, fleet_ops, fleet_storage, gateway, hardware_profiles, hf_credentials, job_storage, memory_admission, model_exposure,
+from . import (alerts, artifact_metadata, auth, broadcast, broker, capabilities, chat_jobs, cloud_guard, control_plane, enrollment, execution_assets, execution_identity, fleet_ops, fleet_storage, gateway, hardware_profiles, hf_credentials, job_storage, memory_admission, model_exposure,
                ledger, metrics, peers, recipes, registry, shared_voices, startup_services, transcription_jobs,
                voice_qualification)
 from .auto_update import UpdateError
 from .auto_update_config import create_updater
-from .fleet_auto_updates import FleetAutoUpdates
+from .fleet_auto_updates import FleetAutoUpdates, managed_failure_code
 from .auth import is_loopback, is_tailscale, load_token, make_middleware
 from .control import control_studio
 from .monitor import StudioMonitor
 from .memory_control import FleetMemoryControl
 from .model_baselines import FleetModelBaselines
 from .process_title import PROCESS_TITLE, apply_process_title
+from .release_reconciliation import ReleaseReconciler
 from .registry import DATA_DIR, LAUNCHER_ROOT, base_url
 from .resources import host_stats, proxy_stats, studio_process_stats
 
@@ -67,10 +69,17 @@ class AutoUpdateSettingsBody(BaseModel):
 
 class AutoUpdateRequestBody(BaseModel):
     after_current: bool = False
+    target_commit: str | None = None
+    target_version: str | None = None
+    operation_id: str | None = None
 
 
 class HubRestartBody(BaseModel):
     force: bool = False
+
+
+class ReleaseActivationBody(BaseModel):
+    genstudio_run_reference: str | None = Field(default=None, max_length=128)
 
 
 class FleetAutoModeBody(BaseModel):
@@ -216,6 +225,21 @@ def _read_app_version() -> str:
 APP_VERSION = _read_app_version()
 
 
+def _read_app_commit() -> str:
+    """Commit attested by this loaded process, never by a later checkout."""
+    try:
+        commit = subprocess.check_output(
+            ["/usr/bin/git", "rev-parse", "HEAD"], cwd=LAUNCHER_ROOT,
+            text=True, stderr=subprocess.DEVNULL, timeout=5,
+        ).strip()
+        return commit if re.fullmatch(r"[0-9a-f]{40}", commit) else "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+
+
+APP_COMMIT = _read_app_commit()
+
+
 def _app_version() -> str:
     """Version of the code loaded by this process, not a later disk checkout."""
     return APP_VERSION
@@ -244,15 +268,79 @@ fleet_auto_updates = FleetAutoUpdates(
 model_baselines = FleetModelBaselines(
     monitor, state_path=DATA_DIR / "model_baselines.json",
 )
+release_reconciler: ReleaseReconciler | None = None
+
+
+def _reconcile_managed_registry() -> int:
+    """Persist fleet growth without making registration depend on rollout state."""
+    service = release_reconciler
+    if service is None:
+        return 0
+    supplemented = service.reconcile_registry()
+    if supplemented:
+        activation = service.state_snapshot()["activation"]
+        if activation is not None:
+            service.schedule(activation["release_id"])
+    return supplemented
+
+
+async def _request_managed_release_catalog(operation_id: str) -> dict[str, Any]:
+    """Request one catalog pass and return request evidence, never cache completion."""
+    snapshot = await model_baselines.reconcile()
+    revision = snapshot.get("catalog_revision")
+    approved = (snapshot.get("summary") or {}).get("approved_models")
+    return {
+        "operation_id": operation_id,
+        "requested_revision": revision if isinstance(revision, str) else None,
+        "requested_models": approved if isinstance(approved, int) else 0,
+    }
+
+
+async def _run_managed_hub_update(
+    target: dict[str, Any], operation_id: str,
+) -> dict[str, Any]:
+    try:
+        result = auto_updater.trigger_update(
+            after_current=True,
+            target_commit=target["commit"],
+            target_version=target["version"],
+            operation_id=operation_id,
+        )
+    except (UpdateError, ValueError, OSError):
+        failure_code = managed_failure_code(auto_updater.public_status())
+        return {
+            "component": "hub",
+            "state": "retryable_failure",
+            "error_code": failure_code or "update_refused",
+        }
+    if not isinstance(result, dict) or result.get("state") == "failed":
+        return {
+            "component": "hub",
+            "state": "retryable_failure",
+            "error_code": managed_failure_code(result) or "update_refused",
+        }
+    return {"component": "hub", "state": "restarting"}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global release_reconciler
     removed_execution_assets = execution_assets.cleanup_expired()
     if removed_execution_assets:
         print(f"[hub] removed {removed_execution_assets} expired execution asset(s)")
     monitor.start()
     await control_plane.runtime.start(monitor, _app_version())
+    release_reconciler = ReleaseReconciler(
+        monitor,
+        state_path=DATA_DIR / "release_reconciliation.json",
+        loaded_version=_app_version(),
+        loaded_commit=APP_COMMIT,
+        identity_reader=control_plane.public_settings,
+        hub_runner=_run_managed_hub_update,
+        catalog_requester=_request_managed_release_catalog,
+    )
+    peers.release_reconciler = release_reconciler
+    await release_reconciler.start()
     fleet_ops.start_published_version_monitor()
     resumed_updates = fleet_auto_updates.resume_pending()
     if resumed_updates:
@@ -275,6 +363,9 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        if release_reconciler is not None:
+            await release_reconciler.stop()
+        peers.release_reconciler = None
         await fleet_ops.stop_published_version_monitor()
         await control_plane.runtime.stop()
         await fleet_storage.stop()
@@ -360,6 +451,7 @@ def auth_logout(request: Request):
 @app.get("/api/health")
 def health():
     return {"ok": True, "version": "0.1.0", "app_version": _app_version(),
+            "app_commit": APP_COMMIT,
             "process_title": PROCESS_TITLE, "process_title_applied": PROCESS_TITLE_APPLIED,
             "control_plane": control_plane.runtime.readiness()}
 
@@ -395,7 +487,18 @@ async def controller_capabilities(request: Request):
             "Hub or fleet token required for the private capability snapshot.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return await control_plane.runtime.capability_snapshot(_app_version(), monitor)
+    managed_release = (
+        release_reconciler.capability_evidence()
+        if release_reconciler is not None else None
+    )
+    return await capabilities.build_snapshot(
+        monitor,
+        app_version=_app_version(),
+        settings=control_plane.public_settings(),
+        readiness=control_plane.runtime.readiness(),
+        base_capacity=control_plane.runtime.capacity(monitor),
+        managed_release=managed_release,
+    )
 
 
 # ── Update auto-check (surfaced by the web-UI banner; mirrors the studios) ──
@@ -455,6 +558,7 @@ def update_status():
 @app.get("/api/version")
 def version():
     return {"app_version": _app_version(), "title": TITLE,
+            "app_commit": APP_COMMIT,
             "process_title": PROCESS_TITLE, "process_title_applied": PROCESS_TITLE_APPLIED}
 
 
@@ -613,7 +717,7 @@ def enrollment_info(request: Request):
 
 
 @app.post("/api/hub/enrollment/claim")
-def claim_agent_enrollment(request: Request, body: EnrollmentCodeBody):
+async def claim_agent_enrollment(request: Request, body: EnrollmentCodeBody):
     if not enrollment.private_request_host(request.client.host if request.client else None):
         raise HTTPException(403, "Agent enrollment is available only over a private LAN or Tailscale link.")
     try:
@@ -632,6 +736,7 @@ def claim_agent_enrollment(request: Request, body: EnrollmentCodeBody):
             added = registry.add_user_entries(
                 registry.build_machine_entries(host, machine, modalities))
             monitor.reload_registry()
+            _reconcile_managed_registry()
             profile = hardware_profiles.set_machine_hardware_profile(
                 machine, profile_id) if profile_id else None
             if body.machine_name:
@@ -743,7 +848,10 @@ def automatic_update_check():
 @app.post("/api/auto-update/update")
 def automatic_update_run(body: AutoUpdateRequestBody):
     try:
-        return auto_updater.trigger_update(after_current=body.after_current)
+        return auto_updater.trigger_update(after_current=body.after_current,
+                                           target_commit=body.target_commit,
+                                           target_version=body.target_version,
+                                           operation_id=body.operation_id)
     except UpdateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -2740,6 +2848,129 @@ async def release_fleet_memory(body: FleetMemoryReleaseBody):
         raise HTTPException(400, str(exc)) from exc
 
 
+def _managed_release_service() -> ReleaseReconciler:
+    if release_reconciler is None:
+        raise HTTPException(503, "Managed release reconciliation is still starting.")
+    return release_reconciler
+
+
+def _require_managed_release_role(request: Request, expected: str) -> dict[str, Any]:
+    if not auth.valid_machine_token(request, HUB_TOKEN):
+        raise HTTPException(
+            401,
+            "A header machine credential is required for managed release writes.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    settings = control_plane.public_settings()
+    role = settings.get("role")
+    if role == expected:
+        return settings
+    if role == "standalone":
+        raise HTTPException(409, f"Configure this Hub as a {expected} first.")
+    raise HTTPException(403, f"This managed release write requires the {expected} role.")
+
+
+def _release_identity(settings: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "role": settings.get("role"),
+        "site_id": settings.get("site_id"),
+        "site_name": settings.get("site_name"),
+        "controller_id": settings.get("controller_id"),
+    }
+
+
+def _schedule_release(release_id: str) -> None:
+    _managed_release_service().schedule(release_id)
+
+
+@app.get("/api/hub/maintenance/release-intent")
+def get_release_intent():
+    service = _managed_release_service()
+    settings = control_plane.public_settings()
+    state = service.state_snapshot()
+    return {
+        **_release_identity(settings),
+        "desired": state["desired"],
+        "activation": state["activation"],
+        "jobs": list(state["jobs"].values()),
+    }
+
+
+@app.put("/api/hub/maintenance/release-intent")
+def put_release_intent(request: Request, body: dict[str, Any]):
+    settings = _require_managed_release_role(request, "controller")
+    try:
+        changed, manifest = _managed_release_service().replace_intent(body)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {
+        "ok": True,
+        "accepted": True,
+        "changed": changed,
+        "release_id": manifest["release_id"],
+        "sequence": manifest["sequence"],
+        **_release_identity(settings),
+    }
+
+
+@app.post(
+    "/api/hub/maintenance/release-intent/{release_id}/activate",
+    status_code=202,
+)
+async def activate_release_intent(
+    release_id: str, request: Request, body: ReleaseActivationBody | None = None,
+):
+    settings = _require_managed_release_role(request, "controller")
+    service = _managed_release_service()
+    try:
+        job = service.activate(
+            release_id,
+            genstudio_run_reference=(body.genstudio_run_reference if body else None),
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    _schedule_release(release_id)
+    return {
+        "ok": True,
+        "accepted": True,
+        "job_id": job["id"],
+        "release_id": release_id,
+        **_release_identity(settings),
+    }
+
+
+@app.get("/api/hub/maintenance/release-jobs/{job_id}")
+def get_release_job(job_id: str):
+    try:
+        return {
+            **_managed_release_service().job_snapshot(job_id),
+            **_release_identity(control_plane.public_settings()),
+        }
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/hub/maintenance/managed-update", status_code=202)
+async def admit_managed_update(request: Request, body: dict[str, Any]):
+    settings = _require_managed_release_role(request, "agent")
+    try:
+        admission = _managed_release_service().admit_and_schedule_managed_update(body)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {**admission, **_release_identity(settings)}
+
+
+@app.get("/api/hub/maintenance/managed-update/{job_id}")
+def get_managed_update(job_id: str):
+    try:
+        return {
+            **_managed_release_service().managed_update_snapshot(job_id),
+            **_release_identity(control_plane.public_settings()),
+        }
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
 @app.get("/api/hub/maintenance/preflight")
 def get_preflight():
     return fleet_ops.preflight_snapshot()
@@ -2871,9 +3102,10 @@ async def rescan_hub_versions():
 
 
 @app.post("/api/hub/registry/reload")
-def reload_registry():
+async def reload_registry():
     """Re-read studios.json after editing it — no restart needed."""
     monitor.reload_registry()
+    _reconcile_managed_registry()
     return {"ok": True, "studios": len(monitor.registry)}
 
 
@@ -2964,7 +3196,7 @@ def remove_studio_route(studio_id: str):
 
 
 @app.post("/api/hub/registry/add")
-def add_machine_manual(body: dict):
+async def add_machine_manual(body: dict):
     """Pre-register a machine's studios WITHOUT probing — works while the
     machine is offline. The entries persist and turn 'up' on their own once the
     machine is reachable. `modalities` defaults to the production Image and
@@ -2981,6 +3213,7 @@ def add_machine_manual(body: dict):
     entries = build_machine_entries(host, machine, modalities)
     added = add_user_entries(entries)
     monitor.reload_registry()
+    _reconcile_managed_registry()
     profile = None
     if profile_id and machine in _registered_machine_ids():
         profile = hardware_profiles.set_machine_hardware_profile(machine, profile_id)
@@ -3041,6 +3274,7 @@ async def discover_machine(body: dict):
     added = add_user_entries(entries) if entries else 0
     if added:
         monitor.reload_registry()
+        _reconcile_managed_registry()
     profile = None
     if profile_id and machine in _registered_machine_ids():
         profile = hardware_profiles.set_machine_hardware_profile(machine, profile_id)

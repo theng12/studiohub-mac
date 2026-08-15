@@ -1049,7 +1049,8 @@ def _remote_hosts(monitor) -> dict[str, str]:
     return out
 
 
-def start_hub_updates(monitor, latest: str | None, machines: list[str] | None = None) -> dict:
+def start_hub_updates(monitor, latest: str | None,
+                      machines: list[str] | None = None) -> dict:
     active = next((j for j in _hub_updates.values() if j["status"] in {"queued", "running"}), None)
     if active:
         raise ValueError(f"a fleet Hub update ({active['id']}) is already running")

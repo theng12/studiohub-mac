@@ -272,6 +272,7 @@
   .auto-update-controls .field-label{display:flex;flex-direction:column;gap:7px}.auto-update-controls .selctl{width:100%;text-transform:none;letter-spacing:0;font-family:var(--sans)}.auto-update-idle{height:var(--control-min-height);margin:0;padding:0 8px;border:1px solid transparent;border-radius:10px;text-transform:none;letter-spacing:0;font:600 var(--font-body)/1.2 var(--sans)}
   .auto-update-actions{min-height:var(--control-min-height)}.auto-update-actions .sub{flex:1;min-width:220px}.auto-update-facts{display:grid;grid-template-columns:repeat(6,minmax(110px,1fr));gap:8px;margin:14px 0 5px}.auto-update-fact{min-width:0;padding:10px 11px;border:1px solid #dfe3da;border-radius:12px;background:#fbfbf6}.auto-update-fact span{display:block;margin-bottom:5px;color:var(--dim);font:700 var(--font-compact)/1 var(--mono);letter-spacing:.09em;text-transform:uppercase}.auto-update-fact b{display:block;overflow:hidden;text-overflow:ellipsis;color:var(--accent2);font:700 var(--font-secondary)/1.35 var(--mono);white-space:nowrap}
   .auto-update-table{min-width:1040px}.auto-update-table td{vertical-align:middle}.auto-update-table .selctl{min-width:112px;padding:7px 9px}.auto-update-table .actions{margin:0;flex-wrap:nowrap}.auto-update-status{max-width:210px;overflow-wrap:anywhere}.auto-update-app b{display:block}.auto-update-app .sub{display:block;margin-top:2px}.auto-update-unavailable{opacity:.62}.auto-update-spinner{display:inline-block;margin-right:5px;animation:autoSpin 1s linear infinite}@keyframes autoSpin{to{transform:rotate(360deg)}}
+  .managed-release-target{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:12px 0}.managed-release-machines{overflow-x:auto}.managed-release-table{min-width:820px}.managed-release-table td{vertical-align:middle}.managed-release-table code{display:block;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.managed-release-note{padding:10px 12px;border-radius:11px;background:var(--panel2);color:var(--dim);font-size:var(--font-secondary)}.managed-release-note.warn{background:#fff6e5;color:#765a21}.managed-release-note.err{background:#fbefeb;color:#8d3d31}
   .memory-modes{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin:15px 0}.memory-mode{position:relative;display:block;padding:15px;border:1px solid #d5dbd2;border-radius:14px;background:#f8f9f3;cursor:pointer;transition:.15s}.memory-mode:hover{border-color:#8bb49b;transform:translateY(-1px)}.memory-mode.on{border-color:var(--accent);background:#edf7ef;box-shadow:inset 0 0 0 1px var(--accent)}.memory-mode input{position:absolute;opacity:0;pointer-events:none}.memory-mode b{display:block;color:var(--accent2);font:750 14px/1.2 var(--display)}.memory-mode span{display:block;margin-top:6px;color:var(--dim);font-size:var(--font-secondary);line-height:1.4}.memory-default{display:inline-block;margin-left:5px;padding:2px 5px;border-radius:5px;background:#dce9dd;color:var(--accent);font:700 var(--font-compact)/1 var(--mono);text-transform:uppercase}.memory-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}.memory-actions .sub{flex:1;min-width:240px}.memory-table{min-width:1040px}.memory-table td{vertical-align:middle}.memory-studio b{display:block}.memory-studio .sub{display:block}.memory-model{max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.memory-row-muted{opacity:.68}
   .ram-admission-controls{display:grid;grid-template-columns:minmax(260px,2fr) minmax(150px,.7fr) minmax(150px,.7fr);gap:10px;margin:12px 0}.ram-admission-controls label{display:flex;flex-direction:column;gap:6px;color:var(--dim);font:700 var(--font-compact)/1.2 var(--mono);letter-spacing:.08em;text-transform:uppercase}.ram-admission-controls input,.ram-admission-controls select{width:100%}.ram-policy-main{display:block;color:var(--accent2);font-weight:750}.ram-policy-sub{display:block;margin-top:3px;color:var(--dim);font-size:var(--font-secondary);line-height:1.35}.ram-policy-override{color:var(--warn)}
   .model-placement-wrap{max-width:100%;overflow:auto;border:1px solid var(--border);border-radius:14px;background:var(--panel)}
@@ -292,6 +293,7 @@
   @media(max-width:1050px){header{margin-left:210px;padding:0 24px}nav{width:210px}main{margin-left:210px;padding:26px 24px 60px}.lrow{grid-template-columns:22px minmax(0,1.7fr) minmax(0,1fr) 90px minmax(0,1.15fr) 170px}.lrow>div:nth-child(6),.lrow.lhead>span:nth-child(6){display:none}.auto-update-controls{grid-template-columns:repeat(2,minmax(180px,1fr))}.auto-update-facts{grid-template-columns:repeat(3,minmax(110px,1fr))}.memory-modes{grid-template-columns:repeat(2,minmax(150px,1fr))}.ram-admission-controls{grid-template-columns:1fr 1fr}.ram-admission-controls label:first-child{grid-column:1/-1}.voice-form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.hardware-profile-builder .fields{grid-template-columns:repeat(2,minmax(150px,1fr))}.setup-fields{grid-template-columns:repeat(2,minmax(170px,1fr))}}
   @media(max-width:820px){header{margin-left:0;height:68px;padding:0 18px}header .summary{display:none}nav{position:sticky;top:68px;width:auto;height:58px;padding:7px 12px;flex-direction:row;overflow-x:auto;background:#123126;box-shadow:0 8px 20px #1736281c}nav:before,nav:after{display:none}nav button{width:auto;flex:0 0 auto;padding:8px 11px}nav button:hover{transform:none}main{margin-left:0;padding:22px 18px 54px}.workspace-head{padding:25px 26px}.live-chip{display:none}.grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}}
   @media(max-width:600px){header>span:first-child{display:none}header{gap:9px;padding:0 14px}header h1{font-size:18px}header #last-refresh{display:none}nav button{font-size:var(--font-compact);gap:7px;padding:7px 12px}nav button:before{font-size:14px}nav button.active{font-size:var(--font-compact);gap:7px}main{padding:16px 12px 45px}main>section,.card{min-width:0}.workspace-head{margin-bottom:16px;padding:22px 20px;border-radius:18px}.workspace-head h2{font-size:32px}.workspace-head p{font-size:12.5px}.controls,.toolbar{padding:10px}.controls .grp{width:100%;justify-content:space-between}.seg{max-width:100%;overflow-x:auto}.grid{grid-template-columns:1fr}.card{overflow:hidden;border-radius:15px;padding:16px}table{display:block;max-width:100%;overflow-x:auto}table thead,table tbody{display:table;width:max-content;min-width:100%;table-layout:auto}.lrow{grid-template-columns:20px 1.5fr .8fr auto;gap:8px}.lrow>div:nth-child(3),.lrow>div:nth-child(5),.lrow>div:nth-child(6),.lrow.lhead>span:nth-child(3),.lrow.lhead>span:nth-child(5),.lrow.lhead>span:nth-child(6){display:none}.modal{padding:20px;border-radius:18px}#bell-dropdown{position:fixed;left:12px;right:12px;top:72px;width:auto}.auto-update-controls{grid-template-columns:1fr;padding:11px}.auto-update-idle{height:auto;padding:7px 2px}.auto-update-actions .btn{flex:1 1 145px}.auto-update-actions .sub{flex-basis:100%}.auto-update-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.memory-modes{grid-template-columns:1fr}.memory-actions .btn{flex:1 1 135px}.ram-admission-controls{grid-template-columns:1fr}.ram-admission-controls label:first-child{grid-column:auto}.voice-form-grid{grid-template-columns:1fr}.voice-field.wide{grid-column:auto}.voice-list{grid-template-columns:1fr}.voice-audio-row .voice-field,.voice-audio-row .voice-field.model{min-width:100%}.setup-fields{grid-template-columns:1fr}.setup-fields .wide,.setup-fields .full,.setup-intro,.setup-connection{grid-column:auto}}
+  @media(max-width:600px){.managed-release-target{grid-template-columns:1fr}.managed-release-note{line-height:1.5}}
   @media(max-width:600px){.resource-studio-table thead,.resource-studio-table tbody{min-width:720px}}
 </style>
 </head>
@@ -795,6 +797,18 @@
       <details class="tx-items"><summary class="sub">Safety details and release notes</summary><p class="sub" style="margin-top:8px">Requires the fixed GitHub remote, <code>main</code>, a clean fast-forward, enough disk, successful dependency/import checks, and an idle Hub. Logs are stored in <code>logs/auto_update/</code>. Turning Off unloads the schedule immediately.</p><a id="hau-notes" class="open" target="_blank" rel="noopener">Open release notes ↗</a><div class="sub" id="hau-details" style="margin-top:6px"></div></details>
     </div>
 
+    <div class="card section" id="managed-release-card" aria-labelledby="managed-release-title">
+      <div class="top"><span class="emoji">🧬</span><h3 id="managed-release-title">Managed release</h3><span id="managed-release-state" class="pill">Loading</span></div>
+      <p class="muted" style="font-size:13px;margin-bottom:10px">GenStudio assigns one exact Hub, Image, and Voice release for this location. This card is status only; automatic update settings above and below do not change.</p>
+      <div id="managed-release-status" role="status" aria-live="polite">
+        <div class="managed-release-note">Loading managed release status…</div>
+      </div>
+      <div class="managed-release-target" id="managed-release-target"></div>
+      <div id="managed-release-explanation" class="managed-release-note">Waiting for release evidence…</div>
+      <div id="managed-release-machines" class="managed-release-machines"></div>
+      <div id="managed-release-catalog" class="sub" style="margin-top:10px"></div>
+    </div>
+
     <div class="card section">
       <div class="top"><span class="emoji">🧭</span><h3>Automatic updates across the fleet</h3><span style="margin-left:auto"></span><button class="btn" id="fau-refresh" onclick="loadAutoUpdates()">Refresh</button><button class="btn" id="fau-check" onclick="checkAllAutoUpdates()">Check all</button><button class="btn primary" id="fau-update" onclick="updateIdleAutoApps()">Update idle apps</button></div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">Each row uses that app’s own updater and authentication. Updates run one at a time, reconnect after a restart, and verify health before the next app begins. Dirty or divergent repositories are refused by the target app.</p>
@@ -1158,6 +1172,12 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.8.0", date: "2026-08-15", items: [
+    "GenStudio can now give each location one immutable Hub/Image/Voice release; Hub resumes it after restarts and verifies the exact approved version and Git commit before restoring capacity.",
+    "Rollouts are serial: the first reachable agent is the canary, remaining machines follow one by one, and the controller Hub updates last. Offline or busy machines stay pending without blocking healthy capacity.",
+    "Updates now shows a separate read-only Managed release card, and capability schema v3 quarantines pending, blocked, or mismatched software until its exact release and model-catalog evidence converge.",
+    "Your ordinary Off, Notify, Auto, schedule, idle-only, and manual-update controls are unchanged. Legacy PPS remains safely excluded until its immutable physical bootstrap can be proved.",
+  ]},
   { v: "2.7.1", date: "2026-08-14", items: [
     "SSD staging now excludes genuinely partial catalog packages and omits safe zero-byte Hugging Face transfer placeholders from otherwise complete portable caches.",
     "A repeat run cleans an affected SSD package atomically without changing valid weights or unrelated models and voices.",
@@ -2082,7 +2102,7 @@ document.querySelectorAll("nav button").forEach(btn => {
     if (btn.dataset.tab === "models") loadModels();
     if (btn.dataset.tab === "voices") loadSharedVoices();
     if (btn.dataset.tab === "memory") loadFleetMemory();
-    if (btn.dataset.tab === "updates") { loadAutoUpdates(); loadMaintenance(); loadStartupServices(); }
+    if (btn.dataset.tab === "updates") { loadManagedRelease(); loadAutoUpdates(); loadMaintenance(); loadStartupServices(); }
     if (btn.dataset.tab === "remote") { loadController(); loadEnrollmentCode(); loadAccess(); loadMachines(); loadAlerts(); }
     if (btn.dataset.tab === "jobs") { loadJobModels(); loadBatches(); loadTranscriptionSettings(); loadFleetStorage(); selectJobKind(activeJobKind); }
     if (btn.dataset.tab === "assets") loadAssets();
@@ -4430,6 +4450,152 @@ function releaseFleetMemory() {
 }
 
 // ── optional automatic updates ───────────────────────────────────────────
+let managedReleasePollTimer = null;
+const MANAGED_RELEASE_ACTIVE_POLL_MS = 5000;
+const MANAGED_RELEASE_PASSIVE_POLL_MS = 30000;
+const MANAGED_RELEASE_ERROR_POLL_MS = 10000;
+
+function scheduleManagedReleasePoll(delay) {
+  clearTimeout(managedReleasePollTimer);
+  managedReleasePollTimer = null;
+  if (!vis("updates")) return;
+  managedReleasePollTimer = setTimeout(() => {
+    managedReleasePollTimer = null;
+    if (vis("updates")) loadManagedRelease();
+  }, delay);
+}
+
+function managedReleaseState(value) {
+  const states = {
+    pending: ["warn", "Pending"], queued: ["warn", "Queued"], running: ["gen", "Rolling out"],
+    waiting_busy: ["warn", "Waiting for idle"], degraded: ["warn", "Reduced capacity"],
+    blocked_release: ["err", "Release blocked"], complete: ["ok", "Current"],
+    pending_offline: ["warn", "Offline · pending"], pending_busy: ["warn", "Busy · pending"],
+    checking: ["gen", "Checking"], updating: ["gen", "Updating"], restarting: ["gen", "Restarting"],
+    verifying: ["gen", "Verifying"], current: ["ok", "Current"], retryable_failure: ["warn", "Retry scheduled"],
+    auth_blocked: ["err", "Authentication blocked"], release_blocked: ["err", "Release blocked"],
+    not_installed: ["", "Not installed"], acknowledged: ["ok", "Requested"], requesting: ["gen", "Requesting"]
+  };
+  return states[value] || ["", String(value || "Pending").replaceAll("_", " ")];
+}
+
+function fmtManagedTime(value) {
+  if (!value) return "—";
+  const stamp = typeof value === "number" && value < 1e12 ? value * 1000 : value;
+  return fmtAutoTime(stamp);
+}
+
+function managedShortSha(value) {
+  return value ? String(value).slice(0, 10) : "—";
+}
+
+function managedReleaseJob(data) {
+  const jobs = Array.isArray(data && data.jobs) ? data.jobs : [];
+  const jobId = data && data.activation && data.activation.job_id;
+  if (!jobId) return null;
+  return jobs.find(job => job.id === jobId) || null;
+}
+
+function managedReleaseCanary(job) {
+  if (!job || !job.machines) return null;
+  return Object.values(job.machines).filter(machine => machine.id !== "local")
+    .filter(machine => machine.host_evidence && machine.host_evidence.reachable === true && machine.host_evidence.auth !== false)
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)))[0]?.id || null;
+}
+
+function renderManagedRelease(data) {
+  const badge = $("#managed-release-state");
+  const status = $("#managed-release-status");
+  const target = $("#managed-release-target");
+  const explanation = $("#managed-release-explanation");
+  const machines = $("#managed-release-machines");
+  const catalog = $("#managed-release-catalog");
+  const desired = data && data.desired;
+  const manifest = desired && desired.manifest;
+  if (!manifest) {
+    badge.className = "pill"; badge.textContent = "No release";
+    status.textContent = "Managed release status loaded.";
+    target.innerHTML = ""; machines.innerHTML = ""; catalog.textContent = "";
+    explanation.className = "managed-release-note";
+    explanation.textContent = "No managed release has been assigned to this location. Ordinary Off, Notify, and Auto update settings continue unchanged.";
+    return false;
+  }
+
+  const job = managedReleaseJob(data);
+  const state = job?.state || (data.activation ? "queued" : "pending");
+  const [tone, label] = managedReleaseState(state);
+  badge.className = `pill ${tone}`; badge.textContent = label;
+  status.textContent = `Managed release ${label.toLowerCase()}.`;
+  const canary = managedReleaseCanary(job);
+  const releaseLabel = `${manifest.release_id.slice(0, 19)}…`;
+  target.innerHTML = [
+    ["Target", releaseLabel, manifest.release_id],
+    ["Sequence", String(manifest.sequence), String(manifest.sequence)],
+    ["Canary", canary ? mlabel(canary) : "Not selected yet", canary || "Not selected yet"],
+    ["Next retry", fmtManagedTime(job?.next_retry), fmtManagedTime(job?.next_retry)]
+  ].map(([name, value, title]) => `<div class="auto-update-fact" title="${esc(title)}"><span>${esc(name)}</span><b>${esc(value)}</b></div>`).join("");
+
+  explanation.className = `managed-release-note${state === "blocked_release" ? " err" : state === "degraded" || state === "waiting_busy" ? " warn" : ""}`;
+  explanation.textContent = state === "blocked_release"
+    ? "This exact release is blocked by verified release evidence. Later targets are paused until GenStudio assigns a corrected immutable release."
+    : state === "degraded"
+      ? "Pending machines do not block healthy machines or other locations. Offline, busy, or unreachable Macs stay scheduled and rejoin automatically."
+      : state === "complete"
+        ? "Every installed managed component is on the exact approved commit. Catalog reconciliation has been requested separately."
+        : data.activation
+          ? "The Hub is updating one machine bundle at a time. The controller is last, and individual offline or busy machines remain pending."
+          : "The exact release is stored and waiting for GenStudio to activate this location.";
+
+  const componentOrder = { hub: 0, image: 1, voice: 2 };
+  const rows = Object.values(job?.machines || {}).flatMap(machine =>
+    Object.entries(machine.components || {}).map(([component, row]) => ({ machine, component, row }))
+  ).sort((a, b) => String(a.machine.id).localeCompare(String(b.machine.id))
+    || (componentOrder[a.component] ?? 9) - (componentOrder[b.component] ?? 9));
+  if (!rows.length) {
+    machines.innerHTML = `<div class="empty">Machine evidence appears after this location starts the release.</div>`;
+  } else {
+    machines.innerHTML = `<table class="managed-release-table"><thead><tr><th>Machine</th><th>Order</th><th>Component</th><th>Target</th><th>Observed</th><th>Status</th><th>Retry</th></tr></thead><tbody>${rows.map(({ machine, component, row }) => {
+      const [rowTone, rowLabel] = managedReleaseState(row.state);
+      const order = machine.id === canary ? "Canary" : machine.id === "local" ? "Controller last" : "Fleet";
+      const expected = `${row.expected_version || "—"} · ${managedShortSha(row.expected_commit)}`;
+      const observed = `${row.observed_version || "—"} · ${managedShortSha(row.observed_commit)}`;
+      return `<tr><td><b>${esc(mlabel(machine.id))}</b></td><td>${esc(order)}</td><td>${esc(component)}</td><td><code title="${esc(row.expected_commit || "")}">${esc(expected)}</code></td><td><code title="${esc(row.observed_commit || "")}">${esc(observed)}</code></td><td><span class="pill ${rowTone}">${esc(rowLabel)}</span></td><td>${esc(fmtManagedTime(row.next_retry))}</td></tr>`;
+    }).join("")}</tbody></table>`;
+  }
+  const catalogRow = job?.catalog;
+  if (!catalogRow) catalog.textContent = "Model catalog reconciliation has not been requested yet.";
+  else {
+    const catalogLabel = managedReleaseState(catalogRow.state)[1];
+    catalog.textContent = `Catalog evidence · ${catalogLabel} · requested ${fmtManagedTime(catalogRow.requested_at)} · acknowledged ${fmtManagedTime(catalogRow.acknowledged_at)}${catalogRow.requested_revision ? ` · revision ${catalogRow.requested_revision}` : ""}`;
+  }
+  return !["complete", "blocked_release"].includes(state);
+}
+
+async function loadManagedRelease() {
+  clearTimeout(managedReleasePollTimer);
+  managedReleasePollTimer = null;
+  const status = $("#managed-release-status");
+  try {
+    const response = await api("/api/hub/maintenance/release-intent");
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
+    const active = renderManagedRelease(data);
+    scheduleManagedReleasePoll(active
+      ? MANAGED_RELEASE_ACTIVE_POLL_MS
+      : MANAGED_RELEASE_PASSIVE_POLL_MS);
+  } catch (error) {
+    $("#managed-release-state").className = "pill err";
+    $("#managed-release-state").textContent = "Unavailable";
+    status.textContent = `Managed release status is temporarily unavailable: ${error.message}`;
+    $("#managed-release-target").innerHTML = "";
+    $("#managed-release-machines").innerHTML = "";
+    $("#managed-release-catalog").textContent = "";
+    $("#managed-release-explanation").className = "managed-release-note err";
+    $("#managed-release-explanation").textContent = "Managed release status is temporarily unavailable. Production and ordinary updater controls remain separate.";
+    scheduleManagedReleasePoll(MANAGED_RELEASE_ERROR_POLL_MS);
+  }
+}
+
 let hubAutoStatus = null;
 let fleetAutoData = null;
 let fleetAutoPollTimer = null;

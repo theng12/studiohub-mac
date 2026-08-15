@@ -706,6 +706,18 @@ def test_interrupted_remote_jobs_survive_restart_as_retryable_history(monkeypatc
     assert "retry remotely" in restored["items"][0]["detail"]
 
 
+def test_legacy_fleet_ops_restart_history_is_not_managed_desired_state(
+        tmp_path, monkeypatch, reset):
+    monkeypatch.setattr(fleet_ops, "_STATE_FILE", tmp_path / "fleet_versions.json")
+    fleet_ops._hub_updates["legacy"] = {
+        "id": "legacy", "status": "running",
+        "items": [{"status": "restarting"}],
+    }
+    fleet_ops._save_state(); fleet_ops._hub_updates.clear(); fleet_ops._load_state()
+    assert fleet_ops._hub_updates["legacy"]["restart_interrupted"] is True
+    assert fleet_ops._hub_updates["legacy"]["status"] == "failed"
+
+
 def test_self_update_endpoint_requires_auth(client):
     # non-loopback without the token → blocked before the handler runs
     assert client.post("/api/hub/maintenance/self-update").status_code == 401

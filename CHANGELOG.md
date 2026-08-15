@@ -10,6 +10,56 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.8.0] — 2026-08-15
+
+### Added — durable exact-release reconciliation
+
+- GenStudio can now deliver one canonical, immutable Hub/Image/Voice release
+  intent to a location controller and activate a durable site-owned job. The
+  controller resumes the same job after a restart, adopts the same agent child
+  job after a lost response, and records sanitized per-machine, per-component,
+  retry, and model-catalog evidence.
+- Managed updates verify the approved 40-character Git commit and SemVer from
+  the target tree, fast-forward only to that exact commit, and accept success
+  only when the restarted process reports both the requested version and
+  `app_commit`. Image and Voice are managed only when installed and when their
+  exact-update capability is present; no managed path falls back to the
+  moving-`main` `update.js` script.
+- The Updates workspace has a separate status-only **Managed release** card,
+  and the private capability contract advances to schema version 3 with
+  controller, machine, and worker convergence evidence.
+
+### Changed — serial site rollout with reduced-capacity recovery
+
+- The first reachable remote Hub is the canary. Each remote machine updates
+  Hub, installed Image, then installed Voice serially; remaining machines
+  follow in stable-ID order; controller Image and Voice run before the
+  controller Hub updates last.
+- Offline, busy, disk-limited, authentication-blocked, and target-local failures
+  stay durably pending with bounded retry and do not block later healthy
+  machines or locations. Only immutable-manifest integrity failures, exact
+  target mismatches, or a repeated clean-checkout health failure can block that
+  frozen release.
+- An active desired release quarantines stale or mismatched supply with the
+  stable reasons `managed_release_pending`, `managed_release_blocked`, and
+  `managed_release_mismatch`. Capacity returns only after exact software
+  convergence and a requested approved-model catalog reconciliation.
+
+### Compatibility and safety
+
+- Existing per-app **Off**, **Notify only**, **Download and install
+  automatically**, schedules, idle-only settings, manual updater endpoints,
+  and historical maintenance jobs are unchanged. Managed release activation
+  remains owned by GenStudio; the Hub dashboard cannot activate or retry it.
+- Chat, Music, Video, and Render are not managed, and model eligibility remains
+  separate from software release state. No dependency, launcher, cloud API,
+  customer payload, or generation workload was added.
+- A PPS controller already offline on a legacy 2.6.x release is truthfully
+  `physical_bootstrap_required`: it remains excluded and nonblocking until an
+  operator applies an attested immutable bootstrap ancestor or a new immutable
+  release is approved after its observed bootstrap. Legacy moving-main update
+  is never used to claim automatic recovery.
+
 ## [2.7.1] — 2026-08-14
 
 ### Fixed — SSD staging excludes partial transfer residue

@@ -287,6 +287,33 @@ def test_automatic_catalog_can_be_paused_without_losing_desired_state(authed):
     assert response.json()["summary"]["approved_models"] == 1
 
 
+@pytest.mark.asyncio
+async def test_managed_release_catalog_request_records_request_evidence_only(monkeypatch):
+    from backend import main
+
+    calls = 0
+
+    async def reconcile():
+        nonlocal calls
+        calls += 1
+        return {
+            "catalog_revision": "d" * 64,
+            "summary": {"approved_models": 3, "cached": 1, "pending": 2},
+        }
+
+    monkeypatch.setattr(main.model_baselines, "reconcile", reconcile)
+    evidence = await main._request_managed_release_catalog("catalog-operation-1")
+
+    assert calls == 1
+    assert evidence == {
+        "operation_id": "catalog-operation-1",
+        "requested_revision": "d" * 64,
+        "requested_models": 3,
+    }
+    assert "cached" not in evidence
+    assert "complete" not in evidence
+
+
 def test_dashboard_renders_approved_models_as_a_machine_placement_matrix() -> None:
     frontend = (
         Path(__file__).parents[1] / "frontend" / "index.html"

@@ -17,7 +17,7 @@ from .registry import machine_enabled, studio_enabled
 from .resources import host_stats
 
 SCHEMA_NAME = "studiohub.site-capabilities"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 OPERATION_BY_MODALITY = {
     "image": "image.text_to_image",
@@ -176,7 +176,8 @@ def _controls(model: dict, modality: str) -> dict:
     return controls
 
 
-def _model_capability(model: dict, studio: dict, worker: dict) -> dict:
+def _model_capability(model: dict, studio: dict, worker: dict,
+                      managed_release_reason: str | None = None) -> dict:
     modality = str(model.get("hub_modality") or studio.get("modality") or "unknown")
     operation = str(model.get("hub_operation") or OPERATION_BY_MODALITY.get(
         modality, f"{modality}.operation"))
@@ -254,6 +255,9 @@ def _model_capability(model: dict, studio: dict, worker: dict) -> dict:
         reason = "model_not_installed"
     else:
         reason = None
+    if managed_release_reason is not None:
+        available_now = False
+        reason = managed_release_reason
 
     if candidate:
         revision = candidate.get("runtime_revision")
@@ -418,9 +422,76 @@ def _machine_host(machine: str) -> tuple[bool, dict | None]:
     )
 
 
+def _missing_release_component(managed_release: dict, component: str,
+                               state: str = "pending_offline") -> dict:
+    desired = managed_release.get("desired") or {}
+    target = (desired.get("components") or {}).get(component) or {}
+    return {
+        "component": component,
+        "desired_release_id": desired.get("release_id"),
+        "expected_version": target.get("expected_version"),
+        "expected_commit": target.get("expected_commit"),
+        "observed_version": None,
+        "observed_commit": None,
+        "state": state,
+        "next_retry": managed_release.get("next_retry"),
+        "converged": False,
+    }
+
+
+def _machine_release_evidence(managed_release: dict | None, machine: str) -> dict | None:
+    if not isinstance(managed_release, dict) or not managed_release.get("desired"):
+        return None
+    existing = (managed_release.get("machines") or {}).get(machine)
+    if isinstance(existing, dict):
+        return existing
+    components = {
+        name: _missing_release_component(managed_release, name)
+        for name in ("hub", "image", "voice")
+    }
+    return {
+        "desired_release_id": managed_release["desired"].get("release_id"),
+        "state": "pending",
+        "next_retry": managed_release.get("next_retry"),
+        "converged": False,
+        "components": components,
+    }
+
+
+def _managed_release_reason(managed_release: dict | None,
+                            machine_release: dict | None,
+                            component: str | None) -> str | None:
+    if not isinstance(managed_release, dict) or not managed_release.get("desired"):
+        return None
+    if managed_release.get("site_state") == "blocked_release":
+        return "managed_release_blocked"
+    components = (machine_release or {}).get("components") or {}
+    rows = [components.get("hub")]
+    if component in {"image", "voice"}:
+        rows.append(components.get(component))
+    if any(not isinstance(row, dict) for row in rows):
+        return "managed_release_pending"
+    if any(row.get("state") == "release_blocked" for row in rows):
+        return "managed_release_blocked"
+    if any(
+        (row.get("observed_version") is not None
+         or row.get("observed_commit") is not None)
+        and (
+            row.get("observed_version") != row.get("expected_version")
+            or row.get("observed_commit") != row.get("expected_commit")
+        )
+        for row in rows
+    ):
+        return "managed_release_mismatch"
+    if any(row.get("converged") is not True for row in rows):
+        return "managed_release_pending"
+    return None
+
+
 async def build_snapshot(monitor, *, app_version: str, settings: dict,
-                         readiness: dict, base_capacity: dict) -> dict:
-    """Build schema v2 without mutating or refreshing live worker state."""
+                         readiness: dict, base_capacity: dict,
+                         managed_release: dict | None = None) -> dict:
+    """Build schema v3 without mutating or refreshing live worker state."""
     observed = time.time()
     aggregate = monitor.cached_aggregate_catalog()
     models_by_studio: dict[str, list[dict]] = {}
@@ -461,6 +532,14 @@ async def build_snapshot(monitor, *, app_version: str, settings: dict,
         quarantined = bool((protections.get(machine) or {}).get("quarantined"))
         is_busy = studio_id in busy
         machine_busy = machine in busy_machines
+        machine_release = _machine_release_evidence(managed_release, machine)
+        component_release = (
+            (machine_release.get("components") or {}).get(studio.get("modality"))
+            if machine_release else None
+        )
+        release_reason = _managed_release_reason(
+            managed_release, machine_release, studio.get("modality"),
+        )
         ready = bool(
             online and not status.get("health_recovering")
             and not drained and not quarantined
@@ -478,6 +557,7 @@ async def build_snapshot(monitor, *, app_version: str, settings: dict,
             "drained": drained,
             "maintenance": maintenance,
             "machine_quarantined": quarantined,
+            "managed_release": component_release,
             "last_seen_at": (
                 _rfc3339(status["last_seen"]) if isinstance(status.get("last_seen"), (int, float))
                 else None
@@ -489,7 +569,10 @@ async def build_snapshot(monitor, *, app_version: str, settings: dict,
             },
         }
         worker["models"] = [
-            _model_capability(model, studio, worker)
+            _model_capability(
+                model, studio, worker,
+                managed_release_reason=release_reason,
+            )
             for model in models_by_studio.get(studio_id, [])
         ]
         if not any(model["availability"]["available_now"] for model in worker["models"]):
@@ -504,6 +587,7 @@ async def build_snapshot(monitor, *, app_version: str, settings: dict,
         machine_workers = [row for row in workers if row["physical_machine_id"] == machine]
         peer_online, host = _machine_host(machine)
         online = peer_online or any(row["online"] for row in machine_workers)
+        machine_release = _machine_release_evidence(managed_release, machine)
         machines.append({
             "physical_machine_id": machine,
             "hardware_profile": hardware_profiles.machine_hardware_profile(machine),
@@ -511,6 +595,7 @@ async def build_snapshot(monitor, *, app_version: str, settings: dict,
             "enabled": machine_enabled(machine),
             "drained": bool(machine_workers) and all(row["drained"] for row in machine_workers),
             "maintenance": any(row["maintenance"] for row in machine_workers),
+            "managed_release": machine_release,
             "available_capacity": {
                 "worker_slots": int(any(
                     row["available_capacity"]["slots"] for row in machine_workers
@@ -545,6 +630,11 @@ async def build_snapshot(monitor, *, app_version: str, settings: dict,
     available_machine_slots = sum(
         machine["available_capacity"]["worker_slots"] for machine in machines
     )
+    controller_release = None
+    if isinstance(managed_release, dict) and managed_release.get("desired"):
+        controller_release = managed_release.get("controller") or _missing_release_component(
+            managed_release, "hub", state="checking",
+        )
     return {
         "schema": SCHEMA_NAME,
         "schema_version": SCHEMA_VERSION,
@@ -557,7 +647,9 @@ async def build_snapshot(monitor, *, app_version: str, settings: dict,
             "online": True,
             "ready": bool(readiness.get("ready") and not controller_drained),
             "drained": controller_drained,
+            "managed_release": controller_release,
         },
+        "managed_release": managed_release,
         "authority": {
             "global": "genstudio",
             "site_local_scheduler": "sqlite",

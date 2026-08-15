@@ -104,6 +104,67 @@ async def test_peer_unreachable_and_recovery_alerts_are_debounced(reset):
 
 
 @pytest.mark.asyncio
+async def test_peer_recovery_schedules_only_the_recovered_managed_target(reset, monkeypatch):
+    class Reconciler:
+        def __init__(self):
+            self.machines = []
+
+        def wake_peer(self, machine):
+            self.machines.append(machine)
+
+    reconciler = Reconciler()
+    monkeypatch.setattr(peers, "release_reconciler", reconciler, raising=False)
+    peers._peer_alert_state["mac-b"] = {"failures": 3, "alerted": True}
+
+    await peers.refresh(
+        REMOTE,
+        FakeGet(resp=FakeResp(data={"host": {}, "studios": {}})),
+    )
+
+    assert reconciler.machines == ["mac-b"]
+
+
+@pytest.mark.asyncio
+async def test_peer_recovery_before_alert_threshold_still_schedules_target(reset, monkeypatch):
+    class Reconciler:
+        def __init__(self):
+            self.machines = []
+
+        def wake_peer(self, machine):
+            self.machines.append(machine)
+
+    reconciler = Reconciler()
+    monkeypatch.setattr(peers, "release_reconciler", reconciler, raising=False)
+    await peers.refresh(REMOTE, FakeGet(exc=httpx.ConnectError("down")))
+    assert peers._peer_alert_state["mac-b"]["alerted"] is False
+
+    peers._cache.clear()
+    await peers.refresh(
+        REMOTE,
+        FakeGet(resp=FakeResp(data={"host": {}, "studios": {}})),
+    )
+
+    assert reconciler.machines == ["mac-b"]
+
+
+@pytest.mark.asyncio
+async def test_peer_recovery_scheduler_failure_does_not_hide_reachable_peer(reset, monkeypatch):
+    class Reconciler:
+        def wake_peer(self, _machine):
+            raise OSError("state unavailable")
+
+    monkeypatch.setattr(peers, "release_reconciler", Reconciler(), raising=False)
+    peers._peer_alert_state["mac-b"] = {"failures": 3, "alerted": True}
+
+    await peers.refresh(
+        REMOTE,
+        FakeGet(resp=FakeResp(data={"host": {}, "studios": {}})),
+    )
+
+    assert peers.cached("mac-b")["reachable"] is True
+
+
+@pytest.mark.asyncio
 async def test_refresh_success_caches_host(reset):
     resp = FakeResp(data={
         "host": {"total_gb": 64},

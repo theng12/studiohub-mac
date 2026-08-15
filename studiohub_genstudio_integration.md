@@ -1,9 +1,9 @@
 # GenStudio KH handoff: consume Studio Hub site capabilities
 
 Use this file as the implementation brief for a GenStudio KH coding session.
-The approved-model discovery contract is available as capability schema
-version 2. Global desired-state delivery is available in Studio Hub KH
-`v1.72.0` and later.
+The approved-model discovery contract is capability schema version 3 in Studio
+Hub KH `v2.8.0` and later. It includes exact managed-release convergence and
+routing quarantine evidence.
 
 The canonical response contract is documented in
 [`CAPABILITY_CONTRACT.md`](CAPABILITY_CONTRACT.md). If this handoff and that
@@ -45,40 +45,66 @@ Expected identity:
 ```json
 {
   "schema": "studiohub.site-capabilities",
-  "schema_version": 2
+  "schema_version": 3
 }
 ```
 
 GenStudio must reject an unknown schema name or unsupported major schema
-version and should ignore unknown additive fields within version 2.
+version and should ignore unknown additive fields within version 3.
 
-## Multi-controller maintenance composition
+## Immutable release intent and site activation
 
-GenStudio may provide one global operator button, but each selected Studio Hub
-continues to own and persist only its site-local maintenance jobs. Use each
-site's stored authenticated transport and compose these existing contracts:
+GenStudio owns the immutable global target and activates one location at a
+time. A location controller owns its durable site-local job and credentials.
+For each site, use the existing machine credential in a header; never use an
+owner browser cookie, password, query-string token, or loggable URL token.
 
-1. Confirm the site has no queued/running Hub work from `GET /api/hub/jobs`,
-   `GET /api/hub/chat/jobs`, and `GET /api/hub/transcription/jobs`.
-2. Audit or repair startup services with `GET /api/hub/startup-services` and
-   `POST /api/hub/startup-services/{machine}/{modality}/install`.
-3. Rescan and start drained Studio updates with
-   `POST /api/hub/maintenance/studio-versions` and
-   `POST /api/hub/maintenance/updates`; poll the returned site-owned job.
-4. Update agent Hubs with `POST /api/hub/maintenance/hub-updates` and poll the
-   returned site-owned job.
-5. Reconcile the current approved fleet catalog with
-   `POST /api/hub/model-baselines/reconcile`.
-6. Update the location controller itself last through
-   `POST /api/hub/maintenance/self-update`, then verify its version and
-   capability identity after it returns.
+The initial qualified sibling targets are the immutable commits published on
+the release repositories' `main` branches: Image Studio `1.30.1` at
+`7e6b25a73ff7e8ad4b0c1e838a697341c97eb51b`, and Voice Studio `2.3.0` at
+`bf13bdf7d9688da87ec6e3a5e89961245beeede0`. Each target must also report
+`managed_exact_commit: true`; an older or capability-missing sibling stays a
+nonblocking `retryable_failure`. Never replace these pinned targets with the
+current `main` branch.
 
-Run locations with bounded concurrency and retain per-site results. A dropped
-connection is not proof of failure: reconnect to the site-owned update job or
-rescan versions before retrying. Never start a second update merely because a
-poll response was lost. These are operator maintenance operations, not customer
-jobs; they must not mint GenStudio job IDs, attempts, idempotency keys, leases,
-or fencing tokens.
+1. `PUT /api/hub/maintenance/release-intent` with canonical schema
+   `genstudio.studio-fleet-release-intent`, schema version 1, release hash,
+   increasing sequence, creation time, and exact Hub/Image/Voice repository,
+   SemVer, and lowercase 40-hex commits. Exact duplicate delivery is
+   idempotent. A lower sequence or changed content under the same release ID is
+   rejected before state mutation.
+2. `POST /api/hub/maintenance/release-intent/{release_id}/activate` with optional
+   `{"genstudio_run_reference":"<bounded opaque reference>"}`. A replay adopts
+   the durable job and returns its `job_id`.
+3. Poll `GET /api/hub/maintenance/release-jobs/{job_id}`. Match returned
+   `site_id` and `controller_id` to the configured location. Treat a lost
+   response as unknown and poll/adopt the same ID; never create a second target.
+4. Wait for `complete`, or retain `degraded`/pending evidence for later retry.
+   `blocked_release` stops only that immutable release. Do not require every
+   machine to be online before allowing healthy exact-current supply.
+5. Resume routing only from a fresh schema-v3 capability snapshot whose worker
+   managed-release evidence is converged and whose ordinary model contract is
+   still available.
+
+Set global site activation concurrency to one. Inside a site, Hub selects the
+first reachable remote machine as canary; updates Hub, installed Image, and
+installed Voice serially; continues remaining stable machine IDs one by one;
+then updates controller Image, Voice, and controller Hub last. Offline, busy,
+disk, authentication, and target-local failures remain durable and nonblocking.
+Do not call the agent-only `/api/hub/maintenance/managed-update` routes from
+GenStudio; the controller owns those authenticated child jobs.
+
+Managed execution never calls moving-main `update.js` and never changes normal
+per-app Off/Notify/Auto, schedule, maintenance-hour, or idle-only settings.
+Those existing maintenance endpoints remain available for ordinary operator
+work, but they are not a substitute for an immutable GenStudio release.
+
+PPS is a pre-protocol bootstrap exception. While its controller is an offline
+legacy 2.6.x build, retain it as `physical_bootstrap_required`, exclude it from
+new routing, and continue later sites. Do not run its moving-main updater. It
+may enter managed reconciliation only after an operator applies an attested
+immutable bootstrap ancestor of the desired Hub target, or after the owner
+issues a new descending release intent from an observed safe bootstrap.
 
 The approved fleet-catalog status endpoints contain no customer material:
 
@@ -306,7 +332,7 @@ Add tests proving:
 
 1. Bearer authentication is sent and never logged.
 2. Schema name/version and site/controller identity are validated.
-3. Unknown additive v2 fields are ignored.
+3. Unknown additive v3 fields are ignored.
 4. Stale, malformed, unauthorized, and unreachable sites are ineligible.
 5. Drained or unready controllers are ineligible.
 6. Busy, drained, maintained, quarantined, offline, or incompatible workers are
@@ -329,7 +355,7 @@ GET above and must not submit, drain, restart, or alter workers or jobs.
 ## Definition of done
 
 - GenStudio can configure and authenticate one or more Studio Hub sites.
-- It periodically obtains and validates schema v2 snapshots.
+- It periodically obtains and validates schema v3 snapshots.
 - Its router can filter sites by freshness, controller state, physical
   capacity, operation, model, revision, voice mode, limits, and controls.
 - Site unavailability reduces routing capacity without changing global job

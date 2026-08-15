@@ -35,6 +35,10 @@ The Hub runs on fixed port **47873** and provides:
 - **Private site-capability contract** — GenStudio can authenticate with the Hub
   or fleet token and read one schema-versioned snapshot of machines, hardware,
   workers, models, controls, limits, revisions, and truthful current capacity.
+- **Durable managed releases** — GenStudio can pin Hub, installed Image, and
+  installed Voice to exact approved commits. Each controller persists and
+  resumes its site job, rolls one machine at a time behind a canary, and keeps
+  offline or busy machines pending without blocking healthy capacity.
 - **Machine-level work leases** — image generation and final rendering take turns
   on each Mac without pausing active work. Waiting render jobs are assigned first,
   with faster M4 16 GB workers preferred when available.
@@ -205,6 +209,44 @@ running version. Dirty, detached, divergent, or rewritten repositories are
 refused without changing files. Failure makes one bounded rollback attempt;
 rotating redacted logs are under `logs/auto_update/` in that app.
 
+### Managed fleet releases
+
+Managed releases are a separate GenStudio-owned path. GenStudio first sends a
+canonical `genstudio.studio-fleet-release-intent` version 1 manifest to
+`PUT /api/hub/maintenance/release-intent`, then activates that exact
+`release_id`. The manifest pins the repository, SemVer, and lowercase 40-hex
+commit for Hub plus installed Image and Voice. A duplicate intent or activation
+adopts the existing durable state; it never creates duplicate component work.
+
+Within a location, the first reachable remote machine is the canary. Hub,
+installed Image, and installed Voice update serially on that Mac; remaining
+agents follow in stable machine-ID order; controller Image and Voice run before
+the controller Hub updates last. Managed code never calls the moving-`main`
+`update.js` path. Success requires the restarted app to report both the exact
+target version and `app_commit`, and each sibling must advertise
+`managed_exact_commit: true`. The first qualified sibling targets are Image
+Studio `1.30.1` and Voice Studio `2.3.0`; older installed siblings remain
+retryable and are never silently sent through an ordinary updater.
+
+Offline, busy, disk-limited, authentication-blocked, and target-local failures
+remain nonterminal with bounded persisted retry. They reduce capacity but do
+not block later healthy machines or locations. Only a malformed or mismatched
+immutable manifest, an exact target mismatch, or the same clean-checkout health
+failure on two machines blocks that frozen release. Nonterminal jobs resume
+after Hub restart and a returning peer is scheduled immediately.
+
+The Updates page shows this as a read-only **Managed release** card. It cannot
+activate or retry a release and does not change ordinary per-app **Off**,
+**Notify only**, **Auto**, schedule, maintenance-hour, or idle-only settings.
+After software convergence Hub requests the existing approved model-catalog
+reconciliation; that request is evidence, not a claim that downloads finished.
+
+PPS predates the exact-update protocol. A legacy 2.6.x PPS controller that was
+already offline remains `physical_bootstrap_required` and nonblocking. It must
+receive a separately attested immutable bootstrap ancestor, or be observed on a
+safe bootstrap before the owner approves a new descending intent. The legacy
+moving-main updater is not a valid bootstrap proof.
+
 ### Adding a studio on another machine
 
 Create `studios.json` in this folder (it's gitignored — per-machine state):
@@ -237,7 +279,11 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/auto-updates/jobs/{id}/retry` | Retry only the failed apps from a saved automatic fleet update |
 | `GET /api/hub/studios` | Registry + live status per studio |
 | `GET /health/live` · `GET /health/ready` · `GET /health/capacity` | Controller liveness, site-execution readiness, and non-secret routing capacity; optional telemetry never gates readiness |
-| `GET /api/hub/capabilities` | Private cache-only GenStudio capability snapshot (schema v2); only exact owner-approved audited models are advertised |
+| `GET /api/hub/capabilities` | Private cache-only GenStudio capability snapshot (schema v3); active managed intent adds exact-release convergence and quarantine evidence |
+| `GET` · `PUT /api/hub/maintenance/release-intent` | Read sanitized managed-release status / controller-only machine-token write of one immutable desired manifest |
+| `POST /api/hub/maintenance/release-intent/{release_id}/activate` | Controller-only activation or adoption of the durable site release job; optional `{ "genstudio_run_reference": "..." }` |
+| `GET /api/hub/maintenance/release-jobs/{job_id}` | Read sanitized per-machine/component state, exact version/commit evidence, retry, and catalog request evidence |
+| `POST /api/hub/maintenance/managed-update` · `GET /api/hub/maintenance/managed-update/{job_id}` | Agent-only authenticated child admission/adoption and polling; used by the location controller, not GenStudio directly |
 | `GET /api/hub/model-exposures` | Cache-only audited candidate, fleet supply, and historical exposure inventory |
 | `POST /api/hub/model-exposures/approve` | Owner-only approval of an exact model + operation + revision + contract hash |
 | `POST /api/hub/model-exposures/revoke` | Owner-only stop for an exact exposure, including historical candidates no longer online |

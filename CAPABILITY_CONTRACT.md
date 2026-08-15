@@ -4,7 +4,7 @@ Endpoint: `GET /api/hub/capabilities`
 
 Schema: `studiohub.site-capabilities`
 
-Schema version: `2`
+Schema version: `3`
 
 This is a private, read-only machine-to-machine contract from a Studio Hub
 location controller to GenStudio KH. It is routing input only. It does not
@@ -33,7 +33,7 @@ authenticate this endpoint.
 ## Versioning
 
 Clients must check both `schema` and `schema_version` and ignore unknown fields.
-Additive optional fields may be introduced within schema version 2. Removing a
+Additive optional fields may be introduced within schema version 3. Removing a
 field, changing a field's type, or changing its meaning requires a new schema
 version. The Studio Hub application version is reported separately as
 `controller.studiohub_version`.
@@ -43,7 +43,7 @@ version. The Studio Hub application version is reported separately as
 ```json
 {
   "schema": "studiohub.site-capabilities",
-  "schema_version": 2,
+  "schema_version": 3,
   "observed_at": "2026-07-20T15:30:00Z",
   "site_id": "phnom-penh-1",
   "controller": {
@@ -52,7 +52,8 @@ version. The Studio Hub application version is reported separately as
     "studiohub_version": "1.56.0",
     "online": true,
     "ready": true,
-    "drained": false
+    "drained": false,
+    "managed_release": null
   },
   "authority": {
     "global": "genstudio",
@@ -69,7 +70,8 @@ version. The Studio Hub application version is reported separately as
   },
   "machines": [],
   "workers": [],
-  "model_supply": []
+  "model_supply": [],
+  "managed_release": null
 }
 ```
 
@@ -121,7 +123,7 @@ the worker catalog or transfer global authority from GenStudio.
 
 ## Audited candidate and exposure gate
 
-Schema version 2 advertises only models that pass both independent gates:
+Schema version 3 advertises only models that pass both independent gates:
 
 1. The sibling Studio publishes a valid `studio.model-audit` version 1
    `genstudio_candidate` for an exact internal model ID, immutable runtime
@@ -210,6 +212,38 @@ An unavailable model includes a stable reason such as `worker_offline`,
 Older sibling versions that omit `qualified_revision_match` and
 `execution_ready` publish both as `null`; omission alone never makes a
 previously compatible model unavailable.
+
+## Managed release evidence and quarantine
+
+Schema version 3 adds sanitized `managed_release` evidence at the response,
+controller, machine, and worker levels. With no desired release it is `null`
+and the existing availability reasons keep their previous precedence. With an
+active intent it reports the desired release ID, expected and observed SemVer
+and 40-hex commit, component/site state, convergence, next retry, canary, and
+catalog-request timestamps. It never includes credentials, checkout paths,
+commands, or customer data.
+
+Site states are `pending`, `queued`, `running`, `waiting_busy`, `degraded`,
+`blocked_release`, and `complete`. Component states are `not_installed`,
+`pending_offline`, `pending_busy`, `checking`, `updating`, `restarting`,
+`verifying`, `current`, `retryable_failure`, `auth_blocked`, and
+`release_blocked`. `complete` and `blocked_release` are terminal;
+`degraded` remains retryable and survives controller restart.
+
+When managed intent is active, a model is routable only when its machine Hub
+and matching installed Image or Voice component are exact and current. The
+availability reason is exactly:
+
+- `managed_release_pending` for missing, offline, busy, retryable, or otherwise
+  unconverged evidence;
+- `managed_release_blocked` for a release- or component-blocking failure;
+- `managed_release_mismatch` when observed version or commit differs from the
+  immutable target.
+
+These checks are additional to the existing audit, approval, revision, cache,
+memory, busy, maintenance, and health gates. A catalog acknowledgement records
+only that the approved-model reconciliation was requested; it is not proof
+that model downloads completed.
 
 ## Privacy and authority boundary
 
