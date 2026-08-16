@@ -1172,6 +1172,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.8.2", date: "2026-08-16", items: [
+    "Studio Hub now documents the approved design contract for Controller-managed repair of an existing Agent enrollment: short-lived target-bound callback tickets, strict identity checks, sequential nonblocking batches, and preservation of machine state.",
+    "This is a design-only release. Repair enrollment controls, APIs, tickets, and Agent repair behavior are not implemented or available in Studio Hub 2.8.2.",
+    "Runtime behavior, dependencies, launchers, registry data, credentials, capability schema v3, managed releases, Image/Voice Studios, models, generation, and GenStudio are unchanged.",
+  ]},
   { v: "2.8.1", date: "2026-08-15", items: [
     "Managed releases now leave a whole-machine-disabled Mac untouched and nonblocking, show that exclusion truthfully, then add it to the same immutable release automatically when you turn that machine back on.",
     "Agent identity checks now match the location site and each enrolled Mac's stable machine ID, so valid controller/agent layouts proceed while wrong or incomplete identities stay quarantined to that Mac.",
