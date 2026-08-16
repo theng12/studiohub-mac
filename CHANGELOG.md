@@ -10,6 +10,29 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.8.2] — 2026-08-16
+
+### Added — controller-managed enrollment repair design contract only
+
+- Added the owner-approved design for repairing a registered Agent's location
+  enrollment from its Controller with a short-lived, single-use, target-bound
+  callback ticket, strict source and identity checks, durable retry semantics,
+  sequential nonblocking batches, and explicit preservation of registry,
+  credentials, settings, workloads, models, and managed-release evidence.
+- The design makes ambiguous identity owner-visible and specifies safe handling
+  for offline, duplicate, host-mismatched, token-mismatched, expired, and older
+  Agent Hubs without using or exposing the permanent enrollment code.
+
+### Compatibility and safety
+
+- This is a **design-contract-only** patch. Studio Hub 2.8.2 does not ship a
+  Repair enrollment button, repair API, ticket store, Agent repair executor, or
+  fleet behavior. No repair action should be expected until a future versioned
+  implementation release.
+- Runtime code, dependencies, launchers, Controller registry data, capability
+  schema v3, managed-release state names, Image/Voice Studios, models,
+  generation, and GenStudio are unchanged.
+
 ## [2.8.1] — 2026-08-15
 
 ### Fixed — controlled-canary release eligibility and agent identity
