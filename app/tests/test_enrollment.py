@@ -1,11 +1,13 @@
 import json
 import sqlite3
+import threading
 from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
 
 from backend import control_plane, enrollment, hardware_profiles, peers, registry
+from backend.controller_settings_lock import SettingsWriterBusy, settings_writer_lock
 
 
 def _controller():
@@ -209,6 +211,7 @@ def test_enrollment_info_is_private_read_only_and_contains_no_secret(app):
 
     assert response.status_code == 200
     assert response.json()["role"] == "controller"
+    assert response.json()["repair_schema_version"] == 1
     assert response.json()["enrollment_active"] is True
     assert issued["code"] not in response.text
     assert "fleet_token" not in response.text
@@ -491,3 +494,289 @@ def test_dashboard_exposes_explicit_machine_modes_and_plain_controller_credentia
     assert 'visible.textContent = r.token' in dashboard
     assert "if (sum.control_plane) renderController(sum.control_plane, false);" in dashboard
     assert 'manualFleetMaintenance.append($("#" + id))' in dashboard
+
+
+def _writer_busy() -> bool:
+    result = []
+
+    def writer():
+        try:
+            with settings_writer_lock():
+                result.append(False)
+        except SettingsWriterBusy:
+            result.append(True)
+
+    thread = threading.Thread(target=writer)
+    thread.start()
+    thread.join(2)
+    return result == [True]
+
+
+def test_setup_controller_and_join_are_busy_while_repair_lock_is_held(
+        app, monkeypatch):
+    before = {
+        "settings": (control_plane.SETTINGS_FILE.read_bytes()
+                     if control_plane.SETTINGS_FILE.exists() else None),
+        "token": peers.FLEET_TOKEN_FILE.read_bytes() if peers.FLEET_TOKEN_FILE.exists() else None,
+        "profiles": (hardware_profiles.MACHINE_PROFILES_FILE.read_bytes()
+                     if hardware_profiles.MACHINE_PROFILES_FILE.exists() else None),
+        "labels": registry.LABELS_FILE.read_bytes() if registry.LABELS_FILE.exists() else None,
+        "code": enrollment.ENROLLMENT_CODE_FILE.read_bytes() if enrollment.ENROLLMENT_CODE_FILE.exists() else None,
+    }
+
+    async def claim_remote(*_args, **_kwargs):
+        return {
+            "site_id": "location-a", "site_name": "Location A",
+            "controller_id": "controller-a", "fleet_token": "new-site-fleet-token",
+        }
+
+    monkeypatch.setattr(enrollment, "claim_remote", claim_remote)
+    local = TestClient(app, client=("127.0.0.1", 50000))
+    with settings_writer_lock():
+        controller = local.post("/api/hub/setup/controller", json={
+            "location_name": "Location A", "site_id": "location-a",
+            "hardware_profile_id": "mac-mini-m4-16gb",
+        })
+        joined = local.post("/api/hub/setup/join", json={
+            "controller_url": "http://100.70.0.2:47873",
+            "enrollment_code": "permanent-code",
+            "hardware_profile_id": "mac-mini-m4-16gb",
+        })
+
+    assert controller.status_code == joined.status_code == 423
+    assert controller.json()["detail"]["code"] == "settings_writer_busy"
+    assert joined.json()["detail"]["code"] == "settings_writer_busy"
+    after = {
+        "settings": (control_plane.SETTINGS_FILE.read_bytes()
+                     if control_plane.SETTINGS_FILE.exists() else None),
+        "token": peers.FLEET_TOKEN_FILE.read_bytes() if peers.FLEET_TOKEN_FILE.exists() else None,
+        "profiles": (hardware_profiles.MACHINE_PROFILES_FILE.read_bytes()
+                     if hardware_profiles.MACHINE_PROFILES_FILE.exists() else None),
+        "labels": registry.LABELS_FILE.read_bytes() if registry.LABELS_FILE.exists() else None,
+        "code": enrollment.ENROLLMENT_CODE_FILE.read_bytes() if enrollment.ENROLLMENT_CODE_FILE.exists() else None,
+    }
+    assert after == before
+
+
+def test_join_rollback_keeps_repair_busy_until_restore_and_cache_reload(
+        reset, monkeypatch):
+    _controller()
+    peers.set_fleet_token("old-site-fleet-token")
+    hardware_profiles.set_machine_hardware_profile("local", "mac-mini-m1-8gb")
+    registry.set_label("local", "Old label")
+    before = {
+        path: path.read_bytes() if path.exists() else None
+        for path in enrollment._configuration_paths()
+    }
+    started = threading.Event()
+    allow_failure = threading.Event()
+    allow_restore = threading.Event()
+    allow_cache_reload = threading.Event()
+    restored = threading.Event()
+    cache_reloaded = threading.Event()
+    original_restore = enrollment._restore
+    original_reload = control_plane.reload_settings_cache
+
+    def fail_assignment(*_args):
+        started.set()
+        allow_failure.wait(2)
+        raise RuntimeError("profile write failed")
+
+    def paused_restore(snapshot):
+        original_restore(snapshot)
+        restored.set()
+        allow_restore.wait(2)
+
+    def tracked_reload():
+        original_reload()
+        cache_reloaded.set()
+        allow_cache_reload.wait(2)
+
+    monkeypatch.setattr(hardware_profiles, "set_machine_hardware_profile", fail_assignment)
+    monkeypatch.setattr(enrollment, "_restore", paused_restore)
+    monkeypatch.setattr(control_plane, "reload_settings_cache", tracked_reload)
+    errors = []
+
+    def join():
+        try:
+            enrollment.configure_joined_agent(
+                "http://100.70.0.2:47873", "mac-mini-m4-16gb", {
+                    "site_id": "location-b", "site_name": "Location B",
+                    "controller_id": "controller-b", "fleet_token": "new-site-fleet-token",
+                }, machine_name="New label")
+        except RuntimeError as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=join)
+    thread.start()
+    assert started.wait(2)
+    assert _writer_busy()
+    allow_failure.set()
+    assert restored.wait(2)
+    assert _writer_busy()
+    allow_restore.set()
+    assert cache_reloaded.wait(2)
+    assert _writer_busy()
+    allow_cache_reload.set()
+    thread.join(2)
+
+    assert errors and "profile write failed" in str(errors[0])
+    assert restored.is_set() and cache_reloaded.is_set()
+    assert _writer_busy() is False
+    assert {
+        path: path.read_bytes() if path.exists() else None
+        for path in enrollment._configuration_paths()
+    } == before
+    assert control_plane.load_settings()["role"] == "controller"
+
+
+def test_new_controller_existing_code_failure_preserves_code_and_holds_outer_lock(
+        reset, monkeypatch):
+    _controller()
+    peers.set_fleet_token("old-site-fleet-token")
+    issued = enrollment.create_enrollment_code(now=100)
+    with sqlite3.connect(enrollment.DB_FILE) as connection:
+        code_row = connection.execute("SELECT * FROM enrollment_codes").fetchone()
+    code_file = enrollment.ENROLLMENT_CODE_FILE.read_bytes()
+    code_mode = enrollment.ENROLLMENT_CODE_FILE.stat().st_mode & 0o777
+    before = {
+        path: path.read_bytes() if path.exists() else None
+        for path in enrollment._configuration_paths()
+    }
+    started = threading.Event()
+    allow_failure = threading.Event()
+    allow_restore = threading.Event()
+    allow_cache_reload = threading.Event()
+    restored = threading.Event()
+    cache_reloaded = threading.Event()
+    original_restore = enrollment._restore
+    original_reload = control_plane.reload_settings_cache
+
+    def fail_status(**_kwargs):
+        started.set()
+        allow_failure.wait(2)
+        raise RuntimeError("credential status failed")
+
+    def paused_restore(snapshot):
+        original_restore(snapshot)
+        restored.set()
+        allow_restore.wait(2)
+
+    def tracked_reload():
+        original_reload()
+        cache_reloaded.set()
+        allow_cache_reload.wait(2)
+
+    monkeypatch.setattr(enrollment, "enrollment_credential_status", fail_status)
+    monkeypatch.setattr(enrollment, "_restore", paused_restore)
+    monkeypatch.setattr(control_plane, "reload_settings_cache", tracked_reload)
+    errors = []
+
+    def configure():
+        try:
+            enrollment.configure_new_controller(
+                "Location B", "location-b", "mac-mini-m4-16gb", "New label")
+        except RuntimeError as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=configure)
+    thread.start()
+    assert started.wait(2)
+    assert _writer_busy()
+    allow_failure.set()
+    assert restored.wait(2)
+    assert _writer_busy()
+    allow_restore.set()
+    assert cache_reloaded.wait(2)
+    assert _writer_busy()
+    allow_cache_reload.set()
+    thread.join(2)
+
+    assert errors and "credential status failed" in str(errors[0])
+    assert restored.is_set() and cache_reloaded.is_set()
+    assert {
+        path: path.read_bytes() if path.exists() else None
+        for path in enrollment._configuration_paths()
+    } == before
+    with sqlite3.connect(enrollment.DB_FILE) as connection:
+        assert connection.execute("SELECT * FROM enrollment_codes").fetchone() == code_row
+    assert enrollment.ENROLLMENT_CODE_FILE.read_bytes() == code_file
+    assert enrollment.ENROLLMENT_CODE_FILE.stat().st_mode & 0o777 == code_mode
+    assert issued["code"]
+
+
+def test_new_controller_code_precommit_failure_holds_outer_lock_through_internal_rollback(
+        reset, monkeypatch):
+    started = threading.Event()
+    release = threading.Event()
+    inner_restored = threading.Event()
+    cache_reloaded = threading.Event()
+    original_connect = enrollment._connect
+    original_restore = enrollment._restore
+    original_reload = control_plane.reload_settings_cache
+
+    class CommitFailure:
+        def __init__(self, connection):
+            self.connection = connection
+            self.inserted = False
+
+        def __enter__(self):
+            self.connection.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.connection.__exit__(*args)
+
+        def execute(self, sql, *args):
+            if "INSERT INTO enrollment_codes" in sql:
+                self.inserted = True
+            return self.connection.execute(sql, *args)
+
+        def commit(self):
+            if self.inserted:
+                started.set()
+                raise RuntimeError("precommit failure")
+            return self.connection.commit()
+
+        def __getattr__(self, name):
+            return getattr(self.connection, name)
+
+    def failing_connect():
+        return CommitFailure(original_connect())
+
+    def paused_restore(snapshot):
+        original_restore(snapshot)
+        if set(snapshot) == {enrollment.ENROLLMENT_CODE_FILE}:
+            inner_restored.set()
+            release.wait(2)
+
+    def tracked_reload():
+        original_reload()
+        cache_reloaded.set()
+
+    monkeypatch.setattr(enrollment, "_connect", failing_connect)
+    monkeypatch.setattr(enrollment, "_restore", paused_restore)
+    monkeypatch.setattr(control_plane, "reload_settings_cache", tracked_reload)
+    errors = []
+
+    def configure():
+        try:
+            enrollment.configure_new_controller(
+                "Location B", "location-b", "mac-mini-m4-16gb")
+        except RuntimeError as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=configure)
+    thread.start()
+    assert started.wait(2)
+    assert inner_restored.wait(2)
+    assert _writer_busy()
+    release.set()
+    thread.join(2)
+
+    assert errors and "precommit failure" in str(errors[0])
+    assert cache_reloaded.is_set()
+    with sqlite3.connect(enrollment.DB_FILE) as connection:
+        assert connection.execute("SELECT * FROM enrollment_codes").fetchall() == []
+    assert not enrollment.ENROLLMENT_CODE_FILE.exists()
+    assert _writer_busy() is False

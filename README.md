@@ -292,7 +292,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/controller/check` | Verify the optional PostgreSQL evidence schema and publish an immediate heartbeat |
 | `POST /api/hub/setup/controller` | Local simple setup for the first Mac at a new location; assigns identity and local hardware while forcing PostgreSQL off |
 | `GET` · `POST` · `DELETE /api/hub/enrollment-codes` | Read, generate/rotate, or revoke the controller's permanent reusable enrollment code; owner access is required to reveal or change it |
-| `GET /api/hub/enrollment/info` | Private read-only controller identity, version, role, and enrollment-readiness check; contains no credentials |
+| `GET /api/hub/enrollment/info` | Private read-only controller identity, version, role, enrollment readiness, and `repair_schema_version`; contains no credentials |
 | `POST /api/hub/enrollment/claim` | Private LAN/Tailscale claim of the permanent code; optionally accepts machine/profile/modalities to register that Agent from its private source address and returns the site identity, fleet credential, and registration result |
 | `POST /api/hub/setup/check-controller` | Read-only validation of a pasted private controller address; accepted locally or from an owner-authenticated browser |
 | `POST /api/hub/setup/join` | Guided worker setup using a private controller address, permanent enrollment code, and local hardware profile; accepted locally or from an owner-authenticated browser |
@@ -587,6 +587,84 @@ await fetch(`${HUB}/api/hub/jobs`, {
   })
 });
 ```
+
+### Controller-managed enrollment repair API
+
+Studio Hub 2.9.0 implements Controller-managed repair for an already registered
+remote Agent whose saved location identity or parent Controller is wrong. It is
+not a new-enrollment path: it does not use the permanent enrollment code, re-key
+the Controller registry, merge machines, or infer identity from a hostname or
+display label.
+
+The six repair endpoints are:
+
+| Endpoint | Authorization and purpose |
+|---|---|
+| `GET /api/hub/enrollment-repairs/eligibility` | Controller owner read of every registered remote Mac's exact eligibility and current request state |
+| `POST /api/hub/enrollment-repairs` | Controller owner creates or adopts a stable-order one-machine/batch request |
+| `GET /api/hub/enrollment-repairs/{batch_id}` | Controller owner reads sanitized durable batch and per-machine state |
+| `POST /api/hub/enrollment-repair/apply` | Exact-current fleet-token service dispatch to the bound Agent and private source |
+| `POST /api/hub/enrollment-repair-tickets/redeem` | Exact-current fleet-token callback that atomically consumes one bound ticket on the Controller |
+| `GET /api/hub/enrollment-repair/status/{request_id}` | Exact-current fleet-token, source-bound read of sanitized Agent terminal evidence |
+
+The three owner routes accept only Controller loopback or that Controller's
+valid remembered owner-browser session. They do not accept the unique Hub
+token, the shared fleet token, a recovery credential, or an owner session from
+another Hub as initiation authority. Existing same-origin browser-write
+protection still applies. Each of the three service routes independently
+requires the exact current `X-Hub-Token` fleet header, a private direct client,
+the expected request source, and no cookie, `Authorization`, query credential,
+forwarded-host trust, redirect, or environment proxy fallback.
+
+A successful Agent apply performs one atomic replacement of
+`controller_settings.json` and changes exactly these five keys:
+
+- `role`
+- `site_id`
+- `site_name`
+- `controller_id`
+- `parent_controller_url`
+
+Every other settings key is retained. The Controller stores only SHA-256 ticket
+and fleet-token digests. A random target-bound ticket is single-use and becomes
+ineligible for first redemption at its persisted absolute deadline,
+approximately 120 seconds after issuance. Redemption revalidates the request,
+ticket, expiry, registry key/host/address, direct source, Controller
+role/site/name/ID snapshot, and exact current fleet credential in one durable
+transaction. The Agent journals uncertainty before callback and never resumes a
+forward settings write during restart recovery.
+
+Fresh batch dispatch is sequential. If an exact terminal result does not arrive
+within the bounded 15-second scheduling interval, that Mac becomes
+`confirmation_pending`; it is parked without extending or revoking any accepted
+claim, and the next eligible Mac continues. A parked target receives no second
+ticket. The Controller can later adopt source-bound `complete`, `never_applied`,
+or `needs_review` status. It marks completion only when the returned identity is
+exact, then invalidates that peer cache and wakes the existing managed-release
+reconciler for the same stable registry key.
+
+Before dispatch, the Controller reads the registered Agent's
+`repair_schema_version` through one pinned, bounded, no-redirect private socket
+request. An absent, old, malformed, mismatched, or unreachable capability fails
+closed as **Hub update required** and is never sent `/apply`. Repair never starts
+an Agent update: update that Mac through its ordinary manual or overnight Hub
+update path, then retry. It never updates Image Studio, Voice Studio, or models.
+
+Repair preserves the permanent enrollment code and its use count, both
+fleet-token files byte-for-byte, unique Hub token, owner password and sessions,
+Controller registry key and every Studio endpoint, labels and hardware profile,
+whole-machine and per-Studio Off flags, jobs and artifacts, shared voices,
+models and caches, catalog/download state, updater settings/history, and
+`release_reconciliation.json` including release intent, activation/job IDs,
+machine/component/child operation rows, retries, catalog evidence, and leases.
+Capability schema remains `studiohub.site-capabilities` version 3.
+
+Deleting and re-enrolling is an emergency procedure only. It is especially
+unsafe during an active degraded managed release: deleting a registry key does
+not clean its durable release machine row, child operation/job IDs, retry
+counters, or evidence. Before emergency re-enrollment, those durable rows need
+a separate reviewed cleanup or migration. Enrollment repair never performs that
+cleanup implicitly.
 
 ## Dashboard
 

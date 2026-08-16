@@ -10,6 +10,36 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.9.0] — 2026-08-16
+
+### Added — controller-managed enrollment repair
+
+- Added Controller-only **Repair enrollment** and **Repair eligible Macs**
+  controls, six strictly authenticated repair endpoints, a durable digest-only
+  ticket/batch store, and an Agent executor that changes only the five approved
+  local identity/parent settings.
+- Repair tickets are target-bound, single-use, and expire for first redemption
+  after approximately 120 seconds. Sequential batches park uncertain Macs after
+  the bounded foreground interval and continue with later healthy Macs; strict
+  terminal status can be adopted afterward without replaying an Agent write.
+- Older, malformed, or unreachable Agent repair capabilities fail closed before
+  `/apply`. Repair never starts an Agent update; update that Mac through its
+  ordinary manual or overnight Hub update path, then retry.
+
+### Compatibility and safety
+
+- Repair preserves the permanent enrollment code, fleet-token bytes, registry
+  key and Studio endpoints, owner credentials, labels and hardware profiles,
+  Off flags, jobs and artifacts, models and caches, updater state/history, and
+  durable managed-release state. Capability schema remains version 3.
+- Delete and re-enroll remains emergency-only. An active degraded release also
+  requires separate reviewed cleanup or migration of its durable machine,
+  child-operation, retry, and evidence rows before emergency re-enrollment.
+- This release describes and ships the APIs, UI, store, and executor verified
+  locally. It does not claim that a live canary, fleet rollout, or automatic
+  repair was performed, and it changes no dependency, launcher, Image/Voice
+  Studio, model, generation, or GenStudio behavior.
+
 ## [2.8.2] — 2026-08-16
 
 ### Added — controller-managed enrollment repair design contract only

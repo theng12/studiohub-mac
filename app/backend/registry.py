@@ -14,7 +14,10 @@ studios.json format (all fields optional except id for overrides):
 """
 
 import json
+import socket
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Callable, Sequence
 
 # Launcher root = two levels up from this file (app/backend/registry.py)
 LAUNCHER_ROOT = Path(__file__).resolve().parents[2]
@@ -185,6 +188,113 @@ def load_registry() -> list[dict]:
 
 def base_url(studio: dict) -> str:
     return f"http://{studio['host']}:{studio['port']}"
+
+
+class RepairRegistryAmbiguity(ValueError):
+    """A stable, credential-free reason a registry target cannot be repaired."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+@dataclass(frozen=True)
+class RepairMachineSnapshot:
+    """Read-only identity evidence for one registered remote machine."""
+
+    machine: str
+    registry_host: str
+    resolved_address: str
+    endpoint_ids: tuple[str, ...]
+
+
+def _repair_origin_for_host(host: str) -> str:
+    candidate = str(host or "")
+    if not candidate or candidate != candidate.strip():
+        raise RepairRegistryAmbiguity("host_invalid")
+    # Registry hosts are hostnames/IP literals, not URL fragments.  The transport
+    # validator owns normalization and private-address enforcement.
+    display = f"[{candidate}]" if ":" in candidate and not candidate.startswith("[") else candidate
+    return f"http://{display}:47873"
+
+
+def repair_machine_snapshot(
+    rows: Sequence[dict[str, Any]],
+    machine: str,
+    *,
+    resolver: Callable[..., Any] = socket.getaddrinfo,
+    expected_address: str | None = None,
+) -> RepairMachineSnapshot:
+    """Return exact remote identity evidence without probing or changing registry state.
+
+    The registry's ``machine`` field is the identity authority. Labels, profiles,
+    scheduler flags, endpoint titles, and inference from a hostname are all
+    deliberately excluded from this decision.
+    """
+    stable_machine = str(machine or "").strip()
+    if not stable_machine:
+        raise RepairRegistryAmbiguity("machine_missing")
+    if stable_machine == "local":
+        raise RepairRegistryAmbiguity("machine_local")
+
+    matching = [row for row in rows if str(row.get("machine", "")).strip() == stable_machine]
+    if not matching:
+        raise RepairRegistryAmbiguity("machine_missing")
+    hosts = {str(row.get("host", "")) for row in matching}
+    if "" in hosts:
+        raise RepairRegistryAmbiguity("host_missing")
+    if len(hosts) != 1:
+        raise RepairRegistryAmbiguity("machine_multi_host")
+    host = next(iter(hosts))
+
+    remote_by_host: dict[str, set[str]] = {}
+    for row in rows:
+        row_machine = str(row.get("machine", "")).strip()
+        row_host = str(row.get("host", ""))
+        if row_machine and row_machine != "local" and row_host:
+            remote_by_host.setdefault(row_host, set()).add(row_machine)
+    if len(remote_by_host.get(host, set())) != 1:
+        raise RepairRegistryAmbiguity("host_shared")
+
+    endpoint_ids = []
+    for row in matching:
+        endpoint_id = str(row.get("id", "")).strip()
+        if not endpoint_id:
+            raise RepairRegistryAmbiguity("endpoint_missing")
+        if "@" in endpoint_id and endpoint_id.rsplit("@", 1)[1] != stable_machine:
+            raise RepairRegistryAmbiguity("endpoint_machine_conflict")
+        endpoint_ids.append(endpoint_id)
+    if len(set(endpoint_ids)) != len(endpoint_ids):
+        raise RepairRegistryAmbiguity("endpoint_duplicate")
+
+    try:
+        from .enrollment_repair_transport import OriginInvalid, resolve_private_origin
+
+        origin = resolve_private_origin(_repair_origin_for_host(host), resolver=resolver)
+    except (OriginInvalid, OSError, TypeError, ValueError):
+        raise RepairRegistryAmbiguity("host_address_ambiguous") from None
+    # A different hostname is not a different machine identity when it pins to
+    # the same direct private address.  Resolve only registry hosts; this is
+    # identity validation, never a peer/service probe.
+    for other_host in remote_by_host:
+        if other_host == host:
+            continue
+        try:
+            other = resolve_private_origin(
+                _repair_origin_for_host(other_host), resolver=resolver,
+            )
+        except (RepairRegistryAmbiguity, OriginInvalid, OSError, TypeError, ValueError):
+            continue
+        if other.address == origin.address:
+            raise RepairRegistryAmbiguity("address_shared")
+    if expected_address is not None and origin.address != str(expected_address):
+        raise RepairRegistryAmbiguity("host_address_changed")
+    return RepairMachineSnapshot(
+        machine=stable_machine,
+        registry_host=host,
+        resolved_address=origin.address,
+        endpoint_ids=tuple(sorted(endpoint_ids)),
+    )
 
 
 # Family port convention — used by discovery to infer modality.

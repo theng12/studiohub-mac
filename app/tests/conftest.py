@@ -22,7 +22,10 @@ from starlette.testclient import TestClient
 
 def _reset_state():
     from backend import (alerts, auth, broadcast, broker, chat_jobs, control_plane, enrollment, execution_assets, execution_identity, fleet_ops, fleet_storage, hardware_profiles, hf_credentials, job_storage, memory_admission, model_exposure, release_reconciliation,
-                         ledger, metrics, peers, shared_voices, transcription_jobs)
+                         ledger, metrics, peers, shared_voices, transcription_jobs,
+                         enrollment_repair_store)
+    from backend.enrollment_repair import EnrollmentRepairCoordinator
+    from backend.enrollment_repair_executor import RepairExecutor
     from backend import main
     from backend import registry as reg
     from backend.main import monitor
@@ -50,7 +53,12 @@ def _reset_state():
               fleet_ops._STATE_FILE, control_plane.SETTINGS_FILE,
               release_reconciliation.STATE_FILE, release_reconciliation.LOCK_FILE,
               control_plane.DATABASE_URL_FILE, enrollment.DB_FILE,
-              enrollment.ENROLLMENT_CODE_FILE):
+              enrollment.ENROLLMENT_CODE_FILE,
+              Path(str(enrollment.DB_FILE) + "-wal"),
+              Path(str(enrollment.DB_FILE) + "-shm"),
+              enrollment_repair_store.enrollment_repair_journal_path(),
+              enrollment_repair_store.enrollment_repair_lock_path(),
+              control_plane.SETTINGS_FILE.with_name("controller_settings.json.repair.lock")):
         try:
             f.unlink()
         except FileNotFoundError:
@@ -100,6 +108,7 @@ def _reset_state():
     main._transcription_busy.clear()
     control_plane.reset_for_tests()
     enrollment.reset_for_tests()
+    enrollment_repair_store.reset_for_tests()
     execution_identity.reset_for_tests()
     reg._labels_cache = None
     reg._flags_cache = None
@@ -124,6 +133,12 @@ def _reset_state():
     monitor._catalog_meta.clear()
     monitor._catalog_refresh_lock = None
     monitor._restart_alerts.clear()
+    repair_store = enrollment_repair_store.RepairStore(enrollment.DB_FILE)
+    main.app.state.enrollment_repair_store = repair_store
+    main.app.state.enrollment_repair_executor = RepairExecutor()
+    main.app.state.enrollment_repair_coordinator = EnrollmentRepairCoordinator(
+        repair_store, registry_loader=lambda: list(monitor.registry),
+    )
 
 
 @pytest.fixture

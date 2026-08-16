@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from . import control_plane, hardware_profiles, peers, registry
+from .controller_settings_lock import settings_writer_lock
 from .registry import DATA_DIR
 
 DB_FILE = DATA_DIR / "setup_enrollment.db"
@@ -418,7 +419,6 @@ def _restore(snapshot: dict[Path, bytes | None]) -> None:
             path.unlink(missing_ok=True)
         else:
             _replace_private(path, content)
-    control_plane.reload_settings_from_disk()
     hardware_profiles._assignment_cache = None
 
 
@@ -454,32 +454,34 @@ def configure_new_controller(location_name: str, site_id: str,
     profile = hardware_profiles.hardware_profile(hardware_profile_id)
     if profile is None:
         raise ValueError(f"unknown hardware profile {hardware_profile_id!r}")
-    current = control_plane.load_settings()
-    controller_id = (
-        current["controller_id"]
-        if current["role"] == "controller" and current["site_id"] == site_id
-        else suggested_local_hub_id(hardware_profile_id)
-    )
-    snapshot = _snapshot(_configuration_paths())
-    try:
-        saved = control_plane.save_settings({
-            "role": "controller",
-            "site_id": site_id,
-            "site_name": location_name,
-            "controller_id": controller_id,
-            "database_mode": "off",
-        }, clear_database_url=True)
-        profile = hardware_profiles.set_machine_hardware_profile(
-            "local", hardware_profile_id)
-        peers.fleet_token()
-        if machine_name is not None:
-            registry.set_label("local", machine_name)
-        status = enrollment_credential_status(include_code=True)
-        if not status.get("active") or not status.get("code"):
-            create_enrollment_code()
-    except Exception:
-        _restore(snapshot)
-        raise
+    with settings_writer_lock():
+        current = control_plane.load_settings()
+        controller_id = (
+            current["controller_id"]
+            if current["role"] == "controller" and current["site_id"] == site_id
+            else suggested_local_hub_id(hardware_profile_id)
+        )
+        snapshot = _snapshot(_configuration_paths())
+        try:
+            saved = control_plane.save_settings({
+                "role": "controller",
+                "site_id": site_id,
+                "site_name": location_name,
+                "controller_id": controller_id,
+                "database_mode": "off",
+            }, clear_database_url=True)
+            profile = hardware_profiles.set_machine_hardware_profile(
+                "local", hardware_profile_id)
+            peers.fleet_token()
+            if machine_name is not None:
+                registry.set_label("local", machine_name)
+            status = enrollment_credential_status(include_code=True)
+            if not status.get("active") or not status.get("code"):
+                create_enrollment_code()
+        except Exception:
+            _restore(snapshot)
+            control_plane.reload_settings_cache()
+            raise
     return {
         "ok": True,
         "mode": "controller",
@@ -559,30 +561,32 @@ def configure_joined_agent(controller_url: str, hardware_profile_id: str,
         raise ValueError(f"unknown hardware profile {hardware_profile_id!r}")
     base_url = validate_private_controller_url(controller_url)
     values = _validated_claim({"schema_version": 1, **claim})
-    current = control_plane.load_settings()
-    agent_id = (
-        current["controller_id"]
-        if current["role"] == "agent" and current["site_id"] == values["site_id"]
-        else suggested_local_hub_id(hardware_profile_id)
-    )
-    snapshot = _snapshot(_configuration_paths())
-    try:
-        saved = control_plane.save_settings({
-            "role": "agent",
-            "site_id": values["site_id"],
-            "site_name": values["site_name"],
-            "controller_id": agent_id,
-            "database_mode": "off",
-            "parent_controller_url": base_url,
-        }, clear_database_url=True)
-        peers.set_fleet_token(values["fleet_token"])
-        profile = hardware_profiles.set_machine_hardware_profile(
-            "local", hardware_profile_id)
-        if machine_name is not None:
-            registry.set_label("local", machine_name)
-    except Exception:
-        _restore(snapshot)
-        raise
+    with settings_writer_lock():
+        current = control_plane.load_settings()
+        agent_id = (
+            current["controller_id"]
+            if current["role"] == "agent" and current["site_id"] == values["site_id"]
+            else suggested_local_hub_id(hardware_profile_id)
+        )
+        snapshot = _snapshot(_configuration_paths())
+        try:
+            saved = control_plane.save_settings({
+                "role": "agent",
+                "site_id": values["site_id"],
+                "site_name": values["site_name"],
+                "controller_id": agent_id,
+                "database_mode": "off",
+                "parent_controller_url": base_url,
+            }, clear_database_url=True)
+            peers.set_fleet_token(values["fleet_token"])
+            profile = hardware_profiles.set_machine_hardware_profile(
+                "local", hardware_profile_id)
+            if machine_name is not None:
+                registry.set_label("local", machine_name)
+        except Exception:
+            _restore(snapshot)
+            control_plane.reload_settings_cache()
+            raise
     return {
         "ok": True,
         "mode": "agent",

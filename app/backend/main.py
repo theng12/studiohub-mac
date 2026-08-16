@@ -18,19 +18,21 @@ import secrets
 import subprocess
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal
 
 import httpx
 
 from starlette.background import BackgroundTask
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from . import (alerts, artifact_metadata, auth, broadcast, broker, capabilities, chat_jobs, cloud_guard, control_plane, enrollment, execution_assets, execution_identity, fleet_ops, fleet_storage, gateway, hardware_profiles, hf_credentials, job_storage, memory_admission, model_exposure,
+from . import (alerts, artifact_metadata, auth, broadcast, broker, capabilities, chat_jobs, cloud_guard, control_plane, enrollment, enrollment_repair, execution_assets, execution_identity, fleet_ops, fleet_storage, gateway, hardware_profiles, hf_credentials, job_storage, memory_admission, model_exposure,
                ledger, metrics, peers, recipes, registry, shared_voices, startup_services, transcription_jobs,
                voice_qualification)
 from .auto_update import UpdateError
@@ -38,6 +40,11 @@ from .auto_update_config import create_updater
 from .fleet_auto_updates import FleetAutoUpdates, managed_failure_code
 from .auth import is_loopback, is_tailscale, load_token, make_middleware
 from .control import control_studio
+from .controller_settings_lock import SettingsWriterBusy, settings_writer_lock
+from .enrollment_repair import EnrollmentRepairCoordinator
+from .enrollment_repair_executor import RepairExecutor, RepairExecutorError
+from .enrollment_repair_store import RepairStore, RepairStoreError
+from .enrollment_repair_transport import resolve_private_origin
 from .monitor import StudioMonitor
 from .memory_control import FleetMemoryControl
 from .model_baselines import FleetModelBaselines
@@ -174,6 +181,73 @@ class EnrollmentCodeBody(BaseModel):
     machine_name: str | None = Field(default=None, max_length=120)
     hardware_profile_id: str | None = Field(default=None, max_length=64)
     modalities: list[str] | None = None
+
+
+RepairMachineId = Annotated[
+    str,
+    StringConstraints(
+        min_length=1,
+        max_length=100,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$",
+    ),
+]
+RepairRequestId = Annotated[
+    str,
+    StringConstraints(
+        min_length=16,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    ),
+]
+RepairTicket = Annotated[
+    str,
+    StringConstraints(min_length=43, max_length=256, pattern=r"^[A-Za-z0-9_-]+$"),
+]
+BoundedSiteId = Annotated[str, StringConstraints(min_length=1, max_length=100)]
+BoundedSiteName = Annotated[str, StringConstraints(min_length=1, max_length=120)]
+
+
+class StrictRepairBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class EnrollmentRepairBatchBody(StrictRepairBody):
+    machines: list[RepairMachineId] = Field(min_length=1, max_length=100)
+
+
+class EnrollmentRepairControllerBody(StrictRepairBody):
+    site_id: BoundedSiteId
+    site_name: BoundedSiteName
+    controller_id: RepairMachineId
+
+
+class EnrollmentRepairDispatchBody(StrictRepairBody):
+    schema_name: Literal["studiohub.enrollment-repair-dispatch"] = Field(alias="schema")
+    schema_version: Annotated[int, Field(strict=True, ge=1, le=1)]
+    request_id: RepairRequestId
+    target_machine_id: RepairMachineId
+    ticket: RepairTicket
+    redemption_expires_at: Annotated[float, Field(strict=True, allow_inf_nan=False)]
+    controller_url: Annotated[str, StringConstraints(min_length=1, max_length=500)]
+    controller: EnrollmentRepairControllerBody
+
+
+class EnrollmentRepairObservedIdentityBody(StrictRepairBody):
+    role: Annotated[str, StringConstraints(max_length=20)]
+    site_id: Annotated[str, StringConstraints(max_length=100)]
+    site_name: Annotated[str, StringConstraints(max_length=120)]
+    controller_id: Annotated[str, StringConstraints(max_length=100)]
+    parent_controller_url: Annotated[str, StringConstraints(min_length=1, max_length=500)] | None
+
+
+class EnrollmentRepairRedemptionBody(StrictRepairBody):
+    schema_name: Literal["studiohub.enrollment-repair-redemption"] = Field(alias="schema")
+    schema_version: Annotated[int, Field(strict=True, ge=1, le=1)]
+    request_id: RepairRequestId
+    target_machine_id: RepairMachineId
+    ticket: RepairTicket
+    redemption_expires_at: Annotated[float, Field(strict=True, allow_inf_nan=False)]
+    observed_identity: EnrollmentRepairObservedIdentityBody
 
 
 class ControllerProbeBody(BaseModel):
@@ -317,61 +391,168 @@ async def _run_managed_hub_update(
     return {"component": "hub", "state": "restarting"}
 
 
+async def _probe_enrollment_repair_capability(
+    machine: str,
+    host: str,
+    _fleet_token: str,
+) -> dict[str, Any]:
+    """Read one registered Agent's repair capability over its pinned socket."""
+    try:
+        snapshot = await asyncio.to_thread(
+            registry.repair_machine_snapshot, list(monitor.registry), machine,
+        )
+        if snapshot.registry_host != host:
+            return {}
+        origin = await asyncio.to_thread(
+            resolve_private_origin, f"http://{host}:47873",
+        )
+        if origin.address != snapshot.resolved_address:
+            return {}
+        async with enrollment_repair.open_pinned_json(origin) as connection:
+            connect = getattr(connection, "connect", None)
+            if callable(connect):
+                await connect(timeout=enrollment_repair.DISPATCH_TIMEOUT_SECONDS)
+            if getattr(connection, "direct_peer", None) != origin.address:
+                return {}
+            status, capability = await connection.request_json(
+                "GET", "/api/hub/enrollment/info", headers={}, body=None,
+                timeout=enrollment_repair.DISPATCH_TIMEOUT_SECONDS,
+            )
+        if status != 200 or not isinstance(capability, dict):
+            return {}
+        return capability
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return {}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global release_reconciler
-    removed_execution_assets = execution_assets.cleanup_expired()
-    if removed_execution_assets:
-        print(f"[hub] removed {removed_execution_assets} expired execution asset(s)")
-    monitor.start()
-    await control_plane.runtime.start(monitor, _app_version())
-    release_reconciler = ReleaseReconciler(
-        monitor,
-        state_path=DATA_DIR / "release_reconciliation.json",
-        loaded_version=_app_version(),
-        loaded_commit=APP_COMMIT,
-        identity_reader=control_plane.public_settings,
-        hub_runner=_run_managed_hub_update,
-        catalog_requester=_request_managed_release_catalog,
-    )
-    peers.release_reconciler = release_reconciler
-    await release_reconciler.start()
-    fleet_ops.start_published_version_monitor()
-    resumed_updates = fleet_auto_updates.resume_pending()
-    if resumed_updates:
-        print(f"[hub] resumed {resumed_updates} interrupted fleet update job(s)")
-    restored = broker.restore_batches()
-    if restored:
-        print(f"[hub] resumed {restored} unfinished batch(es) from hub.db")
-    broker.start_dispatcher()
-    transcription_restored = transcription_jobs.restore_batches()
-    if transcription_restored:
-        print(f"[hub] resumed {transcription_restored} transcription batch(es) from hub.db")
-    transcription_jobs.start_dispatcher(monitor)
-    chat_restored = chat_jobs.restore_batches()
-    if chat_restored:
-        print(f"[hub] resumed {chat_restored} Chat batch(es) from hub.db")
-    chat_jobs.start_dispatcher(monitor)
-    shared_voices.start_reconciler(monitor)
-    fleet_storage.start(monitor)
-    model_baselines.start()
+    monitor_start_attempted = False
+    runtime_start_attempted = False
+    release_start_attempted = False
+    repair_start_attempted = False
+    version_start_attempted = False
+    transcription_start_attempted = False
+    chat_start_attempted = False
+    voices_start_attempted = False
+    storage_start_attempted = False
+    baselines_start_attempted = False
+    repair_coordinator = None
+    primary_error: BaseException | None = None
     try:
+        removed_execution_assets = execution_assets.cleanup_expired()
+        if removed_execution_assets:
+            print(f"[hub] removed {removed_execution_assets} expired execution asset(s)")
+        monitor_start_attempted = True
+        monitor.start()
+        runtime_start_attempted = True
+        await control_plane.runtime.start(monitor, _app_version())
+        release_reconciler = ReleaseReconciler(
+            monitor,
+            state_path=DATA_DIR / "release_reconciliation.json",
+            loaded_version=_app_version(),
+            loaded_commit=APP_COMMIT,
+            identity_reader=control_plane.public_settings,
+            hub_runner=_run_managed_hub_update,
+            catalog_requester=_request_managed_release_catalog,
+        )
+        peers.release_reconciler = release_reconciler
+        release_start_attempted = True
+        await release_reconciler.start()
+        repair_store = RepairStore()
+        repair_executor = RepairExecutor()
+        repair_coordinator = EnrollmentRepairCoordinator(
+            repair_store,
+            registry_loader=lambda: list(monitor.registry),
+            capability_probe=_probe_enrollment_repair_capability,
+        )
+        app.state.enrollment_repair_store = repair_store
+        app.state.enrollment_repair_executor = repair_executor
+        app.state.enrollment_repair_coordinator = repair_coordinator
+        repair_executor.recover()
+        repair_start_attempted = True
+        await repair_coordinator.start()
+        version_start_attempted = True
+        fleet_ops.start_published_version_monitor()
+        resumed_updates = fleet_auto_updates.resume_pending()
+        if resumed_updates:
+            print(f"[hub] resumed {resumed_updates} interrupted fleet update job(s)")
+        restored = broker.restore_batches()
+        if restored:
+            print(f"[hub] resumed {restored} unfinished batch(es) from hub.db")
+        broker.start_dispatcher()
+        transcription_restored = transcription_jobs.restore_batches()
+        if transcription_restored:
+            print(f"[hub] resumed {transcription_restored} transcription batch(es) from hub.db")
+        transcription_start_attempted = True
+        transcription_jobs.start_dispatcher(monitor)
+        chat_restored = chat_jobs.restore_batches()
+        if chat_restored:
+            print(f"[hub] resumed {chat_restored} Chat batch(es) from hub.db")
+        chat_start_attempted = True
+        chat_jobs.start_dispatcher(monitor)
+        voices_start_attempted = True
+        shared_voices.start_reconciler(monitor)
+        storage_start_attempted = True
+        fleet_storage.start(monitor)
+        baselines_start_attempted = True
+        model_baselines.start()
         yield
+    except BaseException as exc:
+        primary_error = exc
+        raise
     finally:
-        if release_reconciler is not None:
-            await release_reconciler.stop()
+        cleanup_error: BaseException | None = None
+
+        async def stop(attempted: bool, callback) -> None:
+            nonlocal cleanup_error
+            if not attempted:
+                return
+            try:
+                await callback()
+            except BaseException as exc:
+                if cleanup_error is None:
+                    cleanup_error = exc
+
+        await stop(
+            repair_start_attempted and repair_coordinator is not None,
+            repair_coordinator.stop if repair_coordinator is not None else None,
+        )
+        await stop(
+            release_start_attempted and release_reconciler is not None,
+            release_reconciler.stop if release_reconciler is not None else None,
+        )
+        release_reconciler = None
         peers.release_reconciler = None
-        await fleet_ops.stop_published_version_monitor()
-        await control_plane.runtime.stop()
-        await fleet_storage.stop()
-        await model_baselines.stop()
-        await shared_voices.stop()
-        await chat_jobs.stop()
-        await transcription_jobs.stop()
-        await monitor.stop()
+        await stop(version_start_attempted, fleet_ops.stop_published_version_monitor)
+        await stop(runtime_start_attempted, control_plane.runtime.stop)
+        await stop(storage_start_attempted, fleet_storage.stop)
+        await stop(baselines_start_attempted, model_baselines.stop)
+        await stop(voices_start_attempted, shared_voices.stop)
+        await stop(chat_start_attempted, chat_jobs.stop)
+        await stop(transcription_start_attempted, transcription_jobs.stop)
+        await stop(monitor_start_attempted, monitor.stop)
+        if cleanup_error is not None and primary_error is None:
+            raise cleanup_error
 
 
 app = FastAPI(title=TITLE, lifespan=lifespan)
+
+
+@app.exception_handler(RequestValidationError)
+async def redacted_repair_request_validation(
+    request: Request,
+    exc: RequestValidationError,
+):
+    if auth.strict_fleet_service_path(request.url.path):
+        return JSONResponse(
+            {"detail": {"code": "repair_request_invalid"}},
+            status_code=422,
+        )
+    return await request_validation_exception_handler(request, exc)
 
 # The Hub is the canonical API other clients (Story Studio KH, scripts, LLM
 # directors) converge on — allow browser clients from anywhere on the tailnet.
@@ -609,22 +790,37 @@ def controller_status():
 @app.put("/api/hub/controller")
 async def controller_save_settings(body: ControllerSettingsBody):
     try:
-        control_plane.save_settings(
-            body.model_dump(exclude={"database_url", "clear_database_url", "machine_name"}),
-            new_database_url=body.database_url,
-            clear_database_url=body.clear_database_url,
-        )
-        if body.machine_name is not None:
-            from .registry import set_label
-            set_label("local", body.machine_name)
-        # Controller mode is immediately usable: both credentials exist as
-        # soon as the role is saved.  Existing permanent codes are retained;
-        # a code is created only for a newly promoted controller or recovery.
-        if control_plane.load_settings()["role"] == "controller":
-            peers.fleet_token()
-            code = enrollment.enrollment_credential_status(include_code=True)
-            if not code.get("active") or not code.get("code"):
-                enrollment.create_enrollment_code()
+        coordinator = _repair_coordinator_from_app()
+        with coordinator.controller_mutation():
+            current = control_plane.load_settings()
+            proposed_identity = (
+                body.role, body.site_id, body.site_name, body.controller_id,
+            )
+            current_identity = tuple(current.get(key) for key in (
+                "role", "site_id", "site_name", "controller_id",
+            ))
+            if proposed_identity != current_identity:
+                coordinator.require_controller_identity_mutable()
+            with settings_writer_lock():
+                control_plane.save_settings(
+                    body.model_dump(exclude={"database_url", "clear_database_url", "machine_name"}),
+                    new_database_url=body.database_url,
+                    clear_database_url=body.clear_database_url,
+                )
+                if body.machine_name is not None:
+                    from .registry import set_label
+                    set_label("local", body.machine_name)
+                # Controller mode is immediately usable: both credentials exist as
+                # soon as the role is saved. Existing permanent codes are retained.
+                if control_plane.load_settings()["role"] == "controller":
+                    peers.fleet_token()
+                    code = enrollment.enrollment_credential_status(include_code=True)
+                    if not code.get("active") or not code.get("code"):
+                        enrollment.create_enrollment_code()
+    except RepairStoreError as exc:
+        _raise_registry_mutation_error(exc)
+    except SettingsWriterBusy as exc:
+        raise HTTPException(423, {"code": "settings_writer_busy"}) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     # Return an immediate, truthful database/schema result rather than making
@@ -646,10 +842,16 @@ def setup_new_location_controller(request: Request, body: SimpleControllerSetupB
             "profile_id")
         if not profile_id:
             raise ValueError("This Mac's chip and RAM could not be matched automatically; choose a hardware profile.")
-        return enrollment.configure_new_controller(
-            body.location_name.strip(), body.site_id.strip().lower(),
-            profile_id,
-        )
+        coordinator = _repair_coordinator(request)
+        with coordinator.controller_mutation(identity=True):
+            return enrollment.configure_new_controller(
+                body.location_name.strip(), body.site_id.strip().lower(),
+                profile_id,
+            )
+    except RepairStoreError as exc:
+        _raise_registry_mutation_error(exc)
+    except SettingsWriterBusy as exc:
+        raise HTTPException(423, {"code": "settings_writer_busy"}) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -665,6 +867,272 @@ def _can_manage_enrollment(request: Request) -> bool:
 def _can_configure_this_hub(request: Request) -> bool:
     """Local setup also works from an owner-authenticated remote browser."""
     return _can_manage_enrollment(request)
+
+
+def _repair_coordinator(request: Request) -> EnrollmentRepairCoordinator:
+    service = getattr(request.app.state, "enrollment_repair_coordinator", None)
+    if service is None:
+        raise HTTPException(503, {"code": "repair_service_unavailable"})
+    return service
+
+
+def _repair_coordinator_from_app() -> EnrollmentRepairCoordinator:
+    service = getattr(app.state, "enrollment_repair_coordinator", None)
+    if service is None:
+        raise HTTPException(503, {"code": "repair_service_unavailable"})
+    return service
+
+
+def _raise_registry_mutation_error(exc: RepairStoreError) -> None:
+    status = 423 if exc.code == "enrollment_repair_busy" else 409
+    raise HTTPException(status, {"code": str(exc.code)[:80]}) from exc
+
+
+def _repair_executor(request: Request) -> RepairExecutor:
+    service = getattr(request.app.state, "enrollment_repair_executor", None)
+    if service is None:
+        raise HTTPException(503, {"code": "repair_service_unavailable"})
+    return service
+
+
+def _require_repair_owner(request: Request) -> EnrollmentRepairCoordinator:
+    owner = is_loopback(request) or auth.valid_browser_session(
+        request.cookies.get(auth.SESSION_COOKIE_NAME)
+    )
+    if not owner:
+        raise HTTPException(403, {"code": "owner_access_required"})
+    if control_plane.load_settings().get("role") != "controller":
+        raise HTTPException(409, {"code": "controller_role_required"})
+    return _repair_coordinator(request)
+
+
+def _require_repair_service(
+    request: Request,
+    *,
+    expected_source: str | None = None,
+) -> tuple[str, str]:
+    try:
+        return auth.require_exact_fleet_service_request(
+            request, expected_source=expected_source,
+        )
+    except auth.ExactFleetServiceRequestError as exc:
+        raise HTTPException(exc.status_code, {"code": exc.code}) from exc
+
+
+_REPAIR_ERROR_HTTP = {
+    "dispatch_invalid": 400,
+    "redemption_invalid": 400,
+    "claim_invalid": 400,
+    "fleet_token_mismatch": 401,
+    "fleet_token_missing": 503,
+    "fleet_token_unavailable": 503,
+    "private_source_required": 403,
+    "source_host_mismatch": 403,
+    "target_binding_mismatch": 403,
+    "callback_source_mismatch": 403,
+    "callback_url_invalid": 403,
+    "ticket_expired": 410,
+    "enrollment_repair_busy": 423,
+    "settings_writer_busy": 423,
+    "transport_unavailable": 503,
+}
+
+
+def _raise_repair_error(exc: RepairStoreError | RepairExecutorError) -> None:
+    code = str(exc.code)[:80]
+    status = _REPAIR_ERROR_HTTP.get(code, 409)
+    raise HTTPException(status, {"code": code}) from exc
+
+
+def _repair_status_expected_source(executor: Any, request_id: str) -> str:
+    reader = getattr(executor, "expected_status_source", None)
+    if callable(reader):
+        return str(reader(request_id))
+    journal_reader = getattr(executor, "_load_journal", None)
+    if not callable(journal_reader):
+        raise RepairExecutorError("request_not_found")
+    journal = journal_reader()
+    if (
+        not isinstance(journal, dict)
+        or str(journal.get("request_id", "")) != request_id
+        or not journal.get("controller_address")
+    ):
+        raise RepairExecutorError("request_not_found")
+    return str(journal["controller_address"])
+
+
+def _registry_with_entries(
+    rows: list[dict[str, Any]], entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Predict the post-write registry for pre-lock address resolution."""
+    by_id = {str(row.get("id")): dict(row) for row in rows if row.get("id")}
+    for entry in entries:
+        studio_id = str(entry.get("id") or "")
+        if studio_id:
+            by_id[studio_id] = {**by_id.get(studio_id, {}), **entry}
+    return list(by_id.values())
+
+
+def _registry_identity_changes(
+    rows: list[dict[str, Any]], entries: list[dict[str, Any]],
+) -> bool:
+    current = {str(row.get("id")): row for row in rows if row.get("id")}
+    identity_fields = ("machine", "host", "port")
+    return any(
+        str(entry.get("id") or "") not in current
+        or any(
+            current[str(entry["id"])].get(field) != entry.get(field)
+            for field in identity_fields
+        )
+        for entry in entries
+        if entry.get("id")
+    )
+
+
+def _reload_registry_and_note_repair(prepared_registry: Any = None) -> None:
+    """Reload once, then notify repair and managed-release coordinators."""
+    monitor.reload_registry()
+    coordinator = getattr(app.state, "enrollment_repair_coordinator", None)
+    if coordinator is not None:
+        coordinator.note_registry_reload(
+            prepared_registry if prepared_registry is not None else monitor.registry
+        )
+    _reconcile_managed_registry()
+
+
+_REPAIR_OWNER_OBSERVED_FIELDS = (
+    "role_matches", "site_id_matches", "site_name_matches",
+    "controller_id_matches", "parent_controller_url_matches",
+)
+_REPAIR_OWNER_SECRET_KEYS = ("ticket", "token", "claim", "credential")
+
+
+def _sanitize_repair_owner_payload(value: Any) -> Any:
+    """Recursively enforce a credential-free owner-facing repair read model."""
+    current_token = peers.current_fleet_token()
+
+    def sanitize(item: Any, *, key: str = "") -> Any:
+        if isinstance(item, dict):
+            if key == "observed_identity":
+                return {
+                    field: bool(item[field])
+                    for field in _REPAIR_OWNER_OBSERVED_FIELDS
+                    if type(item.get(field)) is bool
+                }
+            result = {}
+            for raw_key, raw_value in item.items():
+                field = str(raw_key)
+                lowered = field.lower()
+                if any(secret in lowered for secret in _REPAIR_OWNER_SECRET_KEYS):
+                    continue
+                if current_token and current_token in field:
+                    continue
+                result[field] = sanitize(raw_value, key=field)
+            return result
+        if isinstance(item, (list, tuple)):
+            return [sanitize(child) for child in item]
+        if isinstance(item, str) and current_token and current_token in item:
+            return item.replace(current_token, "[redacted]")
+        return item
+
+    return sanitize(value)
+
+
+@app.post("/api/hub/enrollment-repairs", status_code=202)
+def create_enrollment_repair(
+    request: Request,
+    body: EnrollmentRepairBatchBody,
+):
+    coordinator = _require_repair_owner(request)
+    if not enrollment_repair.NEW_ISSUANCE_ENABLED:
+        raise HTTPException(503, {"code": "repair_issuance_disabled"})
+    try:
+        return _sanitize_repair_owner_payload(
+            coordinator.create_batch(body.machines)
+        )
+    except (RepairStoreError, ValueError) as exc:
+        if isinstance(exc, RepairStoreError):
+            _raise_repair_error(exc)
+        raise HTTPException(409, {"code": "repair_request_rejected"}) from exc
+
+
+@app.get("/api/hub/enrollment-repairs/eligibility")
+def enrollment_repair_eligibility(request: Request):
+    return _sanitize_repair_owner_payload(
+        _require_repair_owner(request).eligibility()
+    )
+
+
+@app.get("/api/hub/enrollment-repairs/{batch_id}")
+def enrollment_repair_batch(request: Request, batch_id: str):
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", batch_id):
+        raise HTTPException(404, {"code": "repair_batch_not_found"})
+    batch = _require_repair_owner(request).batch(batch_id)
+    if batch is None:
+        raise HTTPException(404, {"code": "repair_batch_not_found"})
+    return _sanitize_repair_owner_payload(batch)
+
+
+@app.post("/api/hub/enrollment-repair/apply")
+async def apply_enrollment_repair(
+    request: Request,
+    body: EnrollmentRepairDispatchBody,
+):
+    _require_repair_service(request)
+    try:
+        origin = await asyncio.to_thread(
+            resolve_private_origin, body.controller_url,
+        )
+        direct_source, _token = _require_repair_service(
+            request, expected_source=origin.address,
+        )
+        return await _repair_executor(request).apply(
+            body.model_dump(by_alias=True), direct_source=direct_source,
+        )
+    except (RepairStoreError, RepairExecutorError) as exc:
+        _raise_repair_error(exc)
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(403, {"code": "callback_url_invalid"}) from exc
+
+
+@app.post("/api/hub/enrollment-repair-tickets/redeem")
+async def redeem_enrollment_repair_ticket(
+    request: Request,
+    body: EnrollmentRepairRedemptionBody,
+):
+    direct_source, token = _require_repair_service(request)
+    try:
+        snapshot = await asyncio.to_thread(
+            registry.repair_machine_snapshot,
+            list(monitor.registry),
+            body.target_machine_id,
+        )
+        direct_source, token = _require_repair_service(
+            request, expected_source=snapshot.resolved_address,
+        )
+        return await _repair_coordinator(request).redeem(
+            body.model_dump(by_alias=True), direct_source=direct_source, fleet_token=token,
+        )
+    except registry.RepairRegistryAmbiguity as exc:
+        raise HTTPException(403, {"code": "source_host_mismatch"}) from exc
+    except (RepairStoreError, RepairExecutorError) as exc:
+        _raise_repair_error(exc)
+
+
+@app.get("/api/hub/enrollment-repair/status/{request_id}")
+def enrollment_repair_status(request: Request, request_id: str):
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", request_id):
+        raise HTTPException(400, {"code": "request_invalid"})
+    _require_repair_service(request)
+    executor = _repair_executor(request)
+    try:
+        expected_source = _repair_status_expected_source(executor, request_id)
+        direct_source, _token = _require_repair_service(
+            request, expected_source=expected_source,
+        )
+        return executor.status(request_id, direct_source=direct_source)
+    except (RepairStoreError, RepairExecutorError) as exc:
+        _raise_repair_error(exc)
 
 
 @app.get("/api/hub/enrollment-codes")
@@ -702,6 +1170,7 @@ def enrollment_info(request: Request):
     status = enrollment.enrollment_credential_status(include_code=False)
     return {
         "schema_version": 1,
+        "repair_schema_version": 1,
         "role": settings["role"],
         "site_id": settings["site_id"],
         "site_name": settings["site_name"],
@@ -716,22 +1185,38 @@ async def claim_agent_enrollment(request: Request, body: EnrollmentCodeBody):
     if not enrollment.private_request_host(request.client.host if request.client else None):
         raise HTTPException(403, "Agent enrollment is available only over a private LAN or Tailscale link.")
     try:
-        claim = enrollment.claim_enrollment_code(body.code)
-        if body.machine:
-            host, machine, profile_id = _registration_identity({
-                "host": request.client.host,
-                "machine": body.machine,
-                "hardware_profile_id": body.hardware_profile_id,
-            })
-            modalities = (body.modalities if body.modalities is not None
-                          else list(PRODUCTION_STUDIO_MODALITIES))
-            unknown = sorted(set(modalities) - set(registry.MODALITY_PORT))
-            if unknown:
-                raise ValueError(f"unknown modalities: {unknown}")
+        if not body.machine:
+            return enrollment.claim_enrollment_code(body.code)
+        host, machine, profile_id = _registration_identity({
+            "host": request.client.host,
+            "machine": body.machine,
+            "hardware_profile_id": body.hardware_profile_id,
+        })
+        modalities = (body.modalities if body.modalities is not None
+                      else list(PRODUCTION_STUDIO_MODALITIES))
+        unknown = sorted(set(modalities) - set(registry.MODALITY_PORT))
+        if unknown:
+            raise ValueError(f"unknown modalities: {unknown}")
+        entries = registry.build_machine_entries(host, machine, modalities)
+        coordinator = _repair_coordinator(request)
+        registration_resolution = coordinator.resolve_enrollment_registration(
+            machine, host,
+        )
+        prepared_reload = None
+        resolve_rows = getattr(coordinator, "resolve_registry_rows", None)
+        if callable(resolve_rows):
+            prepared_reload = resolve_rows(
+                _registry_with_entries(list(monitor.registry), entries)
+            )
+        with coordinator.controller_mutation(machine=machine):
+            coordinator.require_enrollment_registration_mutable(
+                machine, host, resolved=registration_resolution,
+            )
+            claim = enrollment.claim_enrollment_code(body.code)
             added = registry.add_user_entries(
-                registry.build_machine_entries(host, machine, modalities))
-            monitor.reload_registry()
-            _reconcile_managed_registry()
+                entries,
+            )
+            _reload_registry_and_note_repair(prepared_reload)
             profile = hardware_profiles.set_machine_hardware_profile(
                 machine, profile_id) if profile_id else None
             if body.machine_name:
@@ -743,6 +1228,10 @@ async def claim_agent_enrollment(request: Request, body: EnrollmentCodeBody):
                 "hardware_profile": profile,
             }
         return claim
+    except RepairStoreError as exc:
+        if exc.code == "enrollment_repair_busy":
+            raise HTTPException(423, {"code": exc.code}) from exc
+        raise HTTPException(409, {"code": exc.code}) from exc
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 
@@ -779,14 +1268,20 @@ async def join_existing_location(request: Request, body: AgentJoinBody):
                 "modalities": list(PRODUCTION_STUDIO_MODALITIES),
             },
         )
-        result = enrollment.configure_joined_agent(
-            body.controller_url, profile_id, claim,
-            machine_name=machine_name,
-        )
+        coordinator = _repair_coordinator(request)
+        with coordinator.controller_mutation(identity=True):
+            result = enrollment.configure_joined_agent(
+                body.controller_url, profile_id, claim,
+                machine_name=machine_name,
+            )
         if claim.get("registration"):
             result["controller_registration"] = claim["registration"]
             result["checklist"].insert(1, "Controller registered this Mac and its Studios")
         return result
+    except RepairStoreError as exc:
+        _raise_registry_mutation_error(exc)
+    except SettingsWriterBusy as exc:
+        raise HTTPException(423, {"code": "settings_writer_busy"}) from exc
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 
@@ -2815,12 +3310,20 @@ async def set_fleet(body: dict):
     token = str(body.get("token") or "").strip()
     if not 12 <= len(token) <= 512:
         raise HTTPException(400, "fleet credential must be 12 to 512 characters")
+    coordinator = _repair_coordinator_from_app()
+
+    def local_commit(value: str) -> None:
+        with coordinator.controller_mutation():
+            peers.set_fleet_token(value)
+            peers._cache.clear()
+
     sync = None
     if body.get("sync"):
-        sync = await peers.sync_fleet_token(monitor.registry, monitor._client, token)
+        sync = await peers.sync_fleet_token(
+            monitor.registry, monitor._client, token, local_commit=local_commit,
+        )
     else:
-        peers.set_fleet_token(token)
-        peers._cache.clear()
+        local_commit(token)
     return {"ok": True, "fleet_token_set": True, "sync": sync}
 
 
@@ -3101,8 +3604,14 @@ async def rescan_hub_versions():
 @app.post("/api/hub/registry/reload")
 async def reload_registry():
     """Re-read studios.json after editing it — no restart needed."""
-    monitor.reload_registry()
-    _reconcile_managed_registry()
+    coordinator = getattr(app.state, "enrollment_repair_coordinator", None)
+    prepared = (
+        coordinator.resolve_registry_rows(registry.load_registry())
+        if coordinator is not None else None
+    )
+    mutation = coordinator.controller_mutation() if coordinator is not None else nullcontext()
+    with mutation:
+        _reload_registry_and_note_repair(prepared)
     return {"ok": True, "studios": len(monitor.registry)}
 
 
@@ -3157,12 +3666,22 @@ def remove_machine_route(machine: str):
 
     if machine == "local":
         raise HTTPException(400, "the local machine's studios can't be removed")
-    studio_ids = {studio["id"] for studio in monitor.registry
-                  if studio.get("machine") == machine}
-    removed = remove_machine(machine)
-    if not removed:
-        raise HTTPException(404, f"no registered studios for machine {machine!r}")
-    monitor.reload_registry()
+    coordinator = _repair_coordinator_from_app()
+    current = coordinator.resolve_registry_rows(list(monitor.registry))
+    prepared = coordinator.resolve_registry_rows([
+        row for row in monitor.registry if row.get("machine") != machine
+    ])
+    try:
+        with coordinator.controller_mutation(machine=machine):
+            coordinator._require_registry_rows_current(current)
+            studio_ids = {studio["id"] for studio in monitor.registry
+                          if studio.get("machine") == machine}
+            removed = remove_machine(machine)
+            if not removed:
+                raise HTTPException(404, f"no registered studios for machine {machine!r}")
+            _reload_registry_and_note_repair(prepared)
+    except RepairStoreError as exc:
+        _raise_registry_mutation_error(exc)
     monitor.forget_studios(studio_ids)
     peers.forget_machine(machine)
     fleet_ops.forget_machine(machine, studio_ids)
@@ -3180,10 +3699,21 @@ def remove_studio_route(studio_id: str):
     entry = next((s for s in monitor.registry if s["id"] == studio_id), None)
     if entry and entry.get("machine", "local") == "local":
         raise HTTPException(400, "the local machine's studios can't be removed")
-    removed = remove_studio(studio_id)
-    if not removed:
-        raise HTTPException(404, f"no registered studio {studio_id!r}")
-    monitor.reload_registry()
+    coordinator = _repair_coordinator_from_app()
+    machine = str((entry or {}).get("machine", "local"))
+    current = coordinator.resolve_registry_rows(list(monitor.registry))
+    prepared = coordinator.resolve_registry_rows([
+        row for row in monitor.registry if row.get("id") != studio_id
+    ])
+    try:
+        with coordinator.controller_mutation(machine=machine):
+            coordinator._require_registry_rows_current(current)
+            removed = remove_studio(studio_id)
+            if not removed:
+                raise HTTPException(404, f"no registered studio {studio_id!r}")
+            _reload_registry_and_note_repair(prepared)
+    except RepairStoreError as exc:
+        _raise_registry_mutation_error(exc)
     monitor.forget_studios({studio_id})
     fleet_ops.forget_studios({studio_id})
     if entry:
@@ -3208,12 +3738,24 @@ async def add_machine_manual(body: dict):
     if bad:
         raise HTTPException(400, f"unknown modalities: {bad}")
     entries = build_machine_entries(host, machine, modalities)
-    added = add_user_entries(entries)
-    monitor.reload_registry()
-    _reconcile_managed_registry()
-    profile = None
-    if profile_id and machine in _registered_machine_ids():
-        profile = hardware_profiles.set_machine_hardware_profile(machine, profile_id)
+    coordinator = _repair_coordinator_from_app()
+    registration = coordinator.resolve_enrollment_registration(machine, host)
+    prepared = coordinator.resolve_registry_rows(
+        _registry_with_entries(list(monitor.registry), entries)
+    )
+    try:
+        with coordinator.controller_mutation():
+            if _registry_identity_changes(list(monitor.registry), entries):
+                coordinator.require_enrollment_registration_mutable(
+                    machine, host, resolved=registration,
+                )
+            added = add_user_entries(entries)
+            _reload_registry_and_note_repair(prepared)
+            profile = None
+            if profile_id and machine in _registered_machine_ids():
+                profile = hardware_profiles.set_machine_hardware_profile(machine, profile_id)
+    except RepairStoreError as exc:
+        _raise_registry_mutation_error(exc)
     return {"host": host, "machine": machine, "requested": modalities,
             "registered": added,
             "hardware_profile": profile,
@@ -3232,8 +3774,7 @@ async def discover_machine(body: dict):
 
     host, machine, profile_id = _registration_identity(body)
     machine_was_supplied = bool(str(body.get("machine") or "").strip())
-    known = {(s["host"], s["port"]) for s in monitor.registry}
-    found, entries, detected_hardware = [], [], None
+    found, detected_hardware = [], None
     async with httpx.AsyncClient() as client:
         if not profile_id:
             try:
@@ -3261,20 +3802,40 @@ async def discover_machine(body: dict):
             except Exception:
                 continue
             found.append({"port": port, "modality": modality, "title": title})
-            if (host, port) in known:
-                continue  # already registered (e.g. this Hub's own locals)
-            entries.append({
-                "id": f"{modality}@{machine}", "title": f"{title} ({machine})",
-                "modality": modality, "host": host, "port": port,
-                "machine": machine, "emoji": MODALITY_EMOJI[modality],
-            })
-    added = add_user_entries(entries) if entries else 0
-    if added:
-        monitor.reload_registry()
-        _reconcile_managed_registry()
-    profile = None
-    if profile_id and machine in _registered_machine_ids():
-        profile = hardware_profiles.set_machine_hardware_profile(machine, profile_id)
+    proposed_entries = [{
+        "id": f"{row['modality']}@{machine}",
+        "title": f"{row['title']} ({machine})",
+        "modality": row["modality"], "host": host, "port": row["port"],
+        "machine": machine, "emoji": MODALITY_EMOJI[row["modality"]],
+    } for row in found]
+    coordinator = _repair_coordinator_from_app()
+    registration = coordinator.resolve_enrollment_registration(machine, host)
+    prepared = coordinator.resolve_registry_rows(
+        _registry_with_entries(list(monitor.registry), proposed_entries)
+    )
+    try:
+        with coordinator.controller_mutation():
+            known = {(s["host"], s["port"]) for s in monitor.registry}
+            entries = [
+                entry for entry in proposed_entries
+                if (entry["host"], entry["port"]) not in known
+                or any(
+                    row.get("id") == entry["id"]
+                    for row in monitor.registry
+                )
+            ]
+            if _registry_identity_changes(list(monitor.registry), entries):
+                coordinator.require_enrollment_registration_mutable(
+                    machine, host, resolved=registration,
+                )
+            added = add_user_entries(entries) if entries else 0
+            if entries:
+                _reload_registry_and_note_repair(prepared)
+            profile = None
+            if profile_id and machine in _registered_machine_ids():
+                profile = hardware_profiles.set_machine_hardware_profile(machine, profile_id)
+    except RepairStoreError as exc:
+        _raise_registry_mutation_error(exc)
     return {"host": host, "machine": machine, "found": found,
             "registered": added,
             "hardware_profile": profile,

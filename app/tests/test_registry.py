@@ -135,3 +135,32 @@ def test_registry_endpoint_rejects_url_shaped_host_and_unsafe_machine(authed):
     assert authed.post("/api/hub/registry/add", json={
         "host": "100.1.1.1", "machine": "mac@spoofed",
     }).status_code == 400
+
+
+def test_repair_snapshot_is_read_only_and_requires_exact_private_address(reset):
+    reg.add_user_entries(reg.build_machine_entries("agent.test", "mac-a", ["image", "voice"]))
+    before = reg.REGISTRY_FILE.read_bytes()
+
+    snapshot = reg.repair_machine_snapshot(
+        reg.load_registry(), "mac-a",
+        resolver=lambda host, port, *, type: [(2, type, 6, "", ("100.64.0.10", port))],
+    )
+
+    assert snapshot.machine == "mac-a"
+    assert snapshot.registry_host == "agent.test"
+    assert snapshot.resolved_address == "100.64.0.10"
+    assert snapshot.endpoint_ids == ("image@mac-a", "voice@mac-a")
+    assert reg.REGISTRY_FILE.read_bytes() == before
+
+
+def test_repair_snapshot_rejects_distinct_hosts_with_one_shared_address(reset):
+    rows = [
+        {"id": "image@mac-a", "machine": "mac-a", "host": "a.test", "port": 47868},
+        {"id": "voice@mac-b", "machine": "mac-b", "host": "b.test", "port": 47870},
+    ]
+
+    with pytest.raises(reg.RepairRegistryAmbiguity, match="address_shared"):
+        reg.repair_machine_snapshot(
+            rows, "mac-a",
+            resolver=lambda host, port, *, type: [(2, type, 6, "", ("100.64.0.10", port))],
+        )

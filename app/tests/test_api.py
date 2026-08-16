@@ -1,4 +1,5 @@
 import asyncio
+import ast
 import hashlib
 import json
 from copy import deepcopy
@@ -7,6 +8,60 @@ import re
 import subprocess
 
 import pytest
+
+
+def test_enrollment_repair_keeps_capability_release_vocabularies_and_product_scope():
+    from backend import capabilities, release_reconciliation
+
+    assert (capabilities.SCHEMA_NAME, capabilities.SCHEMA_VERSION) == (
+        "studiohub.site-capabilities", 3,
+    )
+    assert release_reconciliation.SITE_STATES == {
+        "pending", "queued", "running", "waiting_busy", "degraded",
+        "blocked_release", "complete",
+    }
+    assert release_reconciliation.COMPONENT_STATES == {
+        "not_installed", "pending_offline", "pending_busy", "checking",
+        "updating", "restarting", "verifying", "current",
+        "retryable_failure", "auth_blocked", "release_blocked",
+        "excluded_disabled",
+    }
+
+    repair_modules = [
+        Path(__file__).parents[1] / "backend" / name
+        for name in (
+            "enrollment_repair.py",
+            "enrollment_repair_executor.py",
+            "enrollment_repair_store.py",
+            "enrollment_repair_transport.py",
+        )
+    ]
+    forbidden_import_roots = {
+        "image", "voice", "generation", "genstudio", "model_exposure",
+        "fleet_ops", "control",
+    }
+    forbidden_calls = {
+        "configure_joined_agent", "create_enrollment_code",
+        "set_fleet_token", "save_registry", "add_user_entries",
+        "remove_machine", "run_hub_script",
+    }
+    for path in repair_modules:
+        tree = ast.parse(path.read_text(), filename=str(path))
+        imported = set()
+        called = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[-1] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.update(alias.name.split(".")[-1] for alias in node.names)
+            elif isinstance(node, ast.Call):
+                function = node.func
+                if isinstance(function, ast.Name):
+                    called.add(function.id)
+                elif isinstance(function, ast.Attribute):
+                    called.add(function.attr)
+        assert imported.isdisjoint(forbidden_import_roots), path.name
+        assert called.isdisjoint(forbidden_calls), path.name
 
 
 RELEASE_COMPONENTS = {

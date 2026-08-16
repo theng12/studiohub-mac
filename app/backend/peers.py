@@ -22,6 +22,7 @@ import asyncio
 import os
 import secrets
 import time
+from collections.abc import Callable
 from urllib.parse import urlsplit
 
 import httpx
@@ -56,6 +57,18 @@ def fleet_token() -> str | None:
     token = secrets.token_urlsafe(24)
     set_fleet_token(token)
     return token
+
+
+def current_fleet_token() -> str | None:
+    """Return the currently configured fleet token without changing state."""
+    env = os.environ.get("STUDIOHUB_FLEET_TOKEN")
+    if env and env.strip():
+        return env.strip()
+    try:
+        value = FLEET_TOKEN_FILE.read_text().strip()
+    except (OSError, UnicodeError):
+        return None
+    return value or None
 
 
 def set_fleet_token(token: str):
@@ -376,6 +389,7 @@ async def install_remote_generation(
 
 async def sync_fleet_token(
     registry: list[dict], client: httpx.AsyncClient, new_token: str,
+    *, local_commit: Callable[[str], None] = set_fleet_token,
 ) -> dict:
     """Rotate connected peer Hubs from the current credential to ``new_token``.
 
@@ -415,7 +429,7 @@ async def sync_fleet_token(
     rows = await asyncio.gather(*(one(machine, studios)
                                   for machine, studios in machines.items()))
     results = dict(rows)
-    set_fleet_token(new_token)
+    local_commit(new_token)
     _cache.clear()
     verified = sum(row["ok"] for row in results.values())
     manual = sum(row["status"] == "manual" for row in results.values())

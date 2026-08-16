@@ -37,6 +37,10 @@ PUBLIC_PATHS = {"/", "/api/health", "/api/version", "/health/live",
                 "/health/ready", "/health/capacity", "/api/auth/status",
                 "/api/auth/login", "/api/auth/logout",
                 "/api/hub/enrollment/claim", "/api/hub/enrollment/info"}
+STRICT_FLEET_SERVICE_PATHS = {
+    "/api/hub/enrollment-repair/apply",
+    "/api/hub/enrollment-repair-tickets/redeem",
+}
 COOKIE_NAME = "kh_hub_token"
 SESSION_COOKIE_NAME = "kh_hub_session"
 SESSION_TTL_DAYS = 90
@@ -44,6 +48,81 @@ SESSION_TTL_S = SESSION_TTL_DAYS * 24 * 60 * 60
 _LOGIN_WINDOW_S = 15 * 60
 _MAX_LOGIN_FAILURES = 5
 _login_failures: dict[str, list[float]] = {}
+
+
+class ExactFleetServiceRequestError(ValueError):
+    """Stable route-local rejection for enrollment-repair service traffic."""
+
+    def __init__(self, code: str, status_code: int) -> None:
+        self.code = code
+        self.status_code = status_code
+        super().__init__(code)
+
+
+def strict_fleet_service_path(path: str) -> bool:
+    return (
+        path in STRICT_FLEET_SERVICE_PATHS
+        or path.startswith("/api/hub/enrollment-repair/status/")
+    )
+
+
+def _private_direct_source(value: str) -> str:
+    try:
+        address = ipaddress.ip_address(str(value or "").split("%", 1)[0])
+    except ValueError as exc:
+        raise ExactFleetServiceRequestError("private_source_required", 403) from exc
+    allowed = (
+        address.is_loopback
+        or address.is_private
+        or address.is_link_local
+        or (
+            address.version == 4
+            and address in ipaddress.ip_network("100.64.0.0/10")
+        )
+    )
+    if not allowed or address.is_multicast or address.is_unspecified:
+        raise ExactFleetServiceRequestError("private_source_required", 403)
+    return str(address)
+
+
+def require_exact_fleet_service_request(
+    request: Request,
+    *,
+    expected_source: str | None = None,
+) -> tuple[str, str]:
+    """Authenticate one repair service request without broad auth fallbacks.
+
+    The current fleet token is read before any request-specific state. Missing
+    configuration therefore fails closed without invoking the legacy token
+    generator. Browser, bearer, URL, and forwarded identity substitutes are
+    rejected even when an otherwise-valid fleet header is also present.
+    """
+    from . import peers
+
+    current = peers.current_fleet_token()
+    if not current:
+        raise ExactFleetServiceRequestError("fleet_token_unavailable", 503)
+    if (
+        request.cookies
+        or request.headers.get("authorization") is not None
+        or request.query_params
+        or any(request.headers.get(name) is not None for name in (
+            "forwarded", "x-forwarded-for", "x-forwarded-host",
+            "x-forwarded-port", "x-forwarded-proto", "x-real-ip",
+        ))
+    ):
+        raise ExactFleetServiceRequestError("credential_substitute_rejected", 403)
+    offered = request.headers.get("x-hub-token")
+    if not offered or not secrets.compare_digest(offered, current):
+        raise ExactFleetServiceRequestError("fleet_token_mismatch", 401)
+    direct_source = _private_direct_source(
+        request.client.host if request.client else ""
+    )
+    if expected_source is not None:
+        expected = _private_direct_source(expected_source)
+        if not secrets.compare_digest(direct_source, expected):
+            raise ExactFleetServiceRequestError("source_host_mismatch", 403)
+    return direct_source, current
 
 
 def _write_private(path, value: dict) -> None:
@@ -238,6 +317,15 @@ def make_middleware(token: str):
     from . import peers
 
     async def middleware(request: Request, call_next):
+        if strict_fleet_service_path(request.url.path):
+            try:
+                require_exact_fleet_service_request(request)
+            except ExactFleetServiceRequestError as exc:
+                return JSONResponse(
+                    {"detail": {"code": exc.code}},
+                    status_code=exc.status_code,
+                )
+            return await call_next(request)
         # Local access stays passwordless, but an unrelated website opened in
         # the user's browser must not be able to mutate a loopback Hub. Native
         # clients do not send Origin; the Hub dashboard sends its own Host.

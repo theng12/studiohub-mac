@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .registry import DATA_DIR, label_for, machine_enabled, studio_enabled
+from .controller_settings_lock import settings_writer_lock
 from .resources import host_stats
 
 SETTINGS_FILE = DATA_DIR / "controller_settings.json"
@@ -144,59 +145,61 @@ def public_settings() -> dict:
 
 
 def save_settings(values: dict, *, new_database_url: str | None = None,
-                  clear_database_url: bool = False) -> dict:
+                  clear_database_url: bool = False,
+                  writer_blocking: bool = False) -> dict:
     global _settings_cache
-    current = load_settings()
-    updated = {
-        "version": 2,
-        "role": str(values.get("role", current["role"])).strip().lower(),
-        "site_id": str(values.get("site_id", current["site_id"])).strip().lower(),
-        "site_name": str(values.get("site_name", current["site_name"])).strip(),
-        "controller_id": str(values.get("controller_id", current["controller_id"])).strip().lower(),
-        "database_mode": str(values.get("database_mode", current["database_mode"])).strip().lower(),
-        "parent_controller_url": values.get(
-            "parent_controller_url", current.get("parent_controller_url")),
-    }
-    if updated["role"] not in ROLES:
-        raise ValueError(f"role must be one of {sorted(ROLES)}")
-    if updated["database_mode"] not in DATABASE_MODES:
-        raise ValueError(f"database_mode must be one of {sorted(DATABASE_MODES)}")
-    if updated["role"] != "controller" and updated["database_mode"] != "off":
-        raise ValueError("PostgreSQL shadow mode is available only in controller role")
-    if not ID_PATTERN.fullmatch(updated["site_id"]):
-        raise ValueError("site_id must use lowercase letters, numbers, dots, dashes, or underscores")
-    if not ID_PATTERN.fullmatch(updated["controller_id"]):
-        raise ValueError("controller_id must use lowercase letters, numbers, dots, dashes, or underscores")
-    if not 1 <= len(updated["site_name"]) <= 120:
-        raise ValueError("site_name must be between 1 and 120 characters")
-    candidate_url = None
-    if new_database_url is not None and new_database_url.strip():
-        candidate_url = new_database_url.strip()
-        parsed = urlsplit(candidate_url)
-        if parsed.scheme not in {"postgres", "postgresql"} or not parsed.hostname:
-            raise ValueError("database_url must be a PostgreSQL connection URL")
-    if updated["role"] == "agent" and os.environ.get("STUDIOHUB_DATABASE_URL"):
-        raise ValueError(
-            "Agent Hubs must not have STUDIOHUB_DATABASE_URL; remove it before enabling agent mode")
-    if updated["role"] == "agent" and candidate_url:
-        raise ValueError("Agent Hubs must not store PostgreSQL credentials")
-    if updated["role"] == "agent":
-        clear_database_url = True
-    if updated["role"] != "agent":
-        updated["parent_controller_url"] = None
-    elif updated["parent_controller_url"] is not None:
-        updated["parent_controller_url"] = str(updated["parent_controller_url"]).strip() or None
+    with settings_writer_lock(blocking=writer_blocking):
+        current = load_settings()
+        updated = {
+            "version": 2,
+            "role": str(values.get("role", current["role"])).strip().lower(),
+            "site_id": str(values.get("site_id", current["site_id"])).strip().lower(),
+            "site_name": str(values.get("site_name", current["site_name"])).strip(),
+            "controller_id": str(values.get("controller_id", current["controller_id"])).strip().lower(),
+            "database_mode": str(values.get("database_mode", current["database_mode"])).strip().lower(),
+            "parent_controller_url": values.get(
+                "parent_controller_url", current.get("parent_controller_url")),
+        }
+        if updated["role"] not in ROLES:
+            raise ValueError(f"role must be one of {sorted(ROLES)}")
+        if updated["database_mode"] not in DATABASE_MODES:
+            raise ValueError(f"database_mode must be one of {sorted(DATABASE_MODES)}")
+        if updated["role"] != "controller" and updated["database_mode"] != "off":
+            raise ValueError("PostgreSQL shadow mode is available only in controller role")
+        if not ID_PATTERN.fullmatch(updated["site_id"]):
+            raise ValueError("site_id must use lowercase letters, numbers, dots, dashes, or underscores")
+        if not ID_PATTERN.fullmatch(updated["controller_id"]):
+            raise ValueError("controller_id must use lowercase letters, numbers, dots, dashes, or underscores")
+        if not 1 <= len(updated["site_name"]) <= 120:
+            raise ValueError("site_name must be between 1 and 120 characters")
+        candidate_url = None
+        if new_database_url is not None and new_database_url.strip():
+            candidate_url = new_database_url.strip()
+            parsed = urlsplit(candidate_url)
+            if parsed.scheme not in {"postgres", "postgresql"} or not parsed.hostname:
+                raise ValueError("database_url must be a PostgreSQL connection URL")
+        if updated["role"] == "agent" and os.environ.get("STUDIOHUB_DATABASE_URL"):
+            raise ValueError(
+                "Agent Hubs must not have STUDIOHUB_DATABASE_URL; remove it before enabling agent mode")
+        if updated["role"] == "agent" and candidate_url:
+            raise ValueError("Agent Hubs must not store PostgreSQL credentials")
+        if updated["role"] == "agent":
+            clear_database_url = True
+        if updated["role"] != "agent":
+            updated["parent_controller_url"] = None
+        elif updated["parent_controller_url"] is not None:
+            updated["parent_controller_url"] = str(updated["parent_controller_url"]).strip() or None
 
-    SETTINGS_FILE.write_text(json.dumps(updated, indent=2) + "\n", encoding="utf-8")
-    with _settings_lock:
-        _settings_cache = updated
-    if clear_database_url:
-        DATABASE_URL_FILE.unlink(missing_ok=True)
-    elif candidate_url:
-        DATABASE_URL_FILE.write_text(candidate_url + "\n", encoding="utf-8")
-        os.chmod(DATABASE_URL_FILE, 0o600)
-    runtime.wake()
-    return public_settings()
+        SETTINGS_FILE.write_text(json.dumps(updated, indent=2) + "\n", encoding="utf-8")
+        with _settings_lock:
+            _settings_cache = updated
+        if clear_database_url:
+            DATABASE_URL_FILE.unlink(missing_ok=True)
+        elif candidate_url:
+            DATABASE_URL_FILE.write_text(candidate_url + "\n", encoding="utf-8")
+            os.chmod(DATABASE_URL_FILE, 0o600)
+        runtime.wake()
+        return public_settings()
 
 
 def accepts_customer_jobs() -> bool:
@@ -578,6 +581,11 @@ def reload_settings_from_disk() -> None:
     with _settings_lock:
         _settings_cache = None
     runtime.wake()
+
+
+def reload_settings_cache() -> None:
+    """Discard the cached identity after a caller-owned restore."""
+    reload_settings_from_disk()
 
 
 def reset_for_tests() -> None:

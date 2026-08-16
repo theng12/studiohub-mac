@@ -67,6 +67,119 @@ def test_fleet_token_roundtrip(reset):
     assert peers.fleet_token() not in {None, "", "secret"}
 
 
+def test_current_fleet_token_missing_returns_none_without_creating_files(reset):
+    for path in (peers.FLEET_TOKEN_FILE, peers.SHARED_STUDIO_TOKEN_FILE):
+        path.unlink(missing_ok=True)
+
+    assert peers.current_fleet_token() is None
+    assert peers.current_fleet_token() is None
+    assert not peers.FLEET_TOKEN_FILE.exists()
+    assert not peers.SHARED_STUDIO_TOKEN_FILE.exists()
+
+
+def test_empty_current_fleet_token_is_read_only(reset):
+    peers.FLEET_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    peers.FLEET_TOKEN_FILE.write_bytes(b" \n\t")
+    peers.FLEET_TOKEN_FILE.chmod(0o640)
+    before_bytes = peers.FLEET_TOKEN_FILE.read_bytes()
+    before_mode = peers.FLEET_TOKEN_FILE.stat().st_mode
+
+    assert peers.current_fleet_token() is None
+    assert peers.current_fleet_token() is None
+    assert peers.FLEET_TOKEN_FILE.read_bytes() == before_bytes
+    assert peers.FLEET_TOKEN_FILE.stat().st_mode == before_mode
+    assert not peers.SHARED_STUDIO_TOKEN_FILE.exists()
+
+
+def test_current_fleet_token_reads_existing_or_environment_value_without_side_effects(
+    reset, monkeypatch,
+):
+    peers.FLEET_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    peers.FLEET_TOKEN_FILE.write_bytes(b"  file-secret  \n")
+    peers.FLEET_TOKEN_FILE.chmod(0o640)
+    before_bytes = peers.FLEET_TOKEN_FILE.read_bytes()
+    before_mode = peers.FLEET_TOKEN_FILE.stat().st_mode
+
+    monkeypatch.delenv("STUDIOHUB_FLEET_TOKEN", raising=False)
+    assert peers.current_fleet_token() == "file-secret"
+    assert peers.FLEET_TOKEN_FILE.read_bytes() == before_bytes
+    assert peers.FLEET_TOKEN_FILE.stat().st_mode == before_mode
+
+    monkeypatch.setenv("STUDIOHUB_FLEET_TOKEN", "  env-secret  ")
+    assert peers.current_fleet_token() == "env-secret"
+    assert peers.FLEET_TOKEN_FILE.read_bytes() == before_bytes
+    assert peers.FLEET_TOKEN_FILE.stat().st_mode == before_mode
+
+
+def test_legacy_fleet_token_generation_is_unchanged_for_nonrepair_callers(reset):
+    assert peers.fleet_token()
+    assert peers.FLEET_TOKEN_FILE.exists()
+    assert peers.SHARED_STUDIO_TOKEN_FILE.exists()
+
+
+@pytest.mark.asyncio
+async def test_sync_fleet_token_invokes_local_commit_once_after_network_work(reset):
+    peers.set_fleet_token("old-shared-secret")
+    events = []
+
+    class OrderedSyncClient(FakeSyncClient):
+        async def post(self, url, headers=None, json=None, timeout=None):
+            events.append(("network", "POST", url))
+            return await super().post(url, headers=headers, json=json, timeout=timeout)
+
+        async def get(self, url, headers=None, timeout=None):
+            events.append(("network", "GET", url))
+            return await super().get(url, headers=headers, timeout=timeout)
+
+    client = OrderedSyncClient()
+
+    def local_commit(token):
+        events.append(("commit", token))
+
+    result = await peers.sync_fleet_token(
+        REMOTE, client, "new-shared-secret", local_commit=local_commit,
+    )
+
+    assert result["verified"] == 1
+    assert [event[0] for event in events] == ["network", "network", "commit"]
+    assert events[-1] == ("commit", "new-shared-secret")
+    assert sum(event[0] == "commit" for event in events) == 1
+
+
+def test_fleet_sync_network_io_precedes_short_local_token_commit_lock(
+    authed, monkeypatch,
+):
+    from contextlib import contextmanager
+    from backend import main
+
+    events = []
+
+    class Coordinator:
+        @contextmanager
+        def controller_mutation(self, *, identity=False, machine=None):
+            events.append("lock_enter")
+            try:
+                yield
+            finally:
+                events.append("lock_exit")
+
+    main.app.state.enrollment_repair_coordinator = Coordinator()
+
+    async def sync(_registry, _client, token, *, local_commit):
+        events.extend(["remote_update", "remote_verify"])
+        local_commit(token)
+        return {"total": 1, "verified": 1, "manual": 0, "pending": 0, "machines": {}}
+
+    monkeypatch.setattr(peers, "sync_fleet_token", sync)
+    response = authed.post("/api/hub/fleet", json={
+        "token": "new-shared-fleet-token", "sync": True,
+    })
+
+    assert response.status_code == 200
+    assert events == ["remote_update", "remote_verify", "lock_enter", "lock_exit"]
+    assert peers.current_fleet_token() == "new-shared-fleet-token"
+
+
 def test_remote_machines_grouping():
     reg = REMOTE + [{"id": "image", "machine": "local", "host": "127.0.0.1", "port": 47868}]
     grouped = peers._remote_machines(reg)

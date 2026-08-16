@@ -1,9 +1,11 @@
 import json
 from pathlib import Path
+import threading
 
 import pytest
 
 from backend import broker, control_plane, ledger
+from backend.controller_settings_lock import settings_writer_lock
 
 
 def test_controller_defaults_preserve_existing_single_hub_behavior(reset):
@@ -54,6 +56,27 @@ def test_invalid_database_url_does_not_partially_save_settings(reset):
         )
     assert control_plane.public_settings()["role"] == before["role"]
     assert not control_plane.SETTINGS_FILE.exists()
+
+
+def test_controller_settings_route_is_busy_while_repair_lock_is_held(authed):
+    before = control_plane.SETTINGS_FILE.read_bytes() if control_plane.SETTINGS_FILE.exists() else None
+    result = []
+
+    def write_settings():
+        result.append(authed.put("/api/hub/controller", json={
+            "role": "controller", "site_id": "site-a", "site_name": "Site A",
+            "controller_id": "controller-a", "database_mode": "off",
+        }))
+
+    with settings_writer_lock():
+        worker = threading.Thread(target=write_settings)
+        worker.start()
+        worker.join(2)
+
+    assert result[0].status_code == 423
+    assert result[0].json()["detail"]["code"] == "settings_writer_busy"
+    after = control_plane.SETTINGS_FILE.read_bytes() if control_plane.SETTINGS_FILE.exists() else None
+    assert after == before
 
 
 def test_agent_role_rejects_customer_jobs_but_keeps_health_online(authed):
