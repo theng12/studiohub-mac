@@ -10,6 +10,19 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.9.1] — 2026-08-17
+
+### Fixed — downloaded-only transcription library
+
+- The dashboard Model Library now hides transcription models that are present
+  only in a worker's catalogue and have not been downloaded on any registered
+  Mac. Downloaded transcription models remain visible with their exact machine
+  availability, while every other model modality keeps its existing catalogue
+  behavior.
+- The backend transcription inventory and `/api/hub/models` contract remain
+  unchanged for download planning, audits, and capability evidence. This is a
+  UI-only release; it performs no model download or fleet update.
+
 ## [2.9.0] — 2026-08-16
 
 ### Added — controller-managed enrollment repair

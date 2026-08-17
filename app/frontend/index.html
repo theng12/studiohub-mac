@@ -1185,6 +1185,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.9.1", date: "2026-08-17", items: [
+    "The Model Library now shows transcription models only after at least one registered Mac has downloaded them. Catalogue-only transcription entries no longer clutter the operator view.",
+    "Other model modalities and the backend transcription inventory remain unchanged. This UI-only release downloads no models and does not update the fleet.",
+  ]},
   { v: "2.9.0", date: "2026-08-16", items: [
     "Controllers now provide <b>Repair enrollment</b> and <b>Repair eligible Macs</b> with six strictly authenticated endpoints, durable digest-only tickets and batches, and an Agent executor limited to the five approved local identity and parent settings.",
     "Single-use target-bound tickets expire for first redemption after about 120 seconds. Uncertain Macs are parked while later Macs continue, and strict terminal status can be adopted without replaying an Agent write.",
@@ -2987,18 +2991,22 @@ async function resetRamAdmission() {
   status.textContent = "Hub default restored. Queued jobs are being re-evaluated now.";
   await loadModels();
 }
+function modelLibraryRows(models) {
+  return models.filter(model => model.modality !== "transcription" || model.downloaded);
+}
 function renderModels() {
   const body = $("#m-body");
   if (!modelsData) { body.innerHTML = `<tr><td colspan="6" class="empty">Catalog unavailable</td></tr>`; return; }
+  const visibleModels = modelLibraryRows(modelsData);
   // machine dropdown (union of cached_on), preserving selection
-  const machines = [...new Set(modelsData.flatMap(m => m.cached_on))].sort();
+  const machines = [...new Set(visibleModels.flatMap(m => m.cached_on))].sort();
   const sel = $("#m-machine");
   if (sel.dataset.sig !== machines.join()) {
     sel.dataset.sig = machines.join();
     sel.innerHTML = `<option value="">All machines</option>` + machines.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
     sel.value = mMachine;
   }
-  let rows = modelsData;
+  let rows = visibleModels;
   if (mMachine) rows = rows.filter(m => m.cached_on.includes(mMachine));
   const cmp = {
     modality: (a, b) => (a.modality || "").localeCompare(b.modality || "") || a.label.localeCompare(b.label),
@@ -3025,7 +3033,10 @@ function renderModels() {
       <td>${avail}</td></tr>`;
   };
   const html = sortRows(rows).map(rowHtml).join("");
-  body.innerHTML = html || `<tr><td colspan="6" class="empty">No models match</td></tr>`;
+  const empty = $("#m-modality").value === "transcription"
+    ? "No downloaded transcription models."
+    : "No models match";
+  body.innerHTML = html || `<tr><td colspan="6" class="empty">${empty}</td></tr>`;
 }
 let mTimer;
 ["m-search", "m-modality", "m-dl"].forEach(id => $("#" + id).addEventListener("input", () => { clearTimeout(mTimer); mTimer = setTimeout(loadModels, 250); }));
