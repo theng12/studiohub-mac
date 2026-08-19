@@ -63,6 +63,7 @@ def strict_fleet_service_path(path: str) -> bool:
     return (
         path in STRICT_FLEET_SERVICE_PATHS
         or path.startswith("/api/hub/enrollment-repair/status/")
+        or path.startswith("/api/hub/service/startup-services/local/")
     )
 
 

@@ -988,10 +988,11 @@
       <div class="top"><span class="emoji">⚡</span><h3>Automatic startup across the fleet</h3>
         <span style="margin-left:auto"></span>
         <button class="btn" id="startup-refresh" onclick="loadStartupServices()">↻&nbsp; Check startup</button>
+        <button class="btn" id="startup-retire-unused" onclick="retireUnusedStartupServices()" disabled>Retire unused</button>
         <button class="btn primary" id="startup-install-all" onclick="installMissingStartupServices()" disabled>Install missing</button>
       </div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        Checks whether each installed Image, Voice, Chat, Music, Video, and Render Studio starts automatically and has its watchdog loaded. Install or repair one service at a time, or install every missing service. Installation is refused while that Studio has active Hub work.
+        Checks whether each installed Image, Voice, Chat, Music, Video, and Render Studio starts automatically and has its watchdog loaded. Retire unused Music, Chat, Video, or Render services to turn their updater and routing Off and unload their startup processes. <b>Nothing is deleted:</b> launchers, models, caches, outputs, and settings stay in place. Image and Voice cannot be retired here.
       </p>
       <div id="startup-status" class="update-progress hide" role="status" aria-live="polite"></div>
       <div style="overflow-x:auto"><table><thead><tr><th>Studio</th><th>Machine</th><th>Startup status</th><th>Service check</th><th></th></tr></thead><tbody id="startup-body"><tr><td colspan="5" class="empty">Click “Check startup” to audit the fleet.</td></tr></tbody></table></div>
@@ -1185,6 +1186,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.10.0", date: "2026-08-19", items: [
+    "Controllers can now retire unused Music, Chat, Video, and Render services one at a time or sequentially across the fleet. Retirement turns that Studio's updater and routing Off, then verifies its startup server and watchdog are unloaded.",
+    "Image and Voice are protected from retirement. Launchers, Git checkouts, models, caches, outputs, settings, jobs, and credentials are preserved, and failed or offline Macs do not stop later batch targets.",
+    "Remote changes run through each Mac's authenticated peer Hub and trusted uninstaller. This release changes the source only; no fleet retirement was executed.",
+  ]},
   { v: "2.9.1", date: "2026-08-17", items: [
     "The Model Library now shows transcription models only after at least one registered Mac has downloaded them. Catalogue-only transcription entries no longer clutter the operator view.",
     "Other model modalities and the backend transcription inventory remain unchanged. This UI-only release downloads no models and does not update the fleet.",
@@ -5192,30 +5198,42 @@ async function rescanStudioVersions() {
   else { progress.className = "update-progress error"; progress.innerHTML = `<div class="update-progress-title">! Version scan failed</div><div class="update-progress-detail">Try again.</div>`; }
 }
 let startupServiceRows = [];
+let startupOfflineMachines = [];
+const RETIRABLE_STARTUP_MODALITIES = ["music", "chat", "video", "render"];
+let startupActionBusy = false;
 function renderStartupServices(data) {
-  const body = $("#startup-body"), status = $("#startup-status"), installAll = $("#startup-install-all");
+  const body = $("#startup-body"), status = $("#startup-status"), installAll = $("#startup-install-all"), retireAll = $("#startup-retire-unused");
   startupServiceRows = [];
+  startupOfflineMachines = [];
   const machineRows = Object.entries(data?.machines || {});
   body.innerHTML = machineRows.map(([machine, snapshot]) => {
     if (!snapshot.reachable || !snapshot.supported) {
+      startupOfflineMachines.push({machine, detail: snapshot.detail || "offline or unsupported"});
       const detail = snapshot.detail || (snapshot.reachable ? "Startup control is unavailable" : "Peer Hub is offline or unreachable");
       return `<tr><td class="sub">All Studios</td><td><b>${esc(mlabel(machine))}</b></td><td><span class="pill no">${snapshot.reachable ? "Hub update needed" : "unreachable"}</span></td><td class="sub">${esc(detail)}</td><td>—</td></tr>`;
     }
     return (snapshot.services || []).map(service => {
       const row = {...service, machine, reachable: true}; startupServiceRows.push(row);
-      const state = service.installed ? ["ok", "automatic"] :
+      const state = service.retired ? ["", "retired"] : service.installed ? ["ok", "automatic"] :
         service.status === "repair_needed" ? ["warn", "repair needed"] :
         service.status === "not_installed" ? ["warn", "not installed"] :
         ["app_missing", "runtime_missing"].includes(service.status) ? ["no", "app not installed"] : ["no", "unsupported"];
-      const action = service.can_install
-        ? `<button class="btn primary compact" data-startup-install onclick="installStartupService('${jsq(machine)}','${jsq(service.modality)}')">${service.status === "repair_needed" ? "Repair" : "Install"}</button>` : "—";
+      const install = !service.retired && service.can_install
+        ? `<button class="btn primary compact" data-startup-install onclick="installStartupService('${jsq(machine)}','${jsq(service.modality)}')">${service.status === "repair_needed" ? "Repair" : "Install"}</button>` : "";
+      const canRetire = RETIRABLE_STARTUP_MODALITIES.includes(service.modality) && service.app_installed && !service.retired;
+      const retire = canRetire
+        ? `<button class="btn compact" data-startup-retire onclick="retireStartupService('${jsq(machine)}','${jsq(service.modality)}')">Retire</button>` : "";
+      const action = install || retire ? `<div class="actions">${install}${retire}</div>` : "—";
       return `<tr><td><b>${esc(service.title)}</b></td><td>${esc(mlabel(machine))}</td><td><span class="pill ${state[0]}">${state[1]}</span></td><td class="sub">${esc(service.detail || "")}</td><td>${action}</td></tr>`;
     }).join("");
   }).join("") || `<tr><td colspan="5" class="empty">No Hub machines are registered.</td></tr>`;
   const installed = startupServiceRows.filter(row => row.installed).length;
-  const actionable = startupServiceRows.filter(row => row.can_install).length;
+  const actionable = startupServiceRows.filter(row => row.can_install && !row.retired).length;
+  const retireable = startupServiceRows.filter(row => RETIRABLE_STARTUP_MODALITIES.includes(row.modality) && row.app_installed && !row.retired).length;
   installAll.disabled = actionable === 0;
   installAll.textContent = actionable ? `Install ${actionable} missing` : "All installed";
+  retireAll.disabled = retireable === 0;
+  retireAll.textContent = retireable ? `Retire ${retireable} unused` : "Unused retired";
   status.className = "update-progress";
   status.innerHTML = `<div class="update-progress-head"><span class="update-progress-title">✓ Startup audit complete</span><span class="update-progress-count">${installed}/${startupServiceRows.length} ready</span></div><div class="update-progress-detail">${actionable} service${actionable === 1 ? "" : "s"} can be installed or repaired${machineRows.some(([, row]) => !row.reachable) ? " · offline machines can be retried later" : ""}</div>`;
 }
@@ -5235,20 +5253,48 @@ async function runStartupInstall(machine, modality) {
   const data = response ? await response.json().catch(() => ({})) : {};
   return {ok: !!response?.ok, detail: data.detail || data.error || "Startup installation failed"};
 }
+async function runStartupRetire(machine, modality) {
+  const response = await api(`/api/hub/startup-services/${encodeURIComponent(machine)}/${encodeURIComponent(modality)}/retire`, { method: "POST" }).catch(() => null);
+  const data = response ? await response.json().catch(() => ({})) : {};
+  const detail = typeof data.detail === "string" ? data.detail : data.detail?.message;
+  return {ok: !!response?.ok, detail: detail || data.error || "Startup retirement failed"};
+}
+async function retireStartupService(machine, modality) {
+  const row = startupServiceRows.find(item => item.machine === machine && item.modality === modality);
+  if (!row || !RETIRABLE_STARTUP_MODALITIES.includes(modality) || startupActionBusy) return;
+  if (!confirm(`Retire ${row.title} on ${mlabel(machine)}?\n\nIts updater and Hub routing will be turned Off, then its startup server and watchdog will be unloaded. Nothing is deleted: the launcher, models, caches, outputs, and settings remain.`)) return;
+  startupActionBusy = true;
+  const status = $("#startup-status");
+  document.querySelectorAll("[data-startup-install],[data-startup-retire]").forEach(button => button.disabled = true);
+  status.className = "update-progress";
+  status.innerHTML = `<div class="update-progress-title">↻ Retiring ${esc(row.title)} on ${esc(mlabel(machine))}…</div><div class="update-progress-detail">Turning updater and routing Off, then unloading startup services. Nothing is being deleted.</div>`;
+  const result = await runStartupRetire(machine, modality);
+  startupActionBusy = false;
+  await loadStartupServices();
+  status.className = result.ok ? "update-progress" : "update-progress error";
+  status.innerHTML = result.ok
+    ? `<div class="update-progress-title">✓ ${esc(row.title)} retired</div><div class="update-progress-detail">Updater Off · routing Off · startup unloaded · launcher, models, caches, outputs, and settings preserved.</div>`
+    : `<div class="update-progress-title">! ${esc(row.title)} needs attention</div><div class="update-progress-detail">${esc(result.detail)} · Retry safely after resolving the issue.</div>`;
+}
 async function installStartupService(machine, modality) {
   const row = startupServiceRows.find(item => item.machine === machine && item.modality === modality);
-  if (!row || !confirm(`Install automatic startup for ${row.title} on ${mlabel(machine)}?\nThe Studio may restart while launchd takes ownership. Hub-tracked active work is protected.`)) return;
+  if (!row || startupActionBusy || !confirm(`Install automatic startup for ${row.title} on ${mlabel(machine)}?\nThe Studio may restart while launchd takes ownership. Hub-tracked active work is protected.`)) return;
+  startupActionBusy = true;
   const status = $("#startup-status"); document.querySelectorAll("[data-startup-install]").forEach(button => button.disabled = true);
+  $("#startup-retire-unused").disabled = true;
   status.className = "update-progress"; status.innerHTML = `<div class="update-progress-title">↻ Installing ${esc(row.title)} startup on ${esc(mlabel(machine))}…</div>`;
   const result = await runStartupInstall(machine, modality);
+  startupActionBusy = false;
   await loadStartupServices();
   if (!result.ok) { status.className = "update-progress error"; status.innerHTML = `<div class="update-progress-title">! Startup installation failed</div><div class="update-progress-detail">${esc(result.detail)}</div>`; }
 }
 async function installMissingStartupServices() {
-  const rows = startupServiceRows.filter(row => row.can_install);
-  if (!rows.length || !confirm(`Install or repair ${rows.length} startup service${rows.length === 1 ? "" : "s"} one at a time?\nEach Studio may restart as launchd takes ownership. Busy Hub work will be refused, not interrupted.`)) return;
+  const rows = startupServiceRows.filter(row => row.can_install && !row.retired);
+  if (!rows.length || startupActionBusy || !confirm(`Install or repair ${rows.length} startup service${rows.length === 1 ? "" : "s"} one at a time?\nEach Studio may restart as launchd takes ownership. Busy Hub work will be refused, not interrupted.`)) return;
+  startupActionBusy = true;
   const status = $("#startup-status"), button = $("#startup-install-all");
   button.disabled = true; button.setAttribute("aria-busy", "true");
+  $("#startup-retire-unused").disabled = true;
   let succeeded = 0, failures = [];
   for (let index = 0; index < rows.length; index++) {
     const row = rows[index];
@@ -5257,11 +5303,33 @@ async function installMissingStartupServices() {
     const result = await runStartupInstall(row.machine, row.modality);
     if (result.ok) succeeded++; else failures.push(`${row.title} on ${mlabel(row.machine)}: ${result.detail}`);
   }
-  button.removeAttribute("aria-busy"); await loadStartupServices();
+  startupActionBusy = false; button.removeAttribute("aria-busy"); await loadStartupServices();
   if (failures.length) {
     status.className = "update-progress error";
     status.innerHTML = `<div class="update-progress-title">! ${succeeded} installed · ${failures.length} need attention</div><div class="update-progress-detail">${esc(failures.join(" · "))}</div>`;
   }
+}
+async function retireUnusedStartupServices() {
+  const rows = startupServiceRows.filter(row => RETIRABLE_STARTUP_MODALITIES.includes(row.modality) && row.app_installed && !row.retired);
+  if (!rows.length || startupActionBusy) return;
+  if (!confirm(`Retire ${rows.length} unused Studio service${rows.length === 1 ? "" : "s"} one at a time?\n\nMusic, Chat, Video, and Render only. Each updater and routing entry will be turned Off before startup is unloaded. Nothing is deleted: launchers, models, caches, outputs, and settings remain. ${startupOfflineMachines.length ? `${startupOfflineMachines.length} offline or unsupported machine${startupOfflineMachines.length === 1 ? " is" : "s are"} skipped and can be retried later.` : "Busy targets are skipped and the batch continues."}`)) return;
+  startupActionBusy = true;
+  const status = $("#startup-status"), button = $("#startup-retire-unused");
+  button.disabled = true; button.setAttribute("aria-busy", "true");
+  $("#startup-install-all").disabled = true;
+  document.querySelectorAll("[data-startup-install],[data-startup-retire]").forEach(action => action.disabled = true);
+  let succeeded = 0, failures = [];
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index];
+    status.className = "update-progress";
+    status.innerHTML = `<div class="update-progress-head"><span class="update-progress-title">↻ Retiring unused Studios…</span><span class="update-progress-count">${index + 1}/${rows.length}</span></div><div class="update-progress-detail">${esc(row.title)} · ${esc(mlabel(row.machine))}</div>`;
+    const result = await runStartupRetire(row.machine, row.modality);
+    if (result.ok) succeeded++; else failures.push(`${row.title} on ${mlabel(row.machine)}: ${result.detail}`);
+  }
+  startupActionBusy = false; button.removeAttribute("aria-busy");
+  await loadStartupServices();
+  status.className = failures.length ? "update-progress error" : "update-progress";
+  status.innerHTML = `<div class="update-progress-title">${failures.length ? "!" : "✓"} ${succeeded} retired · ${failures.length} need attention · ${startupOfflineMachines.length} offline or unsupported</div><div class="update-progress-detail">The Hub retirement action did not delete launchers, models, caches, outputs, or settings.${failures.length ? ` ${esc(failures.join(" · "))}` : ""}${startupOfflineMachines.length ? ` Skipped: ${esc(startupOfflineMachines.map(row => mlabel(row.machine)).join(", "))}.` : ""}</div>`;
 }
 async function startFleetUpdate(ids) {
   if (!ids.length || !confirm(`Update ${ids.length} Studio${ids.length > 1 ? "s" : ""} one at a time? Active work will drain first.`)) return;

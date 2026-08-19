@@ -364,3 +364,20 @@ async def test_remote_startup_install_targets_peer_local_machine(reset):
     assert url.endswith("/api/hub/startup-services/local/voice/install")
     assert headers == {"X-Hub-Token": "shared-secret"}
     assert timeout == 260.0
+
+
+@pytest.mark.asyncio
+async def test_remote_startup_retire_targets_peer_local_machine(reset):
+    peers.set_fleet_token("shared-secret")
+    client = FakeStartupClient(data={"ok": True, "changed": True})
+
+    result = await peers.retire_remote_startup_service(
+        client, REMOTE[0], "music",
+    )
+
+    assert result["ok"] is True
+    method, url, headers, timeout = client.calls[0]
+    assert method == "POST"
+    assert url.endswith("/api/hub/service/startup-services/local/music/retire")
+    assert headers == {"X-Hub-Token": "shared-secret"}
+    assert timeout == 260.0

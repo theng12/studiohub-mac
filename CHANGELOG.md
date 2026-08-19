@@ -10,6 +10,30 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.10.0] — 2026-08-19
+
+### Added — retire unused legacy Studio services
+
+- Added Controller actions to retire Music, Chat, Video, and Render startup
+  services one at a time or as a sequential fleet batch. Retirement turns the
+  selected Studio's automatic updater and Hub routing Off, then verifies that
+  its launchd server and watchdog are unloaded.
+- Retirement is refused while that Studio has active Hub work or a managed
+  automatic update. Busy, offline, unsupported, or failed Macs do not prevent
+  the remaining batch targets from being attempted. If a remote mutation fails
+  after routing is disabled, the result explicitly stays disabled and asks the
+  owner to retry instead of silently restoring production routing.
+
+### Compatibility and safety
+
+- Image and Voice are hard-blocked from this workflow. Retirement never deletes
+  launcher folders, Git checkouts, models, caches, outputs, settings, jobs, or
+  credentials; the disabled Studio remains registered and observable for a
+  later manual recovery.
+- Remote retirement runs only through that Mac's authenticated peer Hub and
+  its trusted sibling-owned uninstaller. No fleet retirement was executed as
+  part of this source release.
+
 ## [2.9.1] — 2026-08-17
 
 ### Fixed — downloaded-only transcription library

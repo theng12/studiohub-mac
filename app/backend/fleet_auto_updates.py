@@ -507,6 +507,11 @@ class FleetAutoUpdates:
         settings.setdefault("idle_only", True)
         return await self._request(target, "POST", "/api/auto-update/settings", settings)
 
+    async def retirement_status(self, target_id: str) -> dict[str, Any]:
+        """Read the sibling's own updater state before startup retirement."""
+        target = self._target(target_id)
+        return await self._request(target, "GET", "/api/auto-update/status")
+
     def start_idle_updates(self, target_ids: list[str] | None = None) -> dict[str, Any]:
         active = next((job for job in self._jobs.values()
                        if job["status"] in {"queued", "running"}), None)

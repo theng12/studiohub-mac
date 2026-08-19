@@ -353,6 +353,33 @@ async def install_remote_startup_service(
         return {"ok": False, "error": f"can't reach the remote Hub ({exc})"}
 
 
+async def retire_remote_startup_service(
+    client: httpx.AsyncClient, studio: dict, modality: str,
+) -> dict:
+    """Ask one peer Hub to retire one legacy sibling on its own Mac."""
+    token = _peer_token(studio)
+    if not token:
+        return {"ok": False, "error": "no fleet token set"}
+    try:
+        response = await client.post(
+            f"{_peer_url(studio)}/api/hub/service/startup-services/local/{modality}/retire",
+            headers={"X-Hub-Token": token}, timeout=260.0,
+        )
+        payload = (response.json()
+                   if response.headers.get("content-type", "").startswith("application/json")
+                   else {})
+        if response.status_code in {401, 403}:
+            return {"ok": False, "error": "remote Hub rejected the fleet credential"}
+        if response.status_code == 404:
+            return {"ok": False, "error": "update the remote Studio Hub before retiring startup services"}
+        if response.status_code >= 400:
+            return {"ok": False, "error": str(payload.get("detail") or
+                                                f"remote Hub returned HTTP {response.status_code}")}
+        return payload
+    except httpx.HTTPError as exc:
+        return {"ok": False, "error": f"can't reach the remote Hub ({exc})"}
+
+
 async def install_remote_generation(
     client: httpx.AsyncClient, studio: dict,
 ) -> dict:

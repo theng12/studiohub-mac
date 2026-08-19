@@ -298,6 +298,8 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/setup/join` | Guided worker setup using a private controller address, permanent enrollment code, and local hardware profile; accepted locally or from an owner-authenticated browser |
 | `GET /api/hub/startup-services` | Audit sibling Studio launchd service and watchdog readiness on this Hub and authenticated peer Hubs |
 | `POST /api/hub/startup-services/{machine}/{studio}/install` | Install or repair one sibling's startup service on its own machine; refuses Hub-tracked active work |
+| `POST /api/hub/startup-services/{machine}/{studio}/retire` | Loopback/owner-session retirement for Music, Chat, Video, or Render: turn updater/routing Off and unload startup without deleting app or model data; partial remote failures remain safely disabled for retry |
+| `POST /api/hub/service/startup-services/local/{studio}/retire` | Strict fleet-header peer route used by the Controller; the target Hub repeats local busy/update checks before changing its own Mac |
 | `POST /api/hub/registry/studios/{id}/enabled` | Pause/resume new jobs for one Studio with `{"enabled": false/true}`; running work and the process are untouched |
 | `GET /api/hub/health` | Aggregate: totals + per-studio statuses |
 | `GET /api/hub/catalog` | Local per-studio catalog rows (annotated `hub_cached`, `hub_machine`). Query: `q`, `modality`, `downloaded`, `force` |

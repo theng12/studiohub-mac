@@ -37,7 +37,7 @@ from . import (alerts, artifact_metadata, auth, broadcast, broker, capabilities,
                voice_qualification)
 from .auto_update import UpdateError
 from .auto_update_config import create_updater
-from .fleet_auto_updates import FleetAutoUpdates, managed_failure_code
+from .fleet_auto_updates import FleetAutoUpdates, TERMINAL_ITEM_STATES, managed_failure_code
 from .auth import is_loopback, is_tailscale, load_token, make_middleware
 from .control import control_studio
 from .controller_settings_lock import SettingsWriterBusy, settings_writer_lock
@@ -3289,6 +3289,102 @@ async def install_fleet_startup_service(machine: str, modality: str):
     finally:
         if maintenance_id:
             broker.set_maintenance(maintenance_id, False)
+
+
+_RETIRED_DATA_PRESERVED = ["launcher", "models", "caches", "outputs", "settings"]
+
+
+def _startup_retirement_update_active(studio_id: str) -> bool:
+    return any(
+        job.get("status") in {"queued", "running"}
+        and any(
+            item.get("target") == studio_id
+            and item.get("status") not in TERMINAL_ITEM_STATES
+            for item in job.get("items", [])
+        )
+        for job in fleet_auto_updates.jobs()
+    )
+
+
+async def _retire_local_startup_service(modality: str) -> dict:
+    """Retire one local legacy sibling while keeping its app data intact."""
+    if modality not in startup_services.RETIRABLE_MODALITIES:
+        raise HTTPException(400, "Only Music, Chat, Video, and Render may be retired.")
+    target = next((row for row in monitor.registry
+                   if row.get("machine", "local") == "local"
+                   and row.get("modality") == modality), None)
+    if target is None:
+        raise HTTPException(404, f"{modality.title()} Studio is not registered on this Mac")
+    studio_id = target["id"]
+    broker.set_maintenance(studio_id, True)
+    try:
+        if fleet_ops.studio_has_active_work(studio_id):
+            raise HTTPException(
+                409, "This Studio has active Hub work; wait for it to finish before retiring it.")
+        try:
+            with startup_services.retirement_lock(modality):
+                if _startup_retirement_update_active(studio_id):
+                    raise HTTPException(
+                        409, "This Studio has an active update; wait for it to finish before retiring it.")
+                updater = await fleet_auto_updates.retirement_status(studio_id)
+                if updater.get("managed_update") or str(updater.get("state") or "idle").lower() in {
+                        "checking", "downloading", "updating", "restarting"}:
+                    raise HTTPException(
+                        409, "This Studio has an active update; wait for it to finish before retiring it.")
+                await fleet_auto_updates.set_mode(studio_id, "off")
+                from . import registry
+                registry.set_studio_enabled("local", studio_id, False)
+                result = await asyncio.to_thread(startup_services.uninstall_service, modality)
+        except HTTPException:
+            raise
+        except (ValueError, OSError, httpx.HTTPError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {**result, "retired": True, "modality": modality,
+                "routing_enabled": False, "updater_mode": "off",
+                "preserved": _RETIRED_DATA_PRESERVED}
+    finally:
+        broker.set_maintenance(studio_id, False)
+
+
+@app.post("/api/hub/service/startup-services/local/{modality}/retire")
+async def retire_local_startup_service_for_peer(modality: str):
+    """Strict fleet-service route; the peer performs its authoritative checks."""
+    return await _retire_local_startup_service(modality)
+
+
+@app.post("/api/hub/startup-services/{machine}/{modality}/retire")
+async def retire_fleet_startup_service(request: Request, machine: str, modality: str):
+    """Retire one legacy sibling without deleting its launcher or app data."""
+    _require_exposure_owner(request)
+    if modality not in startup_services.RETIRABLE_MODALITIES:
+        raise HTTPException(400, "Only Music, Chat, Video, and Render may be retired.")
+    if machine == "local":
+        return await _retire_local_startup_service(modality)
+    target = next((row for row in monitor.registry
+                   if row.get("machine") == machine
+                   and row.get("modality") == modality), None)
+    if target is None:
+        raise HTTPException(404, f"unknown {modality} Studio on machine: {machine}")
+    studio_id = target["id"]
+    broker.set_maintenance(studio_id, True)
+    try:
+        if fleet_ops.studio_has_active_work(studio_id):
+            raise HTTPException(
+                409, "This Studio has active Hub work; wait for it to finish before retiring it.")
+        from . import registry
+        registry.set_studio_enabled(machine, studio_id, False)
+        result = await peers.retire_remote_startup_service(
+            monitor._client, target, modality)
+        if not result.get("ok"):
+            raise HTTPException(409, {
+                "code": "routing_disabled_pending_retry",
+                "message": result.get("error", "remote startup retirement failed"),
+                "routing_disabled": True,
+            })
+        return {**result, "retired": True, "modality": modality,
+                "routing_enabled": False, "preserved": _RETIRED_DATA_PRESERVED}
+    finally:
+        broker.set_maintenance(studio_id, False)
 
 
 @app.get("/api/hub/fleet")

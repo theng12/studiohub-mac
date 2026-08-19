@@ -7,6 +7,8 @@ local operation; the controller never writes another Mac's filesystem.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import os
 import subprocess
 import time
@@ -48,6 +50,8 @@ SERVICE_SPECS = {
     },
 }
 
+RETIRABLE_MODALITIES = frozenset({"music", "chat", "video", "render"})
+
 
 def _app_dir(modality: str) -> Path | None:
     spec = SERVICE_SPECS.get(modality)
@@ -73,7 +77,11 @@ def _launchd_loaded(label: str) -> bool:
 
 
 def _safe_installer(app_dir: Path) -> Path | None:
-    installer = app_dir / "install_service.sh"
+    return _safe_service_script(app_dir, "install_service.sh")
+
+
+def _safe_service_script(app_dir: Path, name: str) -> Path | None:
+    installer = app_dir / name
     try:
         resolved_root = app_dir.resolve(strict=True)
         resolved = installer.resolve(strict=True)
@@ -84,6 +92,31 @@ def _safe_installer(app_dir: Path) -> Path | None:
     if resolved.parent != resolved_root:
         return None
     return resolved
+
+
+@contextlib.contextmanager
+def retirement_lock(modality: str):
+    """Fence retirement against the sibling updater's own exclusive lock."""
+    if modality not in RETIRABLE_MODALITIES:
+        raise ValueError("Only Music, Chat, Video, and Render may be retired.")
+    app_dir = _app_dir(modality)
+    if app_dir is None:
+        raise ValueError("Studio app is not installed on this Mac.")
+    state_dir = app_dir / "auto_update"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = state_dir / "update.lock"
+    handle = open(lock_path, "a+", encoding="utf-8")
+    os.chmod(lock_path, 0o600)
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ValueError("A Studio update is already running; wait before retiring it.") from exc
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
 
 
 def inspect_service(modality: str) -> dict:
@@ -142,13 +175,29 @@ def inspect_service(modality: str) -> dict:
 
 
 def local_snapshot() -> dict:
+    from . import registry
+
+    registered = list(registry.load_registry())
+    services = []
+    for modality in SERVICE_SPECS:
+        service = inspect_service(modality)
+        studio = next((row for row in registered
+                       if row.get("machine", "local") == "local"
+                       and row.get("modality") == modality), None)
+        enabled = (registry.studio_enabled("local", studio["id"])
+                   if studio is not None else True)
+        service.update(
+            routing_enabled=enabled,
+            retired=modality in RETIRABLE_MODALITIES and not enabled,
+        )
+        services.append(service)
     return {
         "schema_version": 1,
         "observed_at": time.time(),
         "machine": "local",
         "reachable": True,
         "supported": True,
-        "services": [inspect_service(modality) for modality in SERVICE_SPECS],
+        "services": services,
     }
 
 
@@ -180,3 +229,39 @@ def install_service(modality: str) -> dict:
         raise ValueError("Installer finished, but launchd did not load both services.")
     return {"ok": True, "changed": True, "service": after,
             "detail": "Automatic startup installed and verified"}
+
+
+def uninstall_service(modality: str) -> dict:
+    """Unload only one legacy Studio's launchd server and watchdog.
+
+    The sibling-owned script removes its launchd marker and plists. It does
+    not delete the launcher checkout, models, caches, outputs, or settings.
+    """
+    if modality not in RETIRABLE_MODALITIES:
+        raise ValueError("Only Music, Chat, Video, and Render may be retired.")
+    before = inspect_service(modality)
+    app_dir = _app_dir(modality)
+    uninstaller = (_safe_service_script(app_dir, "uninstall_service.sh")
+                   if app_dir is not None else None)
+    if app_dir is None or uninstaller is None:
+        raise ValueError("A trusted startup uninstaller is unavailable.")
+    if before["status"] == "not_installed":
+        return {"ok": True, "changed": False, "service": before,
+                "detail": "Automatic startup is already retired"}
+    try:
+        result = subprocess.run(
+            ["/bin/bash", str(uninstaller)], cwd=app_dir,
+            capture_output=True, text=True, timeout=240, check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError("Startup retirement timed out; check the Studio service logs.") from exc
+    except OSError as exc:
+        raise ValueError(f"Startup uninstaller could not run: {exc}") from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "startup uninstaller failed").strip()
+        raise ValueError(detail[-500:])
+    after = inspect_service(modality)
+    if after["status"] != "not_installed":
+        raise ValueError("Uninstaller finished, but a launchd service or startup file remains.")
+    return {"ok": True, "changed": True, "service": after,
+            "detail": "Automatic startup retired and verified"}
