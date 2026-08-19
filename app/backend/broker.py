@@ -137,7 +137,27 @@ MODALITY = {
     "render": ("/api/generate/render", "label", "video"),
 }
 
-MODALITY_PRIORITY = {"render": 0}
+# Every modality whose artifact is sound. Derived from MODALITY so a future
+# audio modality inherits the priority below without a second edit.
+AUDIO_MODALITIES = frozenset(
+    m for m, spec in MODALITY.items() if spec[2] == "audio")
+# Audio outranks image (and every other normal-priority class) on every machine
+# that can actually run the audio model.
+#
+# This reorders only the *next* dispatch decision, which is exactly the owner's
+# rule: a machine finishes the image it is already generating, then takes audio.
+# Nothing is preempted and no machine is ever held idle — the scheduler makes a
+# single pass over this ordering, so any worker audio cannot use (too little
+# unified memory, model not downloaded, no free RAM yet) falls through to the
+# image batch in the *same* pass.
+#
+# The memory floor is never hardcoded here. _memory_gate() already skips a Mac
+# whose total unified memory is below the model's declared
+# min_unified_memory_gb, so the audio-capable pool follows the model and a
+# future TTS with a different footprint needs no code change. The pool is flat:
+# no size is preferred within it.
+AUDIO_PRIORITY = 5
+MODALITY_PRIORITY = dict({"render": 0}, **{m: AUDIO_PRIORITY for m in AUDIO_MODALITIES})
 
 MAX_TRIES = 3
 MAX_INFRA_TRIES = 8
@@ -1435,6 +1455,11 @@ def _supports_genstudio_voice_evidence(batch: dict, studio: dict) -> bool:
 def _queued_batches() -> list[dict]:
     """Queued work in modality, scarcity, then fair-turn order.
 
+    Audio sorts ahead of image (see MODALITY_PRIORITY), so a worker that just
+    freed up is offered to queued audio before queued image. Because the
+    scheduler makes one pass over this list, this never idles a worker: audio
+    that cannot use a given Mac leaves it to the image batch immediately.
+
     Within one normal-priority local-inference class, a workload that needs
     more total memory receives the next compatible high-memory worker before a
     flexible workload does. This changes only the next dispatch decision:
@@ -1448,6 +1473,37 @@ def _queued_batches() -> list[dict]:
                        b.get("last_dispatched_at", 0),
                        b.get("created_at", 0)),
     )
+
+
+def _image_batch_waiting(now: float) -> dict | None:
+    """A dispatchable image batch, for the audio-priority decision log.
+
+    Read from the live queue, never inferred: this is the same `queued` test the
+    scheduler itself applies, so the log line only claims audio went first when
+    an image job really was ready to take that worker.
+    """
+    for batch in batches.values():
+        if batch["modality"] != "image" or batch.get("cancelled"):
+            continue
+        if any(i["state"] == "queued" and (i.get("retry_at") or 0) <= now
+               for i in batch["items"]):
+            return batch
+    return None
+
+
+def _log_audio_priority(batch: dict, item: dict, studio: dict, now: float) -> None:
+    """One line whenever audio takes a worker ahead of ready image work."""
+    if batch["modality"] not in AUDIO_MODALITIES:
+        return
+    waiting = _image_batch_waiting(now)
+    if waiting is None:
+        return
+    logging.getLogger("studiohub.broker").info(
+        "audio priority machine=%s studio=%s audio=%s/%s#%d image-waiting=%s/%s "
+        "— audio takes this worker first; the image job keeps every other worker",
+        studio.get("machine", "local"), studio["id"],
+        batch["id"], batch["model"], item["index"],
+        waiting["id"], waiting["model"])
 
 
 async def _dispatch_loop():
@@ -1556,6 +1612,7 @@ async def _dispatch_loop():
                     _reserved["gb"] += reserve
                     _busy.add(studio["id"])
                     b["last_dispatched_at"] = time.time()
+                    _log_audio_priority(b, item, studio, now)
                     asyncio.create_task(_run_item(client, b, item, studio))
                     assigned = True
             _wakeup.clear()

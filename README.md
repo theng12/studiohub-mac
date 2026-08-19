@@ -942,6 +942,14 @@ Heterogeneity is handled per-dispatch:
   more items; nothing is statically split.
 - **Memory** — the local machine is guarded by the Hub's governor; remote
   studios are paced by their own backends (one concurrent job each).
+- **Audio first** — when a worker frees up and audio work is queued, it takes
+  audio before image. The image job in flight is never interrupted, so the
+  longest an audio item waits is one image generation. No Mac is reserved or
+  held idle: audio only claims a worker that meets its model's declared
+  `min_unified_memory_gb` and has the model downloaded, and every worker audio
+  cannot use takes the queued image job in the same scheduler pass. Each time
+  audio goes ahead of ready image work the Hub logs one `audio priority` line
+  naming the machine and both batches.
 
 ## Swarm Batch
 

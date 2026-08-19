@@ -817,6 +817,172 @@ def test_render_batches_have_queue_priority_without_preemption(reset):
     assert ordered[1]["id"] == image["batch_id"]
 
 
+def test_audio_outranks_image_in_the_queue(reset):
+    """Audio is the priority in every situation: a worker freeing up is offered
+    to queued audio first, even when the image batch has been waiting longer."""
+    image = broker.submit_batch({"modality": "image", "model": "a/image-model",
+                                 "items": [{"prompt": "image"}]})
+    voice = broker.submit_batch({"modality": "voice", "model": "a/voice-model",
+                                 "items": [{"text": "audio"}]})
+    broker.batches[image["batch_id"]]["created_at"] = 1.0
+    broker.batches[voice["batch_id"]]["created_at"] = 2.0
+
+    ordered = broker._queued_batches()
+
+    assert [b["id"] for b in ordered] == [voice["batch_id"], image["batch_id"]]
+
+
+def test_every_audio_modality_shares_one_flat_priority(reset):
+    """The audio class is derived from MODALITY, not spelled out twice, and it
+    sits below render and above image."""
+    assert broker.AUDIO_MODALITIES == {"voice", "music"}
+    assert broker.MODALITY_PRIORITY["render"] < broker.MODALITY_PRIORITY["voice"]
+    assert (broker.MODALITY_PRIORITY["voice"]
+            == broker.MODALITY_PRIORITY["music"]
+            == broker.AUDIO_PRIORITY)
+    assert broker.MODALITY_PRIORITY.get("image", 10) > broker.AUDIO_PRIORITY
+
+
+def _seed_audio_priority_fleet(monkeypatch, machines: dict,
+                               voice_min_total: float, image_min_total: float = 8):
+    """Two modalities across the given machines, with declared memory floors."""
+    mon = broker._monitor()
+    for studio in mon.registry:
+        mon.status[studio["id"]] = {"status": "down"}
+    entries = {
+        "voice": {"repo": "a/voice-model", "cache": {"state": "cached"},
+                  "min_unified_memory_gb": voice_min_total},
+        "image": {"repo": "a/image-model", "cache": {"state": "cached"},
+                  "min_unified_memory_gb": image_min_total},
+    }
+    for modality in ("voice", "image"):
+        template = next(s for s in mon.registry if s["id"] == modality)
+        for machine in machines:
+            worker = {**template, "id": f"{modality}@{machine}",
+                      "machine": machine, "host": f"10.0.0.{len(mon.registry)}"}
+            mon.registry.append(worker)
+            mon.status[worker["id"]] = {"status": "up"}
+            mon._catalog_cache[worker["id"]] = (
+                time.time(), {"models": [entries[modality]]})
+    monkeypatch.setattr(broker.peers, "cached",
+                        lambda machine: {"host": machines.get(machine)})
+
+
+async def _dispatch_until_idle(monkeypatch) -> dict:
+    """Run the real scheduler for a tick; return machine -> studio id assigned."""
+    assigned: dict[str, str] = {}
+
+    async def run_item(_client, _batch, item, studio):
+        assigned[studio.get("machine", "local")] = studio["id"]
+
+    monkeypatch.setattr(broker, "_run_item", run_item)
+    await _run_dispatch_loop_briefly(0.3)
+    return assigned
+
+
+async def test_free_worker_goes_to_audio_ahead_of_older_image_work(
+    reset, monkeypatch,
+):
+    """The whole policy, on the one machine both modalities want: the image
+    batch is older and needs exactly as much memory, and audio still goes
+    first. Nothing running is touched — the image item simply stays queued."""
+    _seed_audio_priority_fleet(
+        monkeypatch,
+        {"mac-16": {"total_gb": 16, "available_gb": 14}},
+        voice_min_total=8, image_min_total=8,
+    )
+    image = broker.submit_batch({"modality": "image", "model": "a/image-model",
+                                 "items": [{"prompt": "image"}]})
+    broker.submit_batch({"modality": "voice", "model": "a/voice-model",
+                         "items": [{"text": "audio"}]})
+
+    assigned = await _dispatch_until_idle(monkeypatch)
+
+    assert assigned == {"mac-16": "voice@mac-16"}
+    assert broker.batches[image["batch_id"]]["items"][0]["state"] == "queued"
+
+
+async def test_audio_pool_follows_the_model_declared_memory_floor(
+    reset, monkeypatch,
+):
+    """The audio-capable pool is whatever meets the model's own
+    min_unified_memory_gb — nothing here hardcodes 16 — and every other worker
+    keeps taking image work in the same scheduler pass."""
+    _seed_audio_priority_fleet(
+        monkeypatch,
+        {"mac-8": {"total_gb": 8, "available_gb": 7},
+         "mac-16": {"total_gb": 16, "available_gb": 14}},
+        voice_min_total=16,
+    )
+    broker.submit_batch({"modality": "image", "model": "a/image-model",
+                         "items": [{"prompt": "image"}]})
+    broker.submit_batch({"modality": "voice", "model": "a/voice-model",
+                         "items": [{"text": "audio"}]})
+
+    assigned = await _dispatch_until_idle(monkeypatch)
+
+    assert assigned == {"mac-16": "voice@mac-16", "mac-8": "image@mac-8"}
+
+
+async def test_audio_priority_never_idles_a_worker_it_cannot_use(
+    reset, monkeypatch,
+):
+    """Fail open and stay work-conserving: when no worker meets the audio
+    model's floor, image still takes the machine in the very same pass."""
+    _seed_audio_priority_fleet(
+        monkeypatch,
+        {"mac-8": {"total_gb": 8, "available_gb": 7}},
+        voice_min_total=16,
+    )
+    broker.submit_batch({"modality": "image", "model": "a/image-model",
+                         "items": [{"prompt": "image"}]})
+    broker.submit_batch({"modality": "voice", "model": "a/voice-model",
+                         "items": [{"text": "audio"}]})
+
+    assigned = await _dispatch_until_idle(monkeypatch)
+
+    assert assigned == {"mac-8": "image@mac-8"}
+
+
+async def test_audio_priority_decision_is_logged(reset, monkeypatch, caplog):
+    """The fleet must say when it puts audio ahead of ready image work."""
+    _seed_audio_priority_fleet(
+        monkeypatch,
+        {"mac-16": {"total_gb": 16, "available_gb": 14}},
+        voice_min_total=8, image_min_total=8,
+    )
+    image = broker.submit_batch({"modality": "image", "model": "a/image-model",
+                                 "items": [{"prompt": "image"}]})
+    voice = broker.submit_batch({"modality": "voice", "model": "a/voice-model",
+                                 "items": [{"text": "audio"}]})
+
+    with caplog.at_level("INFO", logger="studiohub.broker"):
+        await _dispatch_until_idle(monkeypatch)
+
+    line = next(r.getMessage() for r in caplog.records
+                if "audio priority" in r.getMessage())
+    assert "machine=mac-16" in line
+    assert voice["batch_id"] in line and image["batch_id"] in line
+
+
+async def test_no_audio_priority_log_without_waiting_image_work(
+    reset, monkeypatch, caplog,
+):
+    """No image job was displaced, so the Hub stays quiet."""
+    _seed_audio_priority_fleet(
+        monkeypatch,
+        {"mac-16": {"total_gb": 16, "available_gb": 14}},
+        voice_min_total=16,
+    )
+    broker.submit_batch({"modality": "voice", "model": "a/voice-model",
+                         "items": [{"text": "audio"}]})
+
+    with caplog.at_level("INFO", logger="studiohub.broker"):
+        await _dispatch_until_idle(monkeypatch)
+
+    assert not [r for r in caplog.records if "audio priority" in r.getMessage()]
+
+
 def test_local_inference_workers_prefer_the_smallest_available_ram_tier(
     reset, monkeypatch,
 ):

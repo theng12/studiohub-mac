@@ -10,6 +10,35 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.11.0] — 2026-08-20
+
+### Added — audio takes the next free worker
+
+- Queued audio work (Voice, Music) now outranks queued image work in the
+  dispatch queue. When a Mac finishes a job and audio is waiting, its next job
+  is audio.
+- Running work is never preempted. A generation already in flight completes
+  normally, so the longest an audio item waits is one image generation.
+- Each time audio goes ahead of ready image work the Hub logs a single
+  `audio priority` line naming the machine, the audio batch, and the image
+  batch it went ahead of.
+
+### Compatibility and safety
+
+- No Mac is reserved or held idle. The scheduler makes one pass over the
+  queue, so any worker audio cannot use — too little unified memory, model not
+  downloaded, not enough free RAM yet — is handed to the queued image batch in
+  that same pass. Behavior with no audio queued is unchanged.
+- The audio-capable pool follows the model, not a hardcoded number: the
+  existing memory governor already refuses a Mac below the model's declared
+  `min_unified_memory_gb`, so a future audio model with a different footprint
+  needs no code change. The pool is flat — no machine size is preferred within
+  it.
+- The audio class is derived from the modality table, so any future
+  sound-producing modality inherits the same priority. Render keeps its
+  existing top priority; scarcity and fair-turn ordering are unchanged within
+  each class.
+
 ## [2.10.0] — 2026-08-19
 
 ### Added — retire unused legacy Studio services

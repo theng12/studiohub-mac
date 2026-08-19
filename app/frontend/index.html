@@ -1186,6 +1186,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.11.0", date: "2026-08-20", items: [
+    "Audio now has priority on the fleet. When a Mac finishes a job and voice or music work is queued, its next job is audio instead of image.",
+    "Nothing is interrupted and no Mac is held idle. A generation already running finishes first, so audio waits at most one image generation, and any Mac audio cannot use — too little memory, model not downloaded — takes the queued image job straight away.",
+    "The audio-capable machines are decided by the model's own memory requirement, not a fixed size, and are treated equally. Each time audio goes ahead of waiting image work the Hub logs one line naming the machine and both batches.",
+  ]},
   { v: "2.10.0", date: "2026-08-19", items: [
     "Controllers can now retire unused Music, Chat, Video, and Render services one at a time or sequentially across the fleet. Retirement turns that Studio's updater and routing Off, then verifies its startup server and watchdog are unloaded.",
     "Image and Voice are protected from retirement. Launchers, Git checkouts, models, caches, outputs, settings, jobs, and credentials are preserved, and failed or offline Macs do not stop later batch targets.",
