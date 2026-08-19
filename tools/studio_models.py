@@ -63,6 +63,9 @@ STUDIOS = {
 
 MANIFEST_NAME = "MANIFEST.json"
 STT_FAMILY = "Whisper (speech-to-text)"
+QWEN_06B_BASE = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit"
+QWEN_QUALITY_WHISPER = "mlx-community/whisper-large-v3-turbo"
+EIGHT_GB_VOICE_ALLOWLIST = frozenset({QWEN_06B_BASE, QWEN_QUALITY_WHISPER})
 PINOKIO_VERSION = "8.0.40"
 PINOKIO_DMG = f"Pinokio-{PINOKIO_VERSION}-arm64.dmg"
 PINOKIO_DMG_URL = (
@@ -465,6 +468,9 @@ def stage_bootstrap_kit(volume_root: Path, *, plan_only: bool) -> None:
          "1 Install Pinokio and Studios.command"),
         (repo / "tools/2 Copy Models to This Mac.command",
          "2 Copy Models to This Mac.command"),
+        (repo / "tools/repair_startup.py", "repair_startup.py"),
+        (repo / "tools/4 Repair Studio Startup.command",
+         "4 Repair Studio Startup.command"),
     )
     print(f"bootstrap: Pinokio {PINOKIO_VERSION} + Hub/Image/Voice installer -> {kit}")
     if plan_only:
@@ -571,6 +577,20 @@ def resolve_floor(repo: str, *sources: dict) -> float | None:
     """
     known = [s[repo] for s in sources if s.get(repo) is not None]
     return max(known) if known else None
+
+
+def restore_floor(studio: str, repo: str, ram: float, floor: float | None) -> float | None:
+    """Apply the owner's exact low-memory Voice placement decision."""
+    if studio == "voice" and ram < 12 and repo == QWEN_06B_BASE:
+        return 8.0
+    return floor
+
+
+def restore_allowed(studio: str, repo: str, ram: float, restore_all: bool) -> bool:
+    """Keep ordinary RAM restore broad, but make the 8 GB Voice tier exact."""
+    if restore_all or studio != "voice" or ram >= 12:
+        return True
+    return repo in EIGHT_GB_VOICE_ALLOWLIST
 
 
 # ------------------------------------------------------------------- stage
@@ -752,6 +772,10 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
         want, defer, unqualified = [], [], []
         for e in staged:
             floor = resolve_floor(e["repo"], local_floors, ssd_floors)
+            floor = restore_floor(name, e["repo"], ram, floor)
+            if not restore_allowed(name, e["repo"], ram, restore_all):
+                defer.append((e, floor))
+                continue
             if restore_all:
                 want.append((e, floor))
             elif floor is None:

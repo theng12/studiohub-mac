@@ -10,14 +10,10 @@ an 8 GB Mac can still accept other modalities such as image generation.
 from __future__ import annotations
 
 
-# Qwen3-TTS 0.6B Base technically completed an 8 GB qualification run, but it
-# reached urgent memory pressure, fell below 0.75 GB available, and used more
-# than 2.2 GB swap. The safe commercial floor is therefore 16 GB. CustomVoice
-# remains a separate unapproved model identity and keeps its existing local
-# testing floor until it receives its own quality and hardware decision.
+# The owner selected Qwen3-TTS 0.6B Base as the 8 GB production voice-cloning
+# tier. Keep the measured live-headroom guard below; CustomVoice remains a
+# separate preset-only identity and is not part of the 8 GB SSD allowlist.
 _MIN_MACHINE_MEMORY_GB_BY_REPO_PREFIX = {
-    "mlx-community/qwen3-tts-12hz-0.6b-base-8bit": 16.0,
-    "qwen/qwen3-tts-12hz-0.6b-base": 16.0,
     "mlx-community/qwen3-tts-12hz-0.6b-": 8.0,
     "qwen/qwen3-tts-12hz-0.6b-": 8.0,
 }

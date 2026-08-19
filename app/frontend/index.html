@@ -1186,6 +1186,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.11.1", date: "2026-08-20", items: [
+    "Image, Voice, and Hub now start independently. Hub no longer waits on false Pinokio dependencies when a Studio is already owned by its launchd startup service.",
+    "The SSD includes a safe Repair Studio Startup step for existing Macs. It changes startup ownership only; it does not start, stop, delete, reinstall, or re-enroll anything.",
+    "On 8 GB Macs, normal SSD restore now copies only Qwen3-TTS 0.6B Base plus its required Whisper quality checker for Voice. CustomVoice and unrelated audio generators are skipped.",
+  ]},
   { v: "2.11.0", date: "2026-08-20", items: [
     "Audio now has priority on the fleet. When a Mac finishes a job and voice or music work is queued, its next job is audio instead of image.",
     "Nothing is interrupted and no Mac is held idle. A generation already running finishes first, so audio waits at most one image generation, and any Mac audio cannot use — too little memory, model not downloaded — takes the queued image job straight away.",

@@ -80,25 +80,25 @@ def test_qwen_production_floor_is_identified_as_hub_default(reset):
     assert policy["default_reason"] == "Hub production qualification"
 
 
-def test_qwen_base_uses_measured_16gb_commercial_floor(reset):
+def test_qwen_base_uses_owner_approved_8gb_floor_with_live_headroom_guard(reset):
     repo = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit"
     entry = {"repo": repo, "min_unified_memory_gb": 8}
 
     policy = memory_admission.describe(repo, entry)
 
     assert policy["catalog_min_total_memory_gb"] == 8
-    assert policy["effective_min_total_memory_gb"] == 16
+    assert policy["effective_min_total_memory_gb"] == 8
     assert policy["effective_min_free_memory_gb"] == 3.2
     assert policy["source"] == "fleet_default"
     assert policy["default_reason"] == "Hub production qualification"
     requirements = broker._admission_requirements(repo, entry)
-    assert requirements == {"min_total": 16, "min_free": 3.2}
+    assert requirements == {"min_total": 8, "min_free": 3.2}
     assert broker._memory_gate(
         requirements, {"total_gb": 8, "available_gb": 4}
-    )[0] == "skip"
-    assert broker._memory_gate(
-        requirements, {"total_gb": 16, "available_gb": 4}
     )[0] == "run"
+    assert broker._memory_gate(
+        requirements, {"total_gb": 8, "available_gb": 2.5}
+    )[0] == "wait"
 
 
 def test_models_api_and_ram_admission_controls(seed_catalog, authed):

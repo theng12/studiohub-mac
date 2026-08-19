@@ -15,7 +15,7 @@ def load_tool(name: str):
     return module
 
 
-def test_bootstrap_autolaunch_is_one_dependency_graph(tmp_path):
+def test_bootstrap_autolaunch_is_independent_for_every_studio(tmp_path):
     bootstrap = load_tool("fleet_bootstrap.py")
     targets = {}
     for name in bootstrap.AUTOLAUNCH:
@@ -29,10 +29,11 @@ def test_bootstrap_autolaunch_is_one_dependency_graph(tmp_path):
     image = (targets["imagestudio-mac"] / "ENVIRONMENT").read_text()
     voice = (targets["voicestudio-mac"] / "ENVIRONMENT").read_text()
     hub = (targets["studiohub-mac"] / "ENVIRONMENT").read_text()
-    assert "PINOKIO_SCRIPT_AUTOLAUNCH_ENABLED=false" in image
-    assert "PINOKIO_SCRIPT_AUTOLAUNCH_ENABLED=false" in voice
+    assert "PINOKIO_SCRIPT_AUTOLAUNCH_ENABLED=true" in image
+    assert "PINOKIO_SCRIPT_AUTOLAUNCH_ENABLED=true" in voice
     assert "PINOKIO_SCRIPT_AUTOLAUNCH_ENABLED=true" in hub
-    assert "PINOKIO_SCRIPT_REQUIRES=imagestudio-mac,voicestudio-mac" in hub
+    assert "PINOKIO_SCRIPT_REQUIRES=" in hub
+    assert "imagestudio-mac,voicestudio-mac" not in hub
     assert "HF_HOME=./cache/HF_HOME" in image
 
 
@@ -126,6 +127,55 @@ def test_offline_restore_copies_without_contacting_studio(tmp_path, monkeypatch)
 
     copied = studio / "cache/HF_HOME/hub" / source.name / "blobs/model.bin"
     assert copied.read_bytes() == b"model weights"
+
+
+def test_8gb_offline_restore_copies_only_qwen_base_and_required_whisper(
+    tmp_path, monkeypatch
+):
+    models = load_tool("studio_models.py")
+    root = tmp_path / "studio-models"
+    packages = [
+        ("mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit", 16),
+        ("mlx-community/whisper-large-v3-turbo", None),
+        ("mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit", 8),
+        ("mlx-community/OmniVoice-bfloat16", 8),
+    ]
+    entries = []
+    for repo, floor in packages:
+        dirname = "models--" + repo.replace("/", "--")
+        source = root / "voice" / "Voice" / dirname
+        source.mkdir(parents=True)
+        (source / "weights.bin").write_bytes(repo.encode())
+        entries.append({
+            "repo": repo,
+            "dir": dirname,
+            "family": "Voice",
+            "floor_gb": floor,
+            "bytes": models.dir_bytes(source),
+        })
+    (root / "MANIFEST.json").write_text(json.dumps({
+        "studios": {
+            "voice": {"packages": entries},
+            "image": {"packages": []},
+        },
+        "voices": [],
+    }))
+    home = tmp_path / "pinokio"
+    studio = home / "api/voicestudio-mac"
+    studio.mkdir(parents=True)
+    (studio / "ENVIRONMENT").write_text("HF_HOME=./cache/HF_HOME\n")
+    monkeypatch.setattr(models, "machine_memory_gb", lambda: 8.6)
+
+    models.do_restore(
+        root, plan_only=False, prune=False, restore_all=False, force=False,
+        include_unqualified=False, keep_non_cloning=False, pinokio_home=home,
+    )
+
+    hub = studio / "cache/HF_HOME/hub"
+    assert (hub / "models--mlx-community--Qwen3-TTS-12Hz-0.6B-Base-8bit").is_dir()
+    assert (hub / "models--mlx-community--whisper-large-v3-turbo").is_dir()
+    assert not (hub / "models--mlx-community--Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit").exists()
+    assert not (hub / "models--mlx-community--OmniVoice-bfloat16").exists()
 
 
 def test_model_root_prefers_current_label_and_can_find_renamed_manifest(tmp_path):
@@ -231,6 +281,8 @@ def test_restaging_preserves_legacy_ssd_logs(tmp_path, monkeypatch):
     assert (kit / ".terranash-bootstrap.command").stat().st_mode & 0o555 == 0o555
     assert (kit / "1 Install Pinokio and Studios.command").is_file()
     assert (kit / "2 Copy Models to This Mac.command").is_file()
+    assert (kit / "4 Repair Studio Startup.command").is_file()
+    assert (kit / "repair_startup.py").is_file()
     assert (kit / "studio_models.py").is_file()
     assert (tmp_path / "READ-ME-FIRST.md").stat().st_mode & 0o444 == 0o444
 
@@ -315,10 +367,8 @@ def test_legacy_checkout_name_is_used_for_scripts_and_startup_graph(
     bootstrap.configure_autolaunch(targets, dry_run=False)
 
     hub_environment = (targets["studiohub-mac"] / "ENVIRONMENT").read_text()
-    assert (
-        "PINOKIO_SCRIPT_REQUIRES=imagestudio-mac.git,voicestudio-mac.git"
-        in hub_environment
-    )
+    assert "PINOKIO_SCRIPT_REQUIRES=" in hub_environment
+    assert "imagestudio-mac.git,voicestudio-mac.git" not in hub_environment
 
 
 def test_stage_includes_every_cached_local_catalog_model(tmp_path, monkeypatch, capsys):

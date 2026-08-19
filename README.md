@@ -726,12 +726,20 @@ the owner password signs every remembered browser out immediately.
 
 For a clean Apple-silicon Mac, the fleet SSD can install Pinokio, Studio Hub,
 Image Studio, Voice Studio, both generation environments, the RAM-qualified
-model set, SHA-256-bound shared voice references, and the Pinokio-owned startup
-graph before performing the Agent join. Staging is additive: unchanged packages
+model set, SHA-256-bound shared voice references, and independent Pinokio
+startup settings before performing the Agent join. Staging is additive: unchanged packages
 are skipped and an offline Studio cannot erase previously staged payloads.
 Prepare it once with `python3 tools/studio_models.py stage`, then follow
 [`SSD-COPY-README.md`](SSD-COPY-README.md). The permanent Controller registration
 code is prompted securely on the new Mac and is never stored on the SSD.
+
+On an 8 GB Mac, normal SSD restore uses an exact Voice allowlist: Qwen3-TTS
+0.6B Base for cloning plus `mlx-community/whisper-large-v3-turbo` for its
+quality check. The preset-only CustomVoice checkpoint and unrelated Voice
+generators are not copied. Run **4 Repair Studio Startup.command** on an
+existing Mac if Hub waits for Image/Voice or Pinokio and launchd both try to
+own a Studio; the repair changes only `ENVIRONMENT` startup keys and does not
+touch processes, services, models, jobs, or enrollment.
 
 Open **Remote → Machine mode** and choose the role this Mac should perform. The
 mode is always visible: **Standalone** is orange, **Agent** is green, and

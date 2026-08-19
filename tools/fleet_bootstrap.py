@@ -60,16 +60,18 @@ APPS = (
 AUTOLAUNCH = {
     "imagestudio-mac": {
         "PINOKIO_SCRIPT_AUTOLAUNCH": "start.js",
-        "PINOKIO_SCRIPT_AUTOLAUNCH_ENABLED": "false",
+        "PINOKIO_SCRIPT_AUTOLAUNCH_ENABLED": "true",
+        "PINOKIO_SCRIPT_REQUIRES": "",
     },
     "voicestudio-mac": {
         "PINOKIO_SCRIPT_AUTOLAUNCH": "start.js",
-        "PINOKIO_SCRIPT_AUTOLAUNCH_ENABLED": "false",
+        "PINOKIO_SCRIPT_AUTOLAUNCH_ENABLED": "true",
+        "PINOKIO_SCRIPT_REQUIRES": "",
     },
     "studiohub-mac": {
         "PINOKIO_SCRIPT_AUTOLAUNCH": "start.js",
         "PINOKIO_SCRIPT_AUTOLAUNCH_ENABLED": "true",
-        "PINOKIO_SCRIPT_REQUIRES": "imagestudio-mac,voicestudio-mac",
+        "PINOKIO_SCRIPT_REQUIRES": "",
     },
 }
 
@@ -410,11 +412,6 @@ def update_environment(path: Path, values: dict[str, str]) -> None:
 def configure_autolaunch(targets: dict[str, Path], *, dry_run: bool) -> None:
     for name, values in AUTOLAUNCH.items():
         values = dict(values)
-        if name == "studiohub-mac":
-            values["PINOKIO_SCRIPT_REQUIRES"] = ",".join(
-                targets[studio].name
-                for studio in ("imagestudio-mac", "voicestudio-mac")
-            )
         path = targets[name] / "ENVIRONMENT"
         print(f"  {name}: {', '.join(f'{k}={v}' for k, v in values.items())}")
         if not dry_run:

@@ -125,6 +125,37 @@ if [ "$LOADED_VERSION" != "$EXPECTED_VERSION" ]; then
   echo "   Loaded version: ${LOADED_VERSION:-not responding}. Check logs/service/server.err.log."
   exit 1
 fi
+
+# launchd now owns this app. Disable only its competing Pinokio autolaunch;
+# do not create cross-Studio dependencies or touch any running sibling.
+"$ROOT/conda_env/bin/python" - "$ROOT/ENVIRONMENT" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+values = {
+    "PINOKIO_SCRIPT_AUTOLAUNCH": "start.js",
+    "PINOKIO_SCRIPT_AUTOLAUNCH_ENABLED": "false",
+    "PINOKIO_SCRIPT_REQUIRES": "",
+}
+lines = path.read_text().splitlines() if path.exists() else []
+remaining = dict(values)
+output = []
+for line in lines:
+    key = line.split("=", 1)[0].strip() if "=" in line and not line.lstrip().startswith("#") else ""
+    if key in remaining:
+        output.append(f"{key}={remaining.pop(key)}")
+    else:
+        output.append(line)
+if remaining:
+    if output and output[-1]:
+        output.append("")
+    output.extend(f"{key}={value}" for key, value in remaining.items())
+temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+temporary.write_text("\n".join(output).rstrip() + "\n")
+temporary.replace(path)
+PY
 touch "$ROOT/service/.installed"
 
 echo ""

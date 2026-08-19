@@ -10,6 +10,31 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.11.1] — 2026-08-20
+
+### Fixed — independent Studio startup and exact 8 GB Voice stocking
+
+- Clean-Mac bootstrap no longer declares Image and Voice as Hub launch
+  dependencies. Image, Voice, and Hub now autolaunch independently, so a
+  launchd-owned Studio cannot leave Hub waiting forever for a second Pinokio
+  instance that its own service guard correctly refuses to start.
+- Installing Hub as a startup service atomically disables only Hub's competing
+  Pinokio autolaunch. The SSD now includes an idempotent **Repair Studio
+  Startup** step that applies the same ownership rule to existing canonical or
+  legacy `.git` checkouts without starting, stopping, deleting, or reinstalling
+  an app.
+- Normal restore onto an 8 GB Mac now stocks exactly Qwen3-TTS 0.6B Base and
+  its required Whisper quality checker for Voice. CustomVoice and every other
+  Voice generator are skipped; the explicit advanced restore-all path remains
+  available. Hub keeps the 3.2 GB live-free-memory admission guard.
+
+### Compatibility and safety
+
+- Image model selection and 12 GB-or-larger Voice tiers are unchanged. The
+  startup repair preserves environments, models, caches, jobs, enrollment,
+  service markers, and running processes. No fleet machine was repaired or
+  updated as part of this release.
+
 ## [2.11.0] — 2026-08-20
 
 ### Added — audio takes the next free worker
