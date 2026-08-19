@@ -10,6 +10,47 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.11.2] — 2026-08-20
+
+### Changed — image work goes to the fastest free Mac, not the smallest
+
+- Image dispatch now prefers the fastest free worker. Previously it used
+  best-fit placement and sent an image to the *smallest* free Mac, so a free
+  8 GB M1 was chosen ahead of a free 16 GB M4 at 1.6–2.1x the wall clock:
+  measured 50–60 s/image on M4 · 16 GB, ~90 s on M2 · 8 GB, and 110–120 s on
+  M1 · 8 GB.
+- **Why documented, tested behaviour is being reversed.** Best-fit existed for
+  one reason: to keep scarce high-memory workers free for audio without
+  formally reserving them. Release 2.11.0 does that job properly — audio now
+  takes the next free capable worker outright — so best-fit's benefit is
+  already delivered elsewhere, and keeping it was simply a tax on every image.
+  2.11.1 reinforced this by making Qwen3-TTS 0.6B Base a production voice tier
+  on 8 GB Macs: those machines are no longer image-only, so filling them with
+  slow image work costs more than it did when best-fit was written.
+- "Fastest" is ranked by Apple chip generation first, then unified memory —
+  the same shape as the `render_score` Render Studio already publishes in
+  `/api/health` (`generation * 100 + memory_gb`). This is stated in-source as
+  a **proxy, not a measurement**: nothing in the fleet reports
+  seconds-per-image today, and the ranking should be replaced the day Image
+  Studio publishes a real throughput figure. RAM alone is not speed — an
+  M2 · 16 GB and an M4 · 16 GB have equal memory and unequal throughput.
+
+### Compatibility and safety
+
+- **Audio ordering is unchanged.** The new rule is image-scoped on purpose.
+  Audio must never gain a preference for high-memory machines — 24 GB measured
+  *slower* for TTS — so every Mac clearing the model's declared floor stays an
+  equal audio candidate. Video and render dispatch are also untouched; render
+  keeps ranking by its reported `render_score`.
+- **Preference, not a filter.** Every healthy worker remains eligible, so a
+  slow Mac still takes the job when it is the only one free and the
+  work-conserving property from 2.11.0 does not regress. A worker with no
+  hardware telemetry simply sorts last.
+- No memory number is hardcoded. Admission still comes from the model's
+  `min_unified_memory_gb` through the existing memory governor; this release
+  changes ranking only, never eligibility.
+- Source-only release. No fleet machine was restarted, updated, or repaired.
+
 ## [2.11.1] — 2026-08-20
 
 ### Fixed — independent Studio startup and exact 8 GB Voice stocking

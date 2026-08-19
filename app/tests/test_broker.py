@@ -1009,6 +1009,103 @@ def test_local_inference_workers_prefer_the_smallest_available_ram_tier(
     ]
 
 
+def _register_remote_workers(monkeypatch, modality, port, hardware):
+    """Register one remote worker per hardware row and publish its host stats."""
+    mon = broker._monitor()
+    workers = [{"id": f"{modality}@{machine}", "modality": modality,
+                "machine": machine, "host": f"10.0.0.{index + 1}", "port": port}
+               for index, machine in enumerate(hardware)]
+    mon.registry.extend(workers)
+    for worker in workers:
+        mon.status[worker["id"]] = {"status": "up"}
+    cached = {machine: {"host": host} for machine, host in hardware.items()}
+    monkeypatch.setattr(broker.peers, "cached", lambda machine: cached.get(machine))
+    return workers
+
+
+def test_image_workers_prefer_the_fastest_free_machine(reset, monkeypatch):
+    """Reverses best-fit for image: the M4 wins even though it has the most RAM.
+
+    The owner measured 50-60 s/image on an M4/16 GB against 110-120 s on an
+    M1/8 GB, so smallest-first cost roughly double the wall clock per image.
+    """
+    _register_remote_workers(monkeypatch, "image", 47868, {
+        "mac-m1-8": {"total_gb": 8, "available_gb": 6, "chip": "Apple M1"},
+        "mac-m4-16": {"total_gb": 16, "available_gb": 12, "chip": "Apple M4"},
+        "mac-m2-8": {"total_gb": 8, "available_gb": 6, "chip": "Apple M2"},
+    })
+
+    eligible = broker._eligible_studios("image", "pool")
+
+    assert [studio["machine"] for studio in eligible] == [
+        "mac-m4-16", "mac-m2-8", "mac-m1-8",
+    ]
+
+
+def test_image_speed_ranking_prefers_the_newer_chip_at_equal_memory(reset, monkeypatch):
+    """RAM is not speed: equal memory, and the newer generation still wins."""
+    _register_remote_workers(monkeypatch, "image", 47868, {
+        "mac-m2-16": {"total_gb": 16, "available_gb": 12, "chip": "Apple M2 Pro"},
+        "mac-m4-16": {"total_gb": 16, "available_gb": 12, "chip": "Apple M4"},
+    })
+
+    eligible = broker._eligible_studios("image", "pool")
+
+    assert [studio["machine"] for studio in eligible] == ["mac-m4-16", "mac-m2-16"]
+
+
+def test_image_speed_ranking_is_a_preference_not_a_filter(reset, monkeypatch):
+    """Every healthy worker stays eligible, including one with no chip evidence.
+
+    A slow or unidentified Mac must still take the job when it is the only one
+    free — the work-conserving property shipped in 2.11.0 must not regress.
+    """
+    _register_remote_workers(monkeypatch, "image", 47868, {
+        "mac-unknown": {"total_gb": 16, "available_gb": 12},
+        "mac-m1-8": {"total_gb": 8, "available_gb": 6, "chip": "Apple M1"},
+        "mac-m4-16": {"total_gb": 16, "available_gb": 12, "chip": "Apple M4"},
+    })
+
+    eligible = broker._eligible_studios("image", "pool")
+
+    assert [studio["machine"] for studio in eligible] == [
+        "mac-m4-16", "mac-m1-8", "mac-unknown",
+    ]
+
+
+def test_audio_worker_order_is_unchanged_by_the_image_speed_ranking(
+    reset, monkeypatch,
+):
+    """Audio must never gain a preference for fast or high-memory machines.
+
+    The owner measured 24 GB as *slower* for TTS, so this asserts the exact
+    pre-2.11.2 ordering: best-fit by total memory, chip generation ignored.
+    """
+    _register_remote_workers(monkeypatch, "voice", 47869, {
+        "mac-m4-24": {"total_gb": 24, "available_gb": 20, "chip": "Apple M4"},
+        "mac-m1-8": {"total_gb": 8, "available_gb": 6, "chip": "Apple M1"},
+        "mac-m2-16": {"total_gb": 16, "available_gb": 12, "chip": "Apple M2"},
+    })
+
+    eligible = broker._eligible_studios("voice", "pool")
+
+    assert [studio["machine"] for studio in eligible] == [
+        "mac-m1-8", "mac-m2-16", "mac-m4-24",
+    ]
+
+
+def test_audio_ordering_ignores_chip_generation_at_equal_memory(reset, monkeypatch):
+    """Equal-RAM audio workers stay a flat pool ordered only by studio id."""
+    _register_remote_workers(monkeypatch, "voice", 47869, {
+        "mac-a-m1": {"total_gb": 16, "available_gb": 12, "chip": "Apple M1"},
+        "mac-b-m4": {"total_gb": 16, "available_gb": 12, "chip": "Apple M4"},
+    })
+
+    eligible = broker._eligible_studios("voice", "pool")
+
+    assert [studio["id"] for studio in eligible] == ["voice@mac-a-m1", "voice@mac-b-m4"]
+
+
 def test_constrained_voice_queue_gets_next_high_memory_worker_before_kokoro(
     reset,
 ):

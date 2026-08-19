@@ -359,6 +359,41 @@ def _studio_total_memory_gb(studio: dict) -> float:
     return total if total > 0 else float("inf")
 
 
+# Apple chip generation out of the marketing brand string ("Apple M4 Pro").
+_CHIP_GENERATION = re.compile(r"\bM([1-9])\b")
+
+
+def _studio_speed_score(studio: dict) -> float:
+    """Fastest-first ranking for image workers. A PROXY, not a measurement.
+
+    Nothing in the fleet measures image throughput: Image Studio's /api/health
+    publishes readiness and memory, never seconds-per-image. The one existing
+    speed signal, Render Studio's ``render_score``, is itself this same proxy
+    (``generation * 100 + memory_gb``), so this mirrors its shape rather than
+    inventing a scale.
+
+    Chip generation dominates and is therefore weighted far above RAM. The
+    owner's measured figures: M4/16 GB ~50-60 s/image, M2/8 GB ~90 s,
+    M1/8 GB ~110-120 s — a 1.6-2.1x spread that RAM alone does not explain,
+    since an M2/16 and an M4/16 have equal memory and unequal throughput.
+
+    Replace this whole function the day Image Studio reports a real
+    seconds-per-image figure in health; until then the proxy stands.
+
+    This ranks only. It never admits or excludes: the memory floor still comes
+    from the model's ``min_unified_memory_gb`` via _memory_gate(), and a worker
+    with no hardware telemetry scores 0, sorts last, and stays eligible.
+    """
+    host = _host_for_studio(studio) or {}
+    match = _CHIP_GENERATION.search(str(host.get("chip") or "").upper())
+    generation = int(match.group(1)) if match else 0
+    try:
+        memory_gb = max(0.0, float(host.get("total_gb") or 0.0))
+    except (TypeError, ValueError):
+        memory_gb = 0.0
+    return generation * 100 + memory_gb
+
+
 def _batch_memory_constraint_gb(batch: dict) -> float:
     """Highest cache-observed admission floor for a queued exact model.
 
@@ -1401,13 +1436,33 @@ def _eligible_studios(modality: str, routing: str) -> list[dict]:
                    .get("render_score", 0)),
             s["id"],
         ))
+    elif modality == "image":
+        # Fastest-free-worker placement. Image work is the fleet's slowest
+        # per-item class and the spread between machines is large, so sending
+        # an image to the smallest free Mac cost 1.6-2.1x the wall clock for
+        # no remaining benefit — see _studio_speed_score() for the figures.
+        #
+        # This deliberately reverses the best-fit rule below. Best-fit existed
+        # to keep high-memory workers free for audio without reserving them;
+        # 2.11.0 replaced that with audio taking the next free capable worker
+        # outright, so best-fit became a tax on every image for a benefit
+        # already delivered elsewhere.
+        #
+        # Preference only, never a filter: every healthy worker stays in the
+        # list, so a slow Mac still takes the job when it is the only one free.
+        out.sort(key=lambda studio: (-_studio_speed_score(studio), studio["id"]))
     else:
-        # Best-fit placement preserves scarce high-memory workers without
-        # reserving them while the queue is empty. A flexible 8 GB workload
-        # therefore fills an idle 8 GB Mac before a 16/24 GB Mac, while every
-        # larger worker remains an eligible fallback when demand exceeds the
-        # smaller tier's capacity. Unknown telemetry sorts last but is not
-        # blocked; the worker's own admission guard remains authoritative.
+        # Audio (and video) keep best-fit placement, unchanged. Audio must
+        # never gain a preference for high-memory machines — the owner measured
+        # 24 GB as *slower* for TTS — so any Mac clearing the model's declared
+        # floor is an equal audio candidate and the fastest-first rule above is
+        # deliberately image-scoped rather than global.
+        #
+        # Best-fit also still fills an idle small Mac before a large one for a
+        # flexible workload, while every larger worker remains an eligible
+        # fallback when demand exceeds the smaller tier's capacity. Unknown
+        # telemetry sorts last but is not blocked; the worker's own admission
+        # guard remains authoritative.
         out.sort(key=lambda studio: (
             _studio_total_memory_gb(studio), studio["id"],
         ))

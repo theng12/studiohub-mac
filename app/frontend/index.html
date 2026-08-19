@@ -1186,6 +1186,12 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.11.2", date: "2026-08-20", items: [
+    "Image jobs now go to the fastest free Mac instead of the smallest. Sending an image to a free 8 GB M1 rather than a free 16 GB M4 cost roughly double the wall clock (about 110-120 seconds against 50-60).",
+    "The old smallest-first rule existed to keep bigger Macs free for audio. Release 2.11.0 already does that properly by giving audio the next free capable worker, so smallest-first had become a pure cost on every image.",
+    "Speed is ranked by Apple chip generation first, then memory - the same measure Render Studio already reports. It is an honest stand-in, not a benchmark, and will be replaced when Image Studio reports real seconds-per-image.",
+    "Audio is deliberately unchanged: it must never prefer big Macs, because 24 GB measured slower for speech. Every healthy Mac still stays eligible for image work, so a slow machine takes the job when it is the only one free.",
+  ]},
   { v: "2.11.1", date: "2026-08-20", items: [
     "Image, Voice, and Hub now start independently. Hub no longer waits on false Pinokio dependencies when a Studio is already owned by its launchd startup service.",
     "The SSD includes a safe Repair Studio Startup step for existing Macs. It changes startup ownership only; it does not start, stop, delete, reinstall, or re-enroll anything.",
