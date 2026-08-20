@@ -289,19 +289,17 @@ def test_restaging_preserves_legacy_ssd_logs(tmp_path, monkeypatch):
     assert (tmp_path / "READ-ME-FIRST.md").stat().st_mode & 0o444 == 0o444
 
 
-def test_ssd_guide_separates_machine_paths_and_stays_short():
+def test_ssd_guide_points_to_the_canonical_three_stage_kit_and_stays_short():
     guide = (ROOT / "SSD-COPY-README.md").read_text()
     for heading in (
-        "## NEW MACHINE — two clicks",
-        "## EXISTING MACHINE — models are missing",
-        "## JOIN CONTROLLER — later",
-        "## REPAIR",
-        "## SSD MAINTAINER — main Mac only",
+        "## New Mac",
+        "## Refresh the mounted SSD",
     ):
         assert heading in guide
-    assert "terranash-bootstrap/logs" in guide
-    assert ".shutdownStall" in guide
-    assert len(guide.splitlines()) < 90
+    assert "Tailscale separately from the Mac App Store" in guide
+    assert "ssd_bootstrap/" in guide
+    assert "sync_ssd_bootstrap.py --volume /Volumes/ugreen-terranash --check" in guide
+    assert len(guide.splitlines()) < 50
 
 
 def test_bootstrap_requires_one_split_mode():

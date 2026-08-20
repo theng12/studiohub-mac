@@ -10,6 +10,30 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.11.4] — 2026-08-20
+
+### Changed — one simpler, Git-backed fleet SSD
+
+- SSD Stage 1 now installs exactly Pinokio, Yam Display, and Latest from three
+  verified DMGs. Tailscale is no longer bundled or installed; the owner installs
+  it from the Mac App Store so the App Store owns its updates.
+- The complete three-stage SSD scripts, tests, ordinary-app manifest, and owner
+  instructions now have one canonical source under `ssd_bootstrap/` in this
+  repository. A deterministic sync/check tool refreshes the mounted SSD and
+  regenerates its checksum inventory instead of maintaining a second hand-edited
+  copy.
+- Stage 2 fast-forwards an existing matching Studio checkout only when it is a
+  clean `main` branch tracking `origin/main`. This prevents both stale installs
+  and accidental overwrites of local or feature-branch work.
+
+### Safety
+
+- Sync preserves model packages, remaining installer DMGs, logs, backups, and
+  unrelated SSD contents. It removes only explicitly retired kit artifacts,
+  including the standalone Tailscale package.
+- Source and SSD maintenance only. No application, Studio, model, enrollment,
+  generation, service, or fleet machine was changed.
+
 ## [2.11.3] — 2026-08-20
 
 ### Fixed — fresh Standalone startup no longer stalls

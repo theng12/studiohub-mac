@@ -1186,6 +1186,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.11.4", date: "2026-08-20", items: [
+    "New-Mac SSD Stage 1 is simpler: it installs only Pinokio, Yam Display, and Latest. Install Tailscale from the Mac App Store so its updates stay with the App Store.",
+    "The complete three-stage SSD kit now has one canonical Git source plus one sync/check command. Fixes can no longer be pushed to Studio Hub while leaving a different hand-edited installer on the drive.",
+    "Existing Studio checkouts update only when they are clean main branches tracking origin/main. Models, installer DMGs, logs, backups, enrollment, and fleet machines remain untouched.",
+  ]},
   { v: "2.11.3", date: "2026-08-20", items: [
     "A fresh Standalone Hub now starts normally without a fleet enrollment token. The empty repair scheduler no longer loops at Waiting for application startup when no repair work exists.",
     "Rerunning SSD stage 1 now fast-forwards existing matching Studio checkouts, so published fixes are installed instead of silently leaving older code in place.",

@@ -1,0 +1,85 @@
+from __future__ import annotations
+
+import os
+import hashlib
+import json
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+
+KIT_ROOT = Path(__file__).resolve().parents[1]
+
+
+class CommandWrapperTests(unittest.TestCase):
+    def run_wrapper(self, name: str, *arguments: str, input_text: str = "") -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as value:
+            env = os.environ.copy()
+            env["HOME"] = value
+            env["TERRANASH_NONINTERACTIVE"] = "1"
+            config = Path(value) / ".pinokio/config.json"
+            config.parent.mkdir(parents=True)
+            config.write_text('{"home": "' + str(Path(value) / "pinokio") + '"}')
+            return subprocess.run(
+                [str(KIT_ROOT / name), *arguments],
+                text=True,
+                input=input_text,
+                capture_output=True,
+                env=env,
+            )
+
+    def test_stage_one_is_independent(self) -> None:
+        with tempfile.TemporaryDirectory() as value:
+            root = Path(value)
+            apps = []
+            for index in range(3):
+                filename = f"Fixture-{index}.dmg"
+                path = root / filename
+                path.write_bytes(f"fixture {index}".encode())
+                apps.append({
+                    "id": f"fixture-{index}",
+                    "title": f"Fixture {index}",
+                    "version": "1.0",
+                    "filename": filename,
+                    "source_url": "https://example.invalid/fixture",
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    "kind": "dmg",
+                    "app_name": f"TerraNash Test Fixture {index}.app",
+                    "bundle_id": f"com.terranash.fixture{index}",
+                    "team_id": "ABCDEFGHIJ",
+                })
+            manifest = root / "MANIFEST.json"
+            manifest.write_text(json.dumps({"schema_version": 1, "apps": apps}))
+            result = self.run_wrapper(
+                "1 Install Mac Apps.command", "--dry-run", "--manifest", str(manifest)
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = f"{result.stdout}\n{result.stderr}".lower()
+        self.assertIn("install ordinary mac applications", output)
+        self.assertNotIn("xcode-select", output)
+        self.assertNotIn("image studio checkout", output)
+        self.assertNotIn("voice studio checkout", output)
+        self.assertNotIn("copy ram", output)
+
+    def test_stage_two_dry_run_stops_quickly_when_pinokio_is_not_ready(self) -> None:
+        result = self.run_wrapper("2 Install Studios.command", "--dry-run")
+        output = f"{result.stdout}\n{result.stderr}"
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Install Tools", output)
+        self.assertNotIn("Waiting for Pinokio", output)
+
+    def test_model_actions_are_isolated(self) -> None:
+        wrapper = KIT_ROOT / "3 Manage AI Models.command"
+        self.assertTrue(wrapper.is_file())
+        for action in ("stage", "restore", "restore-all"):
+            result = self.run_wrapper(wrapper.name, "--dry-run", "--action", action)
+            output = f"{result.stdout}\n{result.stderr}".lower()
+            self.assertNotIn("install ordinary mac applications", output)
+            self.assertNotIn("pterm download", output)
+            self.assertNotIn("enrollment code", output)
+            self.assertNotIn("--prune", output)
+
+
+if __name__ == "__main__":
+    unittest.main()
