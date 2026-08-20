@@ -46,6 +46,16 @@ def _latest_version(*values: object) -> str | None:
     return max(candidates, default=(None, None))[1]
 
 
+def _dependency_convergence_capability(status: object) -> int | None:
+    if not isinstance(status, dict):
+        return None
+    capabilities = status.get("capabilities")
+    if not isinstance(capabilities, dict):
+        return None
+    value = capabilities.get("dependency_convergence")
+    return 1 if type(value) is int and value == 1 else None
+
+
 def managed_targets(monitor, manifest: dict[str, Any]) -> list[dict[str, Any]]:
     """Return every installed Image/Voice target with its frozen release tuple.
 
@@ -466,10 +476,12 @@ class FleetAutoUpdates:
                 "defer_reason": status.get("defer_reason"),
                 "last_update_result": status.get("last_update_result"),
                 "scheduler_installed": bool((status.get("scheduler") or {}).get("installed")),
+                "dependency_convergence": _dependency_convergence_capability(status),
             }
         except (httpx.HTTPError, ValueError, OSError) as exc:
             return {**base, "supported": False, "healthy": healthy, "mode": "off",
                     "state": "unavailable", "update_available": False,
+                    "dependency_convergence": None,
                     "error": str(exc)[:180]}
 
     async def snapshot(self) -> dict[str, Any]:
@@ -578,6 +590,9 @@ class FleetAutoUpdates:
                 target, "GET", "/api/auto-update/status", item=item)
         except (httpx.TransportError, httpx.TimeoutException, OSError, ValueError):
             existing = {}
+        else:
+            item["dependency_convergence"] = _dependency_convergence_capability(existing)
+            self._persist()
         if existing.get("state") in {"updating", "restarting"}:
             item.update(status="checking", detail="reconnected to the update already running")
             self._persist()
@@ -595,6 +610,7 @@ class FleetAutoUpdates:
         while True:
             status = await self._request_resilient(
                 target, "GET", "/api/auto-update/status", item=item)
+            item.setdefault("dependency_convergence", _dependency_convergence_capability(status))
             if status.get("state") != "checking" or time.monotonic() >= check_deadline:
                 break
             await asyncio.sleep(min(self.poll_seconds, 0.5))

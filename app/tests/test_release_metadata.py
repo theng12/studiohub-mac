@@ -50,3 +50,16 @@ def test_managed_release_examples_pin_published_sibling_merge_commits():
 
     assert "7e6b25a73ff7e8ad4b0c1e838a697341c97eb51b" in integration
     assert "bf13bdf7d9688da87ec6e3a5e89961245beeede0" in integration
+
+
+def test_dependency_convergence_bridge_release_is_truthful():
+    changelog = (ROOT / "CHANGELOG.md").read_text()
+    frontend = (ROOT / "app/frontend/index.html").read_text()
+
+    assert "## [2.11.5] — 2026-08-21" in changelog
+    assert "one fixed dependency-convergence path" in changelog
+    assert "Image 1.30.3" in changelog
+    assert "Voice 2.4.2" in changelog
+    assert "No live update occurred" in changelog
+    assert 'v: "2.11.5"' in frontend
+    assert "dependency-convergence capability" in frontend

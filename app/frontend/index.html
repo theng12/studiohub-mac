@@ -1186,6 +1186,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.11.5", date: "2026-08-21", items: [
+    "Studio Hub now uses one fixed dependency-convergence path for install, local update, and controller update. Fleet inventory and durable update jobs report the exact dependency-convergence capability without guessing from a version.",
+    "Image 1.30.3 and Voice 2.4.2 are dependency-neutral bridges. Older machines continue ordinary updates; the first later release that adds a system dependency must require this exact bridge capability.",
+    "No live update, restart, model, generation, network, fleet, or GenStudio action occurred in this source-only release.",
+  ]},
   { v: "2.11.4", date: "2026-08-20", items: [
     "New-Mac SSD Stage 1 is simpler: it installs only Pinokio, Yam Display, and Latest. Install Tailscale from the Mac App Store so its updates stay with the App Store.",
     "The complete three-stage SSD kit now has one canonical Git source plus one sync/check command. Fixes can no longer be pushed to Studio Hub while leaving a different hand-edited installer on the drive.",

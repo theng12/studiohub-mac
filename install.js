@@ -12,8 +12,7 @@ module.exports = {
           "python": "python=3.12"
         },
         message: [
-          "python -m pip install --upgrade pip",
-          "uv pip install -r requirements.lock"
+          "python -m backend.dependency_convergence base"
         ]
       }
     }

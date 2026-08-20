@@ -37,8 +37,7 @@ module.exports = {
         path: "app",
         conda: { "path": "{{path.resolve(cwd, 'conda_env')}}" },
         message: [
-          "python -m pip install --upgrade pip",
-          "uv pip install -r requirements.lock"
+          "python -m backend.dependency_convergence all-installed"
         ]
       }
     },

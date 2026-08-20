@@ -391,7 +391,7 @@ class AutoUpdater:
             "rollback": str(status.get("rollback") or "")[:32] or None,
             "pending_manual": bool(status.get("pending_manual")),
             "managed_update": self._active_managed_request(status),
-            "capabilities": {"managed_exact_commit": True},
+            "capabilities": {"managed_exact_commit": True, "dependency_convergence": 1},
             "settings": settings,
             "installed_version": installed,
             "update_available": _is_newer_version(latest, installed),
@@ -799,18 +799,24 @@ class AutoUpdater:
         return candidate
 
     def _install_dependencies(self) -> None:
-        python = self._python()
+        if not (self.root / "app" / "backend" / "dependency_convergence.py").is_file():
+            raise UpdateError("Dependency convergence command is unavailable.")
+        self._run(
+            [str(self._python()), "-m", "backend.dependency_convergence", "all-installed"],
+            cwd=self.root / "app", timeout=1200,
+        )
+
+    def _restore_rollback_dependencies(self) -> None:
+        """Restore a pre-bridge checkout only after this updater rolled it back."""
+        requirements = self.root / "app" / "requirements.lock"
         uv = self._pinokio_home() / "bin" / "miniforge" / "bin" / "uv"
-        base = self.root / "app" / self.spec.get("requirements", "requirements.txt")
-        if not base.is_file():
-            raise UpdateError("Base requirements file is missing.")
-        prefix = [str(uv), "pip", "install", "--python", str(python)] if uv.is_file() \
-                 else [str(python), "-m", "pip", "install"]
-        self._run([*prefix, "-r", str(base)], cwd=self.root / "app", timeout=1200)
-        marker = self.spec.get("generation_marker")
-        generation = self.root / "app" / self.spec.get("generation_requirements", "requirements-generation.txt")
-        if marker and generation.is_file() and any((self.root / "conda_env" / "lib").glob(f"python*/site-packages/{marker}")):
-            self._run([*prefix, "-r", str(generation)], cwd=self.root / "app", timeout=1800)
+        if not requirements.is_file() or not uv.is_file():
+            raise UpdateError("Rollback dependency recovery is unavailable.")
+        self._run(
+            [str(uv), "pip", "install", "--python", str(self._python()),
+             "-r", str(requirements)],
+            cwd=self.root / "app", timeout=1200,
+        )
 
     def _verify_import(self, expected: str) -> None:
         module = self.spec.get("verify_module", "backend.main")
@@ -866,7 +872,10 @@ class AutoUpdater:
             # exists in the worktree.
             self._git("read-tree", "--reset", "-u", old_sha)
             self._git("update-ref", "refs/heads/main", old_sha, new_sha)
-            self._install_dependencies()
+            if (self.root / "app" / "backend" / "dependency_convergence.py").is_file():
+                self._install_dependencies()
+            else:
+                self._restore_rollback_dependencies()
             self._verify_import(old_version)
             self._start_mode(mode)
             return self._verify_health(mode, old_version, old_sha)

@@ -151,16 +151,18 @@ async def test_interrupted_job_is_persisted_and_resumed(monkeypatch, tmp_path):
     first = FleetAutoUpdates(FakeMonitor(), FakeHubUpdater(), state_path=state_path)
     job = _job("voice@a")
     job["status"] = "running"
-    job["items"][0].update(status="updating", detail="restarting")
+    job["items"][0].update(status="updating", detail="restarting", dependency_convergence=1)
     first._jobs[job["id"]] = job
     first._persist()
 
     restored = FleetAutoUpdates(FakeMonitor(), FakeHubUpdater(), state_path=state_path)
+    assert restored._jobs["test"]["items"][0]["dependency_convergence"] == 1
     completed = asyncio.Event()
 
     async def finish(resumed_job, known):
         assert resumed_job["items"][0]["status"] == "queued"
         assert "resuming" in resumed_job["items"][0]["detail"]
+        assert resumed_job["items"][0]["dependency_convergence"] == 1
         resumed_job["status"] = "complete"
         completed.set()
 
@@ -238,6 +240,95 @@ def test_inventory_prefers_published_version_over_stale_updater_history(monkeypa
     assert row["installed_version"] == "1.20.3"
     assert row["latest_version"] == "1.20.3"
     assert row["update_available"] is False
+
+
+async def _status_row_with_capability(value, monkeypatch):
+    coordinator = FleetAutoUpdates(FakeMonitor(), FakeHubUpdater())
+
+    async def request(target, method, path, payload=None):
+        if path.endswith("/auto-update/status"):
+            return {
+                "settings": {"mode": "auto"}, "installed_version": "1.20.3",
+                "latest_version": "1.20.3", "update_available": False,
+                "state": "succeeded", "capabilities": {"dependency_convergence": value},
+            }
+        if path == "/api/update-status":
+            return {"app_version": "1.20.3", "latest_version": "1.20.3"}
+        raise AssertionError((target, method, path, payload))
+
+    monkeypatch.setattr(coordinator, "_request", request)
+    return await coordinator._status_one(coordinator._target("voice@a"))
+
+
+def test_inventory_reports_exact_dependency_capability(monkeypatch):
+    row = asyncio.run(_status_row_with_capability(1, monkeypatch))
+
+    assert row["dependency_convergence"] == 1
+
+
+@pytest.mark.parametrize("value", [None, True, 0, 2, "1", {}, []])
+def test_inventory_does_not_coerce_dependency_capability(value, monkeypatch):
+    row = asyncio.run(_status_row_with_capability(value, monkeypatch))
+
+    assert row["dependency_convergence"] is None
+
+
+def test_ordinary_update_records_exact_dependency_capability(monkeypatch):
+    coordinator = FleetAutoUpdates(FakeMonitor(), FakeHubUpdater(), poll_seconds=0, update_timeout=1)
+    started = False
+
+    async def request(target, method, path, payload=None):
+        nonlocal started
+        if path.endswith("/check"):
+            return {"state": "checking"}
+        if path.endswith("/status"):
+            return {
+                "update_available": True,
+                "state": "succeeded" if started else "idle",
+                "capabilities": {"dependency_convergence": 1},
+            }
+        if path.endswith("/readiness"):
+            return {"idle": True, "reasons": []}
+        if path.endswith("/update"):
+            started = True
+            return {"state": "updating"}
+        if path == "/api/health":
+            return {"ok": True, "app_version": "2.0.0"}
+        raise AssertionError((target, method, path, payload))
+
+    monkeypatch.setattr(coordinator, "_request", request)
+    item = _job("voice@a")["items"][0]
+    asyncio.run(coordinator._update_one(coordinator._target("voice@a"), item))
+
+    assert item["status"] == "complete"
+    assert item["dependency_convergence"] == 1
+
+
+def test_ordinary_update_without_capability_still_completes(monkeypatch):
+    coordinator = FleetAutoUpdates(FakeMonitor(), FakeHubUpdater(), poll_seconds=0, update_timeout=1)
+    started = False
+
+    async def request(target, method, path, payload=None):
+        nonlocal started
+        if path.endswith("/check"):
+            return {"state": "checking"}
+        if path.endswith("/status"):
+            return {"update_available": True, "state": "succeeded" if started else "idle"}
+        if path.endswith("/readiness"):
+            return {"idle": True, "reasons": []}
+        if path.endswith("/update"):
+            started = True
+            return {"state": "updating"}
+        if path == "/api/health":
+            return {"ok": True, "app_version": "2.0.0"}
+        raise AssertionError((target, method, path, payload))
+
+    monkeypatch.setattr(coordinator, "_request", request)
+    item = _job("voice@a")["items"][0]
+    asyncio.run(coordinator._update_one(coordinator._target("voice@a"), item))
+
+    assert item["status"] == "complete"
+    assert item["dependency_convergence"] is None
 
 
 def test_inventory_uses_hub_github_watch_over_stale_studio_answers(

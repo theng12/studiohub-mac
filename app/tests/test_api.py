@@ -217,7 +217,10 @@ def test_managed_update_route_advertises_capability_and_threads_full_tuple(authe
     status = authed.get("/api/auto-update/status")
     response = authed.post("/api/auto-update/update", json=request)
 
-    assert status.json()["capabilities"] == {"managed_exact_commit": True}
+    assert status.json()["capabilities"] == {
+        "managed_exact_commit": True,
+        "dependency_convergence": 1,
+    }
     assert response.status_code == 200
     assert calls == [request]
 

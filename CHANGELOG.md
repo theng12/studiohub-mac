@@ -10,6 +10,26 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.11.5] — 2026-08-21
+
+### Changed — deterministic dependency convergence bridge
+
+- Studio Hub now uses one fixed dependency-convergence path for fresh install,
+  local update, and controller-driven update. The fleet inventory and durable
+  ordinary-update jobs report the exact `dependency_convergence: 1` bridge
+  capability without coercing old or malformed target responses.
+- Image 1.30.3 and Voice 2.4.2 are dependency-neutral bridges. Existing older
+  machines continue their ordinary updates unchanged; a later
+  dependency-bearing release must require this exact capability before rollout.
+
+### Safety and compatibility
+
+- Normal Hub convergence always requires the repository-owned command. A
+  compatibility-only fixed restoration path is used solely while rolling back
+  to a pre-2.11.5 tree that lacks that module.
+- No live update occurred. No service, model, generation, network, fleet, or
+  GenStudio action was performed by this source release.
+
 ## [2.11.4] — 2026-08-20
 
 ### Changed — one simpler, Git-backed fleet SSD

@@ -143,6 +143,13 @@ def test_update_availability_never_offers_a_downgrade(
     assert updater.public_status()["update_available"] is expected
 
 
+def test_public_status_advertises_exact_dependency_convergence(updater: AutoUpdater):
+    assert updater.public_status()["capabilities"] == {
+        "managed_exact_commit": True,
+        "dependency_convergence": 1,
+    }
+
+
 def test_settings_modes_install_and_remove_schedule(updater: AutoUpdater):
     assert _save(updater, "notify")["scheduler"]["installed"] is True
     assert _save(updater, "auto")["scheduler"]["installed"] is True
@@ -853,6 +860,75 @@ def test_install_or_health_failure_attempts_rollback(updater: AutoUpdater, monke
         updater.update()
     assert len(rollbacks) == 1
     assert updater.public_status()["rollback"] == "succeeded"
+
+
+def test_install_dependencies_uses_only_the_convergence_module(
+    updater: AutoUpdater, monkeypatch: pytest.MonkeyPatch,
+):
+    module = updater.root / "app" / "backend" / "dependency_convergence.py"
+    module.parent.mkdir()
+    module.touch()
+    calls = []
+    monkeypatch.setattr(
+        updater, "_run",
+        lambda args, **kwargs: calls.append((args, kwargs))
+        or subprocess.CompletedProcess(args, 0, "", ""),
+    )
+
+    updater._install_dependencies()
+
+    assert calls == [(
+        [str(updater._python()), "-m", "backend.dependency_convergence", "all-installed"],
+        {"cwd": updater.root / "app", "timeout": 1200},
+    )]
+
+
+def test_install_dependencies_requires_convergence_module(
+    updater: AutoUpdater, monkeypatch: pytest.MonkeyPatch,
+):
+    calls = []
+    monkeypatch.setattr(updater, "_run", lambda *args, **kwargs: calls.append((args, kwargs)))
+
+    with pytest.raises(UpdateError, match="Dependency convergence command is unavailable"):
+        updater._install_dependencies()
+
+    assert calls == []
+
+
+def test_rollback_restores_old_tree_with_fixed_compatibility_command_only(
+    updater: AutoUpdater, monkeypatch: pytest.MonkeyPatch,
+):
+    uv = updater.root / "pinokio" / "bin" / "miniforge" / "bin" / "uv"
+    uv.parent.mkdir(parents=True)
+    uv.touch()
+    (updater.root / "app" / "requirements.lock").write_text("fastapi\n")
+    calls = []
+
+    def fake_git(*args, **_kwargs):
+        if args == ("rev-parse", "HEAD"):
+            return "b" * 40
+        if args[:2] == ("status", "--porcelain"):
+            return ""
+        return ""
+
+    monkeypatch.setattr(updater, "_git", fake_git)
+    monkeypatch.setattr(updater, "_pinokio_home", lambda: updater.root / "pinokio")
+    monkeypatch.setattr(updater, "_stop_mode", lambda _mode: None)
+    monkeypatch.setattr(updater, "_start_mode", lambda _mode: None)
+    monkeypatch.setattr(updater, "_verify_import", lambda _version: None)
+    monkeypatch.setattr(updater, "_verify_health", lambda *_args: True)
+    monkeypatch.setattr(
+        updater, "_run",
+        lambda args, **kwargs: calls.append((args, kwargs))
+        or subprocess.CompletedProcess(args, 0, "", ""),
+    )
+
+    assert updater._rollback("a" * 40, "b" * 40, "stopped", "1.0.0") is True
+    assert calls == [(
+        [str(uv), "pip", "install", "--python", str(updater._python()),
+         "-r", str(updater.root / "app" / "requirements.lock")],
+        {"cwd": updater.root / "app", "timeout": 1200},
+    )]
 
 
 def test_rollback_failure_is_reported(updater: AutoUpdater, monkeypatch):
