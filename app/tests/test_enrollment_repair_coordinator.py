@@ -546,6 +546,23 @@ async def test_dispatch_missing_current_token_does_not_claim_or_mutate_request(r
 
 
 @pytest.mark.asyncio
+async def test_empty_dispatch_queue_does_not_require_a_fleet_token(repair_store):
+    """A fresh Standalone Hub must become ready without enrollment state."""
+    from backend.enrollment_repair import EnrollmentRepairCoordinator
+
+    token_reads = []
+    coordinator = EnrollmentRepairCoordinator(
+        repair_store,
+        registry_loader=lambda: [],
+        token_reader=lambda: token_reads.append(True) or None,
+        settings_reader=lambda: {"role": "standalone"},
+    )
+
+    assert await coordinator.dispatch_next() is None
+    assert token_reads == []
+
+
+@pytest.mark.asyncio
 async def test_feature_disable_leaves_queued_and_recovered_rows_without_issuing(
     repair_store, monkeypatch,
 ):

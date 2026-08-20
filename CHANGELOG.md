@@ -10,6 +10,27 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.11.3] — 2026-08-20
+
+### Fixed — fresh Standalone startup no longer stalls
+
+- A fresh Hub with no fleet enrollment token now checks whether enrollment
+  repair work exists before reading that token. Previously the empty repair
+  scheduler threw in a zero-delay loop and starved FastAPI at `Waiting for
+  application startup`, even though no repair had been requested.
+- SSD stage 1 now fast-forwards an existing matching Studio checkout instead
+  of silently retaining stale source. Rerunning the installation therefore
+  picks up published startup fixes as well as configuring independent Studio
+  autolaunch settings.
+
+### Compatibility and safety
+
+- Existing queued enrollment repair, token validation, and digest-only ticket
+  behavior are unchanged. Empty Standalone startup performs no repair,
+  enrollment, model, or fleet action.
+- Existing checkout updates are fast-forward-only and refuse a conflicting
+  local branch instead of overwriting it.
+
 ## [2.11.2] — 2026-08-20
 
 ### Changed — image work goes to the fastest free Mac, not the smallest

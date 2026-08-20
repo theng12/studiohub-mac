@@ -12,8 +12,9 @@ The two jobs are separate. Finish step 1 before step 2 on a new Mac.
 5. Double-click **2 Copy Models to This Mac.command**. Wait for **Complete**.
 
 Step 1 installs Pinokio 8.0.40, Studio Hub, Image Studio, Voice Studio, their
-dependencies, and independent Pinokio startup settings. It does not start the
-Studios or touch model caches.
+dependencies, and independent Pinokio startup settings. Existing matching Git
+checkouts are fast-forwarded to their latest published release instead of
+being silently retained. It does not start the Studios or touch model caches.
 
 Step 2 copies complete Image packages that fit this Mac's RAM. On 8 GB Macs,
 Voice is an exact allowlist: Qwen3-TTS 0.6B Base plus its required Whisper

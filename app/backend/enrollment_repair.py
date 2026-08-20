@@ -1044,6 +1044,8 @@ class EnrollmentRepairCoordinator:
         """Commit one target-bound ticket, then write it on the same pinned socket."""
         if not NEW_ISSUANCE_ENABLED:
             return None
+        if not self.store.has_dispatchable_request():
+            return None
         first_token = self._token_reader()
         if not first_token:
             raise RepairStoreError("fleet_token_missing")

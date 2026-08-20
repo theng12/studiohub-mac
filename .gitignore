@@ -63,5 +63,7 @@ logs/service/
 app/tests/__pycache__/
 fleet_versions.json
 release_reconciliation.json*
+.enrollment_repair_journal.json.lock
+controller_settings.json.repair.lock
 fleet_downloads.json
 auto_update/

@@ -2,6 +2,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -315,7 +317,7 @@ def test_git_url_comparison_ignores_git_suffix():
     )
 
 
-def test_bootstrap_reuses_matching_legacy_git_checkout(tmp_path, monkeypatch):
+def test_bootstrap_updates_matching_legacy_git_checkout(tmp_path, monkeypatch):
     bootstrap = load_tool("fleet_bootstrap.py")
     home = tmp_path / "pinokio"
     legacy = home / "api/voicestudio-mac.git"
@@ -325,12 +327,53 @@ def test_bootstrap_reuses_matching_legacy_git_checkout(tmp_path, monkeypatch):
     )
     commands = []
     monkeypatch.setattr(bootstrap, "run", lambda command, **kwargs: commands.append(command))
+    monkeypatch.setattr(
+        bootstrap,
+        "git_checkout_state",
+        lambda _target: ("main", "origin/main", ""),
+        raising=False,
+    )
 
     target = bootstrap.ensure_repo(
         Path("/pinokio/pterm"), home, bootstrap.APPS[1], dry_run=False
     )
 
     assert target == legacy
+    assert commands == [["git", "-C", str(legacy), "pull", "--ff-only"]]
+
+
+@pytest.mark.parametrize(
+    ("checkout_state", "message"),
+    [
+        (("feature/experiment", "origin/feature/experiment", ""), "must be on main"),
+        (("main", "fork/main", ""), "must track origin/main"),
+        (("main", "origin/main", " M README.md"), "has local changes"),
+    ],
+)
+def test_bootstrap_refuses_to_update_an_unsafe_matching_checkout(
+    tmp_path, monkeypatch, checkout_state, message
+):
+    bootstrap = load_tool("fleet_bootstrap.py")
+    home = tmp_path / "pinokio"
+    target = home / "api/studiohub-mac"
+    (target / ".git").mkdir(parents=True)
+    (target / ".git/config").write_text(
+        '[remote "origin"]\n\turl = https://github.com/theng12/studiohub-mac.git\n'
+    )
+    commands = []
+    monkeypatch.setattr(bootstrap, "run", lambda command, **kwargs: commands.append(command))
+    monkeypatch.setattr(
+        bootstrap,
+        "git_checkout_state",
+        lambda _target: checkout_state,
+        raising=False,
+    )
+
+    with pytest.raises(bootstrap.BootstrapError, match=message):
+        bootstrap.ensure_repo(
+            Path("/pinokio/pterm"), home, bootstrap.APPS[2], dry_run=False,
+        )
+
     assert commands == []
 
 

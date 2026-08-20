@@ -1186,6 +1186,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.11.3", date: "2026-08-20", items: [
+    "A fresh Standalone Hub now starts normally without a fleet enrollment token. The empty repair scheduler no longer loops at Waiting for application startup when no repair work exists.",
+    "Rerunning SSD stage 1 now fast-forwards existing matching Studio checkouts, so published fixes are installed instead of silently leaving older code in place.",
+    "No enrollment, repair, model, or fleet action is performed during this startup fix.",
+  ]},
   { v: "2.11.2", date: "2026-08-20", items: [
     "Image jobs now go to the fastest free Mac instead of the smallest. Sending an image to a free 8 GB M1 rather than a free 16 GB M4 cost roughly double the wall clock (about 110-120 seconds against 50-60).",
     "The old smallest-first rule existed to keep bigger Macs free for audio. Release 2.11.0 already does that properly by giving audio the next free capable worker, so smallest-first had become a pure cost on every image.",

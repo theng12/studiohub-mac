@@ -542,6 +542,20 @@ class RepairStore:
             connection.commit()
         return self._request_result(result)
 
+    def has_dispatchable_request(self) -> bool:
+        """Return whether fresh repair work can claim the scheduling slot."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT 1
+                   WHERE NOT EXISTS (
+                       SELECT 1 FROM enrollment_repair_requests WHERE dispatch_slot = 1
+                   ) AND EXISTS (
+                       SELECT 1 FROM enrollment_repair_requests
+                       WHERE state = 'queued' AND dispatch_slot IS NULL
+                   )"""
+            ).fetchone()
+        return row is not None
+
     def mark_dispatched(self, request_id: str) -> None:
         now = float(self.clock())
         with self._connect() as connection:

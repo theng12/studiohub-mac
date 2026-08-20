@@ -253,6 +253,23 @@ def git_origin(target: Path) -> str:
         return ""
 
 
+def git_checkout_state(target: Path) -> tuple[str, str, str]:
+    def output(*arguments: str) -> str:
+        result = subprocess.run(
+            ["git", "-C", str(target), *arguments],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
+
+    return (
+        output("symbolic-ref", "--quiet", "--short", "HEAD"),
+        output("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"),
+        output("status", "--porcelain"),
+    )
+
+
 def app_ref(name: str) -> str:
     return f"pinokio://127.0.0.1:42000/api/{name}"
 
@@ -272,7 +289,21 @@ def ensure_repo(pterm: Path, home: Path, app: dict, *, dry_run: bool) -> Path:
         origin = git_origin(target)
         if not dry_run and normalize_git_url(origin) != normalize_git_url(app["url"]):
             raise BootstrapError(f"{target} belongs to a different repository; refusing to overwrite it.")
-        print(f"  {app['title']} checkout already exists; keeping it.")
+        if not dry_run:
+            try:
+                branch, upstream, changes = git_checkout_state(target)
+            except subprocess.CalledProcessError as exc:
+                raise BootstrapError(
+                    f"Could not verify the Git state for {target}; refusing to update it."
+                ) from exc
+            if branch != "main":
+                raise BootstrapError(f"{target} must be on main before it can be updated.")
+            if upstream != "origin/main":
+                raise BootstrapError(f"{target} must track origin/main before it can be updated.")
+            if changes:
+                raise BootstrapError(f"{target} has local changes; refusing to update it.")
+        print(f"  {app['title']} checkout already exists; updating it.")
+        run(["git", "-C", str(target), "pull", "--ff-only"], dry_run=dry_run)
         return target
     run([str(pterm), "download", app["url"], app["name"]], dry_run=dry_run)
     if not dry_run and not (target / ".git").is_dir():
