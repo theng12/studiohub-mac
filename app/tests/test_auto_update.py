@@ -830,6 +830,35 @@ def test_git_safety_refusals(updater: AutoUpdater, monkeypatch, case, message):
         updater._git_preflight()
 
 
+def test_dirty_checkout_message_preserves_porcelain_columns_and_filenames(
+    updater: AutoUpdater,
+):
+    porcelain = " M worktree.txt\nM  index.txt\n?? untracked.txt\nR  old.txt -> new.txt\n"
+
+    def runner(args, **kwargs):
+        command = tuple(args[1:])
+        stdout = {
+            ("remote", "get-url", "origin"): updater.spec["expected_remote"] + "\n",
+            ("symbolic-ref", "--quiet", "--short", "HEAD"): "main\n",
+            ("status", "--porcelain", "--untracked-files=normal"): porcelain,
+        }.get(command)
+        if stdout is None:
+            raise AssertionError(command)
+        return subprocess.CompletedProcess(args, 0, stdout, "")
+
+    updater.runner = runner
+
+    assert updater._git("status", "--porcelain", "--untracked-files=normal") == porcelain.rstrip()
+    with pytest.raises(UpdateError) as error:
+        updater._git_preflight()
+    message = str(error.value)
+    assert "worktree.txt" in message
+    assert "index.txt" in message
+    assert "untracked.txt" in message
+    assert "old.txt -> new.txt" in message
+    assert "orktree.txt" not in message.replace("worktree.txt", "")
+
+
 def test_disk_space_failure_happens_before_files_change(updater: AutoUpdater, monkeypatch):
     monkeypatch.setattr(updater, "readiness_reasons", lambda: [])
     monkeypatch.setattr("backend.auto_update.shutil.disk_usage", lambda _p: type("D", (), {"free": 1})())

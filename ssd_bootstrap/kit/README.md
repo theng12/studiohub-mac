@@ -4,7 +4,7 @@ Start with [`../START HERE - TerraNash Mac Setup.md`](../START%20HERE%20-%20Terr
 The canonical scripts and documentation live in Studio Hub's tracked
 `ssd_bootstrap/` directory; this SSD folder is the synchronized deployment copy.
 
-## The three owner commands
+## The five owner commands
 
 1. Double-click **1 Install Mac Apps.command**. It installs only Pinokio, Yam
    Display, and Latest from the signed, checksum-pinned DMGs in `installers/`.
@@ -26,8 +26,16 @@ The canonical scripts and documentation live in Studio Hub's tracked
    launchd service both try to start the same app, double-click **4 Repair
    Studio Startup.command**. It changes startup settings only and does not
    start, stop, delete, reinstall, update, or re-enroll anything.
+5. Before the first dependency-converging Studio update on an existing Mac,
+   make sure Image Studio, Voice Studio, and Studio Hub are idle, keep Pinokio
+   open, and double-click **5 Migrate Studio Updates.command** once. It
+   preserves the Mac's runtime settings, updates Image then Voice then Hub,
+   and verifies each app before continuing. A refusal names the checkout that
+   needs manual review; it never stashes, resets, deletes, or hides unrelated
+   changes. After this one-time migration, normal controller and overnight
+   updates can converge code and dependencies without revisiting the Mac.
 
-All three commands are restartable. A completed app/environment/package is
+All five commands are restartable. A completed app/environment/package is
 detected and skipped. When a command fails, fix the named prerequisite and run
 that same command again.
 
@@ -72,16 +80,31 @@ TERRANASH_NONINTERACTIVE=1 './2 Install Studios.command' --dry-run
 TERRANASH_NONINTERACTIVE=1 './3 Manage AI Models.command' --dry-run --action stage
 TERRANASH_NONINTERACTIVE=1 './3 Manage AI Models.command' --dry-run --action restore
 ./'4 Repair Studio Startup.command' --dry-run
+./'5 Migrate Studio Updates.command' --dry-run
 ```
 
 Developer verification:
 
 ```sh
 python3 -m unittest discover -s tests -v
-python3 -m py_compile mac_apps.py fleet_bootstrap.py studio_models.py repair_startup.py tests/*.py
+python3 -m py_compile mac_apps.py fleet_bootstrap.py studio_models.py repair_startup.py runtime_state_migration.py tests/*.py
 for file in ./*.command; do zsh -n "$file"; done
 shasum -a 256 -c RELEASE-INVENTORY.sha256
 ```
 
 No password, token, session, enrollment code, or fleet credential belongs on
 this SSD.
+
+## Recreate another SSD
+
+Studio Hub's tracked `ssd_bootstrap/` tree is the canonical copy. To reproduce
+this kit on a second mounted SSD, use the current Studio Hub checkout rather
+than copying or hand-editing this deployment folder:
+
+```sh
+python3 tools/sync_ssd_bootstrap.py --volume /Volumes/NAME-OF-SECOND-SSD
+python3 tools/sync_ssd_bootstrap.py --volume /Volumes/NAME-OF-SECOND-SSD --check
+```
+
+The sync preserves model assets and logs, rebuilds the checksum inventory, and
+keeps Tailscale out of the kit so it remains an App Store installation.

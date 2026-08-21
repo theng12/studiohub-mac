@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import hashlib
 import json
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -79,6 +80,39 @@ class CommandWrapperTests(unittest.TestCase):
             self.assertNotIn("pterm download", output)
             self.assertNotIn("enrollment code", output)
             self.assertNotIn("--prune", output)
+
+    def test_stage_five_delegates_only_to_runtime_state_migration(self) -> None:
+        with tempfile.TemporaryDirectory() as value:
+            root = Path(value)
+            source = KIT_ROOT / "5 Migrate Studio Updates.command"
+            target = root / source.name
+            shutil.copy2(source, target)
+            target.chmod(0o755)
+            dispatcher_marker = root / "dispatcher-ran"
+            dispatcher = root / ".terranash-bootstrap.command"
+            dispatcher.write_text(
+                f"#!/bin/zsh\n/usr/bin/touch {str(dispatcher_marker)!r}\nexit 99\n"
+            )
+            dispatcher.chmod(0o755)
+            (root / "runtime_state_migration.py").write_text(
+                "import json, sys\nprint(json.dumps(sys.argv[1:]))\n"
+            )
+            env = os.environ.copy()
+            env["HOME"] = str(root / "home")
+            env["TERRANASH_NONINTERACTIVE"] = "1"
+            result = subprocess.run(
+                [str(root / "5 Migrate Studio Updates.command"), "--dry-run"],
+                text=True,
+                capture_output=True,
+                env=env,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('["--dry-run"]', result.stdout)
+        self.assertFalse(dispatcher_marker.exists())
+        self.assertNotIn("fleet_bootstrap.py", result.stdout)
+        self.assertNotIn("studio_models.py", result.stdout)
+        self.assertNotIn("repair_startup.py", result.stdout)
 
 
 if __name__ == "__main__":

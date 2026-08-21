@@ -1,4 +1,5 @@
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -63,3 +64,30 @@ def test_dependency_convergence_bridge_release_is_truthful():
     assert "No live update occurred" in changelog
     assert 'v: "2.11.5"' in frontend
     assert "dependency-convergence capability" in frontend
+
+
+def test_root_runtime_repair_state_is_ignored():
+    gitignore = (ROOT / ".gitignore").read_text().splitlines()
+
+    assert "/.enrollment_repair_journal.json" in gitignore
+    assert ".enrollment_repair_journal.json.lock" in gitignore
+    assert "controller_settings.json.repair.lock" in gitignore
+    root = subprocess.run(
+        ["git", "-C", str(ROOT), "check-ignore", "-q", ".enrollment_repair_journal.json"]
+    )
+    nested = subprocess.run(
+        ["git", "-C", str(ROOT), "check-ignore", "-q", "nested/.enrollment_repair_journal.json"]
+    )
+    assert root.returncode == 0
+    assert nested.returncode == 1
+
+
+def test_runtime_state_migration_release_is_truthful():
+    changelog = (ROOT / "CHANGELOG.md").read_text()
+    frontend = (ROOT / "app/frontend/index.html").read_text()
+
+    assert "## [2.11.6] — 2026-08-21" in changelog
+    assert "repair journal" in changelog.lower()
+    assert "never deletes" in changelog.lower()
+    assert 'v: "2.11.6"' in frontend
+    assert "preserved, not deleted" in frontend

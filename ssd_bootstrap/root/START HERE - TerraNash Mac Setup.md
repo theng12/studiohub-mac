@@ -165,6 +165,31 @@ canonical and `.git` checkout appear in startup settings. The repair:
 
 Restart Pinokio when convenient after the repair completes.
 
+### 5. Prepare existing Macs for complete automatic Studio updates
+
+Run `5 Migrate Studio Updates.command` once on each existing Mac before its
+first dependency-converging update. Keep Pinokio open and wait until Image
+Studio, Voice Studio, and Studio Hub have no customer work, downloads,
+installs, or updates in progress. The command:
+
+- accepts both canonical and legacy `.git` checkout folder names;
+- preserves the machine-local `ENVIRONMENT` bytes and file mode;
+- updates Image Studio, then Voice Studio, then Studio Hub, stopping on the
+  first refusal or failed verification;
+- leaves Hub's repair journal and lock files in place while adding exact local
+  Git ignore entries, without deleting them;
+- requires the updated app to report healthy and dependency convergence
+  capability `1` before continuing; and
+- never stashes, resets, broad-cleans, deletes, re-enrolls, copies models, or
+  contacts another fleet machine.
+
+Use `./'5 Migrate Studio Updates.command' --dry-run` first for a no-write
+inspection. If it reports an unknown local change, preserve that change and
+stop for review. Once Stage 5 succeeds, future controller and overnight Studio
+updates can install both code and declared dependencies automatically. A new
+Mac installed from current Stage 2 may report `already_ready`; that is a safe
+no-op.
+
 ## Target SSD layout after implementation
 
 ```text
@@ -176,10 +201,12 @@ ugreen-terranash/
 │   ├── 2 Install Studios.command
 │   ├── 3 Manage AI Models.command
 │   ├── 4 Repair Studio Startup.command
+│   ├── 5 Migrate Studio Updates.command
 │   ├── .terranash-bootstrap.command
 │   ├── fleet_bootstrap.py
 │   ├── studio_models.py
 │   ├── repair_startup.py
+│   ├── runtime_state_migration.py
 │   ├── installers/
 │   └── logs/
 └── studio-models/
@@ -193,7 +220,7 @@ fixture verification.
 
 ## Current software context
 
-Observed and pinned on 2026-08-19:
+Installer assets observed and pinned on 2026-08-19:
 
 - Pinokio 8.0.40 — `Pinokio-8.0.40-arm64.dmg` — SHA-256
   `3c0f55f769efc2c02e5d0b8bc24e2ee7b0be54d42e6404663887e0cf8d3df3fd`.
@@ -201,13 +228,16 @@ Observed and pinned on 2026-08-19:
   `15ad34e950f078b66834f0f3ebc1ade53fcbb2f9ab6cfa51f720ba040dabbd46`.
 - Latest 0.11 — `Latest-0.11.dmg` — SHA-256
   `e098ed410240dc90d75faa576b61d384888f51b93ca742c98a599514b02a197e`.
-- Studio Hub canonical SSD release: 2.11.4. Stage 2 installs the current
-  published `main`, not this documentation's historical checkout.
-- Image Studio checkout: 1.30.2, published merge commit
-  `c506d87aead7c2d5f97b4eb83ca1b9603765e22f` (release commit
-  `f1c99a2e57dfb4d6832154c154bb2cbc5a9585e2`).
-- Voice Studio checkout: 2.4.1, source commit
-  `cce157c0afd440ffd918af318b733b255b332603`.
+
+Studio runtime-state baseline prepared on 2026-08-21:
+
+- Studio Hub 2.11.6;
+- Image Studio 1.30.4; and
+- Voice Studio 2.4.3.
+
+Stage 2 always installs the current published `main`, not a historical commit
+listed in this guide. Stage 5 performs the one-time migration needed by older
+checkouts before ordinary automatic dependency-converging updates.
 - Voice Studio 2.4.0 added internal Moonshine Base and Nemotron 3.5 ASR
   Streaming candidates. They were not downloaded on the source Mac during this
   audit, so they were not yet present in the SSD manifest.
@@ -288,6 +318,18 @@ owner chooses to validate it.
    model downloads to this bootstrap without explicit owner approval.
 10. Update this document whenever behavior, installer assets, model layout, or
     operator steps change.
+
+To reproduce the same kit on a second SSD, mount it and run the canonical
+Studio Hub sync tool from the repository root:
+
+```sh
+python3 tools/sync_ssd_bootstrap.py --volume /Volumes/NAME-OF-SECOND-SSD
+python3 tools/sync_ssd_bootstrap.py --volume /Volumes/NAME-OF-SECOND-SSD --check
+```
+
+Do not copy an older deployed folder over the canonical Git source. The sync
+tool preserves SSD models/logs, rebuilds `RELEASE-INVENTORY.sha256`, and removes
+retired Tailscale installer packages so Tailscale remains App Store-managed.
 
 ## Implementation record
 

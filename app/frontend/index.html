@@ -1186,6 +1186,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.11.6", date: "2026-08-21", items: [
+    "Studio Hub repair journals are now treated as per-machine runtime state, so they no longer make an otherwise clean checkout refuse a safe update. The journal and lock files are preserved, not deleted.",
+    "Dirty-checkout messages now show the complete filename for worktree-only changes instead of dropping the first character.",
+    "Exact-commit, health, dependency-convergence, and rollback gates are unchanged. This release performs no automatic fleet update; the one-time physical migration is owner-run.",
+  ]},
   { v: "2.11.5", date: "2026-08-21", items: [
     "Studio Hub now uses one fixed dependency-convergence path for install, local update, and controller update. Fleet inventory and durable update jobs report the exact dependency-convergence capability without guessing from a version.",
     "Image 1.30.3 and Voice 2.4.2 are dependency-neutral bridges. Older machines continue ordinary updates; the first later release that adds a system dependency must require this exact bridge capability.",

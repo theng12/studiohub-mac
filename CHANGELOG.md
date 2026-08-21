@@ -10,6 +10,23 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.11.6] — 2026-08-21
+
+### Fixed — runtime repair state no longer blocks safe updates
+
+- Studio Hub now treats its enrollment-repair journal as per-machine runtime
+  state, alongside the existing repair lock files. The updater never deletes
+  these files; Git simply stops mistaking them for product-source changes.
+- Dirty-checkout errors preserve the complete filename when Git reports a
+  worktree-only change, instead of dropping its first character.
+
+### Safety and compatibility
+
+- Exact-commit, health, dependency-convergence, and rollback checks are
+  unchanged. Unknown source changes still stop an update.
+- This source release does not update, restart, repair, enroll, or otherwise
+  modify a fleet Mac. The one-time physical migration remains owner-run.
+
 ## [2.11.5] — 2026-08-21
 
 ### Changed — deterministic dependency convergence bridge

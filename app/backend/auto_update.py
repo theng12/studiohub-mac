@@ -531,7 +531,7 @@ class AutoUpdater:
 
     def _git(self, *args: str, timeout: int = 120, check: bool = True) -> str:
         result = self._run(["/usr/bin/git", *args], timeout=timeout, check=check)
-        return result.stdout.strip()
+        return result.stdout.rstrip()
 
     def _pinokio_home(self) -> Path:
         # Every supported checkout is PINOKIO_HOME/api/<app>. Resolve from the

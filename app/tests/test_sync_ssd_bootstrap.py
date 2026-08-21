@@ -26,6 +26,10 @@ def source_fixture(root: Path) -> Path:
     command = source / "kit/1 Install Mac Apps.command"
     command.write_text("#!/bin/zsh\nexit 0\n")
     command.chmod(0o755)
+    migration_command = source / "kit/5 Migrate Studio Updates.command"
+    migration_command.write_text("#!/bin/zsh\nexit 0\n")
+    migration_command.chmod(0o755)
+    (source / "kit/runtime_state_migration.py").write_text("print('migration')\n")
     (source / "kit/tests/test_mac_apps.py").write_text("# canonical test\n")
     (source / "kit/installers/MANIFEST.json").write_text(json.dumps({
         "schema_version": 1,
@@ -57,6 +61,8 @@ def test_sync_copies_canonical_files_removes_tailscale_and_preserves_assets(tmp_
 
     kit = volume / "terranash-bootstrap"
     assert (kit / "mac_apps.py").read_text() == "print('canonical')\n"
+    assert (kit / "runtime_state_migration.py").read_text() == "print('migration')\n"
+    assert (kit / "5 Migrate Studio Updates.command").stat().st_mode & 0o777 == 0o755
     assert (volume / "START HERE - TerraNash Mac Setup.md").read_text() == "App Store Tailscale\n"
     assert not (kit / "installers/Tailscale-1.102.2-macos.pkg").exists()
     assert (kit / "installers/Keep.dmg").read_bytes() == b"keep installer"
