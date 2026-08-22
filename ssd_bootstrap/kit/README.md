@@ -48,11 +48,11 @@ downloaded in their Studio. Engines with a different storage layout require an
 explicit `studio_models.py` update and verification first.
 
 Normal restore never prunes. On an 8 GB Mac, Voice restore is an exact
-allowlist: Qwen3-TTS 0.6B Base plus its required
-`mlx-community/whisper-large-v3-turbo` quality checker. CustomVoice and every
-unrelated audio generator are skipped. The tool preserves complete SSD
-packages not visible on today's source Mac and protects conflicting local
-fleet voices.
+allowlist: Qwen3-TTS 0.6B Base, its required
+`mlx-community/whisper-large-v3-turbo` quality checker, and
+`mlx-community/Kokoro-82M-bf16`. CustomVoice and every unrelated audio
+generator are skipped. The tool preserves complete SSD packages not visible
+on today's source Mac and protects conflicting local fleet voices.
 
 ## Folder-name compatibility
 

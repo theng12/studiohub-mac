@@ -10,6 +10,21 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.11.7] — 2026-08-22
+
+### Fixed — Kokoro restored to the exact 8 GB SSD selection
+
+- Normal Voice restore on an 8 GB Mac now copies Kokoro 82M BF16 alongside
+  Qwen3-TTS 0.6B Base and its Whisper Large v3 Turbo quality checker.
+- The allowlist remains exact: Qwen CustomVoice and every other Voice package
+  are still skipped unless the operator explicitly chooses copy all.
+- Existing SSD archives that already contain the complete Kokoro package need
+  only the refreshed bootstrap kit; the model weights are not copied again.
+
+### Safety and compatibility
+
+- This source release does not update, restart, or alter any fleet Mac.
+
 ## [2.11.6] — 2026-08-21
 
 ### Fixed — runtime repair state no longer blocks safe updates

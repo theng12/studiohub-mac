@@ -53,12 +53,15 @@ class ModelStageIsolationTests(unittest.TestCase):
             self.assertEqual(manifest["studios"]["voice"]["packages"][0]["repo"], "example/small")
             self.assertFalse((volume / "terranash-bootstrap").exists())
 
-    def test_8gb_voice_allowlist_is_base_plus_quality_whisper(self) -> None:
+    def test_8gb_voice_allowlist_is_base_whisper_and_kokoro(self) -> None:
         self.assertTrue(studio_models.restore_allowed(
             "voice", "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit", 8.6, False
         ))
         self.assertTrue(studio_models.restore_allowed(
             "voice", "mlx-community/whisper-large-v3-turbo", 8.6, False
+        ))
+        self.assertTrue(studio_models.restore_allowed(
+            "voice", "mlx-community/Kokoro-82M-bf16", 8.6, False
         ))
         self.assertFalse(studio_models.restore_allowed(
             "voice", "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit", 8.6, False

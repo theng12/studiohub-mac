@@ -65,7 +65,12 @@ MANIFEST_NAME = "MANIFEST.json"
 STT_FAMILY = "Whisper (speech-to-text)"
 QWEN_06B_BASE = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit"
 QWEN_QUALITY_WHISPER = "mlx-community/whisper-large-v3-turbo"
-EIGHT_GB_VOICE_ALLOWLIST = frozenset({QWEN_06B_BASE, QWEN_QUALITY_WHISPER})
+KOKORO_82M_BF16 = "mlx-community/Kokoro-82M-bf16"
+EIGHT_GB_VOICE_ALLOWLIST = frozenset({
+    QWEN_06B_BASE,
+    QWEN_QUALITY_WHISPER,
+    KOKORO_82M_BF16,
+})
 PREFERRED_VOLUME_NAMES = ("ugreen-terranash", "UGREEN-1TB")
 
 def needed_companions(models: list[dict]) -> set[str]:

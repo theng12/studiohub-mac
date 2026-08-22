@@ -141,9 +141,10 @@ The tool must:
 - Require completed Stage 2 checkouts.
 - Read the manifest and detect the Mac's unified memory.
 - Copy Image packages whose recorded memory floor fits the Mac. On an 8 GB Mac,
-  copy exactly Qwen3-TTS 0.6B Base plus
-  `mlx-community/whisper-large-v3-turbo` for Voice; do not copy CustomVoice or
-  any other Voice generator. The advanced “copy all” option remains explicit.
+  copy exactly Qwen3-TTS 0.6B Base,
+  `mlx-community/whisper-large-v3-turbo`, and
+  `mlx-community/Kokoro-82M-bf16` for Voice; do not copy CustomVoice or any
+  other Voice generator. The advanced “copy all” option remains explicit.
 - Skip already complete packages.
 - Resume safely after interruption.
 - Refuse to overwrite an unknown conflicting package.
@@ -231,7 +232,7 @@ Installer assets observed and pinned on 2026-08-19:
 
 Studio runtime-state baseline prepared on 2026-08-21:
 
-- Studio Hub 2.11.6;
+- Studio Hub 2.11.7;
 - Image Studio 1.30.4; and
 - Voice Studio 2.4.3.
 

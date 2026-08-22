@@ -1186,6 +1186,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.11.7", date: "2026-08-22", items: [
+    "The 8 GB SSD restore now includes Kokoro 82M BF16 alongside Qwen3-TTS 0.6B Base and its Whisper Large v3 Turbo quality checker.",
+    "The selection remains exact: Qwen CustomVoice and every unrelated Voice model stay excluded unless copy all is explicitly chosen.",
+    "SSDs that already contain Kokoro need only the refreshed bootstrap kit; the model weights are not copied again. No fleet Mac is changed by this release.",
+  ]},
   { v: "2.11.6", date: "2026-08-21", items: [
     "Studio Hub repair journals are now treated as per-machine runtime state, so they no longer make an otherwise clean checkout refuse a safe update. The journal and lock files are preserved, not deleted.",
     "Dirty-checkout messages now show the complete filename for worktree-only changes instead of dropping the first character.",
