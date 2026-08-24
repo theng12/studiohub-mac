@@ -1186,6 +1186,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.11.8", date: "2026-08-24", items: [
+    "Documented the approved one-time Studio Hub repair for legacy Voice/Image updates blocked by a tracked machine-local ENVIRONMENT file.",
+    "The design preserves every machine setting exactly—including CPLUS_INCLUDE_PATH—and refuses unrelated source changes before returning the Studio to its normal updater and dependency checks.",
+    "Authenticated remote repair will be available after an Agent Hub receives the implementation; this documentation release does not update or change any fleet Mac.",
+  ]},
   { v: "2.11.7", date: "2026-08-22", items: [
     "The 8 GB SSD restore now includes Kokoro 82M BF16 alongside Qwen3-TTS 0.6B Base and its Whisper Large v3 Turbo quality checker.",
     "The selection remains exact: Qwen CustomVoice and every unrelated Voice model stay excluded unless copy all is explicitly chosen.",

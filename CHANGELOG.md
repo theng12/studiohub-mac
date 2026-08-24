@@ -10,6 +10,25 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.11.8] — 2026-08-24
+
+### Documented — safe remote repair for legacy Studio updates
+
+- Added the owner-approved design for a one-time Studio Hub repair that moves
+  legacy Voice/Image checkouts across the tracked `ENVIRONMENT` transition and
+  then returns them to their ordinary update and dependency-convergence flow.
+- The design preserves the complete machine-local file exactly, including
+  compiler workarounds such as `CPLUS_INCLUDE_PATH`, and refuses every unrelated
+  source change.
+- It defines authenticated controller-to-Agent fan-out so sibling repairs can
+  run remotely after the Agent Hub has received the capability.
+
+### Safety and compatibility
+
+- This documentation release does not repair, update, restart, enroll, or
+  otherwise modify any fleet Mac. A Hub that is itself too old, blocked, or
+  offline still needs the existing local SSD Stage 5 fallback once.
+
 ## [2.11.7] — 2026-08-22
 
 ### Fixed — Kokoro restored to the exact 8 GB SSD selection
