@@ -499,3 +499,48 @@ def test_generation_install_api_is_a_separate_explicit_fleet_job(authed, monkeyp
     dashboard = (Path(__file__).parents[1] / "frontend" / "index.html").read_text()
     assert 'id="generation-install-all"' in dashboard
     assert "startGenerationInstall()" in dashboard
+
+
+def test_studio_update_repair_api_is_capability_gated_and_supports_retry(authed, monkeypatch):
+    started = []
+    retried = []
+
+    def start_repair(monitor, studio_ids, *, local_only=False):
+        started.append((studio_ids, local_only))
+        return {"id": "repair-1", "status": "queued", "items": []}
+
+    def retry_repair(monitor, job_id):
+        retried.append(job_id)
+        return {"id": "repair-2", "status": "queued", "items": []}
+
+    monkeypatch.setattr(fleet_ops, "start_studio_update_repairs", start_repair)
+    monkeypatch.setattr(fleet_ops, "retry_studio_update_repairs", retry_repair)
+
+    version = authed.get("/api/version")
+    started_response = authed.post(
+        "/api/hub/maintenance/studio-update-repairs",
+        json={"studio_ids": ["voice"], "local_only": True},
+    )
+    retried_response = authed.post(
+        "/api/hub/maintenance/studio-update-repairs/repair-1/retry"
+    )
+
+    assert version.status_code == 200
+    assert version.json()["studio_update_repair_schema"] == 1
+    assert started_response.status_code == 200 and started == [(["voice"], True)]
+    assert retried_response.status_code == 200 and retried == ["repair-1"]
+
+
+def test_dashboard_exposes_one_time_remote_studio_update_repair():
+    dashboard = (Path(__file__).parents[1] / "frontend" / "index.html").read_text()
+
+    assert 'id="studio-update-repair-card"' in dashboard
+    assert 'id="studio-update-repair-run"' in dashboard
+    assert 'id="studio-update-repair-status"' in dashboard
+    assert "function startStudioUpdateRepair()" in dashboard
+    assert "function retryStudioUpdateRepair(" in dashboard
+    assert '"/api/hub/maintenance/studio-update-repairs"' in dashboard
+    assert "/api/hub/maintenance/studio-update-repairs/${encodeURIComponent(jobId)}/retry" in dashboard
+    assert "complete machine-local ENVIRONMENT" in dashboard
+    assert "Models, enrollment, voices, and jobs are not changed" in dashboard
+    assert "update the Agent Hub first" in dashboard

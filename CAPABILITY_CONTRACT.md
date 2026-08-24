@@ -38,6 +38,21 @@ field, changing a field's type, or changing its meaning requires a new schema
 version. The Studio Hub application version is reported separately as
 `controller.studiohub_version`.
 
+## Agent maintenance capability
+
+`GET /api/version` advertises the additive integer field
+`studio_update_repair_schema`. Exact value `1` means the Agent accepts the
+authenticated, fixed `studio-update-repairs` maintenance operation for its own
+local Voice/Image siblings. Controllers must require `type(value) is int` and
+value `1`; booleans, strings, missing fields, and unknown versions are not
+capability evidence.
+
+The operation never transfers filesystem paths or `ENVIRONMENT` contents to the
+controller. An old, offline, or unsupported Agent remains pending/retryable and
+must receive the Hub update (or local SSD Stage 5 fallback) before remote repair.
+This maintenance capability is independent of GenStudio model routing and does
+not change the site-capabilities schema version.
+
 ## Response shape
 
 ```json

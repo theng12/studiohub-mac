@@ -381,3 +381,49 @@ async def test_remote_startup_retire_targets_peer_local_machine(reset):
     assert url.endswith("/api/hub/service/startup-services/local/music/retire")
     assert headers == {"X-Hub-Token": "shared-secret"}
     assert timeout == 260.0
+
+
+@pytest.mark.asyncio
+async def test_remote_update_repair_requires_exact_capability_and_targets_peer_local_studio(reset):
+    peers.set_fleet_token("shared-secret")
+
+    class Client:
+        def __init__(self): self.calls = []
+        async def get(self, url, headers=None, timeout=None):
+            self.calls.append(("GET", url, headers, None))
+            return FakeResp(200, {"studio_update_repair_schema": 1})
+        async def post(self, url, headers=None, json=None, timeout=None):
+            self.calls.append(("POST", url, headers, json))
+            return FakeResp(200, {"id": "repair-1", "status": "queued", "items": []})
+
+    client = Client()
+    result = await peers.start_remote_studio_update_repair(client, REMOTE[0])
+
+    assert result["ok"] is True and result["job"]["id"] == "repair-1"
+    assert client.calls[0][0] == "GET" and client.calls[0][1].endswith("/api/version")
+    assert client.calls[1][0] == "POST"
+    assert client.calls[1][1].endswith("/api/hub/maintenance/studio-update-repairs")
+    assert client.calls[1][2] == {"X-Hub-Token": "shared-secret"}
+    assert client.calls[1][3] == {"studio_ids": ["image"], "local_only": True}
+
+
+@pytest.mark.asyncio
+async def test_remote_update_repair_old_or_unreachable_hub_is_retryable(reset):
+    peers.set_fleet_token("shared-secret")
+
+    class OldClient:
+        async def get(self, *_args, **_kwargs):
+            return FakeResp(200, {"studio_update_repair_schema": 0})
+        async def post(self, *_args, **_kwargs):
+            raise AssertionError("old Hub must not receive repair request")
+
+    class OfflineClient:
+        async def get(self, *_args, **_kwargs):
+            raise httpx.ConnectError("offline")
+
+    old = await peers.start_remote_studio_update_repair(OldClient(), REMOTE[0])
+    offline = await peers.start_remote_studio_update_repair(OfflineClient(), REMOTE[0])
+
+    assert old["ok"] is False and old["retryable"] is True
+    assert "update the Agent Hub" in old["error"]
+    assert offline["ok"] is False and offline["retryable"] is True

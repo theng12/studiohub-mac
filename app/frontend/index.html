@@ -1009,6 +1009,18 @@
       <div id="generation-install-status" class="update-progress" role="status" aria-live="polite"><div class="update-progress-detail">No fleet generation install has been started.</div></div>
     </div>
 
+    <div class="card section" id="studio-update-repair-card">
+      <div class="top"><span class="emoji">🩹</span><h3>One-time Studio update repair</h3>
+        <span style="margin-left:auto"></span>
+        <button class="btn" id="studio-update-repair-retry" onclick="retryStudioUpdateRepair(studioUpdateRepairJob && studioUpdateRepairJob.id)" hidden>Retry unfinished</button>
+        <button class="btn primary" id="studio-update-repair-run" onclick="startStudioUpdateRepair()">Repair blocked Studio updates</button>
+      </div>
+      <p class="muted" style="font-size:13px;margin-bottom:10px">
+        Repairs legacy Voice and Image updates blocked by a tracked machine settings file. Each Mac's Agent Hub preserves the <b>complete machine-local ENVIRONMENT</b>, runs the Studio's normal updater and dependency checks, then verifies the restored settings. Remote machines must <b>update the Agent Hub first</b>. Models, enrollment, voices, and jobs are not changed.
+      </p>
+      <div id="studio-update-repair-status" class="update-progress" role="status" aria-live="polite"><div class="update-progress-detail">No one-time Studio update repair has been started.</div></div>
+    </div>
+
     <div class="card section" id="studio-updates-card">
       <div class="top"><span class="emoji">🔄</span><h3>Studio updates</h3>
         <span style="margin-left:auto"></span>
@@ -1186,6 +1198,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.12.0", date: "2026-08-24", items: [
+    "Updates now has <b>Repair blocked Studio updates</b>, a one-time local or controller-driven repair for legacy Voice/Image checkouts blocked by their machine ENVIRONMENT file.",
+    "Every Agent preserves the complete file—including CPLUS_INCLUDE_PATH—then runs the Studio's normal dependency-converging updater. Offline or older Agents remain pending and can be retried after their Hub is updated.",
+    "Models, caches, enrollment, fleet tokens, voices, and jobs are untouched. This release does not automatically update or repair any fleet Mac; a Hub blocked from updating itself still needs SSD Stage 5 once.",
+  ]},
   { v: "2.11.8", date: "2026-08-24", items: [
     "Documented the approved one-time Studio Hub repair for legacy Voice/Image updates blocked by a tracked machine-local ENVIRONMENT file.",
     "The design preserves every machine setting exactly—including CPLUS_INCLUDE_PATH—and refuses unrelated source changes before returning the Studio to its normal updater and dependency checks.",
@@ -2176,7 +2193,7 @@ function updatePageHeading(tab) {
   requestAnimationFrame(() => section.classList.add("tab-enter"));
 }
 const manualFleetMaintenance = $("#manual-fleet-maintenance");
-for (const id of ["startup-services-card", "generation-dependencies-card", "studio-updates-card", "hub-updates-card"]) {
+for (const id of ["startup-services-card", "generation-dependencies-card", "studio-update-repair-card", "studio-updates-card", "hub-updates-card"]) {
   manualFleetMaintenance.append($("#" + id));
 }
 document.querySelectorAll("nav button").forEach(btn => {
@@ -5058,6 +5075,8 @@ let studioUpdateJob = null;
 let maintenancePollTimer = null;
 let generationInstallJob = null;
 let generationInstallBusy = false;
+let studioUpdateRepairJob = null;
+let studioUpdateRepairBusy = false;
 let studioUpdateApp = localStorage.getItem("studio_update_app") || "all";
 function studioAppKey(row) { return row.modality || String(row.id || "").split("@")[0]; }
 function filterStudioApp(rows) { return studioUpdateApp === "all" ? rows : rows.filter(r => studioAppKey(r) === studioUpdateApp); }
@@ -5130,6 +5149,71 @@ async function startGenerationInstall() {
     return;
   }
   renderGenerationInstall(data);
+  scheduleMaintenancePoll();
+}
+function renderStudioUpdateRepair(job) {
+  const status = $("#studio-update-repair-status");
+  const run = $("#studio-update-repair-run");
+  const retry = $("#studio-update-repair-retry");
+  if (!status || !run || !retry) return;
+  studioUpdateRepairJob = job || null;
+  if (!job || !Array.isArray(job.items) || !job.items.length) {
+    studioUpdateRepairBusy = false;
+    run.disabled = false; run.removeAttribute("aria-busy"); run.textContent = "Repair blocked Studio updates";
+    retry.hidden = true;
+    status.className = "update-progress";
+    status.innerHTML = `<div class="update-progress-detail">No one-time Studio update repair has been started.</div>`;
+    return;
+  }
+  studioUpdateRepairBusy = ["queued", "running"].includes(job.status);
+  const complete = job.items.filter(item => item.status === "complete").length;
+  const pending = job.items.filter(item => item.status === "pending").length;
+  const failed = job.items.filter(item => item.status === "failed").length;
+  const finished = complete + pending + failed;
+  const active = job.items.find(item => !["complete", "pending", "failed"].includes(item.status));
+  const attention = job.items.filter(item => ["pending", "failed"].includes(item.status));
+  run.disabled = studioUpdateRepairBusy;
+  run.setAttribute("aria-busy", studioUpdateRepairBusy ? "true" : "false");
+  run.textContent = studioUpdateRepairBusy ? "Repairing Studio updates…" : "Repair blocked Studio updates";
+  retry.hidden = studioUpdateRepairBusy || !attention.length;
+  retry.disabled = studioUpdateRepairBusy;
+  const title = studioUpdateRepairBusy ? "Repairing blocked Studio updates" :
+    attention.length ? `${complete} repaired · ${attention.length} need attention` : "Studio update repair complete";
+  const detail = active && studioUpdateRepairBusy
+    ? `${_updateItemName(active, "repair")} · ${active.detail || active.status || "waiting"}`
+    : attention.length
+      ? attention.slice(0, 4).map(item => `${_updateItemName(item, "repair")}: ${item.detail || item.status}`).join(" · ")
+      : "Machine settings were preserved and the normal updater and dependency checks completed.";
+  status.className = `update-progress${studioUpdateRepairBusy ? "" : attention.length ? " degraded" : " success"}`;
+  status.innerHTML = `<div class="update-progress-head"><span class="update-progress-title">${studioUpdateRepairBusy ? "↻ " : attention.length ? "! " : "✓ "}${esc(title)}</span><span class="update-progress-count">${finished}/${job.items.length} finished</span></div><div class="bar"><i style="width:${Math.round(finished / job.items.length * 100)}%"></i></div><div class="update-progress-detail">${esc(detail)}</div>`;
+}
+async function startStudioUpdateRepair() {
+  if (studioUpdateRepairBusy || !confirm("Repair legacy blocked Voice and Image Studio updates across the fleet?\n\nEach Agent Hub preserves its complete machine ENVIRONMENT, drains active work, runs normal update and dependency checks, and may restart the Studio. Models, enrollment, voices, and jobs are not changed.")) return;
+  const run = $("#studio-update-repair-run");
+  run.disabled = true; run.setAttribute("aria-busy", "true"); run.textContent = "Starting repair…";
+  const response = await api("/api/hub/maintenance/studio-update-repairs", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({})
+  }).catch(() => null);
+  const data = response ? await response.json().catch(() => ({})) : {};
+  if (!response?.ok) {
+    studioUpdateRepairBusy = false; run.disabled = false; run.removeAttribute("aria-busy"); run.textContent = "Repair blocked Studio updates";
+    const status = $("#studio-update-repair-status"); status.className = "update-progress error";
+    status.innerHTML = `<div class="update-progress-title">! Studio update repair could not start</div><div class="update-progress-detail">${esc(data.detail || "Try again after current maintenance finishes.")}</div>`;
+    return;
+  }
+  renderStudioUpdateRepair(data);
+  scheduleMaintenancePoll();
+}
+async function retryStudioUpdateRepair(jobId) {
+  if (!jobId || studioUpdateRepairBusy) return;
+  const response = await api(`/api/hub/maintenance/studio-update-repairs/${encodeURIComponent(jobId)}/retry`, { method: "POST" }).catch(() => null);
+  const data = response ? await response.json().catch(() => ({})) : {};
+  if (!response?.ok) {
+    const status = $("#studio-update-repair-status"); status.className = "update-progress error";
+    status.innerHTML = `<div class="update-progress-title">! Retry could not start</div><div class="update-progress-detail">${esc(data.detail || "Try again after the Agent Hub is online and updated.")}</div>`;
+    return;
+  }
+  renderStudioUpdateRepair(data);
   scheduleMaintenancePoll();
 }
 function renderUpdateProgress(el, job, kind) {
@@ -5207,12 +5291,13 @@ function renderStudioUpdates(data) {
   }
 }
 async function loadMaintenance() {
-  const [studioVersions, jobs, hubJobs, hubVers, generationJobs] = await Promise.all([
+  const [studioVersions, jobs, hubJobs, hubVers, generationJobs, repairJobs] = await Promise.all([
     api("/api/hub/maintenance/studio-versions").then(r => r.json()).catch(() => null),
     api("/api/hub/maintenance/updates").then(r => r.json()).catch(() => null),
     api("/api/hub/maintenance/hub-updates").then(r => r.json()).catch(() => null),
     api("/api/hub/maintenance/hub-versions").then(r => r.json()).catch(() => null),
-    api("/api/hub/maintenance/generation-installs").then(r => r.json()).catch(() => null)
+    api("/api/hub/maintenance/generation-installs").then(r => r.json()).catch(() => null),
+    api("/api/hub/maintenance/studio-update-repairs").then(r => r.json()).catch(() => null)
   ]);
   const latest = jobs && jobs.updates && jobs.updates[0];
   studioUpdateJob = latest || studioUpdateJob;
@@ -5229,7 +5314,10 @@ async function loadMaintenance() {
   const generationLatest = generationJobs && generationJobs.installs && generationJobs.installs[0];
   const generationJobRunning = generationLatest && ["queued", "running"].includes(generationLatest.status);
   if (generationLatest) renderGenerationInstall(generationLatest);
-  if (maintenanceBusy || hubJobRunning || generationJobRunning) scheduleMaintenancePoll();
+  const repairLatest = repairJobs && repairJobs.repairs && repairJobs.repairs[0];
+  const repairJobRunning = repairLatest && ["queued", "running"].includes(repairLatest.status);
+  if (repairLatest) renderStudioUpdateRepair(repairLatest);
+  if (maintenanceBusy || hubJobRunning || generationJobRunning || repairJobRunning) scheduleMaintenancePoll();
 }
 async function rescanStudioVersions() {
   if (maintenanceBusy) return;

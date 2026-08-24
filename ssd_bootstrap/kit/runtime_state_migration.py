@@ -114,6 +114,7 @@ class MigrationEngine:
         activity_probe: ActivityProbe | None = None,
         post_update_probe: PostUpdateProbe | None = None,
         app_specs: tuple[tuple[str, str, str, int], ...] = APP_SPECS,
+        preserve_machine_environment: bool = False,
     ) -> None:
         self.home = home
         self.backup_root = backup_root or (
@@ -127,6 +128,7 @@ class MigrationEngine:
         self.activity_probe = activity_probe or self._active_work
         self.post_update_probe = post_update_probe or self._post_update_state
         self.app_specs = app_specs
+        self.preserve_machine_environment = preserve_machine_environment
         self._pterm: Path | None = None
 
     def plan(self) -> MigrationReport:
@@ -204,6 +206,8 @@ class MigrationEngine:
         return tuple(repositories)
 
     def _validate_repository(self, repository: _Repository) -> None:
+        if repository.path.is_symlink():
+            raise MigrationError(f"{repository.title} checkout path must not be a symlink")
         self._git_text(repository, "rev-parse", "--git-dir")
         origin = self._git_optional_text(repository, "config", "--get", "remote.origin.url")
         if _normalize_git_url(origin) != _normalize_git_url(repository.url):
@@ -233,6 +237,9 @@ class MigrationEngine:
             if self._git_code(repository, "check-ignore", "-q", "ENVIRONMENT") != 0:
                 raise MigrationError(f"{repository.title} does not ignore root ENVIRONMENT")
             return RepositoryResult(repository.name, repository.path, "already_ready")
+        if self.preserve_machine_environment and status == ((" M", "ENVIRONMENT"),):
+            self._snapshot_environment(repository, environment)
+            return RepositoryResult(repository.name, repository.path, "requires_migration")
         if self._is_exact_legacy_environment(repository, status, environment):
             return RepositoryResult(repository.name, repository.path, "requires_migration")
         if status:
@@ -336,7 +343,8 @@ class MigrationEngine:
         if self._git_code(repository, "ls-files", "--error-unmatch", "ENVIRONMENT") != 0:
             raise MigrationError(f"{repository.title} no longer tracks ENVIRONMENT")
         if status == ((" M", "ENVIRONMENT"),):
-            if not self._is_exact_environment_content(repository, snapshot.content):
+            if (not self.preserve_machine_environment
+                    and not self._is_exact_environment_content(repository, snapshot.content)):
                 raise MigrationError(self._unknown_status(repository, status))
         elif status:
             raise MigrationError(self._unknown_status(repository, status))
@@ -623,7 +631,7 @@ class MigrationEngine:
                 )
             return (
                 f"{error}; divergent ENVIRONMENT retained at {current.path}; "
-                "restored approved original from a recovery claim"
+                "restored original from a recovery claim"
             )
 
         try:
@@ -820,11 +828,44 @@ class MigrationEngine:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="inspect without changing local checkouts")
+    parser.add_argument(
+        "--app", action="append", choices=tuple(spec[0] for spec in APP_SPECS),
+        help="limit migration to a fixed installed Studio (may be repeated)",
+    )
+    parser.add_argument(
+        "--preserve-machine-environment", action="store_true",
+        help="preserve the complete machine-owned ENVIRONMENT file for an explicitly selected Studio",
+    )
+    parser.add_argument("--json", action="store_true", help="emit one machine-readable report")
     args = parser.parse_args(argv)
-    report = MigrationEngine(dry_run=args.dry_run).run()
-    for result in report.repositories:
-        detail = result.refusal_reason or (str(result.backup_path) if result.backup_path else "")
-        print(f"{result.name}: {result.status}{': ' + detail if detail else ''}")
+    if args.preserve_machine_environment and not args.app:
+        parser.error("--preserve-machine-environment requires at least one explicit --app")
+    if args.preserve_machine_environment and any(
+        app not in {"imagestudio-mac", "voicestudio-mac"} for app in args.app or ()
+    ):
+        parser.error("--preserve-machine-environment supports only Image or Voice Studio")
+    selected = set(args.app or ())
+    app_specs = tuple(spec for spec in APP_SPECS if not selected or spec[0] in selected)
+    report = MigrationEngine(
+        dry_run=args.dry_run,
+        app_specs=app_specs,
+        preserve_machine_environment=args.preserve_machine_environment,
+    ).run()
+    if args.json:
+        print(json.dumps({
+            "ok": report.ok,
+            "repositories": [{
+                "name": result.name,
+                "path": str(result.path) if result.path else None,
+                "status": result.status,
+                "backup_path": str(result.backup_path) if result.backup_path else None,
+                "refusal_reason": result.refusal_reason,
+            } for result in report.repositories],
+        }, separators=(",", ":")))
+    else:
+        for result in report.repositories:
+            detail = result.refusal_reason or (str(result.backup_path) if result.backup_path else "")
+            print(f"{result.name}: {result.status}{': ' + detail if detail else ''}")
     return 0 if report.ok else 1
 
 

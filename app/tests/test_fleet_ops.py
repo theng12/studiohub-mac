@@ -143,6 +143,133 @@ def test_github_published_version_overrides_every_stale_worker_cache():
 
 
 @pytest.mark.asyncio
+async def test_local_studio_update_repair_uses_trusted_runner_and_releases_maintenance(
+    monkeypatch,
+):
+    studio = {
+        "id": "voice", "app": "voicestudio-mac", "modality": "voice",
+        "machine": "local", "host": "127.0.0.1",
+    }
+    item = {"studio": "voice", "machine": "local", "status": "queued", "detail": "waiting"}
+    monkeypatch.setattr(fleet_ops, "studio_has_active_work", lambda _sid: False)
+    monkeypatch.setattr(
+        fleet_ops, "run_studio_update_repair_sync",
+        lambda value: {
+            "ok": True, "studio": value["id"], "status": "migrated",
+            "detail": "machine settings preserved; update and dependencies verified",
+        },
+    )
+
+    await fleet_ops._studio_update_repair_one(studio, item)
+
+    assert item["status"] == "complete"
+    assert "dependencies verified" in item["detail"]
+    assert "voice" not in broker._maintenance
+
+
+@pytest.mark.asyncio
+async def test_studio_update_repairs_are_serial_per_mac_and_parallel_across_macs(monkeypatch):
+    studios = [
+        {"id": "voice", "modality": "voice", "machine": "local"},
+        {"id": "image", "modality": "image", "machine": "local"},
+        {"id": "voice@mac-b", "modality": "voice", "machine": "mac-b"},
+        {"id": "image@mac-b", "modality": "image", "machine": "mac-b"},
+    ]
+    monitor = type("Monitor", (), {"registry": studios})()
+    active = {"local": 0, "mac-b": 0}
+    max_per_machine = {"local": 0, "mac-b": 0}
+    global_active = 0
+    global_max = 0
+
+    async def repair_one(studio, item):
+        nonlocal global_active, global_max
+        machine = studio["machine"]
+        active[machine] += 1
+        global_active += 1
+        max_per_machine[machine] = max(max_per_machine[machine], active[machine])
+        global_max = max(global_max, global_active)
+        await asyncio.sleep(0.02)
+        item.update(status="complete", detail="verified", finished_at=time.time())
+        active[machine] -= 1
+        global_active -= 1
+
+    monkeypatch.setattr(fleet_ops, "_studio_update_repair_one", repair_one)
+    job = {
+        "id": "repair-groups", "kind": "studio_update_repair", "status": "queued",
+        "created_at": time.time(), "finished_at": None,
+        "items": [{
+            "studio": studio["id"], "machine": studio["machine"],
+            "modality": studio["modality"], "status": "queued", "detail": "waiting",
+        } for studio in studios],
+    }
+
+    await fleet_ops._run_studio_update_repairs(monitor, job)
+
+    assert max_per_machine == {"local": 1, "mac-b": 1}
+    assert global_max == 2
+    assert job["status"] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_unreachable_remote_update_repair_stays_pending_and_retryable(monkeypatch):
+    studio = {"id": "voice@mac-b", "modality": "voice", "machine": "mac-b"}
+    monitor = type("Monitor", (), {"registry": [studio]})()
+
+    async def pending(_studio, _item):
+        raise fleet_ops.StudioUpdateRepairPending("Agent Hub is offline; retry when reachable")
+
+    monkeypatch.setattr(fleet_ops, "_studio_update_repair_one", pending)
+    job = {
+        "id": "repair-pending", "kind": "studio_update_repair", "status": "queued",
+        "created_at": time.time(), "finished_at": None,
+        "items": [{"studio": studio["id"], "machine": "mac-b", "modality": "voice",
+                   "status": "queued", "detail": "waiting"}],
+    }
+
+    await fleet_ops._run_studio_update_repairs(monitor, job)
+
+    assert job["status"] == "pending"
+    assert job["items"][0]["status"] == "pending"
+    assert job["retryable_count"] == 1
+
+
+def test_retry_studio_update_repair_targets_only_pending_and_failed(monkeypatch, reset):
+    fleet_ops._studio_update_repairs["old"] = {
+        "id": "old", "status": "pending", "items": [
+            {"studio": "voice@mac-b", "status": "pending"},
+            {"studio": "image@mac-b", "status": "failed"},
+            {"studio": "voice@mac-c", "status": "complete"},
+        ],
+    }
+    called = []
+    monkeypatch.setattr(
+        fleet_ops, "start_studio_update_repairs",
+        lambda monitor, ids, local_only=False: called.append((monitor, ids, local_only)) or {"id": "new"},
+    )
+    monitor = object()
+
+    result = fleet_ops.retry_studio_update_repairs(monitor, "old")
+
+    assert result == {"id": "new"}
+    assert called == [(monitor, ["voice@mac-b", "image@mac-b"], False)]
+
+
+def test_active_update_repair_blocks_hub_self_update(reset):
+    fleet_ops._studio_update_repairs["active"] = {"status": "running", "items": []}
+    assert "a Studio update repair is active" in fleet_ops.hub_update_blockers()
+
+
+def test_studio_update_repair_refuses_competing_maintenance(reset):
+    monitor = type("Monitor", (), {"registry": [
+        {"id": "voice", "modality": "voice", "machine": "local"},
+    ]})()
+    fleet_ops._generation_installs["generation"] = {"status": "running", "items": []}
+
+    with pytest.raises(ValueError, match="generation dependency install"):
+        fleet_ops.start_studio_update_repairs(monitor, ["voice"])
+
+
+@pytest.mark.asyncio
 async def test_github_refresh_is_cache_busted_and_retains_last_known_on_error(monkeypatch):
     requested = []
 

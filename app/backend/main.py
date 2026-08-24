@@ -67,6 +67,11 @@ class GenerationInstallRequest(BaseModel):
     local_only: bool = False
 
 
+class StudioUpdateRepairRequest(BaseModel):
+    studio_ids: list[str] | None = Field(default=None, max_length=100)
+    local_only: bool = False
+
+
 class AutoUpdateSettingsBody(BaseModel):
     mode: str
     frequency: str
@@ -735,7 +740,8 @@ def update_status():
 def version():
     return {"app_version": _app_version(), "title": TITLE,
             "app_commit": APP_COMMIT,
-            "process_title": PROCESS_TITLE, "process_title_applied": PROCESS_TITLE_APPLIED}
+            "process_title": PROCESS_TITLE, "process_title_applied": PROCESS_TITLE_APPLIED,
+            "studio_update_repair_schema": 1}
 
 
 def _release_notes() -> list[dict]:
@@ -3635,6 +3641,38 @@ def get_generation_install(job_id: str):
     if not job:
         raise HTTPException(404, "unknown generation install")
     return job
+
+
+@app.get("/api/hub/maintenance/studio-update-repairs")
+def list_studio_update_repairs():
+    return {"repairs": fleet_ops.studio_update_repair_snapshot()}
+
+
+@app.post("/api/hub/maintenance/studio-update-repairs")
+async def start_studio_update_repairs_route(body: StudioUpdateRepairRequest):
+    """Repair legacy Voice/Image update blockers on each target Agent locally."""
+    try:
+        return fleet_ops.start_studio_update_repairs(
+            monitor, body.studio_ids, local_only=body.local_only,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.get("/api/hub/maintenance/studio-update-repairs/{job_id}")
+def get_studio_update_repair(job_id: str):
+    job = fleet_ops.studio_update_repair_snapshot(job_id)
+    if not job:
+        raise HTTPException(404, "unknown Studio update repair")
+    return job
+
+
+@app.post("/api/hub/maintenance/studio-update-repairs/{job_id}/retry")
+def retry_studio_update_repair(job_id: str):
+    try:
+        return fleet_ops.retry_studio_update_repairs(monitor, job_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.post("/api/hub/maintenance/self-update")

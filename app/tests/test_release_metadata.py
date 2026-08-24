@@ -91,3 +91,16 @@ def test_runtime_state_migration_release_is_truthful():
     assert "never deletes" in changelog.lower()
     assert 'v: "2.11.6"' in frontend
     assert "preserved, not deleted" in frontend
+
+
+def test_remote_studio_update_repair_release_is_truthful():
+    changelog = (ROOT / "CHANGELOG.md").read_text()
+    frontend = (ROOT / "app/frontend/index.html").read_text()
+
+    assert "## [2.12.0] — 2026-08-24" in changelog
+    assert "studio_update_repair_schema: 1" in changelog
+    assert "CPLUS_INCLUDE_PATH" in changelog
+    assert "does not automatically update or" in changelog
+    assert 'v: "2.12.0"' in frontend
+    assert "Repair blocked Studio updates" in frontend
+    assert "This release does not automatically update or repair any fleet Mac" in frontend

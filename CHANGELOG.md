@@ -10,6 +10,31 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.12.0] — 2026-08-24
+
+### Added — remote one-time repair for blocked Studio updates
+
+- Updates now exposes **Repair blocked Studio updates** for legacy Voice and
+  Image checkouts whose tracked machine `ENVIRONMENT` prevents `git pull`.
+- Each Agent Hub performs its own evidence-gated migration, runs the Studio's
+  normal dependency-converging updater, and reports durable per-Studio progress.
+  Repairs are serial per Mac, parallel across independent Macs, and pending
+  offline/older Agents can be retried centrally.
+- Agent capability discovery now advertises exact integer
+  `studio_update_repair_schema: 1`; older Hubs remain usable but must update
+  before their sibling Studios can be repaired remotely.
+
+### Safety and compatibility
+
+- The repair preserves the complete regular machine-local `ENVIRONMENT` bytes
+  and mode, including `CPLUS_INCLUDE_PATH`, while refusing every other dirty
+  path, unexpected origin/branch, symlink, divergence, and concurrent change.
+- Local recovery paths and environment contents never leave the Agent. Models,
+  caches, enrollment, fleet tokens, voices, and jobs are untouched.
+- A Hub cannot bootstrap its own blocked checkout; SSD Stage 5 remains that
+  one-time fallback. Publishing this release does not automatically update or
+  repair any fleet Mac.
+
 ## [2.11.8] — 2026-08-24
 
 ### Documented — safe remote repair for legacy Studio updates

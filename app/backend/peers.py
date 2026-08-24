@@ -414,6 +414,53 @@ async def install_remote_generation(
         return {"ok": False, "error": f"can't reach the remote Hub ({exc})"}
 
 
+async def start_remote_studio_update_repair(
+    client: httpx.AsyncClient, studio: dict,
+) -> dict:
+    """Start one fixed local Studio repair on the Studio's Agent Hub."""
+    token = _peer_token(studio)
+    if not token:
+        return {"ok": False, "retryable": False, "error": "no fleet token set"}
+    headers = {"X-Hub-Token": token}
+    try:
+        capability = await client.get(
+            f"{_peer_url(studio)}/api/version", headers=headers, timeout=15.0,
+        )
+        payload = (capability.json()
+                   if capability.headers.get("content-type", "").startswith("application/json")
+                   else {})
+        schema = payload.get("studio_update_repair_schema") if isinstance(payload, dict) else None
+        if capability.status_code in {401, 403}:
+            return {"ok": False, "retryable": False,
+                    "error": "remote Hub rejected the fleet credential"}
+        if capability.status_code >= 400 or type(schema) is not int or schema != 1:
+            return {"ok": False, "retryable": True,
+                    "error": "update the Agent Hub before repairing Studio updates remotely"}
+        response = await client.post(
+            f"{_peer_url(studio)}/api/hub/maintenance/studio-update-repairs",
+            headers=headers,
+            json={"studio_ids": [studio.get("modality")], "local_only": True},
+            timeout=30.0,
+        )
+        result = (response.json()
+                  if response.headers.get("content-type", "").startswith("application/json")
+                  else {})
+        if response.status_code in {401, 403}:
+            return {"ok": False, "retryable": False,
+                    "error": "remote Hub rejected the fleet credential"}
+        if response.status_code == 404:
+            return {"ok": False, "retryable": True,
+                    "error": "update the Agent Hub before repairing Studio updates remotely"}
+        if response.status_code >= 400:
+            return {"ok": False, "retryable": response.status_code >= 500,
+                    "error": str(result.get("detail") or
+                                 f"remote Hub returned HTTP {response.status_code}")}
+        return {"ok": True, "job": result}
+    except httpx.HTTPError as exc:
+        return {"ok": False, "retryable": True,
+                "error": f"can't reach the remote Hub ({exc})"}
+
+
 async def sync_fleet_token(
     registry: list[dict], client: httpx.AsyncClient, new_token: str,
     *, local_commit: Callable[[str], None] = set_fleet_token,

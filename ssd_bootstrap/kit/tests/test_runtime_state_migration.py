@@ -7,6 +7,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest import mock
 
@@ -606,6 +608,108 @@ class RuntimeStateMigrationTests(unittest.TestCase):
         self.assertEqual(self.calls, [])
         self.assertEqual((targets["imagestudio-mac"] / "ENVIRONMENT").read_bytes(), before)
         self.assertFalse(self.backup_root.exists())
+
+    def test_hub_mode_preserves_arbitrary_machine_environment_bytes_and_mode(self) -> None:
+        targets = self.prepare_old_fleet()
+        environment = targets["voicestudio-mac"] / "ENVIRONMENT"
+        original = (
+            b"SETTING=base\r\n"
+            b"CPLUS_INCLUDE_PATH=/Library/Developer/CommandLineTools/SDKs/"
+            b"MacOSX.sdk/usr/include/c++/v1\r\n"
+            b"OWNER_NOTE=0310-\xff\r\n"
+        )
+        environment.write_bytes(original)
+        environment.chmod(0o640)
+
+        strict = self.make_engine().plan().for_name("voicestudio-mac")
+        report = self.make_engine(preserve_machine_environment=True).run()
+
+        self.assertEqual(strict.status, "refused")
+        self.assertTrue(report.ok, report)
+        self.assertEqual(environment.read_bytes(), original)
+        self.assertEqual(stat.S_IMODE(environment.stat().st_mode), 0o640)
+        self.assertEqual(report.for_name("voicestudio-mac").status, "migrated")
+
+    def test_hub_mode_still_refuses_every_other_dirty_path(self) -> None:
+        targets = self.prepare_old_fleet()
+        environment = targets["voicestudio-mac"] / "ENVIRONMENT"
+        environment.write_text("LOCAL_SETTING=allowed\n", encoding="utf-8")
+        (targets["voicestudio-mac"] / "README.md").write_text(
+            "operator edit\n", encoding="utf-8"
+        )
+
+        result = self.make_engine(
+            preserve_machine_environment=True
+        ).plan().for_name("voicestudio-mac")
+
+        self.assertEqual(result.status, "refused")
+        self.assertIn("README.md", result.refusal_reason or "")
+        self.assertEqual(environment.read_text(encoding="utf-8"), "LOCAL_SETTING=allowed\n")
+
+    def test_hub_mode_refuses_symlinked_machine_environment(self) -> None:
+        targets = self.prepare_old_fleet()
+        environment = targets["voicestudio-mac"] / "ENVIRONMENT"
+        outside = self.root / "operator-environment"
+        outside.write_text("LOCAL_SETTING=outside\n", encoding="utf-8")
+        environment.unlink()
+        environment.symlink_to(outside)
+
+        result = self.make_engine(
+            preserve_machine_environment=True
+        ).plan().for_name("voicestudio-mac")
+
+        self.assertEqual(result.status, "refused")
+        self.assertEqual(outside.read_text(encoding="utf-8"), "LOCAL_SETTING=outside\n")
+
+    def test_hub_mode_refuses_symlinked_checkout_root(self) -> None:
+        targets = self.prepare_old_fleet()
+        checkout = targets["voicestudio-mac"]
+        real_checkout = self.root / "real-voice-checkout"
+        checkout.rename(real_checkout)
+        checkout.symlink_to(real_checkout, target_is_directory=True)
+
+        result = self.make_engine(
+            preserve_machine_environment=True
+        ).plan().for_name("voicestudio-mac")
+
+        self.assertEqual(result.status, "refused")
+        self.assertIn("symlink", result.refusal_reason or "")
+
+    def test_json_cli_filters_to_a_fixed_app_and_emits_machine_readable_result(self) -> None:
+        report = runtime_state_migration.MigrationReport((
+            runtime_state_migration.RepositoryResult(
+                "voicestudio-mac", Path("/fixed/voice"), "migrated",
+                Path("/fixed/backup"), None,
+            ),
+        ))
+        instance = mock.Mock()
+        instance.run.return_value = report
+        output = StringIO()
+
+        with mock.patch.object(runtime_state_migration, "MigrationEngine", return_value=instance) as engine:
+            with redirect_stdout(output):
+                code = runtime_state_migration.main([
+                    "--app", "voicestudio-mac",
+                    "--preserve-machine-environment",
+                    "--json",
+                ])
+
+        self.assertEqual(code, 0)
+        arguments = engine.call_args.kwargs
+        self.assertTrue(arguments["preserve_machine_environment"])
+        self.assertEqual(arguments["app_specs"], (APP_SPECS[1],))
+        payload = json.loads(output.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["repositories"][0]["path"], "/fixed/voice")
+        self.assertEqual(payload["repositories"][0]["backup_path"], "/fixed/backup")
+
+    def test_whole_file_mode_requires_an_explicit_fixed_app(self) -> None:
+        with self.assertRaises(SystemExit):
+            runtime_state_migration.main(["--preserve-machine-environment", "--json"])
+        with self.assertRaises(SystemExit):
+            runtime_state_migration.main([
+                "--app", "studiohub-mac", "--preserve-machine-environment", "--json",
+            ])
 
     def test_failed_fast_forward_restores_the_verified_original_environment(self) -> None:
         targets = self.prepare_old_fleet()

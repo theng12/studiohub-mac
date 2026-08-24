@@ -15,6 +15,7 @@ once federation lands.
 """
 
 import os
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -248,3 +249,88 @@ def run_studio_script_sync(studio: dict, script: str, *, timeout: float = 45 * 6
     if "GEN_VERIFY_OK" not in output:
         return {"ok": False, "error": f"{script} finished without generation verification"}
     return {"ok": True, "script": script, "studio": studio["id"], "verified": True}
+
+
+def _sanitize_repair_detail(value: object) -> str:
+    detail = str(value or "Studio update repair failed")[-500:]
+    for path, replacement in (
+        (str(PINOKIO_HOME), "PINOKIO_HOME"),
+        (str(Path.home()), "HOME"),
+    ):
+        if path:
+            detail = detail.replace(path, replacement)
+    return detail
+
+
+def run_studio_update_repair_sync(
+    studio: dict, *, timeout: float = 45 * 60,
+) -> dict:
+    """Run the fixed whole-file migration for one local Voice/Image Studio.
+
+    The repository-owned standard-library tool performs the Git transaction
+    and normal ``update.js`` verification.  This boundary never accepts a path,
+    command, or environment content from an API caller, and it strips local
+    recovery paths before returning a result that may travel to a controller.
+    """
+    if studio.get("machine", "local") != "local":
+        return {"ok": False, "error": "repair must run on the Studio's local Agent Hub"}
+    modality = studio.get("modality")
+    app_name = {"voice": "voicestudio-mac", "image": "imagestudio-mac"}.get(modality)
+    if app_name is None:
+        return {"ok": False, "error": "repair supports only local Voice or Image Studio"}
+    error = _is_controllable(studio)
+    if error:
+        return {"ok": False, "error": error}
+    app_dir = resolve_app_dir(studio)
+    if app_dir is None or app_dir.name not in {app_name, f"{app_name}.git"}:
+        return {"ok": False, "error": f"registered {modality} checkout does not match {app_name}"}
+
+    expected_parent = (LAUNCHER_ROOT / "ssd_bootstrap" / "kit").resolve()
+    tool_path = expected_parent / "runtime_state_migration.py"
+    try:
+        tool = tool_path.resolve(strict=True)
+    except OSError:
+        return {"ok": False, "error": "trusted Studio update repair tool is unavailable"}
+    if tool_path.is_symlink() or not tool.is_file() or tool.parent != expected_parent:
+        return {"ok": False, "error": "trusted Studio update repair tool is invalid"}
+
+    command = [
+        "/usr/bin/python3", str(tool), "--app", app_name,
+        "--preserve-machine-environment", "--json",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(LAUNCHER_ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": f"Studio update repair timed out after {int(timeout // 60)} minutes"}
+    except OSError as exc:
+        return {"ok": False, "error": _sanitize_repair_detail(f"could not start repair: {exc}")}
+
+    try:
+        payload = json.loads(completed.stdout or "")
+        repositories = payload.get("repositories") if isinstance(payload, dict) else None
+        result = repositories[0] if isinstance(repositories, list) and len(repositories) == 1 else None
+    except (TypeError, ValueError):
+        result = None
+        payload = None
+    if not isinstance(result, dict) or result.get("name") != app_name:
+        return {"ok": False, "error": "repair tool returned no valid machine-readable result"}
+    status = result.get("status")
+    if completed.returncode or payload.get("ok") is not True or status not in {"migrated", "already_ready"}:
+        return {"ok": False, "error": _sanitize_repair_detail(
+            result.get("refusal_reason") or f"repair ended with status {status or 'unknown'}"
+        )}
+    detail = (
+        "already ready; machine settings preserved"
+        if status == "already_ready"
+        else "machine settings preserved; update and dependencies verified"
+    )
+    return {"ok": True, "studio": studio["id"], "status": status, "detail": detail}

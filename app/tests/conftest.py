@@ -91,6 +91,7 @@ def _reset_state():
     peers._cache.clear()
     fleet_ops._updates.clear()
     fleet_ops._hub_updates.clear()
+    fleet_ops._studio_update_repairs.clear()
     fleet_ops._hub_versions.clear()
     fleet_ops._studio_versions = {"checked_at": None, "studios": []}
     fleet_ops._preflight = {"ran_at": None, "status": "never", "studios": []}

@@ -14,7 +14,8 @@ import json
 
 from . import broker, peers
 from .control import (PINOKIO_HOME, control_studio, resolve_app_dir,
-                      run_hub_script, run_studio_script, run_studio_script_sync)
+                      run_hub_script, run_studio_script, run_studio_script_sync,
+                      run_studio_update_repair_sync)
 from .registry import DATA_DIR, base_url
 from .resources import host_stats
 
@@ -32,6 +33,8 @@ REMOTE_STATUS_SILENCE_TIMEOUT = 10 * 60
 DRAIN_TIMEOUT = 30 * 60
 GENERATION_INSTALL_TIMEOUT = 45 * 60
 GENERATION_MODALITIES = {"voice", "image", "music", "chat", "video"}
+STUDIO_UPDATE_REPAIR_TIMEOUT = 45 * 60
+STUDIO_UPDATE_REPAIR_MODALITIES = {"voice", "image"}
 
 # Studio Hub watches the repositories itself instead of waiting for each
 # Studio's scheduled updater. Branch-named raw URLs can be stale after a push,
@@ -59,6 +62,7 @@ _studio_versions = {"checked_at": None, "studios": []}
 _updates: dict[str, dict] = {}
 _hub_updates: dict[str, dict] = {}
 _generation_installs: dict[str, dict] = {}
+_studio_update_repairs: dict[str, dict] = {}
 # machine -> {version, checked_at, host, reachable, chip, total_memory_gb}:
 # last-known peer Hub versions and hardware identity.
 _hub_versions: dict[str, dict] = {}
@@ -83,6 +87,28 @@ def finish_fleet_job(job: dict) -> None:
     )
 
 
+def _finish_studio_update_repair_job(job: dict) -> None:
+    items = job.get("items") or []
+    failed = sum(1 for item in items if item.get("status") == "failed")
+    pending = sum(1 for item in items if item.get("status") == "pending")
+    succeeded = sum(1 for item in items if item.get("status") == "complete")
+    if pending and not succeeded:
+        status = "pending"
+    elif failed and not pending and not succeeded:
+        status = "failed"
+    else:
+        status = "complete"
+    job.update(
+        status=status,
+        degraded=bool((failed or pending) and succeeded),
+        failed_count=failed,
+        pending_count=pending,
+        retryable_count=failed + pending,
+        succeeded_count=succeeded,
+        finished_at=time.time(),
+    )
+
+
 def _save_state() -> None:
     try:
         _STATE_FILE.write_text(json.dumps(
@@ -90,13 +116,14 @@ def _save_state() -> None:
              "hub_versions": _hub_versions,
              "updates": _updates,
              "hub_updates": _hub_updates,
-             "generation_installs": _generation_installs}, indent=2) + "\n")
+             "generation_installs": _generation_installs,
+             "studio_update_repairs": _studio_update_repairs}, indent=2) + "\n")
     except OSError:
         pass
 
 
 def _load_state() -> None:
-    global _preflight, _studio_versions, _hub_versions, _updates, _hub_updates, _generation_installs
+    global _preflight, _studio_versions, _hub_versions, _updates, _hub_updates, _generation_installs, _studio_update_repairs
     try:
         d = json.loads(_STATE_FILE.read_text())
         if isinstance(d.get("studio_versions"), dict):
@@ -123,6 +150,8 @@ def _load_state() -> None:
             _hub_updates = d["hub_updates"]
         if isinstance(d.get("generation_installs"), dict):
             _generation_installs = d["generation_installs"]
+        if isinstance(d.get("studio_update_repairs"), dict):
+            _studio_update_repairs = d["studio_update_repairs"]
         # Preserve interrupted operations for diagnosis instead of letting them
         # vanish or remain falsely "running" forever after a Hub restart.
         for job in [*_updates.values(), *_hub_updates.values(), *_generation_installs.values()]:
@@ -136,6 +165,17 @@ def _load_state() -> None:
                         detail="Primary Hub restarted during this operation; retry remotely from this Hub",
                     )
             finish_fleet_job(job)
+        for job in _studio_update_repairs.values():
+            if job.get("status") not in {"queued", "running"}:
+                continue
+            job["restart_interrupted"] = True
+            for item in job.get("items", []):
+                if item.get("status") not in {"complete", "failed", "pending"}:
+                    item.update(
+                        status="pending", finished_at=time.time(),
+                        detail="Agent Hub restarted during repair; inspect and retry this Studio",
+                    )
+            _finish_studio_update_repair_job(job)
     except (OSError, ValueError):
         pass
 
@@ -1031,6 +1071,203 @@ def generation_install_snapshot(job_id: str | None = None):
     return sorted(_generation_installs.values(), key=lambda j: j["created_at"], reverse=True)[:20]
 
 
+# ── One-time legacy Studio update repair ──────────────────────────────────
+
+class StudioUpdateRepairPending(RuntimeError):
+    """A safe repair has not run because the Agent can be retried later."""
+
+
+def start_studio_update_repairs(
+    monitor, studio_ids: list[str] | None = None, *, local_only: bool = False,
+) -> dict:
+    active = next((job for job in _studio_update_repairs.values()
+                   if job.get("status") in {"queued", "running"}), None)
+    if active:
+        raise ValueError(f"Studio update repair {active['id']} is already running")
+    if any(job.get("status") in {"queued", "running"} for job in _updates.values()):
+        raise ValueError("wait for the active rolling Studio update to finish")
+    if any(job.get("status") in {"queued", "running"} for job in _generation_installs.values()):
+        raise ValueError("wait for the active generation dependency install to finish")
+    if any(job.get("status") in {"queued", "running"} for job in _hub_updates.values()):
+        raise ValueError("wait for the active Agent Hub update to finish")
+    ids = list(dict.fromkeys(studio_ids or []))
+    if any(not isinstance(sid, str) or not sid or len(sid) > 200 for sid in ids):
+        raise ValueError("studio ids must be non-empty strings under 200 characters")
+    known = {studio["id"] for studio in monitor.registry}
+    missing = [sid for sid in ids if sid not in known]
+    if missing:
+        raise ValueError(f"unknown studios: {', '.join(missing)}")
+    targets = [
+        studio for studio in monitor.registry
+        if studio.get("modality") in STUDIO_UPDATE_REPAIR_MODALITIES
+        and (not local_only or studio.get("machine", "local") == "local")
+        and (not ids or studio["id"] in ids)
+    ]
+    if not targets:
+        raise ValueError("no local or registered Voice/Image Studios are eligible for update repair")
+    if len(_studio_update_repairs) >= 50:
+        finished = sorted(
+            (job for job in _studio_update_repairs.values()
+             if job.get("status") not in {"queued", "running"}),
+            key=lambda job: job.get("created_at", 0),
+        )
+        for old in finished[:max(1, len(_studio_update_repairs) - 49)]:
+            _studio_update_repairs.pop(old["id"], None)
+    job = {
+        "id": uuid.uuid4().hex[:10],
+        "kind": "studio_update_repair",
+        "status": "queued",
+        "created_at": time.time(),
+        "finished_at": None,
+        "local_only": local_only,
+        "items": [{
+            "studio": studio["id"],
+            "machine": studio.get("machine", "local"),
+            "modality": studio.get("modality"),
+            "status": "queued",
+            "detail": "waiting",
+        } for studio in targets],
+    }
+    _studio_update_repairs[job["id"]] = job
+    _save_state()
+    asyncio.create_task(_run_studio_update_repairs(monitor, job))
+    return job
+
+
+async def _run_studio_update_repairs(monitor, job: dict) -> None:
+    job["status"] = "running"
+    _save_state()
+    groups: dict[str, list[dict]] = {}
+    for item in job["items"]:
+        groups.setdefault(str(item.get("machine") or "local"), []).append(item)
+
+    async def run_group(items: list[dict]) -> None:
+        for item in items:
+            studio = next((candidate for candidate in monitor.registry
+                           if candidate["id"] == item["studio"]), None)
+            if studio is None:
+                item.update(status="failed", detail="Studio was removed from the registry",
+                            finished_at=time.time())
+                _save_state()
+                continue
+            try:
+                await _studio_update_repair_one(studio, item)
+            except StudioUpdateRepairPending as exc:
+                item.update(status="pending", detail=str(exc)[:240], finished_at=time.time())
+            except Exception as exc:
+                item.update(status="failed", detail=str(exc)[:240], finished_at=time.time())
+            _save_state()
+
+    await asyncio.gather(*(run_group(items) for items in groups.values()))
+    _finish_studio_update_repair_job(job)
+    _save_state()
+
+
+async def _studio_update_repair_one(studio: dict, item: dict) -> None:
+    sid = studio["id"]
+    item.update(status="draining", detail="waiting for active work to finish",
+                started_at=time.time())
+    broker.set_maintenance(sid, True)
+    try:
+        deadline = time.monotonic() + DRAIN_TIMEOUT
+        while studio_has_active_work(sid):
+            if time.monotonic() >= deadline:
+                raise RuntimeError("drain timed out; Studio update repair was not started")
+            await asyncio.sleep(2)
+        if studio.get("machine", "local") == "local":
+            item.update(status="repairing", detail="preserving machine settings and running update")
+            result = await asyncio.to_thread(run_studio_update_repair_sync, studio)
+            if not result.get("ok"):
+                raise RuntimeError(result.get("error", "Studio update repair failed"))
+            item.update(status="complete", detail=result.get("detail", "repair verified"),
+                        migration_status=result.get("status"), finished_at=time.time())
+            return
+
+        item.update(status="repairing", detail="asking the machine's Agent Hub to repair this Studio")
+        async with _client_for_studio_update_repair() as client:
+            result = await peers.start_remote_studio_update_repair(client, studio)
+        if not result.get("ok"):
+            message = result.get("error", "remote Studio update repair could not start")
+            if result.get("retryable"):
+                raise StudioUpdateRepairPending(message)
+            raise RuntimeError(message)
+        remote_job = result.get("job") or {}
+        remote_id = remote_job.get("id")
+        if not remote_id:
+            raise RuntimeError("remote Agent Hub did not return a repair job id")
+        item["remote_job_id"] = remote_id
+        await _wait_remote_studio_update_repair(studio, item, remote_id)
+    finally:
+        broker.set_maintenance(sid, False)
+
+
+def _client_for_studio_update_repair():
+    return httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=8.0))
+
+
+async def _wait_remote_studio_update_repair(
+    studio: dict, item: dict, remote_id: str,
+) -> None:
+    url = f"http://{studio['host']}:{studio.get('hub_port', peers.DEFAULT_HUB_PORT)}"
+    token = peers._peer_token(studio)
+    deadline = time.monotonic() + STUDIO_UPDATE_REPAIR_TIMEOUT
+    try:
+        async with _client_for_studio_update_repair() as client:
+            while time.monotonic() < deadline:
+                await asyncio.sleep(4)
+                response = await client.get(
+                    f"{url}/api/hub/maintenance/studio-update-repairs/{remote_id}",
+                    headers={"X-Hub-Token": token or ""},
+                )
+                if response.status_code in {401, 403}:
+                    raise RuntimeError("remote Agent Hub rejected the fleet credential")
+                if response.status_code >= 500:
+                    raise StudioUpdateRepairPending(
+                        f"remote Agent Hub returned HTTP {response.status_code}; retry when reachable"
+                    )
+                if response.status_code >= 400:
+                    raise RuntimeError(f"remote repair status returned HTTP {response.status_code}")
+                data = response.json()
+                remote_item = (data.get("items") or [{}])[0]
+                item.update(status=remote_item.get("status", "repairing"),
+                            detail=remote_item.get("detail", "checking remote repair"))
+                if data.get("status") == "pending" or remote_item.get("status") == "pending":
+                    raise StudioUpdateRepairPending(
+                        remote_item.get("detail", "remote Agent is unavailable; retry later")
+                    )
+                if data.get("status") == "failed" or remote_item.get("status") == "failed":
+                    raise RuntimeError(remote_item.get("detail", "remote Studio update repair failed"))
+                if data.get("status") == "complete":
+                    item.update(status="complete", detail=remote_item.get(
+                        "detail", "machine settings preserved; update and dependencies verified"
+                    ), finished_at=time.time())
+                    return
+    except httpx.HTTPError as exc:
+        raise StudioUpdateRepairPending(
+            f"Agent Hub is unreachable; retry when reachable ({exc})"
+        ) from exc
+    raise StudioUpdateRepairPending("remote Studio update repair timed out; inspect and retry")
+
+
+def studio_update_repair_snapshot(job_id: str | None = None):
+    if job_id:
+        return _studio_update_repairs.get(job_id)
+    return sorted(
+        _studio_update_repairs.values(), key=lambda job: job.get("created_at", 0), reverse=True,
+    )[:20]
+
+
+def retry_studio_update_repairs(monitor, job_id: str) -> dict:
+    job = _studio_update_repairs.get(job_id)
+    if not job:
+        raise ValueError("unknown Studio update repair")
+    ids = [item["studio"] for item in job.get("items", [])
+           if item.get("status") in {"pending", "failed"}]
+    if not ids:
+        raise ValueError("Studio update repair has no pending or failed items")
+    return start_studio_update_repairs(monitor, ids, local_only=False)
+
+
 # ── Fleet Hub self-update ───────────────────────────────────────────────────
 # The studio updates above cover studios (registry entries). The HUB itself is
 # not a studio, so to update the Studio Hub on the agent Macs the primary tells
@@ -1216,6 +1453,9 @@ def hub_update_blockers() -> list[str]:
         reasons.append("an agent Hub update is active")
     if any(job["status"] in {"queued", "running"} for job in _generation_installs.values()):
         reasons.append("a generation dependency install is active")
+    if any(job.get("status") in {"queued", "running"}
+           for job in _studio_update_repairs.values()):
+        reasons.append("a Studio update repair is active")
     if _active_studio_leases():
         reasons.append("a fleet worker owns an active lease")
     generation_active = any(

@@ -203,6 +203,18 @@ Hub work drains first, and the `GEN_VERIFY_OK` marker is required before a row
 is reported successful. GenStudio can invoke the same site-owned action across
 all connected locations.
 
+**Repair blocked Studio updates** is a separate one-time bridge for legacy
+Voice/Image checkouts whose tracked machine `ENVIRONMENT` prevents `git pull`.
+The Agent Hub backs up and preserves the complete regular file (including
+machine-specific compiler settings), migrates only an otherwise-clean expected
+checkout, then runs the Studio's normal update, dependency convergence, restart,
+and health verification. Repairs are serial per Mac and parallel across Macs;
+offline or older Agents remain pending and can be retried. An Agent Hub must be
+updated to a version advertising `studio_update_repair_schema: 1` before a
+controller can repair its sibling Studios remotely. A Hub whose own checkout is
+blocked still needs SSD Stage 5 once. Models, enrollment, fleet credentials,
+voices, and jobs are never changed by this repair.
+
 Every app independently enforces its expected GitHub origin and `main`, a clean
 fast-forward, free disk, dependency/import checks, healthy restart, and exact
 running version. Dirty, detached, divergent, or rewritten repositories are
@@ -268,7 +280,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | Endpoint | Description |
 |---|---|
 | `GET /api/health` | Hub liveness (same shape as the sibling studios) |
-| `GET /api/version` | `{app_version, title}` |
+| `GET /api/version` | Running Hub identity plus additive maintenance capabilities such as integer `studio_update_repair_schema: 1` |
 | `GET /api/auto-update/status` · `GET /api/auto-update/readiness` | Hub updater settings/state and idle blockers |
 | `POST /api/auto-update/settings` · `POST /api/auto-update/check` | Save and validate the opt-in schedule / check safely now |
 | `POST /api/auto-update/update` · `POST /api/auto-update/retry` | Update now or after current work / retry a failed update |
@@ -277,6 +289,8 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/auto-updates/{target}/mode` | Change one app's Off, Notify, or Auto mode while preserving its schedule |
 | `POST /api/hub/auto-updates/update-idle` | Start a staggered, health-gated update for selected idle sibling Studios |
 | `POST /api/hub/auto-updates/jobs/{id}/retry` | Retry only the failed apps from a saved automatic fleet update |
+| `GET` · `POST /api/hub/maintenance/studio-update-repairs` | List durable one-time Voice/Image update repairs / start fixed local-or-fleet repair targets |
+| `GET /api/hub/maintenance/studio-update-repairs/{id}` · `POST …/{id}/retry` | Poll one durable repair / retry only its pending or failed Studios |
 | `GET /api/hub/studios` | Registry + live status per studio |
 | `GET /health/live` · `GET /health/ready` · `GET /health/capacity` | Controller liveness, site-execution readiness, and non-secret routing capacity; optional telemetry never gates readiness |
 | `GET /api/hub/capabilities` | Private cache-only GenStudio capability snapshot (schema v3); active managed intent adds exact-release convergence and quarantine evidence |
