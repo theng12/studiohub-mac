@@ -384,6 +384,21 @@ async def test_remote_startup_retire_targets_peer_local_machine(reset):
 
 
 @pytest.mark.asyncio
+async def test_remote_full_remove_targets_peer_local_machine(reset):
+    peers.set_fleet_token("shared-secret")
+    client = FakeStartupClient(data={"ok": True, "removed": True})
+
+    result = await peers.remove_remote_studio(client, REMOTE[0], "render")
+
+    assert result["ok"] is True
+    method, url, headers, timeout = client.calls[0]
+    assert method == "POST"
+    assert url.endswith("/api/hub/service/startup-services/local/render/remove")
+    assert headers == {"X-Hub-Token": "shared-secret"}
+    assert timeout == 260.0
+
+
+@pytest.mark.asyncio
 async def test_remote_update_repair_requires_exact_capability_and_targets_peer_local_studio(reset):
     peers.set_fleet_token("shared-secret")
 

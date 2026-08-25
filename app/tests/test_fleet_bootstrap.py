@@ -263,30 +263,41 @@ def test_staged_payload_permissions_are_portable_across_user_ids(tmp_path):
     assert link.is_symlink()
 
 
-def test_restaging_preserves_legacy_ssd_logs(tmp_path, monkeypatch):
+def test_model_staging_never_rewrites_the_canonical_bootstrap_kit(tmp_path, monkeypatch):
     models = load_tool("studio_models.py")
     kit = tmp_path / "terranash-bootstrap"
-    legacy_log = kit / "logs/bootstrap-old.log"
-    legacy_log.parent.mkdir(parents=True)
-    legacy_log.write_text("PINOKIO_HOME=/Users/old-account/pinokio")
-    installer = kit / "installers" / models.PINOKIO_DMG
-    installer.parent.mkdir()
-    installer.write_bytes(b"test installer")
-    monkeypatch.setattr(models, "file_sha256", lambda _path: models.PINOKIO_DMG_SHA256)
+    sentinel = kit / "canonical-only.txt"
+    sentinel.parent.mkdir(parents=True)
+    sentinel.write_text("preserve canonical sync output")
+    model_root = tmp_path / "models"
+    cache = tmp_path / "cache"
+    package = cache / "models--owner--model"
+    package.mkdir(parents=True)
+    (package / "weights.bin").write_bytes(b"weights")
+    monkeypatch.setattr(
+        models,
+        "discover",
+        lambda port: (
+            (cache, [{
+                "repo": "owner/model",
+                "family": "test-family",
+                "provider": "local",
+                "cache": {"state": "cached"},
+            }])
+            if port == models.STUDIOS["voice"]["port"] else (None, [])
+        ),
+    )
+    monkeypatch.setattr(models, "discover_fleet_voices", lambda: [])
+    monkeypatch.setattr(
+        models,
+        "stage_bootstrap_kit",
+        lambda *_args, **_kwargs: pytest.fail("model staging rewrote the bootstrap kit"),
+        raising=False,
+    )
 
-    models.stage_bootstrap_kit(tmp_path, plan_only=False)
+    models.do_stage(model_root, plan_only=True, keep_non_cloning=False)
 
-    assert legacy_log.parent.is_dir()
-    assert legacy_log.read_text() == "PINOKIO_HOME=/Users/old-account/pinokio"
-    assert legacy_log.parent.stat().st_mode & 0o7777 == 0o1777
-    assert not (kit / "Install TerraNash Studios.command").exists()
-    assert (kit / ".terranash-bootstrap.command").stat().st_mode & 0o555 == 0o555
-    assert (kit / "1 Install Pinokio and Studios.command").is_file()
-    assert (kit / "2 Copy Models to This Mac.command").is_file()
-    assert (kit / "4 Repair Studio Startup.command").is_file()
-    assert (kit / "repair_startup.py").is_file()
-    assert (kit / "studio_models.py").is_file()
-    assert (tmp_path / "READ-ME-FIRST.md").stat().st_mode & 0o444 == 0o444
+    assert sentinel.read_text() == "preserve canonical sync output"
 
 
 def test_ssd_guide_points_to_the_canonical_three_stage_kit_and_stays_short():
@@ -432,8 +443,6 @@ def test_stage_includes_every_cached_local_catalog_model(tmp_path, monkeypatch, 
         lambda port: (hub, catalog) if port == models.STUDIOS["voice"]["port"] else (None, []),
     )
     monkeypatch.setattr(models, "discover_fleet_voices", lambda: [])
-    monkeypatch.setattr(models, "stage_bootstrap_kit", lambda *_args, **_kwargs: None)
-
     models.do_stage(tmp_path / "ssd", plan_only=True, keep_non_cloning=False)
 
     assert "Voice Studio: 1 packages" in capsys.readouterr().out
@@ -462,8 +471,6 @@ def test_stage_excludes_a_catalog_package_that_is_still_partial(
         else (None, []),
     )
     monkeypatch.setattr(models, "discover_fleet_voices", lambda: [])
-    monkeypatch.setattr(models, "stage_bootstrap_kit", lambda *_args, **_kwargs: None)
-
     models.do_stage(tmp_path / "ssd", plan_only=True, keep_non_cloning=False)
 
     assert "Voice Studio: 0 packages" in capsys.readouterr().out

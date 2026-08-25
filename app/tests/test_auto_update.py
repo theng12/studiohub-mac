@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 from pathlib import Path
+import plistlib
 import subprocess
 import sys
 import threading
@@ -181,6 +182,11 @@ def test_launchagent_enable_update_disable_and_removal(updater: AutoUpdater, mon
     _save(updater, "notify")
     first = AutoUpdater.apply_scheduler(updater)
     assert first["installed"] is True and updater.agent_path.is_file()
+    assert updater.wrapper_path.is_file()
+    payload = plistlib.loads(updater.agent_path.read_bytes())
+    assert payload["ProgramArguments"] == [str(updater.wrapper_path)]
+    assert updater.wrapper_path.name == "studiohub-test-updater.sh"
+    assert str(updater.root / "conda_env" / "bin" / "python") in updater.wrapper_path.read_text()
     first_contents = updater.agent_path.read_bytes()
 
     updater.save_settings({"mode": "auto", "frequency": "weekly",
@@ -194,6 +200,36 @@ def test_launchagent_enable_update_disable_and_removal(updater: AutoUpdater, mon
     final = AutoUpdater.apply_scheduler(updater)
     assert final["installed"] is False
     assert not updater.agent_path.exists()
+    assert not updater.wrapper_path.exists()
+
+
+def test_named_wrapper_never_follows_a_precreated_temporary_symlink(
+    updater, tmp_path,
+):
+    outside = tmp_path / "outside"
+    outside.write_text("protected")
+    updater.state_dir.mkdir()
+    temporary = updater.wrapper_path.with_name(
+        f".{updater.wrapper_path.name}.{os.getpid()}.tmp"
+    )
+    temporary.symlink_to(outside)
+
+    with pytest.raises(FileExistsError):
+        updater._write_wrapper()
+
+    assert outside.read_text() == "protected"
+
+
+def test_scheduler_reconciliation_does_not_run_while_update_lock_is_held(
+    updater: AutoUpdater, monkeypatch: pytest.MonkeyPatch,
+):
+    calls = []
+    monkeypatch.setattr(updater, "apply_scheduler", lambda: calls.append("bootout"))
+
+    with updater._exclusive_lock():
+        assert updater.apply_scheduler_if_idle() is False
+
+    assert calls == []
 
 
 def test_invalid_settings_are_rejected(updater: AutoUpdater):

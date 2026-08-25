@@ -314,6 +314,8 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/startup-services/{machine}/{studio}/install` | Install or repair one sibling's startup service on its own machine; refuses Hub-tracked active work |
 | `POST /api/hub/startup-services/{machine}/{studio}/retire` | Loopback/owner-session retirement for Music, Chat, Video, or Render: turn updater/routing Off and unload startup without deleting app or model data; partial remote failures remain safely disabled for retry |
 | `POST /api/hub/service/startup-services/local/{studio}/retire` | Strict fleet-header peer route used by the Controller; the target Hub repeats local busy/update checks before changing its own Mac |
+| `POST /api/hub/startup-services/{machine}/{studio}/remove` | Loopback/owner-session full removal for Music, Chat, Video, or Render: stop, disable autolaunch, remove exact LaunchAgents and Hub registration, then move all matching checkouts and owned data to Trash |
+| `POST /api/hub/service/startup-services/local/{studio}/remove` | Strict fleet-header peer route for the same full-removal workflow on the target Mac; Image, Voice, and Hub are always refused |
 | `POST /api/hub/registry/studios/{id}/enabled` | Pause/resume new jobs for one Studio with `{"enabled": false/true}`; running work and the process are untouched |
 | `GET /api/hub/health` | Aggregate: totals + per-studio statuses |
 | `GET /api/hub/catalog` | Local per-studio catalog rows (annotated `hub_cached`, `hub_machine`). Query: `q`, `modality`, `downloaded`, `force` |
@@ -743,7 +745,9 @@ Image Studio, Voice Studio, both generation environments, the RAM-qualified
 model set, SHA-256-bound shared voice references, and independent Pinokio
 startup settings before performing the Agent join. Staging is additive: unchanged packages
 are skipped and an offline Studio cannot erase previously staged payloads.
-Prepare it once with `python3 tools/studio_models.py stage`, then follow
+Synchronize the canonical kit with `python3 tools/sync_ssd_bootstrap.py
+--volume /Volumes/NAME-OF-SSD`, then stage model packages separately with
+`python3 tools/studio_models.py stage` and follow
 [`SSD-COPY-README.md`](SSD-COPY-README.md). The permanent Controller registration
 code is prompted securely on the new Mac and is never stored on the SSD.
 
@@ -823,6 +827,27 @@ operation if that Studio still has Hub-tracked active work. Installation can
 restart the Studio as launchd takes ownership, so direct jobs started outside
 the Hub should also be allowed to finish first. No startup service is installed
 automatically merely by opening or refreshing the audit.
+
+**Fully remove unused** is the recoverable cleanup for machines that should run
+only Hub, Image, and Voice. For Music, Chat, Video, and Render it first fences
+Hub work and app updates, stops every canonical/`.git` Pinokio checkout,
+disables Pinokio autolaunch, unloads and deletes the exact updater, server, and
+watchdog LaunchAgents, removes the Hub registration, then moves the checkout and
+its outputs/settings plus exact Hugging Face cache packages used only by that
+Studio to macOS Trash. A model package referenced by any other installed Studio
+is preserved. Image, Voice,
+and Hub are hard-protected. Offline or busy rows remain available for retry;
+nothing runs merely from opening the audit. The action still works when the
+Pinokio GUI is closed, but fails safely if an unmanaged process remains on the
+Studio's port. Remote deletion is accepted only from the Agent's enrolled
+parent controller, and a lost success response can be retried idempotently.
+
+Hub, Image, and Voice automatic schedules use named executable wrappers
+(`studiohub-updater.sh`, `imagestudio-updater.sh`, and
+`voicestudio-updater.sh`). The first restart after updating reconciles a legacy
+raw-Python LaunchAgent automatically. macOS Background Activity therefore has
+identifiable production updater entries, and removing an unused Studio also
+removes its exact updater label.
 
 ## The fleet: remote specs + remote control
 

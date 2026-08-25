@@ -882,6 +882,11 @@ def _patch_lifecycle_dependencies(main, monkeypatch, events, *, failure=None):
     async def async_event(name):
         events.append(name)
 
+    monkeypatch.setattr(
+        main.auto_updater,
+        "apply_scheduler",
+        lambda: events.append("scheduler_reconciled"),
+    )
     monkeypatch.setattr(main, "ReleaseReconciler", Reconciler)
     monkeypatch.setattr(main, "RepairStore", Store)
     monkeypatch.setattr(main, "RepairExecutor", Executor)
@@ -922,6 +927,7 @@ async def test_repair_lifecycle_recovers_and_starts_after_reconciler_then_stops_
     _patch_lifecycle_dependencies(main, monkeypatch, events)
 
     async with main.lifespan(main.app):
+        assert events.index("scheduler_reconciled") < events.index("monitor_start")
         assert events.index("release_start") < events.index("repair_recover") < events.index("repair_start")
 
     assert events.index("repair_stop") < events.index("release_stop")

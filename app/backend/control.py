@@ -101,6 +101,34 @@ def control_studio(studio: dict, action: str) -> dict:
     return {"ok": True, "action": action, "studio": studio["id"], "ref": ref}
 
 
+def stop_studio_sync(studio: dict) -> dict:
+    """Stop one local Pinokio-owned Studio before its checkout is removed."""
+    error = _is_controllable(studio)
+    if error:
+        return {"ok": False, "error": error}
+    pterm = find_pterm()
+    if pterm is None:
+        return {"ok": False, "error": "pterm CLI not found"}
+    app_dir = resolve_app_dir(studio)
+    ref = f"{KERNEL}/api/{app_dir.name}"
+    try:
+        result = subprocess.run(
+            pterm_command(pterm, "stop", "start.js", ref),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "error": f"failed to stop Pinokio startup: {exc}"}
+    if result.returncode:
+        detail = (result.stdout or "Pinokio could not stop the Studio").strip()
+        return {"ok": False, "error": detail[-500:]}
+    return {"ok": True, "action": "stop", "studio": studio["id"], "ref": ref}
+
+
 def run_hub_script(script: str) -> dict:
     """Run THIS Hub's own maintenance script (update.js) via its Pinokio app.
     Used for remote-triggered self-update: the primary Hub tells a peer to pull

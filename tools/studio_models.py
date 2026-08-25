@@ -66,13 +66,6 @@ STT_FAMILY = "Whisper (speech-to-text)"
 QWEN_06B_BASE = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit"
 QWEN_QUALITY_WHISPER = "mlx-community/whisper-large-v3-turbo"
 EIGHT_GB_VOICE_ALLOWLIST = frozenset({QWEN_06B_BASE, QWEN_QUALITY_WHISPER})
-PINOKIO_VERSION = "8.0.40"
-PINOKIO_DMG = f"Pinokio-{PINOKIO_VERSION}-arm64.dmg"
-PINOKIO_DMG_URL = (
-    f"https://github.com/pinokiocomputer/pinokio/releases/download/"
-    f"v{PINOKIO_VERSION}/{PINOKIO_DMG}"
-)
-PINOKIO_DMG_SHA256 = "3c0f55f769efc2c02e5d0b8bc24e2ee7b0be54d42e6404663887e0cf8d3df3fd"
 PREFERRED_VOLUME_NAMES = ("ugreen-terranash", "UGREEN-1TB")
 
 def needed_companions(models: list[dict]) -> set[str]:
@@ -417,30 +410,6 @@ def stage_voice(root: Path, voice: dict) -> tuple[str, dict]:
     return action, entry
 
 
-def download_with_progress(url: str, destination: Path) -> None:
-    temporary = destination.with_name(f".{destination.name}.{os.getpid()}.part")
-    try:
-        with urllib.request.urlopen(url, timeout=60) as response, temporary.open("wb") as out:
-            total = int(response.headers.get("Content-Length") or 0)
-            copied = 0
-            last_percent = -1
-            while True:
-                chunk = response.read(1024 * 1024)
-                if not chunk:
-                    break
-                out.write(chunk)
-                copied += len(chunk)
-                percent = int(copied * 100 / total) if total else 0
-                if total and percent // 5 != last_percent // 5:
-                    print(f"    Pinokio installer: {percent}%", flush=True)
-                    last_percent = percent
-        if file_sha256(temporary) != PINOKIO_DMG_SHA256:
-            raise RuntimeError("downloaded Pinokio installer failed its SHA-256 check")
-        temporary.replace(destination)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
 def make_portable_readable(root: Path) -> None:
     """Add read/traverse access without changing ownership or following links.
 
@@ -454,59 +423,6 @@ def make_portable_readable(root: Path) -> None:
             continue
         access = 0o555 if path.is_dir() else 0o444
         path.chmod(path.stat().st_mode | access)
-
-
-def stage_bootstrap_kit(volume_root: Path, *, plan_only: bool) -> None:
-    """Put the clean-Mac installer beside the model payload on the SSD."""
-    repo = Path(__file__).resolve().parent.parent
-    kit = volume_root / "terranash-bootstrap"
-    sources = (
-        (repo / "tools/fleet_bootstrap.py", "fleet_bootstrap.py"),
-        (repo / "tools/studio_models.py", "studio_models.py"),
-        (repo / "tools/Install TerraNash Studios.command", ".terranash-bootstrap.command"),
-        (repo / "tools/1 Install Pinokio and Studios.command",
-         "1 Install Pinokio and Studios.command"),
-        (repo / "tools/2 Copy Models to This Mac.command",
-         "2 Copy Models to This Mac.command"),
-        (repo / "tools/repair_startup.py", "repair_startup.py"),
-        (repo / "tools/4 Repair Studio Startup.command",
-         "4 Repair Studio Startup.command"),
-    )
-    print(f"bootstrap: Pinokio {PINOKIO_VERSION} + Hub/Image/Voice installer -> {kit}")
-    if plan_only:
-        print("  would copy the bootstrap scripts, current guide, SSD marker, and signed Pinokio DMG")
-        return
-
-    kit.mkdir(parents=True, exist_ok=True)
-    legacy_logs = kit / "logs"
-    legacy_logs.mkdir(exist_ok=True)
-    legacy_logs.chmod(0o1777)
-    (kit / "Install TerraNash Studios.command").unlink(missing_ok=True)
-    for source, name in sources:
-        destination = kit / name
-        shutil.copy2(source, destination)
-        destination.chmod(0o755)
-    shutil.copy2(repo / "SSD-COPY-README.md", volume_root / "READ-ME-FIRST.md")
-    (volume_root / ".terranash-fleet-ssd.json").write_text(json.dumps({
-        "schema_version": 1,
-        "model_root": "studio-models",
-        "bootstrap_root": "terranash-bootstrap",
-        "pinokio_version": PINOKIO_VERSION,
-        "studio_hub_version": (repo / "VERSION").read_text().strip(),
-    }, indent=2) + "\n")
-
-    installers = kit / "installers"
-    installers.mkdir(exist_ok=True)
-    dmg = installers / PINOKIO_DMG
-    if dmg.is_file() and file_sha256(dmg) == PINOKIO_DMG_SHA256:
-        print(f"  Pinokio installer already verified: {dmg.name}")
-    else:
-        dmg.unlink(missing_ok=True)
-        print(f"  downloading signed Pinokio {PINOKIO_VERSION} installer ({PINOKIO_DMG})")
-        download_with_progress(PINOKIO_DMG_URL, dmg)
-    make_portable_readable(kit)
-    (volume_root / "READ-ME-FIRST.md").chmod(0o644)
-    (volume_root / ".terranash-fleet-ssd.json").chmod(0o644)
 
 
 def stale_staged_packages(root: Path, wanted: set[Path]) -> list[Path]:
@@ -655,7 +571,6 @@ def do_stage(root: Path, plan_only: bool, keep_non_cloning: bool) -> int:
     print(f"total: {total / 1e9:.1f} GB -> {root}")
 
     if plan_only:
-        stage_bootstrap_kit(root.parent, plan_only=True)
         print("\n--plan only, nothing written.")
         return 0
 
@@ -666,8 +581,6 @@ def do_stage(root: Path, plan_only: bool, keep_non_cloning: bool) -> int:
             "would dereference the Hugging Face cache and roughly double its "
             "size. Reformat the drive as APFS."
         )
-    stage_bootstrap_kit(root.parent, plan_only=False)
-
     manifest = {"schema_version": 2,
                 "layout": "<studio>/<family>/models--org--name",
                 "studios": {}, "voices": []}

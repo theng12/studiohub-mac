@@ -16,6 +16,7 @@ import json
 import re
 import secrets
 import subprocess
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager, nullcontext
@@ -340,6 +341,40 @@ def _automatic_update_blockers() -> list[str]:
 
 
 auto_updater = create_updater(readiness=_automatic_update_blockers)
+
+
+def _schedule_auto_update_reconciliation() -> None:
+    def wait_until_idle() -> None:
+        deadline = time.monotonic() + 600
+        while time.monotonic() < deadline:
+            time.sleep(1)
+            try:
+                if auto_updater.apply_scheduler_if_idle():
+                    return
+            except (UpdateError, OSError, subprocess.SubprocessError) as exc:
+                print(f"[hub] automatic-update scheduler reconciliation deferred: {exc}")
+                return
+
+    threading.Thread(
+        target=wait_until_idle,
+        name="hub-updater-wrapper-migration",
+        daemon=True,
+    ).start()
+
+
+def _reconcile_auto_update_scheduler() -> bool:
+    """Migrate the scheduler only when its current update helper is idle."""
+    try:
+        if not auto_updater.apply_scheduler_if_idle():
+            print("[hub] automatic-update scheduler reconciliation deferred: update active")
+            _schedule_auto_update_reconciliation()
+            return False
+        return True
+    except (UpdateError, OSError, subprocess.SubprocessError) as exc:
+        print(f"[hub] automatic-update scheduler reconciliation deferred: {exc}")
+        return False
+
+
 fleet_auto_updates = FleetAutoUpdates(
     monitor, auto_updater,
     state_path=DATA_DIR / "auto_update" / "fleet_jobs.json",
@@ -448,6 +483,13 @@ async def lifespan(app: FastAPI):
     repair_coordinator = None
     primary_error: BaseException | None = None
     try:
+        _reconcile_auto_update_scheduler()
+        for cleanup in startup_services.reconcile_removal_intents():
+            if not cleanup.get("ok"):
+                print(
+                    "[hub] interrupted Studio removal still needs attention: "
+                    f"{cleanup.get('modality')}: {cleanup.get('error')}"
+                )
         removed_execution_assets = execution_assets.cleanup_expired()
         if removed_execution_assets:
             print(f"[hub] removed {removed_execution_assets} expired execution asset(s)")
@@ -3353,8 +3395,9 @@ async def _retire_local_startup_service(modality: str) -> dict:
 
 
 @app.post("/api/hub/service/startup-services/local/{modality}/retire")
-async def retire_local_startup_service_for_peer(modality: str):
+async def retire_local_startup_service_for_peer(request: Request, modality: str):
     """Strict fleet-service route; the peer performs its authoritative checks."""
+    await _require_parent_controller_service(request)
     return await _retire_local_startup_service(modality)
 
 
@@ -3389,6 +3432,115 @@ async def retire_fleet_startup_service(request: Request, machine: str, modality:
             })
         return {**result, "retired": True, "modality": modality,
                 "routing_enabled": False, "preserved": _RETIRED_DATA_PRESERVED}
+    finally:
+        broker.set_maintenance(studio_id, False)
+
+
+async def _remove_local_studio(modality: str) -> dict:
+    if modality not in startup_services.RETIRABLE_MODALITIES:
+        raise HTTPException(400, "Only Music, Chat, Video, and Render may be fully removed.")
+    if startup_services.is_fully_removed(modality):
+        return {
+            "ok": True, "changed": False, "removed": True,
+            "already_removed": True, "modality": modality,
+            "routing_enabled": False,
+            "detail": "Studio was already fully removed",
+        }
+    if startup_services.has_removal_intent(modality):
+        try:
+            result = await asyncio.to_thread(
+                startup_services.finalize_absent_studio_removal, modality,
+            )
+        except (ValueError, OSError, subprocess.SubprocessError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        from . import registry
+        registry.set_studio_removal_complete("local", modality, True)
+        return {**result, "routing_enabled": False}
+    target = next((row for row in monitor.registry
+                   if row.get("machine", "local") == "local"
+                   and row.get("modality") == modality), None)
+    if target is None:
+        raise HTTPException(404, f"{modality.title()} Studio is not registered on this Mac")
+    studio_id = target["id"]
+    broker.set_maintenance(studio_id, True)
+    try:
+        if fleet_ops.studio_has_active_work(studio_id):
+            raise HTTPException(
+                409, "This Studio has active Hub work; wait for it to finish before removing it.")
+        try:
+            with startup_services.retirement_lock(modality):
+                if _startup_retirement_update_active(studio_id):
+                    raise HTTPException(
+                        409, "This Studio has an active update; wait for it to finish before removing it.")
+                from . import registry
+                registry.set_studio_removed("local", studio_id, True)
+                registry.set_studio_removal_complete("local", studio_id, False)
+                registry.set_studio_enabled("local", studio_id, False)
+                result = await asyncio.to_thread(startup_services.fully_remove_studio, modality)
+                registry.set_studio_removal_complete("local", studio_id, True)
+        except HTTPException:
+            raise
+        except (ValueError, OSError, subprocess.SubprocessError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        monitor.reload_registry()
+        return {**result, "routing_enabled": False}
+    finally:
+        broker.set_maintenance(studio_id, False)
+
+
+async def _require_parent_controller_service(request: Request) -> None:
+    settings = control_plane.load_settings()
+    parent = settings.get("parent_controller_url")
+    if settings.get("role") != "agent" or not parent:
+        raise HTTPException(403, {"code": "controller_source_required"})
+    try:
+        origin = await asyncio.to_thread(resolve_private_origin, parent)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(403, {"code": "controller_source_invalid"}) from exc
+    _require_repair_service(request, expected_source=origin.address)
+
+
+@app.post("/api/hub/service/startup-services/local/{modality}/remove")
+async def remove_local_studio_for_peer(request: Request, modality: str):
+    """Controller-bound fleet route; the Agent removes only its local checkout."""
+    await _require_parent_controller_service(request)
+    return await _remove_local_studio(modality)
+
+
+@app.post("/api/hub/startup-services/{machine}/{modality}/remove")
+async def remove_fleet_studio(request: Request, machine: str, modality: str):
+    """Fully remove one unused Studio after an explicit owner confirmation."""
+    _require_exposure_owner(request)
+    if modality not in startup_services.RETIRABLE_MODALITIES:
+        raise HTTPException(400, "Only Music, Chat, Video, and Render may be fully removed.")
+    if machine == "local":
+        return await _remove_local_studio(modality)
+    target = next((row for row in monitor.registry
+                   if row.get("machine") == machine
+                   and row.get("modality") == modality), None)
+    if target is None:
+        raise HTTPException(404, f"unknown {modality} Studio on machine: {machine}")
+    studio_id = target["id"]
+    broker.set_maintenance(studio_id, True)
+    try:
+        if fleet_ops.studio_has_active_work(studio_id):
+            raise HTTPException(
+                409, "This Studio has active Hub work; wait for it to finish before removing it.")
+        from . import registry
+        registry.set_studio_enabled(machine, studio_id, False)
+        result = await peers.remove_remote_studio(monitor._client, target, modality)
+        if not result.get("ok"):
+            raise HTTPException(409, {
+                "code": "routing_disabled_pending_retry",
+                "message": result.get("error", "remote Studio removal failed"),
+                "routing_disabled": True,
+            })
+        registry.remove_studio(studio_id)
+        monitor.reload_registry()
+        monitor.forget_studios({studio_id})
+        fleet_ops.forget_studios({studio_id})
+        peers.forget_machine(machine)
+        return {**result, "routing_enabled": False}
     finally:
         broker.set_maintenance(studio_id, False)
 

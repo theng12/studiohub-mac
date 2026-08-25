@@ -41,7 +41,8 @@ FLAGS_FILE = DATA_DIR / "machine_flags.json"
 # purely cosmetic, so renaming never breaks anything.
 _labels_cache: dict | None = None
 
-# machine-key -> {"enabled": bool, "studios": {studio-id: {"enabled": bool}}}.
+# machine-key -> {"enabled": bool, "studios": {studio-id: {"enabled": bool,
+# "removed": bool}}}.
 # Disabled machines and Studios stay registered and monitored; only new job
 # dispatch is paused. Missing entries default to enabled, which keeps existing
 # machine_flags.json files backward compatible.
@@ -88,7 +89,73 @@ def set_studio_enabled(machine: str, studio_id: str, enabled: bool):
     saved_machine = flags.get(machine, {})
     machine_flags = dict(saved_machine) if isinstance(saved_machine, dict) else {}
     studios = dict(machine_flags.get("studios", {}))
-    studios[studio_id] = {"enabled": bool(enabled)}
+    saved_studio = studios.get(studio_id, {})
+    studio_flags = dict(saved_studio) if isinstance(saved_studio, dict) else {}
+    studio_flags["enabled"] = bool(enabled)
+    studios[studio_id] = studio_flags
+    machine_flags["studios"] = studios
+    flags[machine] = machine_flags
+    FLAGS_FILE.write_text(json.dumps(flags, indent=2) + "\n")
+    _flags_cache = flags
+
+
+def studio_removed(machine: str, studio_id: str) -> bool:
+    """Whether full removal explicitly retired a default local registration."""
+    machine_flags = load_flags().get(machine, {})
+    studio_flags = (
+        machine_flags.get("studios", {})
+        if isinstance(machine_flags, dict) else {}
+    )
+    row = studio_flags.get(studio_id, {}) if isinstance(studio_flags, dict) else {}
+    return bool(row.get("removed", False)) if isinstance(row, dict) else False
+
+
+def studio_removal_complete(machine: str, studio_id: str) -> bool:
+    """Whether cleanup finished after the durable removal intent was written."""
+    machine_flags = load_flags().get(machine, {})
+    studio_flags = (
+        machine_flags.get("studios", {})
+        if isinstance(machine_flags, dict) else {}
+    )
+    row = studio_flags.get(studio_id, {}) if isinstance(studio_flags, dict) else {}
+    return bool(row.get("removal_complete", False)) if isinstance(row, dict) else False
+
+
+def set_studio_removed(machine: str, studio_id: str, removed: bool):
+    """Persist an explicit full-removal marker without losing routing state."""
+    global _flags_cache
+    flags = dict(load_flags())
+    saved_machine = flags.get(machine, {})
+    machine_flags = dict(saved_machine) if isinstance(saved_machine, dict) else {}
+    studios = dict(machine_flags.get("studios", {}))
+    saved_studio = studios.get(studio_id, {})
+    studio_flags = dict(saved_studio) if isinstance(saved_studio, dict) else {}
+    if removed:
+        studio_flags["removed"] = True
+    else:
+        studio_flags.pop("removed", None)
+        studio_flags.pop("removal_complete", None)
+    studios[studio_id] = studio_flags
+    machine_flags["studios"] = studios
+    flags[machine] = machine_flags
+    FLAGS_FILE.write_text(json.dumps(flags, indent=2) + "\n")
+    _flags_cache = flags
+
+
+def set_studio_removal_complete(machine: str, studio_id: str, complete: bool):
+    """Persist verified completion separately from pre-cleanup removal intent."""
+    global _flags_cache
+    flags = dict(load_flags())
+    saved_machine = flags.get(machine, {})
+    machine_flags = dict(saved_machine) if isinstance(saved_machine, dict) else {}
+    studios = dict(machine_flags.get("studios", {}))
+    saved_studio = studios.get(studio_id, {})
+    studio_flags = dict(saved_studio) if isinstance(saved_studio, dict) else {}
+    if complete:
+        studio_flags["removal_complete"] = True
+    else:
+        studio_flags.pop("removal_complete", None)
+    studios[studio_id] = studio_flags
     machine_flags["studios"] = studios
     flags[machine] = machine_flags
     FLAGS_FILE.write_text(json.dumps(flags, indent=2) + "\n")
@@ -183,7 +250,20 @@ def load_registry() -> list[dict]:
                     studios[sid] = entry
         except (json.JSONDecodeError, OSError):
             pass  # malformed override file → fall back to defaults, never crash
-    return list(studios.values())
+    default_ids = {studio["id"] for studio in DEFAULT_STUDIOS}
+
+    def local_checkout_present(studio: dict) -> bool:
+        app = studio.get("app")
+        if not app:
+            return False
+        names = [app, app[:-4] if app.endswith(".git") else f"{app}.git"]
+        return any((LAUNCHER_ROOT.parent / name).is_dir() for name in dict.fromkeys(names))
+
+    return [studio for studio in studios.values()
+            if not (studio.get("id") in default_ids
+                    and studio.get("machine", "local") == "local"
+                    and studio_removed("local", studio["id"])
+                    and not local_checkout_present(studio))]
 
 
 def base_url(studio: dict) -> str:

@@ -10,6 +10,60 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.13.0] — 2026-08-25
+
+### Added — recoverable fleet cleanup for unused Studios
+
+- **Fully remove unused** now removes Music, Chat, Video, and Render one at a
+  time on each Mac after active-work and update fences pass. It stops the
+  Pinokio process, disables autolaunch, unloads the exact updater/server/watchdog
+  labels, removes the Hub registration, and moves canonical and `.git` checkout
+  folders—including outputs and settings—to Trash. Exact Hugging Face cache
+  packages exclusive to the removed Studio are also moved, while packages used
+  by another installed Studio are preserved.
+- Image Studio, Voice Studio, and Studio Hub are hard-protected. Offline, busy,
+  unsupported, and failed targets remain visible for a later retry while the
+  batch continues.
+
+### Fixed — named and self-migrating updater entries
+
+- Hub automatic updates now run through an atomically written, mode-0700
+  `studiohub-updater.sh` wrapper instead of exposing an indistinguishable
+  `python` background item. Image and Voice ship matching named wrappers in
+  their own releases.
+- On the first app restart after updating, the existing schedule is reconciled
+  automatically, so old generic updater entries are replaced without manually
+  toggling Off and Auto. A scheduler-owned update is allowed to finish health
+  verification and status recording before that LaunchAgent is reloaded.
+- An explicit removal marker prevents a fully removed default Studio from
+  returning as a ghost while preserving normal standalone and reinstall flows.
+  Lost controller responses are safe to retry: an Agent recognizes its durable
+  removal marker and returns success so the controller can finish pruning the
+  stale registration. Intent and verified completion are stored separately;
+  after a crash, Hub startup resumes only the already-confirmed cleanup and
+  re-verifies exact services and the fixed Studio port.
+- Removal also works when the Pinokio GUI/kernel is closed: the Hub unloads the
+  exact managed services and verifies the Studio port is closed. It refuses to
+  move data when an unmanaged Studio process is still listening.
+- Destructive peer removal now accepts the fleet credential only from the
+  Agent's enrolled, private parent-controller address. Another Agent holding
+  the shared fleet token cannot invoke it.
+
+### Update-path audit and safety
+
+- The current supported paths remain: each app's `update.js`, its guarded
+  automatic updater, controller-driven fleet/managed updates, and the one-time
+  SSD repair bridge. Server and watchdog LaunchAgents remain current protective
+  services, and `update_and_restart.js` remains a live Pinokio compatibility
+  alias; none were deleted as dead code.
+- The canonical SSD source remains `ssd_bootstrap/` synchronized by
+  `tools/sync_ssd_bootstrap.py`. Model staging remains a separate owner action;
+  the legacy combined bootstrap writer was removed from `studio_models.py`, so
+  staging weights can no longer overwrite a freshly synchronized SSD kit.
+- This release performs no cleanup, app update, restart, or fleet operation by
+  itself. Full removal requires an explicit owner confirmation in the dashboard,
+  and data remains recoverable until Trash is emptied.
+
 ## [2.12.1] — 2026-08-25
 
 ### Fixed — remote Studio repair finds Pinokio's bundled Node

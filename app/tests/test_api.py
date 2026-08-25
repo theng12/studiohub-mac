@@ -121,6 +121,34 @@ def _release_service(monkeypatch, tmp_path):
     return service
 
 
+def test_startup_reconciles_idle_automatic_update_scheduler(monkeypatch):
+    from backend import main
+
+    calls = []
+    monkeypatch.setattr(
+        main.auto_updater,
+        "apply_scheduler_if_idle",
+        lambda: calls.append("reconciled") or True,
+    )
+
+    assert main._reconcile_auto_update_scheduler() is True
+    assert calls == ["reconciled"]
+
+
+def test_startup_defers_scheduler_reconciliation_during_active_update(monkeypatch):
+    from backend import main
+
+    calls = []
+    monkeypatch.setattr(main.auto_updater, "apply_scheduler_if_idle", lambda: False)
+    monkeypatch.setattr(
+        main, "_schedule_auto_update_reconciliation",
+        lambda: calls.append("scheduled-after-update"),
+    )
+
+    assert main._reconcile_auto_update_scheduler() is False
+    assert calls == ["scheduled-after-update"]
+
+
 def test_dashboard_includes_render_studio():
     dashboard = (Path(__file__).parents[1] / "frontend" / "index.html").read_text()
     assert '["image", "chat", "voice", "music", "video", "render"]' in dashboard

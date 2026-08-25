@@ -26,6 +26,34 @@ def test_default_registry_has_six_local_studios(reset):
     assert all(s["host"] == "127.0.0.1" for s in studios)
 
 
+def test_missing_local_checkout_without_removal_marker_keeps_default(reset, tmp_path, monkeypatch):
+    launcher = tmp_path / "api" / "studiohub-mac"
+    launcher.mkdir(parents=True)
+    for studio in reg.DEFAULT_STUDIOS:
+        if studio["id"] != "render":
+            (launcher.parent / studio["app"]).mkdir()
+    monkeypatch.setattr(reg, "LAUNCHER_ROOT", launcher)
+
+    ids = {studio["id"] for studio in reg.load_registry()}
+
+    assert ids == {"image", "music", "voice", "chat", "video", "render"}
+
+
+def test_removed_local_checkout_is_not_returned_as_a_ghost(reset, tmp_path, monkeypatch):
+    launcher = tmp_path / "api" / "studiohub-mac"
+    launcher.mkdir(parents=True)
+    for studio in reg.DEFAULT_STUDIOS:
+        if studio["id"] != "render":
+            (launcher.parent / studio["app"]).mkdir()
+    monkeypatch.setattr(reg, "LAUNCHER_ROOT", launcher)
+    reg.set_studio_removed("local", "render", True)
+
+    ids = {studio["id"] for studio in reg.load_registry()}
+
+    assert "render" not in ids
+    assert ids == {"image", "music", "voice", "chat", "video"}
+
+
 def test_base_url():
     assert reg.base_url({"host": "1.2.3.4", "port": 47870}) == "http://1.2.3.4:47870"
 
@@ -103,6 +131,32 @@ def test_per_studio_scheduler_flags_are_independent_and_persistent(reset):
     assert reg.studio_enabled("local", "image") is False
     reg.set_studio_enabled("local", "image", True)
     assert reg.studio_enabled("local", "image") is True
+
+
+def test_studio_scheduler_and_removal_flags_preserve_each_other(reset):
+    reg.set_studio_removed("local", "music", True)
+    reg.set_studio_enabled("local", "music", False)
+
+    assert reg.studio_removed("local", "music") is True
+    assert reg.studio_enabled("local", "music") is False
+
+    reg.set_studio_removed("local", "music", False)
+    assert reg.studio_removed("local", "music") is False
+    assert reg.studio_removal_complete("local", "music") is False
+    assert reg.studio_enabled("local", "music") is False
+
+
+def test_removal_completion_is_separate_from_pre_cleanup_intent(reset):
+    reg.set_studio_removed("local", "music", True)
+    assert reg.studio_removed("local", "music") is True
+    assert reg.studio_removal_complete("local", "music") is False
+
+    reg.set_studio_removal_complete("local", "music", True)
+    assert reg.studio_removal_complete("local", "music") is True
+
+    reg.set_studio_removed("local", "music", False)
+    assert reg.studio_removed("local", "music") is False
+    assert reg.studio_removal_complete("local", "music") is False
 
 
 def test_remove_studio_clears_its_scheduler_flag(reset):
