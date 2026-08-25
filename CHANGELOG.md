@@ -10,6 +10,13 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+### Documented — remote-first SSD recovery workflow
+
+- The canonical new-Mac SSD guide now records Hub 2.13.0, Image 1.30.5, and
+  Voice 2.4.4, and directs healthy enrolled Macs through controller updates.
+  Stage 5 remains the one-time local fallback for an older Hub or Studio
+  checkout that cannot complete the normal remote path.
+
 ## [2.13.0] — 2026-08-25
 
 ### Added — recoverable fleet cleanup for unused Studios

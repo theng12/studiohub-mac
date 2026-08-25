@@ -166,12 +166,17 @@ canonical and `.git` checkout appear in startup settings. The repair:
 
 Restart Pinokio when convenient after the repair completes.
 
-### 5. Prepare existing Macs for complete automatic Studio updates
+### 5. Recover an older Mac whose normal update is blocked
 
-Run `5 Migrate Studio Updates.command` once on each existing Mac before its
-first dependency-converging update. Keep Pinokio open and wait until Image
-Studio, Voice Studio, and Studio Hub have no customer work, downloads,
-installs, or updates in progress. The command:
+Reachable enrolled Macs should be updated remotely first: update the controller
+Hub, use **Updates → Studio Hub updates (agent Macs) → Update ready Hubs**, then
+update only Image and Voice from **Studio updates**. That normal path installs
+declared dependencies and does not require the SSD.
+
+Run `5 Migrate Studio Updates.command` locally only when an older Mac's own Hub
+or Studio checkout cannot complete that remote flow. Keep Pinokio open and wait
+until Image Studio, Voice Studio, and Studio Hub have no customer work,
+downloads, installs, or updates in progress. The command:
 
 - accepts both canonical and legacy `.git` checkout folder names;
 - preserves the machine-local `ENVIRONMENT` bytes and file mode;
@@ -230,11 +235,11 @@ Installer assets observed and pinned on 2026-08-19:
 - Latest 0.11 — `Latest-0.11.dmg` — SHA-256
   `e098ed410240dc90d75faa576b61d384888f51b93ca742c98a599514b02a197e`.
 
-Studio runtime-state baseline prepared on 2026-08-21:
+Current SSD repair/update context refreshed on 2026-08-25:
 
-- Studio Hub 2.11.7;
-- Image Studio 1.30.4; and
-- Voice Studio 2.4.3.
+- Studio Hub 2.13.0;
+- Image Studio 1.30.5; and
+- Voice Studio 2.4.4.
 
 Stage 2 always installs the current published `main`, not a historical commit
 listed in this guide. Stage 5 performs the one-time migration needed by older

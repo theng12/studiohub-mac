@@ -26,18 +26,28 @@ The canonical scripts and documentation live in Studio Hub's tracked
    launchd service both try to start the same app, double-click **4 Repair
    Studio Startup.command**. It changes startup settings only and does not
    start, stop, delete, reinstall, update, or re-enroll anything.
-5. Before the first dependency-converging Studio update on an existing Mac,
-   make sure Image Studio, Voice Studio, and Studio Hub are idle, keep Pinokio
-   open, and double-click **5 Migrate Studio Updates.command** once. It
-   preserves the Mac's runtime settings, updates Image then Voice then Hub,
-   and verifies each app before continuing. A refusal names the checkout that
-   needs manual review; it never stashes, resets, deletes, or hides unrelated
-   changes. After this one-time migration, normal controller and overnight
-   updates can converge code and dependencies without revisiting the Mac.
+5. Use **5 Migrate Studio Updates.command** only as the one-time recovery path
+   for an older Mac whose own Hub or Studio checkout cannot complete the normal
+   remote update. First make sure Image Studio, Voice Studio, and Studio Hub are
+   idle and keep Pinokio open. Stage 5 preserves the Mac's runtime settings,
+   updates Image then Voice then Hub, and verifies each app before continuing.
+   A refusal names the checkout that needs manual review; it never stashes,
+   resets, deletes, or hides unrelated changes. A healthy enrolled Mac should
+   instead receive Hub, Image, and Voice updates from the controller.
 
 All five commands are restartable. A completed app/environment/package is
 detected and skipped. When a command fails, fix the named prerequisite and run
 that same command again.
+
+## Existing fleet Macs: remote first
+
+For a reachable enrolled Mac, update the controller Hub first, then use
+**Updates → Studio Hub updates (agent Macs) → Update ready Hubs**. After every
+reachable Agent Hub is current, update only Image and Voice from **Studio
+updates**. No SSD is required for that normal path. Bring this SSD to a Mac only
+when its Hub is unreachable, too old to accept the controller update, or blocked
+by a legacy checkout; then run Stage 5 locally once. Future code and declared
+dependency updates can run through the controller or overnight schedule.
 
 ## Model-library meaning
 
