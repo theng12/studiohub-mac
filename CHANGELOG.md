@@ -10,6 +10,22 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.12.1] — 2026-08-25
+
+### Fixed — remote Studio repair finds Pinokio's bundled Node
+
+- The one-time Voice/Image update repair now invokes `pterm` through Pinokio's
+  resolved bundled Node executable instead of relying on the Agent Hub
+  service's minimal launchd `PATH`.
+- Repairs that previously ended with `env: node: No such file or directory`
+  can be continued with **Retry unfinished** after the Agent Hub updates.
+
+### Safety and compatibility
+
+- Completed repairs remain complete; retry selects only pending or failed
+  rows. Machine `ENVIRONMENT` files and their recovery backups remain
+  preserved exactly as before.
+
 ## [2.12.0] — 2026-08-24
 
 ### Added — remote one-time repair for blocked Studio updates

@@ -671,8 +671,12 @@ class MigrationEngine:
             raise MigrationError(f"{repository.title} update verification failed: {reason}")
 
     def _run_update(self, target: Path, pterm: Path) -> str:
+        node = fleet_bootstrap.resolve_node(target.parents[1])
+        if node is None:
+            raise RuntimeError("Pinokio Node is unavailable; finish Pinokio setup and retry")
         result = self.runner(
-            (str(pterm), "start", "update.js", "--ref", f"{KERNEL}/{target.name}"), None
+            (str(node), str(pterm), "start", "update.js", "--ref", f"{KERNEL}/{target.name}"),
+            None,
         )
         output = result.stdout + result.stderr
         if result.returncode:

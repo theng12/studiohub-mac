@@ -1198,6 +1198,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.12.1", date: "2026-08-25", items: [
+    "One-time Voice/Image update repair now finds Pinokio's bundled Node even when an Agent Hub runs under launchd's minimal PATH.",
+    "After Agent Hubs update, <b>Retry unfinished</b> continues only failed or pending repairs; already repaired Studios and complete machine ENVIRONMENT files remain untouched.",
+  ]},
   { v: "2.12.0", date: "2026-08-24", items: [
     "Updates now has <b>Repair blocked Studio updates</b>, a one-time local or controller-driven repair for legacy Voice/Image checkouts blocked by their machine ENVIRONMENT file.",
     "Every Agent preserves the complete file—including CPLUS_INCLUDE_PATH—then runs the Studio's normal dependency-converging updater. Offline or older Agents remain pending and can be retried after their Hub is updated.",
