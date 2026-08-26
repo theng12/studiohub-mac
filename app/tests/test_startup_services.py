@@ -926,6 +926,74 @@ def test_full_remove_peer_retry_finishes_incomplete_cleanup_before_success(
     ]
 
 
+def test_full_remove_peer_first_request_finalizes_an_absent_unregistered_studio(
+    app, monkeypatch,
+):
+    peers.set_fleet_token("shared-secret")
+    monkeypatch.setattr(
+        control_plane, "load_settings",
+        lambda: {
+            "role": "agent",
+            "parent_controller_url": "http://100.64.0.10:47873",
+        },
+    )
+    monkeypatch.setattr(
+        main, "resolve_private_origin",
+        lambda _url: SimpleNamespace(address="100.64.0.10"),
+    )
+    monkeypatch.setattr(startup_services, "is_fully_removed", lambda _modality: False)
+    monkeypatch.setattr(startup_services, "has_removal_intent", lambda _modality: False)
+    monkeypatch.setattr(
+        startup_services, "inspect_service",
+        lambda modality: {"modality": modality, "app_installed": False},
+    )
+    events = []
+    monkeypatch.setattr(
+        startup_services, "finalize_absent_studio_removal",
+        lambda modality: events.append(("finalize", modality)) or {
+            "ok": True, "changed": True, "removed": True,
+            "already_removed": True, "modality": modality,
+        },
+    )
+    monkeypatch.setattr(
+        registry, "set_studio_removed",
+        lambda machine, studio_id, removed: events.append(
+            ("removed", machine, studio_id, removed)
+        ),
+    )
+    monkeypatch.setattr(
+        registry, "set_studio_removal_complete",
+        lambda machine, studio_id, complete: events.append(
+            ("complete", machine, studio_id, complete)
+        ),
+    )
+    monkeypatch.setattr(
+        registry, "set_studio_enabled",
+        lambda machine, studio_id, enabled: events.append(
+            ("routing", machine, studio_id, enabled)
+        ),
+    )
+    monkeypatch.setattr(main.monitor, "registry", [])
+    monkeypatch.setattr(main.monitor, "reload_registry", lambda: events.append(("reload",)))
+
+    response = TestClient(
+        app,
+        client=("100.64.0.10", 50000),
+        headers={"X-Hub-Token": "shared-secret"},
+    ).post("/api/hub/service/startup-services/local/render/remove")
+
+    assert response.status_code == 200
+    assert response.json()["already_removed"] is True
+    assert events == [
+        ("removed", "local", "render", True),
+        ("complete", "local", "render", False),
+        ("routing", "local", "render", False),
+        ("finalize", "render"),
+        ("complete", "local", "render", True),
+        ("reload",),
+    ]
+
+
 def test_full_remove_peer_rejects_shared_token_from_non_controller_agent(
     app, monkeypatch,
 ):

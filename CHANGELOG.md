@@ -10,6 +10,23 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.13.5] — 2026-08-27
+
+### Fixed — verified cleanup and immediate Studio update results
+
+- Controller-driven retirement and full removal now use the current fleet
+  credential required by strict Agent service routes. Legacy per-Studio tokens
+  can no longer block cleanup while ordinary Studio proxy authentication stays
+  unchanged.
+- A controller-authorized removal now treats an already-absent Music, Chat,
+  Video, or Render checkout as idempotent success only after named background
+  services are cleared and its port is verified closed. The controller then
+  prunes the registration and every shared update/startup cache, removing the
+  stale row from both Automatic Startup and Studio Updates.
+- The Studio Updates table immediately overlays a completed job's attested
+  target version instead of displaying the pre-update scan until the remaining
+  fleet batch finishes. Failed and unfinished rows keep their prior version.
+
 ## [2.13.4] — 2026-08-26
 
 ### Fixed — verified, dependency-complete Studio fleet updates

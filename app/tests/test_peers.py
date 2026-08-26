@@ -384,6 +384,18 @@ async def test_remote_startup_retire_targets_peer_local_machine(reset):
 
 
 @pytest.mark.asyncio
+async def test_remote_startup_retire_uses_current_fleet_token_not_stale_registry_token(reset):
+    peers.set_fleet_token("current-fleet-secret")
+    studio = {**REMOTE[0], "hub_token": "stale-machine-secret"}
+    client = FakeStartupClient(data={"ok": True, "changed": True})
+
+    result = await peers.retire_remote_startup_service(client, studio, "music")
+
+    assert result["ok"] is True
+    assert client.calls[0][2] == {"X-Hub-Token": "current-fleet-secret"}
+
+
+@pytest.mark.asyncio
 async def test_remote_full_remove_targets_peer_local_machine(reset):
     peers.set_fleet_token("shared-secret")
     client = FakeStartupClient(data={"ok": True, "removed": True})
@@ -396,6 +408,18 @@ async def test_remote_full_remove_targets_peer_local_machine(reset):
     assert url.endswith("/api/hub/service/startup-services/local/render/remove")
     assert headers == {"X-Hub-Token": "shared-secret"}
     assert timeout == 260.0
+
+
+@pytest.mark.asyncio
+async def test_remote_full_remove_uses_current_fleet_token_not_stale_registry_token(reset):
+    peers.set_fleet_token("current-fleet-secret")
+    studio = {**REMOTE[0], "hub_token": "stale-machine-secret"}
+    client = FakeStartupClient(data={"ok": True, "removed": True})
+
+    result = await peers.remove_remote_studio(client, studio, "render")
+
+    assert result["ok"] is True
+    assert client.calls[0][2] == {"X-Hub-Token": "current-fleet-secret"}
 
 
 @pytest.mark.asyncio

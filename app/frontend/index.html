@@ -1198,6 +1198,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.13.5", date: "2026-08-27", items: [
+    "Unused Music, Chat, Video, and Render Studios now use the controller's current fleet credential, so legacy per-Studio tokens cannot leave retained registrations behind.",
+    "An already-deleted optional Studio is verified absent and treated as a successful idempotent removal; its shared registration disappears from both Automatic Startup and Studio Updates.",
+    "Completed Studio updates immediately show their attested new version while the rest of the serial fleet batch continues.",
+  ]},
   { v: "2.13.4", date: "2026-08-26", items: [
     "Manual controller-driven Studio updates now use each Studio's exact managed updater instead of Pinokio <code>update.js</code>.",
     "Image and Voice updates stay serial and require dependency convergence plus exact version/commit health before the next Studio begins.",
@@ -5272,11 +5277,19 @@ function _sortStudioUpdates(rows) {
   return rows.slice().sort((a, b) => (b.reachable ? 1 : 0) - (a.reachable ? 1 : 0)
     || mlabel(a.machine).localeCompare(mlabel(b.machine)) || app(a).localeCompare(app(b)));
 }
+function effectiveStudioUpdateRow(row, item) {
+  if (!item || !["complete", "current"].includes(item.status) || !item.to_version) return row;
+  const version = String(item.to_version);
+  return { ...row, version, latest_version: version, version_status: "current", update_available: false };
+}
 function renderStudioUpdates(data) {
   const body = $("#su-body"), progress = $("#su-progress"), update = $("#su-update"), rescan = $("#su-rescan");
   if (!body || !progress || !update) return;
   lastStudioVersionData = data;
-  const allRows = _sortStudioUpdates(data && data.studios || []);
+  const jobItems = new Map(((studioUpdateJob && studioUpdateJob.items) || []).map(i => [i.studio, i]));
+  const allRows = _sortStudioUpdates(
+    (data && data.studios || []).map(row => effectiveStudioUpdateRow(row, jobItems.get(row.id)))
+  );
   studioVersionRows = allRows;
   renderStudioAppTabs(allRows);
   const rows = filterStudioApp(allRows);
@@ -5295,7 +5308,6 @@ function renderStudioUpdates(data) {
     : ready.length ? `Update ${ready.length} ready Studio${ready.length === 1 ? "" : "s"}`
     : "All Studios up to date";
   if (rescan) rescan.disabled = maintenanceBusy;
-  const jobItems = new Map(((studioUpdateJob && studioUpdateJob.items) || []).map(i => [i.studio, i]));
   body.innerHTML = rows.map(r => {
     const item = jobItems.get(r.id);
     const showJob = item && (maintenanceBusy || item.status === "failed");

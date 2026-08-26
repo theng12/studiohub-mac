@@ -357,7 +357,10 @@ async def retire_remote_startup_service(
     client: httpx.AsyncClient, studio: dict, modality: str,
 ) -> dict:
     """Ask one peer Hub to retire one legacy sibling on its own Mac."""
-    token = _peer_token(studio)
+    # Strict fleet-service routes accept only the controller's current fleet
+    # credential. A legacy per-row Hub token may still authenticate ordinary
+    # proxy traffic, but must never override this exact service contract.
+    token = current_fleet_token()
     if not token:
         return {"ok": False, "error": "no fleet token set"}
     try:
@@ -384,7 +387,7 @@ async def remove_remote_studio(
     client: httpx.AsyncClient, studio: dict, modality: str,
 ) -> dict:
     """Ask one peer Hub to fully remove an unused sibling on its own Mac."""
-    token = _peer_token(studio)
+    token = current_fleet_token()
     if not token:
         return {"ok": False, "error": "no fleet token set"}
     try:

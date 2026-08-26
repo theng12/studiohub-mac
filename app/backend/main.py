@@ -3457,6 +3457,26 @@ async def _remove_local_studio(modality: str) -> dict:
         from . import registry
         registry.set_studio_removal_complete("local", modality, True)
         return {**result, "routing_enabled": False}
+    if not startup_services.inspect_service(modality).get("app_installed"):
+        # A prior manual deletion or lost successful response can leave the
+        # controller registration behind after the checkout is already gone.
+        # The explicit, controller-authenticated removal request is durable
+        # intent; clear named services and verify the port before acknowledging
+        # absence so the controller can safely prune its retained row.
+        try:
+            with startup_services.retirement_lock(modality):
+                from . import registry
+                registry.set_studio_removed("local", modality, True)
+                registry.set_studio_removal_complete("local", modality, False)
+                registry.set_studio_enabled("local", modality, False)
+                result = await asyncio.to_thread(
+                    startup_services.finalize_absent_studio_removal, modality,
+                )
+                registry.set_studio_removal_complete("local", modality, True)
+        except (ValueError, OSError, subprocess.SubprocessError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        monitor.reload_registry()
+        return {**result, "routing_enabled": False}
     target = next((row for row in monitor.registry
                    if row.get("machine", "local") == "local"
                    and row.get("modality") == modality), None)
