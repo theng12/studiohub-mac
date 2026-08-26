@@ -730,7 +730,7 @@ import time as _time
 import urllib.request as _urlreq
 
 _UPDATE_REPO = "theng12/studiohub-mac"
-_update_state = {"checked_at": 0.0, "latest": None}
+_update_state = {"checked_at": 0.0, "latest": None, "commit": None}
 
 
 def _parse_ver(v):
@@ -754,6 +754,7 @@ def _refresh_latest_version():
         url = f"https://raw.githubusercontent.com/{_UPDATE_REPO}/{commit}/VERSION"
         with _urlreq.urlopen(url, timeout=5) as response:
             _update_state["latest"] = response.read().decode("utf-8").strip()
+            _update_state["commit"] = commit
     except Exception:
         pass
     finally:
@@ -3829,16 +3830,18 @@ async def retry_studio_update_repair(job_id: str):
 
 @app.post("/api/hub/maintenance/self-update")
 def self_update():
-    """Run THIS Hub's own update.js (git pull + restart). Loopback can call it
-    (the sidebar Update does the same), and the primary Hub calls it on a peer
-    over the fleet (authenticated by the fleet token) to update the Studio Hub on
-    an agent Mac. The Hub goes down briefly; its startup service brings it back."""
-    from .control import run_hub_script
+    """Compatibility entry point for older controllers.
+
+    Use the Hub's verified updater rather than Pinokio ``update.js`` so a stale
+    launcher session cannot swallow the request. New controllers use the exact
+    managed-update API directly and verify the resulting commit.
+    """
     before = _app_version()
-    result = run_hub_script("update.js")
-    if not result["ok"]:
-        raise HTTPException(409, result["error"])
-    return {"ok": True, "version_before": before, "ref": result.get("ref")}
+    try:
+        result = auto_updater.trigger_update(after_current=False)
+    except UpdateError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"ok": True, "version_before": before, "state": result.get("state")}
 
 
 @app.get("/api/hub/maintenance/hub-updates")
@@ -3857,7 +3860,9 @@ async def start_hub_updates_route(body: dict):
     if _time.time() - _update_state["checked_at"] > 6 * 3600 or not _update_state["latest"]:
         _refresh_latest_version()  # make sure we know the target version to skip up-to-date peers
     try:
-        return fleet_ops.start_hub_updates(monitor, _update_state["latest"], machines)
+        return fleet_ops.start_hub_updates(
+            monitor, _update_state["latest"], _update_state["commit"], machines,
+        )
     except ValueError as e:
         raise HTTPException(409, str(e))
 

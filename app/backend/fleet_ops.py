@@ -14,7 +14,7 @@ import json
 
 from . import broker, peers
 from .control import (PINOKIO_HOME, control_studio, resolve_app_dir,
-                      run_hub_script, run_studio_script, run_studio_script_sync,
+                      run_studio_script, run_studio_script_sync,
                       run_studio_update_repair_sync)
 from .registry import DATA_DIR, base_url
 from .resources import host_stats
@@ -1270,10 +1270,9 @@ def retry_studio_update_repairs(monitor, job_id: str) -> dict:
 
 # ── Fleet Hub self-update ───────────────────────────────────────────────────
 # The studio updates above cover studios (registry entries). The HUB itself is
-# not a studio, so to update the Studio Hub on the agent Macs the primary tells
-# each peer Hub to run ITS OWN update.js and then waits for it to restart (each
-# peer's launchd startup service brings it back). Peers already accept the fleet
-# token, and already expose /api/hub/maintenance/self-update.
+# not a studio, so the controller asks each peer's durable in-app updater for an
+# exact release. That updater drains work, fast-forwards a clean checkout,
+# converges dependencies, restarts the existing run owner, and verifies health.
 
 def _remote_hosts(monitor) -> dict[str, str]:
     """machine -> host for every non-local registered machine (its Hub is at
@@ -1286,7 +1285,7 @@ def _remote_hosts(monitor) -> dict[str, str]:
     return out
 
 
-def start_hub_updates(monitor, latest: str | None,
+def start_hub_updates(monitor, latest: str | None, latest_commit: str | None,
                       machines: list[str] | None = None) -> dict:
     active = next((j for j in _hub_updates.values() if j["status"] in {"queued", "running"}), None)
     if active:
@@ -1308,10 +1307,15 @@ def start_hub_updates(monitor, latest: str | None,
         for old in sorted((j for j in _hub_updates.values() if j["status"] not in {"queued", "running"}),
                           key=lambda j: j["created_at"])[:max(1, len(_hub_updates) - 49)]:
             _hub_updates.pop(old["id"], None)
-    job = {"id": uuid.uuid4().hex[:10], "kind": "hub", "status": "queued",
+    job_id = uuid.uuid4().hex[:10]
+    job = {"id": job_id, "kind": "hub", "status": "queued",
            "created_at": time.time(), "finished_at": None, "latest": latest,
+           "latest_commit": latest_commit,
            "items": [{"machine": m, "host": h, "status": "queued",
-                      "detail": "waiting", "from_version": None, "to_version": None}
+                      "detail": "waiting", "from_version": None, "to_version": None,
+                      "operation_id": "fleet-hub-" + uuid.uuid5(
+                          uuid.NAMESPACE_URL, f"{m}:{latest_commit or 'unresolved'}",
+                      ).hex}
                      for m, h in targets]}
     _hub_updates[job["id"]] = job
     _save_state()
@@ -1329,7 +1333,7 @@ async def _run_hub_updates(job: dict):
     # later agents.
     for item in job["items"]:
         try:
-            await _update_hub_one(item, job.get("latest"))
+            await _update_hub_one(item, job.get("latest"), job.get("latest_commit"))
         except Exception as exc:
             item.update(status="failed", detail=str(exc)[:240], finished_at=time.time())
         _save_state()
@@ -1337,7 +1341,7 @@ async def _run_hub_updates(job: dict):
     _save_state()
 
 
-async def _update_hub_one(item: dict, latest: str | None):
+async def _update_hub_one(item: dict, latest: str | None, latest_commit: str | None):
     host = item["host"]
     url = f"http://{host}:{peers.DEFAULT_HUB_PORT}"
     headers = {"X-Hub-Token": peers.fleet_token() or ""}
@@ -1346,6 +1350,7 @@ async def _update_hub_one(item: dict, latest: str | None):
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=8.0)) as client:
             cur = ""
+            current_commit = ""
             for attempt, delay in enumerate((0, 3, 10, 20), start=1):
                 if delay:
                     item.update(status="checking",
@@ -1355,7 +1360,9 @@ async def _update_hub_one(item: dict, latest: str | None):
                 try:
                     v = await client.get(f"{url}/api/version")
                     v.raise_for_status()
-                    cur = str(v.json().get("app_version") or "")
+                    version_data = v.json()
+                    cur = str(version_data.get("app_version") or "")
+                    current_commit = str(version_data.get("app_commit") or "")
                     break
                 except (httpx.HTTPError, ValueError):
                     continue
@@ -1363,34 +1370,56 @@ async def _update_hub_one(item: dict, latest: str | None):
                 raise RuntimeError("Hub unreachable after 4 attempts on :47873 — it may be asleep, "
                                    "offline, blocked by the firewall, or not running")
             item["from_version"] = cur
-            if latest and cur == latest:
+            if latest and cur == latest and (not latest_commit or current_commit == latest_commit):
                 item.update(status="current", to_version=cur,
                             detail=f"already on v{cur}", finished_at=time.time())
                 return
-            item.update(status="updating", detail="pulling latest + restarting")
-            _save_state()
-            r = await client.post(f"{url}/api/hub/maintenance/self-update", headers=headers)
-            if r.status_code == 401:
+            if not latest or not latest_commit or not re.fullmatch(r"[0-9a-f]{40}", latest_commit):
+                raise RuntimeError("published Hub release identity is unavailable; retry the version scan")
+            status = await client.get(f"{url}/api/auto-update/status", headers=headers)
+            if status.status_code == 401:
                 raise RuntimeError("remote Hub rejected the fleet token")
-            if r.status_code == 404:
-                # This peer predates remote self-update (added in 1.25.4). It has
-                # no endpoint to receive the command — a one-time manual update
-                # seeds the capability, then future updates are remote.
-                raise RuntimeError(f"Hub v{cur} is too old for remote update — "
-                                   "update it once from the Pinokio sidebar on that "
-                                   "Mac (then it's remote from here on)")
-            r.raise_for_status()
+            if status.status_code == 404:
+                raise RuntimeError(
+                    f"Hub v{cur} is too old for verified remote updates — update it once on that Mac"
+                )
+            status.raise_for_status()
+            updater = status.json()
+            capabilities = updater.get("capabilities") if isinstance(updater, dict) else {}
+            if not isinstance(capabilities, dict) or capabilities.get("managed_exact_commit") is not True:
+                raise RuntimeError("remote Hub lacks exact-version managed updates")
+            if capabilities.get("dependency_convergence") != 1:
+                raise RuntimeError("remote Hub lacks verified dependency convergence")
+            item["dependency_convergence"] = 1
+            item.setdefault("operation_id", f"fleet-hub-{uuid.uuid4().hex}")
+            payload = {
+                "after_current": False,
+                "target_commit": latest_commit,
+                "target_version": latest,
+                "operation_id": item["operation_id"],
+            }
+            item.update(status="updating", detail="draining work, updating dependencies, and restarting")
+            _save_state()
+            try:
+                r = await client.post(
+                    f"{url}/api/auto-update/update", headers=headers, json=payload,
+                )
+                if r.status_code == 401:
+                    raise RuntimeError("remote Hub rejected the fleet token")
+                r.raise_for_status()
+            except httpx.TransportError:
+                # The managed request is admitted durably before the helper can
+                # stop the Hub, so a dropped response is followed by status.
+                pass
     except Exception as e:
         item.update(status="failed", detail=str(e)[:240], finished_at=time.time())
         _save_state()
         return
-    # the peer now runs update.js and restarts — wait for it to come back
-    item.update(status="restarting", detail="waiting for the Hub to come back online")
+    # The peer owns the operation durably. Keep this controller row open until
+    # exact status and health evidence arrive, so the next Mac cannot start early.
+    item.update(status="updating", detail="verified updater is working")
     _save_state()
     deadline = time.monotonic() + UPDATE_TIMEOUT
-    restart_deadline = time.monotonic() + UPDATE_START_TIMEOUT
-    saw_down = False
-    frm = item.get("from_version")
 
     def _record(ver: str, status: str, detail: str):
         item.update(status=status, to_version=ver, detail=detail, finished_at=time.time())
@@ -1405,35 +1434,45 @@ async def _update_hub_one(item: dict, latest: str | None):
         while time.monotonic() < deadline:
             await asyncio.sleep(4)
             try:
-                v = await client.get(f"{url}/api/version")
-                ver = str(v.json().get("app_version") or "")
-                if frm and ver != frm:
-                    _record(ver, "complete", f"updated to v{ver}")
-                    return
-                if saw_down:
-                    # It restarted but came back on the SAME version — the update
-                    # did not actually apply (git pull / deps likely failed on that
-                    # Mac). Report it honestly instead of a misleading "complete".
-                    _record(ver, "failed",
-                            f"restarted but still on v{ver} — update didn't apply "
-                            "(git pull or deps failed on that Mac; update it from "
-                            "its Pinokio sidebar and check its logs)")
-                    return
-                if time.monotonic() >= restart_deadline:
-                    item.update(
-                        status="failed",
-                        detail=(f"still on v{ver or frm or '?'} — update command did not "
-                                "restart the Hub before the maintenance grace period; "
-                                "check its updater status/log"),
-                        finished_at=time.time(),
-                    )
+                response = await client.get(f"{url}/api/auto-update/status", headers=headers)
+                response.raise_for_status()
+                updater = response.json()
+                state = updater.get("state") if isinstance(updater, dict) else None
+                if state == "failed":
+                    details = updater.get("details") or []
+                    detail = str(details[-1] if details else updater.get("last_update_result") or "update failed")
+                    item.update(status="failed", detail=detail[:240], finished_at=time.time())
                     _save_state()
                     return
-            except (httpx.HTTPError, ValueError):
-                saw_down = True  # it went down to restart — expected
+                if state == "deferred":
+                    item.update(status="waiting_busy",
+                                detail=str(updater.get("defer_reason") or "waiting for active work to finish")[:240])
+                    _save_state()
+                    continue
+                if state in {"updating", "checking"}:
+                    item.update(status="updating", detail="installing release and dependencies")
+                    _save_state()
+                    continue
+                if state == "restarting":
+                    item.update(status="restarting", detail="restarting the Hub service")
+                    _save_state()
+                    continue
+                if state != "succeeded":
+                    continue
+                health = await client.get(f"{url}/api/health", headers=headers)
+                health.raise_for_status()
+                evidence = health.json()
+                ver = str(evidence.get("app_version") or "")
+                commit = str(evidence.get("app_commit") or "")
+                if evidence.get("ok") is True and ver == latest and commit == latest_commit:
+                    _record(ver, "complete",
+                            f"updated to v{ver}; dependencies installed and health verified")
+                    return
+            except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+                item.update(status="restarting", detail="reconnecting after the Hub restart")
+                _save_state()
     item.update(status="failed",
-                detail=f"still on v{frm or '?'} — the Hub didn't come back on a new "
-                       "version before the timeout (the update may have failed on that Mac)",
+                detail="verified updater did not finish within the update timeout",
                 finished_at=time.time())
     _save_state()
 

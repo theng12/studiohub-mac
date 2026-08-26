@@ -10,6 +10,25 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.13.2] — 2026-08-26
+
+### Fixed — exact, dependency-complete Agent Hub fleet updates
+
+- Controller-driven Agent Hub updates now use each Hub's durable verified
+  updater instead of starting Pinokio `update.js`. This removes the stale or
+  ghost launcher-session failure that could leave a controller waiting while an
+  Agent restarted on the old checkout.
+- Every target is pinned to the published version and commit. A node must
+  advertise exact managed updates and dependency convergence before it is
+  touched, and completion requires matching version/commit health evidence.
+- Agent Hubs still update strictly one at a time. Busy nodes preserve their
+  admitted operation and wait until work drains; the controller does not advance
+  until dependency installation, restart, reconnect, and health verification
+  finish or the node reports a retryable failure.
+- The legacy remote self-update endpoint now enters the same verified in-app
+  updater, so older controllers no longer create new ghost Pinokio updater
+  sessions when addressing a Hub on this release.
+
 ## [2.13.1] — 2026-08-26
 
 ### Fixed — fleet repair retries and stale Pinokio updater sessions

@@ -1198,6 +1198,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.13.2", date: "2026-08-26", items: [
+    "Controller-driven Agent Hub updates now use the durable verified updater instead of Pinokio <code>update.js</code>, eliminating stale or ghost launcher sessions.",
+    "Each Mac updates one at a time and must install dependencies, restart, reconnect, and prove the exact published version and commit before the next Mac begins.",
+    "Busy machines retain the admitted update until work drains, and older controllers calling the compatibility endpoint are routed through the same safe updater.",
+  ]},
   { v: "2.13.1", date: "2026-08-26", items: [
     "<b>Retry unfinished</b> now schedules its repair task on the Hub event loop instead of leaving an orphaned 0/N queued job.",
     "One-time Voice/Image repair now clears a stale Pinokio <code>update.js</code> session before launching the owned updater, fixing ghost sessions left by the old tracked-<code>ENVIRONMENT</code> merge failure.",

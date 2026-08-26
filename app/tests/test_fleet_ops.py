@@ -698,7 +698,7 @@ def test_start_hub_updates_requires_remote_machines(monitor):
     monitor.registry = [s for s in monitor.registry if s.get("machine", "local") == "local"]
     fleet_ops._hub_updates.clear()
     with pytest.raises(ValueError, match="no remote"):
-        fleet_ops.start_hub_updates(monitor, "1.0.0", None)
+        fleet_ops.start_hub_updates(monitor, "1.0.0", "a" * 40, None)
 
 
 def test_hub_version_snapshot_includes_peer_hardware(monitor):
@@ -727,13 +727,16 @@ async def test_start_hub_updates_builds_job(monkeypatch, monitor):
         return None
     monkeypatch.setattr(fleet_ops, "_run_hub_updates", _noop)
 
-    job = fleet_ops.start_hub_updates(monitor, "9.9.9", None)
+    commit = "a" * 40
+    job = fleet_ops.start_hub_updates(monitor, "9.9.9", commit, None)
     assert job["kind"] == "hub" and job["latest"] == "9.9.9"
+    assert job["latest_commit"] == commit
+    assert all(item["operation_id"].startswith("fleet-hub-") for item in job["items"])
     assert any(i["machine"] == "mac-b" and i["host"] == "10.0.0.9" for i in job["items"])
 
     fleet_ops._hub_updates.clear()
     with pytest.raises(ValueError, match="unknown"):
-        fleet_ops.start_hub_updates(monitor, "9.9.9", ["does-not-exist"])
+        fleet_ops.start_hub_updates(monitor, "9.9.9", commit, ["does-not-exist"])
     fleet_ops._hub_updates.clear()
 
 
@@ -743,7 +746,7 @@ async def test_agent_hub_updates_run_canary_first_then_continue_after_failure(mo
     max_active = 0
     order = []
 
-    async def update_one(item, latest):
+    async def update_one(item, latest, latest_commit):
         nonlocal active, max_active
         active += 1
         max_active = max(max_active, active)
@@ -786,7 +789,7 @@ async def test_slow_hub_version_check_retries_before_failing(monkeypatch, reset)
 
     class Response:
         status_code = 200
-        def json(self): return {"app_version": "2.0.0"}
+        def json(self): return {"app_version": "2.0.0", "app_commit": "b" * 40}
         def raise_for_status(self): return None
 
     class Client:
@@ -809,10 +812,108 @@ async def test_slow_hub_version_check_retries_before_failing(monkeypatch, reset)
     async def no_sleep(seconds): return None
     monkeypatch.setattr(fleet_ops.asyncio, "sleep", no_sleep)
 
-    await fleet_ops._update_hub_one(item, "2.0.0")
+    await fleet_ops._update_hub_one(item, "2.0.0", "b" * 40)
     assert client.get_calls == 3
     assert client.post_calls == 0
     assert item["status"] == "current"
+
+
+@pytest.mark.asyncio
+async def test_agent_hub_update_uses_durable_exact_updater_and_verifies_dependencies(
+        monkeypatch, reset):
+    target_commit = "b" * 40
+    item = {
+        "machine": "mac-a", "host": "10.0.0.8", "status": "queued",
+        "detail": "waiting", "from_version": None, "to_version": None,
+        "operation_id": "fleet-hub-test-mac-a",
+    }
+    calls = []
+    statuses = iter([
+        {"state": "succeeded", "capabilities": {
+            "managed_exact_commit": True, "dependency_convergence": 1,
+        }},
+        {"state": "deferred", "defer_reason": "active generation job"},
+        {"state": "restarting"},
+        {"state": "succeeded", "details": ["Dependencies installed."]},
+    ])
+
+    class Response:
+        status_code = 200
+        def __init__(self, payload): self._payload = payload
+        def json(self): return self._payload
+        def raise_for_status(self): return None
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, url, **kwargs):
+            calls.append(("GET", url, kwargs.get("headers"), None))
+            if url.endswith("/api/version"):
+                return Response({"app_version": "2.13.0", "app_commit": "a" * 40})
+            if url.endswith("/api/auto-update/status"):
+                return Response(next(statuses))
+            if url.endswith("/api/health"):
+                return Response({"ok": True, "app_version": "2.13.2",
+                                 "app_commit": target_commit})
+            raise AssertionError(url)
+        async def post(self, url, **kwargs):
+            calls.append(("POST", url, kwargs.get("headers"), kwargs.get("json")))
+            return Response({"state": "updating"})
+
+    monkeypatch.setattr(fleet_ops.httpx, "AsyncClient", lambda **kwargs: Client())
+    async def no_sleep(seconds): return None
+    monkeypatch.setattr(fleet_ops.asyncio, "sleep", no_sleep)
+
+    await fleet_ops._update_hub_one(item, "2.13.2", target_commit)
+
+    post = next(call for call in calls if call[0] == "POST")
+    assert post[1].endswith("/api/auto-update/update")
+    assert not any(call[1].endswith("/api/hub/maintenance/self-update") for call in calls)
+    assert post[3] == {
+        "after_current": False,
+        "target_commit": target_commit,
+        "target_version": "2.13.2",
+        "operation_id": "fleet-hub-test-mac-a",
+    }
+    assert item["status"] == "complete"
+    assert item["to_version"] == "2.13.2"
+    assert item["dependency_convergence"] == 1
+    assert "dependencies" in item["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_agent_hub_update_refuses_updater_without_dependency_convergence(
+        monkeypatch, reset):
+    item = {
+        "machine": "mac-old", "host": "10.0.0.9", "status": "queued",
+        "detail": "waiting", "from_version": None, "to_version": None,
+        "operation_id": "fleet-hub-test-old",
+    }
+
+    class Response:
+        status_code = 200
+        def __init__(self, payload): self._payload = payload
+        def json(self): return self._payload
+        def raise_for_status(self): return None
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, url, **kwargs):
+            if url.endswith("/api/version"):
+                return Response({"app_version": "1.0.0", "app_commit": "a" * 40})
+            return Response({"state": "succeeded", "capabilities": {
+                "managed_exact_commit": True,
+            }})
+        async def post(self, *args, **kwargs):
+            raise AssertionError("unsafe updater must not be started")
+
+    monkeypatch.setattr(fleet_ops.httpx, "AsyncClient", lambda **kwargs: Client())
+
+    await fleet_ops._update_hub_one(item, "2.13.2", "b" * 40)
+
+    assert item["status"] == "failed"
+    assert "dependency convergence" in item["detail"].lower()
 
 
 def test_interrupted_remote_jobs_survive_restart_as_retryable_history(monkeypatch, tmp_path, reset):

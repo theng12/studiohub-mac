@@ -253,6 +253,22 @@ def test_managed_update_route_advertises_capability_and_threads_full_tuple(authe
     assert calls == [request]
 
 
+def test_legacy_self_update_route_uses_verified_updater(authed, monkeypatch):
+    from backend import main
+
+    calls = []
+    monkeypatch.setattr(
+        main.auto_updater, "trigger_update",
+        lambda **kwargs: calls.append(kwargs) or {"state": "updating"},
+    )
+
+    response = authed.post("/api/hub/maintenance/self-update")
+
+    assert response.status_code == 200
+    assert response.json()["state"] == "updating"
+    assert calls == [{"after_current": False}]
+
+
 @pytest.mark.asyncio
 async def test_managed_hub_runner_preserves_clean_checkout_health_failure(monkeypatch):
     from backend import main
