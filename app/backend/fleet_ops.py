@@ -1392,6 +1392,16 @@ async def _update_hub_one(item: dict, latest: str | None, latest_commit: str | N
                 raise RuntimeError("remote Hub lacks verified dependency convergence")
             item["dependency_convergence"] = 1
             item.setdefault("operation_id", f"fleet-hub-{uuid.uuid4().hex}")
+            history = updater.get("managed_operation_history") or []
+            if any(
+                isinstance(entry, dict)
+                and entry.get("operation_id") == item["operation_id"]
+                and entry.get("result") == "failed"
+                for entry in history
+            ):
+                # An in-flight replay must keep its ID, but a terminal failure
+                # needs a fresh admission so an explicit retry can run again.
+                item["operation_id"] = f"fleet-hub-{uuid.uuid4().hex}"
             payload = {
                 "after_current": False,
                 "target_commit": latest_commit,

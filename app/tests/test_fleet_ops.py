@@ -831,7 +831,9 @@ async def test_agent_hub_update_uses_durable_exact_updater_and_verifies_dependen
     statuses = iter([
         {"state": "succeeded", "capabilities": {
             "managed_exact_commit": True, "dependency_convergence": 1,
-        }},
+        }, "managed_operation_history": [{
+            "operation_id": "fleet-hub-test-mac-a", "result": "failed",
+        }]},
         {"state": "deferred", "defer_reason": "active generation job"},
         {"state": "restarting"},
         {"state": "succeeded", "details": ["Dependencies installed."]},
@@ -869,12 +871,12 @@ async def test_agent_hub_update_uses_durable_exact_updater_and_verifies_dependen
     post = next(call for call in calls if call[0] == "POST")
     assert post[1].endswith("/api/auto-update/update")
     assert not any(call[1].endswith("/api/hub/maintenance/self-update") for call in calls)
-    assert post[3] == {
-        "after_current": False,
-        "target_commit": target_commit,
-        "target_version": "2.13.2",
-        "operation_id": "fleet-hub-test-mac-a",
-    }
+    assert post[3]["after_current"] is False
+    assert post[3]["target_commit"] == target_commit
+    assert post[3]["target_version"] == "2.13.2"
+    assert post[3]["operation_id"].startswith("fleet-hub-")
+    assert post[3]["operation_id"] != "fleet-hub-test-mac-a"
+    assert item["operation_id"] == post[3]["operation_id"]
     assert item["status"] == "complete"
     assert item["to_version"] == "2.13.2"
     assert item["dependency_convergence"] == 1

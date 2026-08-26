@@ -866,6 +866,38 @@ def test_git_safety_refusals(updater: AutoUpdater, monkeypatch, case, message):
         updater._git_preflight()
 
 
+def test_git_fetch_retries_once_after_a_transient_timeout(updater: AutoUpdater, monkeypatch):
+    fetches = 0
+
+    def fake_git(*args, **kwargs):
+        nonlocal fetches
+        command = tuple(args)
+        if command == ("remote", "get-url", "origin"):
+            return updater.spec["expected_remote"]
+        if command[:3] == ("symbolic-ref", "--quiet", "--short"):
+            return "main"
+        if command[:2] == ("status", "--porcelain"):
+            return ""
+        if command[:1] == ("fetch",):
+            fetches += 1
+            if fetches == 1:
+                raise subprocess.TimeoutExpired("git fetch", 180)
+            return ""
+        if command in {("rev-parse", "HEAD"), ("rev-parse", "origin/main")}:
+            return "a" * 40
+        if command[:1] == ("show",):
+            return "1.0.0"
+        raise AssertionError(command)
+
+    monkeypatch.setattr(updater, "_git", fake_git)
+    monkeypatch.setattr("backend.auto_update.time.sleep", lambda _seconds: None)
+
+    result = updater._git_preflight()
+
+    assert fetches == 2
+    assert result["available"] is False
+
+
 def test_dirty_checkout_message_preserves_porcelain_columns_and_filenames(
     updater: AutoUpdater,
 ):

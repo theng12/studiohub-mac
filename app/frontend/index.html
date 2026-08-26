@@ -1198,6 +1198,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.13.3", date: "2026-08-26", items: [
+    "Verified updates now retry one transient or timed-out Git fetch automatically before reporting failure.",
+    "Reconnects still adopt an in-flight operation, while retrying a completed failure now creates a fresh admission that really runs again.",
+  ]},
   { v: "2.13.2", date: "2026-08-26", items: [
     "Controller-driven Agent Hub updates now use the durable verified updater instead of Pinokio <code>update.js</code>, eliminating stale or ghost launcher sessions.",
     "Each Mac updates one at a time and must install dependencies, restart, reconnect, and prove the exact published version and commit before the next Mac begins.",

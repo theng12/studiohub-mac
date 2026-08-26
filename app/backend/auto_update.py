@@ -591,7 +591,17 @@ class AutoUpdater:
                 f"Working tree has local changes{detail}. Commit or remove them before updating."
             )
         if fetch:
-            self._git("fetch", "--prune", "origin", self.spec.get("branch", "main"), timeout=180)
+            for attempt in range(2):
+                try:
+                    self._git(
+                        "fetch", "--prune", "origin", self.spec.get("branch", "main"),
+                        timeout=180,
+                    )
+                    break
+                except (UpdateError, subprocess.TimeoutExpired):
+                    if attempt:
+                        raise
+                    time.sleep(2)
         local = self._git("rev-parse", "HEAD")
         remote_ref = f"origin/{self.spec.get('branch', 'main')}"
         main_tip = self._git("rev-parse", remote_ref)

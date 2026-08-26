@@ -10,6 +10,18 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.13.3] — 2026-08-26
+
+### Fixed — transient network retry during verified fleet updates
+
+- The verified updater retries a failed or timed-out Git fetch once before
+  reporting failure, covering temporary GitHub/Tailscale egress stalls without
+  bypassing clean-tree, fast-forward, dependency, rollback, or health checks.
+- Replaying an in-flight fleet operation still adopts the same durable ID after
+  a reconnect. Once that operation has terminally failed, an explicit retry
+  receives a fresh ID so the target actually runs again instead of returning
+  the prior failure record.
+
 ## [2.13.2] — 2026-08-26
 
 ### Fixed — exact, dependency-complete Agent Hub fleet updates
