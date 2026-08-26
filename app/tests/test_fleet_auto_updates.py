@@ -424,7 +424,8 @@ async def test_managed_component_runner_posts_frozen_tuple_and_attests_exact_hea
         async def get(self, url, **kwargs):
             if url.endswith("/api/auto-update/status"):
                 return Response({"state": "succeeded",
-                                 "capabilities": {"managed_exact_commit": True}})
+                                 "capabilities": {"managed_exact_commit": True,
+                                                  "dependency_convergence": 1}})
             if url.endswith("/api/health"):
                 return Response({"ok": True, "app_version": "1.30.1", "app_commit": "a" * 40})
             raise AssertionError(url)
@@ -504,7 +505,8 @@ async def test_managed_component_runner_replays_lost_post_and_rejects_wrong_comm
         async def get(self, url, **kwargs):
             if url.endswith("/api/auto-update/status"):
                 return Response({"state": "succeeded",
-                                 "capabilities": {"managed_exact_commit": True}})
+                                 "capabilities": {"managed_exact_commit": True,
+                                                  "dependency_convergence": 1}})
             if url.endswith("/api/health"):
                 return Response({"ok": True, "app_version": "1.30.1", "app_commit": "b" * 40})
             raise AssertionError(url)
@@ -564,11 +566,13 @@ async def test_managed_component_runner_preserves_clean_checkout_health_failure(
             if polls == 1:
                 return Response({
                     "state": "idle",
-                    "capabilities": {"managed_exact_commit": True},
+                    "capabilities": {"managed_exact_commit": True,
+                                     "dependency_convergence": 1},
                 })
             return Response({
                 "state": "failed",
-                "capabilities": {"managed_exact_commit": True},
+                "capabilities": {"managed_exact_commit": True,
+                                 "dependency_convergence": 1},
                 "details": [
                     "The updated app did not attest to the expected commit and version."
                 ],
@@ -655,7 +659,8 @@ async def test_managed_component_malformed_json_is_retryable_and_later_target_ru
                 return Response(malformed)
             if url.endswith("/api/auto-update/status"):
                 return Response({"state": "succeeded",
-                                 "capabilities": {"managed_exact_commit": True}})
+                                 "capabilities": {"managed_exact_commit": True,
+                                                  "dependency_convergence": 1}})
             if url.endswith("/api/health"):
                 return Response({"ok": True, "app_version": "2.3.0", "app_commit": "b" * 40})
             raise AssertionError(url)

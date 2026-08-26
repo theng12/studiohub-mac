@@ -431,61 +431,6 @@ def test_rolling_update_waits_for_every_queue_type(reset):
 
 
 @pytest.mark.asyncio
-async def test_update_health_waits_for_new_disk_version(monkeypatch, tmp_path):
-    studio = {"id": "chat", "app": "chatstudio-mac", "host": "127.0.0.1", "port": 1}
-    (tmp_path / "VERSION").write_text("2.0.0")
-    item = {"expected_version": "1.0.0", "from_version": "1.0.0"}
-
-    class Response:
-        status_code = 200
-
-        def __init__(self, version): self.version = version
-        def json(self): return {"ok": True, "app_version": self.version}
-
-    class Client:
-        calls = 0
-        async def __aenter__(self): return self
-        async def __aexit__(self, *args): return None
-        async def get(self, *args, **kwargs):
-            self.calls += 1
-            return Response("1.0.0" if self.calls == 1 else "2.0.0")
-
-    client = Client()
-    monkeypatch.setattr(fleet_ops, "resolve_app_dir", lambda studio: tmp_path)
-    monkeypatch.setattr(fleet_ops.httpx, "AsyncClient", lambda **kwargs: client)
-
-    async def no_sleep(seconds): return None
-    monkeypatch.setattr(fleet_ops.asyncio, "sleep", no_sleep)
-    await fleet_ops._wait_for_healthy(studio, item)
-    assert client.calls == 2 and item["status"] == "complete"
-    assert item["detail"] == "healthy on v2.0.0"
-
-
-@pytest.mark.asyncio
-async def test_update_fails_fast_when_studio_never_restarts(monkeypatch):
-    studio = {"id": "voice", "host": "127.0.0.1", "port": 1}
-    item = {"expected_version": "1.0.0", "from_version": "1.0.0"}
-
-    class Response:
-        status_code = 200
-        def json(self): return {"ok": True, "app_version": "1.0.0"}
-
-    class Client:
-        async def __aenter__(self): return self
-        async def __aexit__(self, *args): return None
-        async def get(self, *args, **kwargs): return Response()
-
-    monkeypatch.setattr(fleet_ops.httpx, "AsyncClient", lambda **kwargs: Client())
-    monkeypatch.setattr(fleet_ops, "UPDATE_START_TIMEOUT", 0)
-
-    async def no_sleep(seconds): return None
-    monkeypatch.setattr(fleet_ops.asyncio, "sleep", no_sleep)
-
-    with pytest.raises(RuntimeError, match="did not restart the Studio"):
-        await fleet_ops._wait_for_healthy(studio, item)
-
-
-@pytest.mark.asyncio
 async def test_updates_are_sequential_and_failure_is_contained(monkeypatch, monitor):
     calls = []
     refreshed = []
@@ -594,46 +539,47 @@ async def test_remote_update_stops_blocking_queue_after_prolonged_silence(monkey
 
 
 @pytest.mark.asyncio
-async def test_local_update_accepts_null_monitor_health(monkeypatch, monitor, tmp_path):
+async def test_local_update_accepts_null_monitor_health(monkeypatch, monitor):
     studio = dict(monitor.registry[0])
+    studio["modality"] = "voice"
     monitor.status[studio["id"]] = {"app_version": None, "health": None}
-    (tmp_path / "VERSION").write_text("1.2.3\n")
     observed = {}
 
-    monkeypatch.setattr(fleet_ops, "resolve_app_dir", lambda value: tmp_path)
-    monkeypatch.setattr(fleet_ops, "run_studio_script", lambda *args: {"ok": True})
+    monkeypatch.setattr(fleet_ops, "_published_versions", {"voice": "1.2.3"})
+    monkeypatch.setattr(fleet_ops, "_published_refs", {"voice": "a" * 40})
 
-    async def healthy(value, item):
-        observed.update(item)
-        item.update(status="complete", detail="healthy")
+    async def managed(target, **kwargs):
+        observed.update(target)
+        return {"state": "current", "detail": "healthy on exact v1.2.3",
+                "target_version": "1.2.3"}
 
-    monkeypatch.setattr(fleet_ops, "_wait_for_healthy", healthy)
+    monkeypatch.setattr(fleet_ops.fleet_auto_updates, "run_managed_component", managed)
 
     item = {"studio": studio["id"], "status": "queued", "detail": "waiting"}
     await fleet_ops._update_one(monitor, studio, item)
 
-    assert observed["from_version"] is None
-    assert observed["expected_version"] == "1.2.3"
+    assert item["from_version"] is None
+    assert item["expected_version"] == "1.2.3"
+    assert observed["target_commit"] == "a" * 40
     assert item["status"] == "complete"
 
 
 @pytest.mark.asyncio
 async def test_local_update_skips_when_running_release_is_already_current(
-        monkeypatch, monitor, tmp_path):
+        monkeypatch, monitor):
     studio = dict(monitor.registry[0])
     studio["modality"] = "voice"
     monitor.status[studio["id"]] = {
         "app_version": "1.68.1",
-        "health": {"app_version": "1.68.1"},
+        "health": {"app_version": "1.68.1", "app_commit": "a" * 40},
     }
-    (tmp_path / "VERSION").write_text("1.68.1\n")
     calls = []
 
-    monkeypatch.setattr(fleet_ops, "resolve_app_dir", lambda value: tmp_path)
     monkeypatch.setattr(fleet_ops, "_published_versions", {"voice": "1.68.1"})
+    monkeypatch.setattr(fleet_ops, "_published_refs", {"voice": "a" * 40})
     monkeypatch.setattr(
-        fleet_ops, "run_studio_script",
-        lambda *args: calls.append(args) or {"ok": True},
+        fleet_ops.fleet_auto_updates, "run_managed_component",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
     )
 
     item = {"studio": studio["id"], "status": "queued", "detail": "waiting"}
@@ -646,27 +592,24 @@ async def test_local_update_skips_when_running_release_is_already_current(
 
 @pytest.mark.asyncio
 async def test_local_update_does_not_skip_stale_checked_out_release(
-        monkeypatch, monitor, tmp_path):
+        monkeypatch, monitor):
     studio = dict(monitor.registry[0])
     studio["modality"] = "voice"
     monitor.status[studio["id"]] = {
         "app_version": "1.68.1",
         "health": {"app_version": "1.68.1"},
     }
-    (tmp_path / "VERSION").write_text("1.68.1\n")
     calls = []
 
-    monkeypatch.setattr(fleet_ops, "resolve_app_dir", lambda value: tmp_path)
     monkeypatch.setattr(fleet_ops, "_published_versions", {"voice": "1.68.2"})
-    monkeypatch.setattr(
-        fleet_ops, "run_studio_script",
-        lambda *args: calls.append(args) or {"ok": True},
-    )
+    monkeypatch.setattr(fleet_ops, "_published_refs", {"voice": "b" * 40})
 
-    async def healthy(value, item):
-        item.update(status="complete", detail="healthy")
+    async def managed(target, **kwargs):
+        calls.append(target)
+        return {"state": "current", "detail": "healthy on exact v1.68.2",
+                "target_version": "1.68.2"}
 
-    monkeypatch.setattr(fleet_ops, "_wait_for_healthy", healthy)
+    monkeypatch.setattr(fleet_ops.fleet_auto_updates, "run_managed_component", managed)
     item = {"studio": studio["id"], "status": "queued", "detail": "waiting"}
     await fleet_ops._update_one(monitor, studio, item)
 

@@ -1490,11 +1490,13 @@ async def test_real_sibling_adapter_clean_failures_block_before_controller(
             if self.polls[key] == 1:
                 return Response({
                     "state": "idle",
-                    "capabilities": {"managed_exact_commit": True},
+                    "capabilities": {"managed_exact_commit": True,
+                                     "dependency_convergence": 1},
                 })
             return Response({
                 "state": "failed",
-                "capabilities": {"managed_exact_commit": True},
+                "capabilities": {"managed_exact_commit": True,
+                                 "dependency_convergence": 1},
                 "details": [
                     "The loaded app does not attest to the requested commit and version."
                 ],

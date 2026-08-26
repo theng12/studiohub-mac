@@ -1198,6 +1198,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.13.4", date: "2026-08-26", items: [
+    "Manual controller-driven Studio updates now use each Studio's exact managed updater instead of Pinokio <code>update.js</code>.",
+    "Image and Voice updates stay serial and require dependency convergence plus exact version/commit health before the next Studio begins.",
+    "Existing clean-tree, idle-work, fast-forward, rollback, restart, reconnect, and durable retry safeguards remain authoritative.",
+  ]},
   { v: "2.13.3", date: "2026-08-26", items: [
     "Verified updates now retry one transient or timed-out Git fetch automatically before reporting failure.",
     "Reconnects still adopt an in-flight operation, while retrying a completed failure now creates a fresh admission that really runs again.",

@@ -12,7 +12,7 @@ import httpx
 
 import json
 
-from . import broker, peers
+from . import broker, fleet_auto_updates, peers
 from .control import (PINOKIO_HOME, control_studio, resolve_app_dir,
                       run_studio_script, run_studio_script_sync,
                       run_studio_update_repair_sync)
@@ -781,77 +781,51 @@ async def _update_one(monitor, studio: dict, item: dict):
         if studio.get("machine", "local") != "local":
             await _update_remote(studio, item)
             return
-        app_dir = resolve_app_dir(studio)
-        if app_dir is None:
-            raise RuntimeError(f"Pinokio app folder not found for {studio['id']}")
-        version_file = app_dir / "VERSION"
         state = monitor.status.get(sid) or {}
         health = state.get("health") or {}
         item["from_version"] = state.get("app_version") or health.get("app_version")
-        try:
-            item["expected_version"] = version_file.read_text().strip()
-        except OSError:
-            item["expected_version"] = None
-        # A stale coordinator snapshot can ask for a Studio that another
-        # machine already updated. Do not run update.js again when the running
-        # service and checked-out release already match; this also prevents a
-        # false restart failure for a no-op update.
-        latest_published = _published_versions.get(studio.get("modality", ""))
-        if (item.get("from_version") and item.get("expected_version")
-                and item["from_version"] == item["expected_version"]
-                and latest_published == item["expected_version"]):
+        modality = studio.get("modality", "")
+        target_version = _published_versions.get(modality)
+        target_commit = _published_refs.get(modality)
+        repository = PUBLISHED_REPOSITORIES.get(modality)
+        if (not target_version or not target_commit or not repository
+                or not re.fullmatch(r"[0-9a-f]{40}", target_commit)):
+            raise RuntimeError("published Studio release identity is unavailable; rescan versions")
+        item["expected_version"] = target_version
+        if (item.get("from_version") == target_version
+                and health.get("app_commit") == target_commit):
             item.update(
                 status="complete",
                 detail=f"already current on v{item['from_version']}",
                 finished_at=time.time(),
             )
             return
-        item.update(status="updating", detail="running the Studio's update.js")
-        result = run_studio_script(studio, "update.js")
-        if not result.get("ok"):
-            raise RuntimeError(result.get("error", "could not start update"))
-        await _wait_for_healthy(studio, item)
-    except Exception:
-        if studio.get("machine", "local") == "local":
-            control_studio(studio, "start")
-        raise
+        item.setdefault("operation_id", f"fleet-studio-{uuid.uuid4().hex}")
+        target = {
+            "id": sid,
+            "kind": "studio",
+            "machine": studio.get("machine", "local"),
+            "modality": modality,
+            "repository": repository,
+            "target_version": target_version,
+            "target_commit": target_commit,
+            "operation_id": item["operation_id"],
+            "url": base_url(studio),
+            "studio": studio,
+        }
+        item.update(status="updating", detail="running the verified Studio updater")
+        result = await fleet_auto_updates.run_managed_component(
+            target, poll_seconds=3.0, update_timeout=UPDATE_TIMEOUT,
+        )
+        if result.get("state") != "current":
+            raise RuntimeError(result.get("detail") or "verified Studio update failed")
+        item.update(
+            status="complete", detail=result["detail"],
+            to_version=target_version, dependency_convergence=1,
+            finished_at=time.time(),
+        )
     finally:
         broker.set_maintenance(sid, False)
-
-
-async def _wait_for_healthy(studio: dict, item: dict):
-    deadline = time.monotonic() + UPDATE_TIMEOUT
-    restart_deadline = time.monotonic() + UPDATE_START_TIMEOUT
-    headers = peers.studio_headers(studio)
-    saw_unavailable = False
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        while time.monotonic() < deadline:
-            await asyncio.sleep(3)
-            try:
-                r = await client.get(f"{base_url(studio)}/api/health", headers=headers)
-                data = r.json()
-                version = str(data.get("app_version", "unknown"))
-                app_dir = resolve_app_dir(studio)
-                if app_dir:
-                    try:
-                        item["expected_version"] = (app_dir / "VERSION").read_text().strip()
-                    except OSError:
-                        pass
-                expected = item.get("expected_version")
-                version_loaded = bool(expected and version.startswith(expected))
-                restarted_or_advanced = saw_unavailable or version != str(item.get("from_version"))
-                if r.status_code == 200 and data.get("ok") and version_loaded and restarted_or_advanced:
-                    item.update(status="complete", detail=f"healthy on v{version}",
-                                finished_at=time.time())
-                    return
-                if not saw_unavailable and time.monotonic() >= restart_deadline:
-                    raise RuntimeError(
-                        "update command did not restart the Studio before the maintenance "
-                        "grace period; check its update status/log"
-                    )
-            except (httpx.HTTPError, ValueError):
-                saw_unavailable = True
-        raise RuntimeError("Studio did not return healthy before the update timeout")
 
 
 async def _update_remote(studio: dict, item: dict):

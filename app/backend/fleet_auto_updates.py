@@ -168,8 +168,8 @@ def _json_object(response: httpx.Response) -> dict[str, Any]:
     return value
 
 
-async def _run_managed_component(target: dict[str, Any], *, poll_seconds: float,
-                                 update_timeout: float) -> dict[str, Any]:
+async def run_managed_component(target: dict[str, Any], *, poll_seconds: float,
+                                update_timeout: float) -> dict[str, Any]:
     """Run one exact sibling update without touching ordinary update controls."""
     headers = peers.studio_headers(target["studio"])
     payload = {"after_current": True, "target_commit": target["target_commit"],
@@ -186,9 +186,14 @@ async def _run_managed_component(target: dict[str, Any], *, poll_seconds: float,
                 status = await client.get(target["url"] + "/api/auto-update/status", headers=headers)
                 status.raise_for_status()
                 state = _json_object(status)
-                if (state.get("capabilities") or {}).get("managed_exact_commit") is not True:
+                capabilities = state.get("capabilities") or {}
+                if capabilities.get("managed_exact_commit") is not True:
                     return _retryable_component_result(
                         target, "exact component updater unavailable: managed_exact_commit is required",
+                    )
+                if capabilities.get("dependency_convergence") != 1:
+                    return _retryable_component_result(
+                        target, "verified component dependency convergence is required",
                     )
                 break
             except transport_errors:
@@ -225,9 +230,14 @@ async def _run_managed_component(target: dict[str, Any], *, poll_seconds: float,
                 status = await client.get(target["url"] + "/api/auto-update/status", headers=headers)
                 status.raise_for_status()
                 state = _json_object(status)
-                if (state.get("capabilities") or {}).get("managed_exact_commit") is not True:
+                capabilities = state.get("capabilities") or {}
+                if capabilities.get("managed_exact_commit") is not True:
                     return _retryable_component_result(
                         target, "exact component updater unavailable: managed_exact_commit is required",
+                    )
+                if capabilities.get("dependency_convergence") != 1:
+                    return _retryable_component_result(
+                        target, "verified component dependency convergence is required",
                     )
                 if state.get("state") == "failed":
                     failure_code = managed_failure_code(state)
@@ -270,7 +280,7 @@ async def run_managed_components(monitor, manifest: dict[str, Any], *, operation
     results = []
     for target in targets:
         try:
-            results.append(await _run_managed_component(
+            results.append(await run_managed_component(
                 target, poll_seconds=poll_seconds, update_timeout=update_timeout,
             ))
         except Exception:

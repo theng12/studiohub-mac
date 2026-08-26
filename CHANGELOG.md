@@ -10,6 +10,22 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.13.4] — 2026-08-26
+
+### Fixed — verified, dependency-complete Studio fleet updates
+
+- Manual controller-driven Studio updates now use each Studio's exact managed
+  updater instead of launching Pinokio `update.js`. This closes the same ghost
+  or stale launcher-session gap already removed from Agent Hub updates.
+- The controller freezes the published version and commit, requires the target
+  to advertise dependency convergence, waits for idle work, and accepts success
+  only after exact health attestation. The updater retains its clean-tree,
+  fast-forward, dependency install, rollback, restart-owner, and durable retry
+  safeguards.
+- Local updates remain serial, and controllers still delegate remote work to
+  each Agent Hub one Mac at a time. The obsolete duplicate restart-polling path
+  and its tests were removed in favor of the shared verified updater.
+
 ## [2.13.3] — 2026-08-26
 
 ### Fixed — transient network retry during verified fleet updates
