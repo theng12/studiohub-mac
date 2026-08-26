@@ -3820,7 +3820,7 @@ def get_studio_update_repair(job_id: str):
 
 
 @app.post("/api/hub/maintenance/studio-update-repairs/{job_id}/retry")
-def retry_studio_update_repair(job_id: str):
+async def retry_studio_update_repair(job_id: str):
     try:
         return fleet_ops.retry_studio_update_repairs(monitor, job_id)
     except ValueError as exc:

@@ -1,3 +1,4 @@
+import asyncio
 import contextlib
 import fcntl
 import os
@@ -1058,6 +1059,26 @@ def test_studio_update_repair_api_is_capability_gated_and_supports_retry(authed,
     assert version.json()["studio_update_repair_schema"] == 1
     assert started_response.status_code == 200 and started == [(["voice"], True)]
     assert retried_response.status_code == 200 and retried == ["repair-1"]
+
+
+def test_studio_update_repair_retry_runs_on_event_loop(authed, monkeypatch):
+    def retry_repair(_monitor, _job_id):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            loop_running = False
+        else:
+            loop_running = True
+        return {"id": "repair-2", "loop_running": loop_running}
+
+    monkeypatch.setattr(fleet_ops, "retry_studio_update_repairs", retry_repair)
+
+    response = authed.post(
+        "/api/hub/maintenance/studio-update-repairs/repair-1/retry"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["loop_running"] is True
 
 
 def test_dashboard_exposes_one_time_remote_studio_update_repair():

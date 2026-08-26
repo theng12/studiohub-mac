@@ -10,6 +10,19 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.13.1] — 2026-08-26
+
+### Fixed — fleet repair retries and stale Pinokio updater sessions
+
+- **Retry unfinished** now runs on FastAPI's event loop, so the retry task is
+  actually scheduled instead of leaving a durable `0/N` queued repair after
+  the API request fails in a worker thread.
+- The one-time Voice/Image repair now stops an existing `update.js` Pinokio
+  session before launching its owned updater. This clears ghost sessions whose
+  terminal is already gone after the legacy tracked-`ENVIRONMENT` merge
+  failure, while the repair's existing work-drain, backup, dependency, restart,
+  and health gates remain authoritative.
+
 ### Documented — remote-first SSD recovery workflow
 
 - The canonical new-Mac SSD guide now records Hub 2.13.0, Image 1.30.5, and

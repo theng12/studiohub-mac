@@ -674,8 +674,13 @@ class MigrationEngine:
         node = fleet_bootstrap.resolve_node(target.parents[1])
         if node is None:
             raise RuntimeError("Pinokio Node is unavailable; finish Pinokio setup and retry")
+        ref = f"{KERNEL}/{target.name}"
+        self.runner(
+            (str(node), str(pterm), "stop", "update.js", "--ref", ref),
+            None,
+        )
         result = self.runner(
-            (str(node), str(pterm), "start", "update.js", "--ref", f"{KERNEL}/{target.name}"),
+            (str(node), str(pterm), "start", "update.js", "--ref", ref),
             None,
         )
         output = result.stdout + result.stderr

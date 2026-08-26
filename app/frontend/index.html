@@ -1198,6 +1198,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.13.1", date: "2026-08-26", items: [
+    "<b>Retry unfinished</b> now schedules its repair task on the Hub event loop instead of leaving an orphaned 0/N queued job.",
+    "One-time Voice/Image repair now clears a stale Pinokio <code>update.js</code> session before launching the owned updater, fixing ghost sessions left by the old tracked-<code>ENVIRONMENT</code> merge failure.",
+    "Machine settings, models, enrollment, voices, and jobs remain preserved; the existing drain, backup, dependency, restart, and health checks are unchanged.",
+  ]},
   { v: "2.13.0", date: "2026-08-25", items: [
     "Remote startup control now has <b>Fully remove unused</b> for Music, Chat, Video, and Render. It stops the app, removes its updater/server/watchdog and Hub registration, then moves every matching checkout and exclusive model cache to Trash while preserving packages another installed Studio uses.",
     "Image, Voice, and Studio Hub are protected. Busy and offline targets remain retryable, and nothing is removed or updated merely by installing this release.",

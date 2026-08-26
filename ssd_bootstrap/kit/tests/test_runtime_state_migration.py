@@ -116,7 +116,7 @@ class RuntimeStateMigrationTests(unittest.TestCase):
         arguments.update(overrides)
         return MigrationEngine(**arguments)
 
-    def test_default_update_runner_uses_pinokio_node_under_launchd_path(self) -> None:
+    def test_default_update_runner_stops_stale_session_and_uses_pinokio_node(self) -> None:
         target = self.home / "api" / "voicestudio-mac"
         target.mkdir(parents=True)
         node = self.home / "bin/miniforge/bin/node"
@@ -132,10 +132,16 @@ class RuntimeStateMigrationTests(unittest.TestCase):
         output = MigrationEngine(home=self.home, runner=runner)._run_update(target, self.pterm)
 
         self.assertEqual(output, "updated\n")
-        self.assertEqual(calls, [((
-            str(node), str(self.pterm), "start", "update.js", "--ref",
-            "pinokio://127.0.0.1:42000/api/voicestudio-mac",
-        ), None)])
+        self.assertEqual(calls, [
+            ((
+                str(node), str(self.pterm), "stop", "update.js", "--ref",
+                "pinokio://127.0.0.1:42000/api/voicestudio-mac",
+            ), None),
+            ((
+                str(node), str(self.pterm), "start", "update.js", "--ref",
+                "pinokio://127.0.0.1:42000/api/voicestudio-mac",
+            ), None),
+        ])
 
     def prepare_old_fleet(self, *, legacy_voice: bool = False) -> dict[str, Path]:
         targets: dict[str, Path] = {}
