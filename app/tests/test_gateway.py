@@ -49,7 +49,11 @@ def test_gateway_routes_to_correct_studio(app, token, monkeypatch):
     assert fc.captured["url"] == "http://127.0.0.1:47868/api/catalog"
 
 
-def test_gateway_strips_hub_token_from_upstream(app, token, monkeypatch):
+def test_gateway_strips_hub_token_from_upstream(app, token, monitor, monkeypatch):
+    monitor.registry.append({
+        "id": "chat", "title": "Chat Studio KH", "modality": "chat",
+        "machine": "local", "host": "127.0.0.1", "port": 47871,
+    })
     fc = FakeClient(resp=FakeResp())
     monkeypatch.setattr(gateway, "_client", fc)
     _authed(app, token).get("/studio/chat/v1/models")

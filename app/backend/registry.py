@@ -1,6 +1,6 @@
 """Studio registry — host-aware local fleet inventory.
 
-Defaults cover the five local KH studios. A per-machine `studios.json` at the
+Defaults cover the production Image and Voice Studios. A per-machine `studios.json` at the
 launcher root (gitignored) can override any default by `id` or add extra
 entries — including studios on OTHER machines over LAN/Tailscale, which is the
 foundation for federation and Swarm Batch worker pools.
@@ -201,28 +201,21 @@ def prune_machine_metadata(known_machines: set[str]) -> None:
     _labels_cache = labels
     _flags_cache = flags
 
-# The five sibling studios and their fixed family ports. `app` is the Pinokio
+# Studio Hub intentionally tracks only the two production worker products.
+# Legacy Chat, Music, Video, and Render records are ignored even when an old
+# studios.json still contains them; their physical app folders are untouched.
+TRACKED_MODALITIES = ("image", "voice")
+
+# The tracked sibling studios and their fixed family ports. `app` is the Pinokio
 # launcher folder name under PINOKIO_HOME/api — used by lifecycle control
 # (pterm --ref). Override in studios.json if your folder names differ.
 DEFAULT_STUDIOS = [
     {"id": "image", "title": "Image Studio KH", "modality": "image",
      "host": "127.0.0.1", "port": 47868, "machine": "local", "emoji": "🎨",
      "app": "imagestudio-mac"},
-    {"id": "music", "title": "Music Studio KH", "modality": "music",
-     "host": "127.0.0.1", "port": 47869, "machine": "local", "emoji": "🎵",
-     "app": "musicstudio-mac"},
     {"id": "voice", "title": "Voice Studio KH", "modality": "voice",
      "host": "127.0.0.1", "port": 47870, "machine": "local", "emoji": "🎙️",
      "app": "voicestudio-mac.git"},
-    {"id": "chat", "title": "Chat Studio KH", "modality": "chat",
-     "host": "127.0.0.1", "port": 47871, "machine": "local", "emoji": "💬",
-     "app": "chatstudio-mac.git"},
-    {"id": "video", "title": "Video Studio KH", "modality": "video",
-     "host": "127.0.0.1", "port": 47872, "machine": "local", "emoji": "🎬",
-     "app": "videostudio-mac"},
-    {"id": "render", "title": "Render Studio KH", "modality": "render",
-     "host": "127.0.0.1", "port": 47874, "machine": "local", "emoji": "🖥️",
-     "app": "renderstudio-mac"},
 ]
 
 
@@ -235,6 +228,9 @@ def load_registry() -> list[dict]:
             for entry in user_entries:
                 sid = entry.get("id")
                 if not sid:
+                    continue
+                modality = entry.get("modality") or str(sid).split("@", 1)[0]
+                if modality not in TRACKED_MODALITIES:
                     continue
                 if sid in studios:
                     studios[sid].update(entry)  # override defaults by id
@@ -377,12 +373,10 @@ def repair_machine_snapshot(
     )
 
 
-# Family port convention — used by discovery to infer modality.
-FAMILY_PORTS = {47868: "image", 47869: "music", 47870: "voice",
-                47871: "chat", 47872: "video", 47874: "render"}
+# Family port convention — used by discovery to infer tracked modalities.
+FAMILY_PORTS = {47868: "image", 47870: "voice"}
 MODALITY_PORT = {v: k for k, v in FAMILY_PORTS.items()}
-MODALITY_EMOJI = {"image": "🎨", "music": "🎵", "voice": "🎙️",
-                  "chat": "💬", "video": "🎬", "render": "🖥️"}
+MODALITY_EMOJI = {"image": "🎨", "voice": "🎙️"}
 
 
 def build_machine_entries(host: str, machine: str, modalities: list[str]) -> list[dict]:
@@ -391,6 +385,8 @@ def build_machine_entries(host: str, machine: str, modalities: list[str]) -> lis
     when it comes online."""
     entries = []
     for mod in modalities:
+        if mod not in TRACKED_MODALITIES:
+            continue
         port = MODALITY_PORT.get(mod)
         if port is None:
             continue

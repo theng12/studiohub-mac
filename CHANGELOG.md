@@ -10,6 +10,20 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.13.6] — 2026-08-27
+
+### Changed — Image and Voice are the complete tracked fleet
+
+- Studio Hub now accepts only Image and Voice registry entries. Legacy Music,
+  Chat, Video, and Render rows saved by older releases are ignored rather than
+  reloaded, and discovery cannot add them again.
+- Automatic Startup and Studio Updates also filter older Agent Hub payloads to
+  Image and Voice, so a controller update removes ghost rows immediately even
+  before every Agent has updated.
+- The remote full-removal controls are no longer shown. Existing legacy app
+  folders and data are left untouched; Studio Hub simply stops registering,
+  monitoring, updating, or displaying them.
+
 ## [2.13.5] — 2026-08-27
 
 ### Fixed — verified cleanup and immediate Studio update results

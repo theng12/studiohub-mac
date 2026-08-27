@@ -1,9 +1,9 @@
 # Studio Hub KH
 
 Production control plane for **Image Studio (47868)** and **Voice Studio
-(47870)**, with Studio Hub itself on **47873**. Legacy Music, Chat, Video, and
-Render registrations remain compatible when deliberately added, but new fleet
-enrollment defaults to the production Image + Voice pair.
+(47870)**, with Studio Hub itself on **47873**. Studio Hub ignores legacy Music,
+Chat, Video, and Render registrations, including rows saved by older releases.
+Their app folders are left untouched and are no longer part of fleet tracking.
 
 The Hub runs on fixed port **47873** and provides:
 
@@ -71,8 +71,8 @@ select menus keep their dedicated readable option size.
 
 ### Control model memory
 
-Open **Memory** in Studio Hub. Every registered Image, Chat, Video, Music, Voice,
-and Render Studio appears separately, including Studios reached through a peer Hub.
+Open **Memory** in Studio Hub. Every registered Image and Voice Studio appears
+separately, including Studios reached through a peer Hub.
 Select the workers you want and choose:
 
 - **Performance** — preserve loaded models for the fastest repeat
@@ -93,16 +93,16 @@ only those workers and retry. Policies are persisted by each Studio, not the
 Hub, and therefore survive Hub restarts and continue working when a remote Hub
 is temporarily unavailable.
 
-When a queued generation, render, Chat, or transcription job cannot meet its
-live free-memory floor, Hub automatically asks the other Studios on that same
+When queued generation or transcription work cannot meet its live free-memory
+floor, Hub automatically asks the other tracked Studio on that same
 Mac to release idle resident state. It refreshes the Mac's RAM telemetry and
 reruns admission before assigning the job. A sibling with queued or active work
 refuses the handoff, so this switches idle models without preempting work or
 changing the operator's saved memory mode.
 
 After dependency installation and the next Studio restart, macOS Activity
-Monitor shows `Image Studio Mac`, `Chat Studio Mac`, `Video Studio Mac`,
-`Music Studio Mac`, `Voice Studio Mac`, and `Studio Hub Mac` instead of a generic
+Monitor shows `Image Studio Mac`, `Voice Studio Mac`, and `Studio Hub Mac`
+instead of a generic
 Python title. The Python process remains the app's backend; the friendly name
 only changes how that same process is presented.
 
@@ -312,10 +312,6 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/setup/join` | Guided worker setup using a private controller address, permanent enrollment code, and local hardware profile; accepted locally or from an owner-authenticated browser |
 | `GET /api/hub/startup-services` | Audit sibling Studio launchd service and watchdog readiness on this Hub and authenticated peer Hubs |
 | `POST /api/hub/startup-services/{machine}/{studio}/install` | Install or repair one sibling's startup service on its own machine; refuses Hub-tracked active work |
-| `POST /api/hub/startup-services/{machine}/{studio}/retire` | Loopback/owner-session retirement for Music, Chat, Video, or Render: turn updater/routing Off and unload startup without deleting app or model data; partial remote failures remain safely disabled for retry |
-| `POST /api/hub/service/startup-services/local/{studio}/retire` | Strict fleet-header peer route used by the Controller; the target Hub repeats local busy/update checks before changing its own Mac |
-| `POST /api/hub/startup-services/{machine}/{studio}/remove` | Loopback/owner-session full removal for Music, Chat, Video, or Render: stop, disable autolaunch, remove exact LaunchAgents and Hub registration, then move all matching checkouts and owned data to Trash |
-| `POST /api/hub/service/startup-services/local/{studio}/remove` | Strict fleet-header peer route for the same full-removal workflow on the target Mac; Image, Voice, and Hub are always refused |
 | `POST /api/hub/registry/studios/{id}/enabled` | Pause/resume new jobs for one Studio with `{"enabled": false/true}`; running work and the process are untouched |
 | `GET /api/hub/health` | Aggregate: totals + per-studio statuses |
 | `GET /api/hub/catalog` | Local per-studio catalog rows (annotated `hub_cached`, `hub_machine`). Query: `q`, `modality`, `downloaded`, `force` |
@@ -828,26 +824,16 @@ restart the Studio as launchd takes ownership, so direct jobs started outside
 the Hub should also be allowed to finish first. No startup service is installed
 automatically merely by opening or refreshing the audit.
 
-**Fully remove unused** is the recoverable cleanup for machines that should run
-only Hub, Image, and Voice. For Music, Chat, Video, and Render it first fences
-Hub work and app updates, stops every canonical/`.git` Pinokio checkout,
-disables Pinokio autolaunch, unloads and deletes the exact updater, server, and
-watchdog LaunchAgents, removes the Hub registration, then moves the checkout and
-its outputs/settings plus exact Hugging Face cache packages used only by that
-Studio to macOS Trash. A model package referenced by any other installed Studio
-is preserved. Image, Voice,
-and Hub are hard-protected. Offline or busy rows remain available for retry;
-nothing runs merely from opening the audit. The action still works when the
-Pinokio GUI is closed, but fails safely if an unmanaged process remains on the
-Studio's port. Remote deletion is accepted only from the Agent's enrolled
-parent controller, and a lost success response can be retried idempotently.
+Legacy Music, Chat, Video, and Render apps are deliberately absent from this
+audit. Studio Hub does not register, monitor, update, start, or stop them, and
+an old peer payload cannot put them back into the controller UI. No cleanup
+action is offered; existing folders and data remain untouched for manual handling.
 
 Hub, Image, and Voice automatic schedules use named executable wrappers
 (`studiohub-updater.sh`, `imagestudio-updater.sh`, and
 `voicestudio-updater.sh`). The first restart after updating reconciles a legacy
 raw-Python LaunchAgent automatically. macOS Background Activity therefore has
-identifiable production updater entries, and removing an unused Studio also
-removes its exact updater label.
+identifiable production updater entries.
 
 ## The fleet: remote specs + remote control
 

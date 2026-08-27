@@ -254,10 +254,8 @@ def local_snapshot() -> dict:
 
     registered = list(registry.load_registry())
     services = []
-    for modality in SERVICE_SPECS:
+    for modality in registry.TRACKED_MODALITIES:
         service = inspect_service(modality)
-        if modality in RETIRABLE_MODALITIES and not service["app_installed"]:
-            continue
         studio = next((row for row in registered
                        if row.get("machine", "local") == "local"
                        and row.get("modality") == modality), None)

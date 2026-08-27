@@ -9,6 +9,21 @@ import pytest
 from backend import broker, ledger, shared_voices, workload_policy
 
 
+def _add_legacy_worker(monitor, modality: str, *, machine: str = "local") -> dict:
+    ports = {"chat": 47871, "music": 47872, "video": 47869, "render": 47874}
+    worker = {
+        "id": modality if machine == "local" else f"{modality}@{machine}",
+        "title": f"{modality.title()} Studio KH",
+        "modality": modality,
+        "host": "127.0.0.1" if machine == "local" else "10.0.0.2",
+        "port": ports[modality],
+        "machine": machine,
+    }
+    monitor.registry.append(worker)
+    monitor.status[worker["id"]] = {"status": "unknown"}
+    return worker
+
+
 async def _run_dispatch_loop_briefly(seconds: float = 0.5) -> None:
     """Run the real scheduler for one or two ticks, then stop it."""
     task = asyncio.create_task(broker._dispatch_loop())
@@ -354,15 +369,15 @@ async def test_coordinated_handoff_releases_only_idle_same_machine_siblings(rese
     result = await broker.release_idle_siblings(client, target)
 
     assert result == {
-        "attempted": 5, "released": 4, "busy": ["image"],
+        "attempted": 1, "released": 0, "busy": ["image"],
         "failed": [], "deferred": False,
     }
-    assert len(client.calls) == 4
+    assert len(client.calls) == 0
     assert all(url.endswith("/api/memory/release") for url in client.calls)
     assert not any(":47870/" in url for url in client.calls)
     repeated = await broker.release_idle_siblings(client, target)
     assert repeated["deferred"] is True and repeated["busy"] == ["image"]
-    assert len(client.calls) == 4
+    assert len(client.calls) == 0
 
 
 @pytest.mark.asyncio
@@ -383,7 +398,7 @@ async def test_low_memory_handoff_rechecks_ram_before_admission(reset, monkeypat
     )
 
     assert decision == "run" and note is None
-    assert len(client.calls) == 5
+    assert len(client.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -794,7 +809,7 @@ def test_item_avoids_recently_failed_machine(reset):
 def test_machine_lease_blocks_other_heavy_studios_on_same_mac(reset):
     mon = broker._monitor()
     img = next(s for s in mon.registry if s["modality"] == "image")
-    render = next(s for s in mon.registry if s["modality"] == "render")
+    render = _add_legacy_worker(mon, "render")
     # Defaults share the physical "local" machine.
     assert img.get("machine", "local") == render.get("machine", "local")
     mon.status[img["id"]] = {"status": "up"}
@@ -1163,7 +1178,7 @@ def test_unknown_model_memory_keeps_existing_fair_turn_order(reset):
 
 def test_pending_render_reserves_its_machine_from_external_queues(reset):
     mon = broker._monitor()
-    render_studio = next(s for s in mon.registry if s["modality"] == "render")
+    render_studio = _add_legacy_worker(mon, "render")
     machine = render_studio.get("machine", "local")
     mon.status[render_studio["id"]] = {"status": "up", "health": {"render_score": 100}}
     render = broker.submit_batch({
@@ -1178,7 +1193,7 @@ def test_pending_render_reserves_its_machine_from_external_queues(reset):
 
 def test_render_workers_rank_by_reported_hardware_score(reset):
     mon = broker._monitor()
-    local = next(s for s in mon.registry if s["modality"] == "render")
+    local = _add_legacy_worker(mon, "render")
     remote = {**local, "id": "render@m4-16", "machine": "m4-16",
               "host": "10.0.0.2"}
     mon.registry.append(remote)
@@ -1194,7 +1209,7 @@ def test_render_workers_rank_by_reported_hardware_score(reset):
 
 def test_remote_render_routing_excludes_hub_machine(reset):
     mon = broker._monitor()
-    local = next(s for s in mon.registry if s["modality"] == "render")
+    local = _add_legacy_worker(mon, "render")
     remote = {**local, "id": "render@m4-16", "machine": "m4-16", "host": "10.0.0.2"}
     mon.registry.append(remote)
     mon.status[local["id"]] = {"status": "up", "health": {"render_score": 500}}

@@ -604,9 +604,12 @@ def test_chat_capability_reports_verified_usage_revision_and_output_limit(
         authed, monitor):
     _seed_capability_site(monitor)
     chat = {
-        **next(row for row in registry.load_registry() if row["id"] == "chat"),
         "id": "chat",
+        "title": "Chat Studio KH",
+        "modality": "chat",
         "machine": "local",
+        "host": "127.0.0.1",
+        "port": 47871,
     }
     monitor.registry.append(chat)
     monitor.status["chat"] = {

@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from backend import registry as reg
@@ -18,10 +20,10 @@ def test_default_launcher_folders_exist():
         assert (reg.LAUNCHER_ROOT.parent / studio["app"]).is_dir(), studio["id"]
 
 
-def test_default_registry_has_six_local_studios(reset):
+def test_default_registry_tracks_only_image_and_voice(reset):
     studios = reg.load_registry()
     ids = {s["id"] for s in studios}
-    assert ids == {"image", "music", "voice", "chat", "video", "render"}
+    assert ids == {"image", "voice"}
     assert all(s["machine"] == "local" for s in studios)
     assert all(s["host"] == "127.0.0.1" for s in studios)
 
@@ -29,29 +31,26 @@ def test_default_registry_has_six_local_studios(reset):
 def test_missing_local_checkout_without_removal_marker_keeps_default(reset, tmp_path, monkeypatch):
     launcher = tmp_path / "api" / "studiohub-mac"
     launcher.mkdir(parents=True)
-    for studio in reg.DEFAULT_STUDIOS:
-        if studio["id"] != "render":
-            (launcher.parent / studio["app"]).mkdir()
     monkeypatch.setattr(reg, "LAUNCHER_ROOT", launcher)
 
     ids = {studio["id"] for studio in reg.load_registry()}
 
-    assert ids == {"image", "music", "voice", "chat", "video", "render"}
+    assert ids == {"image", "voice"}
 
 
-def test_removed_local_checkout_is_not_returned_as_a_ghost(reset, tmp_path, monkeypatch):
-    launcher = tmp_path / "api" / "studiohub-mac"
-    launcher.mkdir(parents=True)
-    for studio in reg.DEFAULT_STUDIOS:
-        if studio["id"] != "render":
-            (launcher.parent / studio["app"]).mkdir()
-    monkeypatch.setattr(reg, "LAUNCHER_ROOT", launcher)
-    reg.set_studio_removed("local", "render", True)
+def test_saved_legacy_studios_are_not_tracked(reset):
+    reg.REGISTRY_FILE.write_text(json.dumps([
+        {"id": "image@mac-b", "modality": "image", "host": "100.1.1.1",
+         "port": 47868, "machine": "mac-b"},
+        {"id": "chat@mac-b", "modality": "chat", "host": "100.1.1.1",
+         "port": 47871, "machine": "mac-b"},
+        {"id": "render@mac-b", "modality": "render", "host": "100.1.1.1",
+         "port": 47874, "machine": "mac-b"},
+    ]))
 
     ids = {studio["id"] for studio in reg.load_registry()}
 
-    assert "render" not in ids
-    assert ids == {"image", "music", "voice", "chat", "video"}
+    assert ids == {"image", "voice", "image@mac-b"}
 
 
 def test_base_url():
@@ -91,14 +90,11 @@ def test_reenrolling_same_machine_updates_its_address(reset):
     assert {row["host"] for row in remote} == {"100.1.1.2"}
 
 
-def test_remove_single_studio(reset):
-    reg.add_user_entries(reg.build_machine_entries(
-        "100.1.1.1", "mac-b", ["image", "music", "video"]))
-    assert reg.remove_studio("music@mac-b") == 1        # prune one
-    assert reg.remove_studio("music@mac-b") == 0        # already gone
-    ids = {s["id"] for s in reg.load_registry()}
-    assert "music@mac-b" not in ids
-    assert {"image@mac-b", "video@mac-b"} <= ids        # siblings untouched
+def test_build_machine_entries_skips_untracked_studios(reset):
+    entries = reg.build_machine_entries(
+        "100.1.1.1", "mac-b", ["image", "music", "voice", "chat", "video", "render"])
+
+    assert {entry["modality"] for entry in entries} == {"image", "voice"}
 
 
 def test_remove_studio_endpoint_rejects_local(authed):
@@ -179,7 +175,7 @@ def test_user_entry_overrides_default(reset):
 def test_malformed_studios_json_falls_back(reset):
     reg.REGISTRY_FILE.write_text("{ not json")
     studios = reg.load_registry()  # must not raise
-    assert len(studios) == 6
+    assert len(studios) == 2
 
 
 def test_registry_endpoint_rejects_url_shaped_host_and_unsafe_machine(authed):

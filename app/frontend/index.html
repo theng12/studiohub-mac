@@ -988,11 +988,10 @@
       <div class="top"><span class="emoji">⚡</span><h3>Automatic startup across the fleet</h3>
         <span style="margin-left:auto"></span>
         <button class="btn" id="startup-refresh" onclick="loadStartupServices()">↻&nbsp; Check startup</button>
-        <button class="btn" id="startup-remove-unused" onclick="removeUnusedStudios()" disabled>Fully remove unused</button>
         <button class="btn primary" id="startup-install-all" onclick="installMissingStartupServices()" disabled>Install missing</button>
       </div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        Checks whether each installed Image, Voice, Chat, Music, Video, and Render Studio starts automatically and has its watchdog loaded. Fully remove unused Music, Chat, Video, or Render Studios to unload their updater, server, and watchdog, remove their Hub registration, and move both canonical and legacy checkout folders to Trash. Image, Voice, and Studio Hub can never be removed here.
+        Checks whether Image and Voice Studio start automatically and have their watchdogs loaded on every fleet Mac. Other legacy Studio products are not registered, monitored, updated, or shown by Studio Hub.
       </p>
       <div id="startup-status" class="update-progress hide" role="status" aria-live="polite"></div>
       <div style="overflow-x:auto"><table><thead><tr><th>Studio</th><th>Machine</th><th>Startup status</th><th>Service check</th><th></th></tr></thead><tbody id="startup-body"><tr><td colspan="5" class="empty">Click “Check startup” to audit the fleet.</td></tr></tbody></table></div>
@@ -1198,6 +1197,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.13.6", date: "2026-08-27", items: [
+    "Studio Hub now tracks only <b>Image Studio</b> and <b>Voice Studio</b>; saved legacy Music, Chat, Video, and Render registrations are ignored.",
+    "Older Agent Hub payloads are filtered at the controller, so ghost rows disappear from Startup and Updates as soon as the controller updates.",
+    "Legacy app folders and data are left untouched. Studio Hub no longer offers remote deletion or includes those products in fleet counts, health, monitoring, or updates.",
+  ]},
   { v: "2.13.5", date: "2026-08-27", items: [
     "Unused Music, Chat, Video, and Render Studios now use the controller's current fleet credential, so legacy per-Studio tokens cannot leave retained registrations behind.",
     "An already-deleted optional Studio is verified absent and treated as a successful idempotent removal; its shared registration disappears from both Automatic Startup and Studio Updates.",
@@ -5374,21 +5378,18 @@ async function rescanStudioVersions() {
   else { progress.className = "update-progress error"; progress.innerHTML = `<div class="update-progress-title">! Version scan failed</div><div class="update-progress-detail">Try again.</div>`; }
 }
 let startupServiceRows = [];
-let startupOfflineMachines = [];
-const REMOVABLE_STUDIO_MODALITIES = ["music", "chat", "video", "render"];
+const TRACKED_STUDIO_MODALITIES = ["image", "voice"];
 let startupActionBusy = false;
 function renderStartupServices(data) {
-  const body = $("#startup-body"), status = $("#startup-status"), installAll = $("#startup-install-all"), removeAll = $("#startup-remove-unused");
+  const body = $("#startup-body"), status = $("#startup-status"), installAll = $("#startup-install-all");
   startupServiceRows = [];
-  startupOfflineMachines = [];
   const machineRows = Object.entries(data?.machines || {});
   body.innerHTML = machineRows.map(([machine, snapshot]) => {
     if (!snapshot.reachable || !snapshot.supported) {
-      startupOfflineMachines.push({machine, detail: snapshot.detail || "offline or unsupported"});
       const detail = snapshot.detail || (snapshot.reachable ? "Startup control is unavailable" : "Peer Hub is offline or unreachable");
-      return `<tr><td class="sub">All Studios</td><td><b>${esc(mlabel(machine))}</b></td><td><span class="pill no">${snapshot.reachable ? "Hub update needed" : "unreachable"}</span></td><td class="sub">${esc(detail)}</td><td>—</td></tr>`;
+      return `<tr><td class="sub">Image & Voice</td><td><b>${esc(mlabel(machine))}</b></td><td><span class="pill no">${snapshot.reachable ? "Hub update needed" : "unreachable"}</span></td><td class="sub">${esc(detail)}</td><td>—</td></tr>`;
     }
-    return (snapshot.services || []).map(service => {
+    return (snapshot.services || []).filter(service => TRACKED_STUDIO_MODALITIES.includes(service.modality)).map(service => {
       const row = {...service, machine, reachable: true}; startupServiceRows.push(row);
       const state = service.retired ? ["", "retired"] : service.installed ? ["ok", "automatic"] :
         service.status === "repair_needed" ? ["warn", "repair needed"] :
@@ -5396,20 +5397,14 @@ function renderStartupServices(data) {
         ["app_missing", "runtime_missing"].includes(service.status) ? ["no", "app not installed"] : ["no", "unsupported"];
       const install = !service.retired && service.can_install
         ? `<button class="btn primary compact" data-startup-install onclick="installStartupService('${jsq(machine)}','${jsq(service.modality)}')">${service.status === "repair_needed" ? "Repair" : "Install"}</button>` : "";
-      const canRemove = REMOVABLE_STUDIO_MODALITIES.includes(service.modality) && service.app_installed;
-      const remove = canRemove
-        ? `<button class="btn compact" data-startup-remove onclick="removeStartupStudio('${jsq(machine)}','${jsq(service.modality)}')">Fully remove</button>` : "";
-      const action = install || remove ? `<div class="actions">${install}${remove}</div>` : "—";
+      const action = install ? `<div class="actions">${install}</div>` : "—";
       return `<tr><td><b>${esc(service.title)}</b></td><td>${esc(mlabel(machine))}</td><td><span class="pill ${state[0]}">${state[1]}</span></td><td class="sub">${esc(service.detail || "")}</td><td>${action}</td></tr>`;
     }).join("");
   }).join("") || `<tr><td colspan="5" class="empty">No Hub machines are registered.</td></tr>`;
   const installed = startupServiceRows.filter(row => row.installed).length;
   const actionable = startupServiceRows.filter(row => row.can_install && !row.retired).length;
-  const removable = startupServiceRows.filter(row => REMOVABLE_STUDIO_MODALITIES.includes(row.modality) && row.app_installed).length;
   installAll.disabled = actionable === 0;
   installAll.textContent = actionable ? `Install ${actionable} missing` : "All installed";
-  removeAll.disabled = removable === 0;
-  removeAll.textContent = removable ? `Fully remove ${removable} unused` : "Unused removed";
   status.className = "update-progress";
   status.innerHTML = `<div class="update-progress-head"><span class="update-progress-title">✓ Startup audit complete</span><span class="update-progress-count">${installed}/${startupServiceRows.length} ready</span></div><div class="update-progress-detail">${actionable} service${actionable === 1 ? "" : "s"} can be installed or repaired${machineRows.some(([, row]) => !row.reachable) ? " · offline machines can be retried later" : ""}</div>`;
 }
@@ -5429,35 +5424,11 @@ async function runStartupInstall(machine, modality) {
   const data = response ? await response.json().catch(() => ({})) : {};
   return {ok: !!response?.ok, detail: data.detail || data.error || "Startup installation failed"};
 }
-async function runStudioRemove(machine, modality) {
-  const response = await api(`/api/hub/startup-services/${encodeURIComponent(machine)}/${encodeURIComponent(modality)}/remove`, { method: "POST" }).catch(() => null);
-  const data = response ? await response.json().catch(() => ({})) : {};
-  const detail = typeof data.detail === "string" ? data.detail : data.detail?.message;
-  return {ok: !!response?.ok, detail: detail || data.error || "Studio removal failed"};
-}
-async function removeStartupStudio(machine, modality) {
-  const row = startupServiceRows.find(item => item.machine === machine && item.modality === modality);
-  if (!row || !REMOVABLE_STUDIO_MODALITIES.includes(modality) || startupActionBusy) return;
-  if (!confirm(`Fully remove ${row.title} from ${mlabel(machine)}?\n\nThis unloads its updater, server, and watchdog, removes its Hub registration, and moves every ${row.title} checkout plus exact model-cache packages used only by that Studio—including outputs and settings—to Trash. Model packages still used by an installed Studio are preserved. Image, Voice, and Studio Hub are protected. You can recover the data from Trash until it is emptied.`)) return;
-  startupActionBusy = true;
-  const status = $("#startup-status");
-  document.querySelectorAll("[data-startup-install],[data-startup-remove]").forEach(button => button.disabled = true);
-  status.className = "update-progress";
-  status.innerHTML = `<div class="update-progress-title">↻ Removing ${esc(row.title)} from ${esc(mlabel(machine))}…</div><div class="update-progress-detail">Draining work, unloading background items, then moving the checkout to Trash.</div>`;
-  const result = await runStudioRemove(machine, modality);
-  startupActionBusy = false;
-  await loadStartupServices();
-  status.className = result.ok ? "update-progress" : "update-progress error";
-  status.innerHTML = result.ok
-    ? `<div class="update-progress-title">✓ ${esc(row.title)} removed</div><div class="update-progress-detail">Updater, server, watchdog, and Hub registration removed · checkout and exclusive model caches moved to Trash.</div>`
-    : `<div class="update-progress-title">! ${esc(row.title)} needs attention</div><div class="update-progress-detail">${esc(result.detail)} · Retry safely after resolving the issue.</div>`;
-}
 async function installStartupService(machine, modality) {
   const row = startupServiceRows.find(item => item.machine === machine && item.modality === modality);
   if (!row || startupActionBusy || !confirm(`Install automatic startup for ${row.title} on ${mlabel(machine)}?\nThe Studio may restart while launchd takes ownership. Hub-tracked active work is protected.`)) return;
   startupActionBusy = true;
   const status = $("#startup-status"); document.querySelectorAll("[data-startup-install]").forEach(button => button.disabled = true);
-  $("#startup-remove-unused").disabled = true;
   status.className = "update-progress"; status.innerHTML = `<div class="update-progress-title">↻ Installing ${esc(row.title)} startup on ${esc(mlabel(machine))}…</div>`;
   const result = await runStartupInstall(machine, modality);
   startupActionBusy = false;
@@ -5470,7 +5441,6 @@ async function installMissingStartupServices() {
   startupActionBusy = true;
   const status = $("#startup-status"), button = $("#startup-install-all");
   button.disabled = true; button.setAttribute("aria-busy", "true");
-  $("#startup-remove-unused").disabled = true;
   let succeeded = 0, failures = [];
   for (let index = 0; index < rows.length; index++) {
     const row = rows[index];
@@ -5484,28 +5454,6 @@ async function installMissingStartupServices() {
     status.className = "update-progress error";
     status.innerHTML = `<div class="update-progress-title">! ${succeeded} installed · ${failures.length} need attention</div><div class="update-progress-detail">${esc(failures.join(" · "))}</div>`;
   }
-}
-async function removeUnusedStudios() {
-  const rows = startupServiceRows.filter(row => REMOVABLE_STUDIO_MODALITIES.includes(row.modality) && row.app_installed);
-  if (!rows.length || startupActionBusy) return;
-  if (!confirm(`Fully remove ${rows.length} unused Studio${rows.length === 1 ? "" : "s"} one at a time?\n\nMusic, Chat, Video, and Render only. Each updater, server, watchdog, and Hub registration is removed before every matching checkout and exact model-cache packages used only by that Studio are moved to Trash. Shared model packages remain. Image, Voice, and Studio Hub are protected. ${startupOfflineMachines.length ? `${startupOfflineMachines.length} offline or unsupported machine${startupOfflineMachines.length === 1 ? " is" : "s are"} skipped and can be retried later.` : "Busy targets are skipped and the batch continues."}`)) return;
-  startupActionBusy = true;
-  const status = $("#startup-status"), button = $("#startup-remove-unused");
-  button.disabled = true; button.setAttribute("aria-busy", "true");
-  $("#startup-install-all").disabled = true;
-  document.querySelectorAll("[data-startup-install],[data-startup-remove]").forEach(action => action.disabled = true);
-  let succeeded = 0, failures = [];
-  for (let index = 0; index < rows.length; index++) {
-    const row = rows[index];
-    status.className = "update-progress";
-    status.innerHTML = `<div class="update-progress-head"><span class="update-progress-title">↻ Removing unused Studios…</span><span class="update-progress-count">${index + 1}/${rows.length}</span></div><div class="update-progress-detail">${esc(row.title)} · ${esc(mlabel(row.machine))}</div>`;
-    const result = await runStudioRemove(row.machine, row.modality);
-    if (result.ok) succeeded++; else failures.push(`${row.title} on ${mlabel(row.machine)}: ${result.detail}`);
-  }
-  startupActionBusy = false; button.removeAttribute("aria-busy");
-  await loadStartupServices();
-  status.className = failures.length ? "update-progress error" : "update-progress";
-  status.innerHTML = `<div class="update-progress-title">${failures.length ? "!" : "✓"} ${succeeded} removed · ${failures.length} need attention · ${startupOfflineMachines.length} offline or unsupported</div><div class="update-progress-detail">Removed Studios were unloaded, unregistered, and moved to Trash.${failures.length ? ` ${esc(failures.join(" · "))}` : ""}${startupOfflineMachines.length ? ` Skipped: ${esc(startupOfflineMachines.map(row => mlabel(row.machine)).join(", "))}.` : ""}</div>`;
 }
 async function startFleetUpdate(ids) {
   if (!ids.length || !confirm(`Update ${ids.length} Studio${ids.length > 1 ? "s" : ""} one at a time? Active work will drain first.`)) return;

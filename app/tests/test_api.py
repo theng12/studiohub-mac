@@ -549,9 +549,9 @@ def test_reported_version_is_snapshot_of_loaded_process(tmp_path, monkeypatch):
 
 def test_hub_health_and_studios(authed):
     hh = authed.get("/api/hub/health").json()
-    assert hh["studios_total"] == 6 and hh["studios_up"] == 0
+    assert hh["studios_total"] == 2 and hh["studios_up"] == 0
     studios = authed.get("/api/hub/studios").json()["studios"]
-    assert len(studios) == 6
+    assert len(studios) == 2
     assert all("machine_label" in s for s in studios)
 
 

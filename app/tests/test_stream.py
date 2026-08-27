@@ -36,6 +36,10 @@ def test_summary_includes_remote_machines(authed, reset):
 def test_summary_marks_chat_worker_with_llm_workload(authed, reset):
     from backend import chat_jobs
 
+    main.monitor.registry.append({
+        "id": "chat", "title": "Chat Studio KH", "modality": "chat",
+        "machine": "local", "host": "127.0.0.1", "port": 47871,
+    })
     main.monitor.status["chat"] = {"status": "up", "last_seen": 1}
     chat_jobs.busy_studios.add("chat")
     chat_jobs.batches["chat-live"] = {

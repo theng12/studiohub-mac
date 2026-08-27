@@ -25,7 +25,9 @@ def test_is_cached_semantics():
 async def test_active_chat_lease_suppresses_false_health_flap(reset, monitor, monkeypatch):
     from backend import alerts, chat_jobs
 
-    studio = next(row for row in monitor.registry if row["id"] == "chat")
+    studio = {"id": "chat", "title": "Chat Studio KH", "modality": "chat",
+              "machine": "local", "host": "127.0.0.1", "port": 47871}
+    monitor.registry.append(studio)
     monitor.status["chat"] = {
         "status": "up", "last_seen": 10, "last_checked": 10,
         "app_version": "1.0.0", "health": {"ok": True},
@@ -127,6 +129,12 @@ async def test_models_dedup_and_availability(monitor, seed_catalog):
 async def test_aggregate_drops_hosted_rows_but_keeps_local_render(
     monitor, seed_catalog,
 ):
+    monitor.registry.extend([
+        {"id": "video", "title": "Video Studio KH", "modality": "video",
+         "machine": "local", "host": "127.0.0.1", "port": 47869},
+        {"id": "render", "title": "Render Studio KH", "modality": "render",
+         "machine": "local", "host": "127.0.0.1", "port": 47874},
+    ])
     seed_catalog("video", [
         {"repo": "local/ltx", "label": "LTX", "cache": {"state": "cached"},
          "size_gb": 8.0},

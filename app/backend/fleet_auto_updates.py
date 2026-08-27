@@ -13,12 +13,11 @@ from typing import Any
 import httpx
 
 from . import fleet_ops, peers
-from .registry import base_url
+from .registry import TRACKED_MODALITIES, base_url
 
 
 TERMINAL_ITEM_STATES = {"complete", "current", "scheduled", "failed"}
-APP_ORDER = {"hub": 0, "voice": 1, "chat": 2, "image": 3, "music": 4,
-             "video": 5, "render": 6}
+APP_ORDER = {"hub": 0, "voice": 1, "image": 2}
 MANAGED_COMPONENT_REPOSITORIES = {
     "image": "theng12/imagestudio-mac",
     "voice": "theng12/voicestudio-mac",
@@ -361,13 +360,13 @@ class FleetAutoUpdates:
             "settings_url": "/#updates",
         }]
         registry = list(self.monitor.registry)
-        for modality in ("voice", "chat", "image", "music", "video", "render"):
+        for modality in TRACKED_MODALITIES:
             candidates = [studio for studio in registry
                           if str(studio.get("modality") or "") == modality]
             if not candidates:
                 continue
-            # This view represents the six repositories in this release, not
-            # every remote worker registered for production. Prefer the fixed
+            # This view represents the two tracked repositories, not every
+            # remote worker registered for production. Prefer the fixed
             # canonical local row; remote agent-Hub maintenance remains in
             # Remote where machine versions and reachability belong.
             studio = min(candidates, key=lambda row: (

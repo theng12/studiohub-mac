@@ -252,6 +252,11 @@ async def test_voice_metadata_uses_peer_auth_and_never_records_local_path(reset,
 ])
 def test_proxy_keeps_allowed_image_and_video_media_types(authed, monkeypatch,
                                                          modality, upstream, expected):
+    if modality == "video":
+        main.monitor.registry.append({
+            "id": "video", "title": "Video Studio KH", "modality": "video",
+            "machine": "local", "host": "127.0.0.1", "port": 47869,
+        })
     submitted = broker.submit_batch({"modality": modality, "model": "fixture/model",
                                      "items": [{"prompt": "fixture"}]})
     batch = broker.batches[submitted["batch_id"]]

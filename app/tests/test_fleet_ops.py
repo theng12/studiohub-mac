@@ -104,6 +104,21 @@ async def test_studio_version_scan_only_reads_version_endpoints(monkeypatch, mon
     assert all(url.endswith(("/api/version", "/api/update-status")) for url in requested)
 
 
+def test_saved_studio_version_snapshot_hides_legacy_rows(reset, monitor):
+    fleet_ops._studio_versions = {
+        "checked_at": 123,
+        "studios": [
+            {"id": "image", "modality": "image", "machine": "local"},
+            {"id": "chat", "modality": "chat", "machine": "local"},
+            {"id": "render@old", "modality": "render", "machine": "old"},
+        ],
+    }
+
+    snapshot = fleet_ops.studio_versions_snapshot(monitor)
+
+    assert [row["id"] for row in snapshot["studios"]] == ["image"]
+
+
 def test_local_published_version_is_applied_to_every_worker_of_the_same_app():
     local = {"id": "voice", "modality": "voice", "machine": "local",
              "version": "1.20.3", "latest_version": "1.20.3",
@@ -369,7 +384,9 @@ def test_maintenance_drains_broker(reset):
 async def test_maintenance_drains_chat_and_transcription(reset, monitor, monkeypatch):
     from backend import chat_jobs, transcription_jobs
 
-    chat = next(s for s in monitor.registry if s["id"] == "chat")
+    chat = {"id": "chat", "title": "Chat Studio KH", "modality": "chat",
+            "machine": "local", "host": "127.0.0.1", "port": 47871}
+    monitor.registry.append(chat)
     voice = next(s for s in monitor.registry if s["id"] == "voice")
     monitor.status["chat"] = {"status": "up"}
     monitor.status["voice"] = {"status": "up"}
@@ -397,7 +414,9 @@ async def test_app_pause_drains_chat_and_transcription_independently(
         reset, monitor, monkeypatch):
     from backend import chat_jobs, registry, transcription_jobs
 
-    chat = next(s for s in monitor.registry if s["id"] == "chat")
+    chat = {"id": "chat", "title": "Chat Studio KH", "modality": "chat",
+            "machine": "local", "host": "127.0.0.1", "port": 47871}
+    monitor.registry.append(chat)
     voice = next(s for s in monitor.registry if s["id"] == "voice")
     monitor.status["chat"] = {"status": "up"}
     monitor.status["voice"] = {"status": "up"}
@@ -437,7 +456,7 @@ async def test_updates_are_sequential_and_failure_is_contained(monkeypatch, moni
 
     async def fake_update(mon, studio, item):
         calls.append(studio["id"])
-        if studio["id"] == "music":
+        if studio["id"] == "image":
             raise RuntimeError("install failed")
         item.update(status="complete", detail="healthy")
 
@@ -448,17 +467,15 @@ async def test_updates_are_sequential_and_failure_is_contained(monkeypatch, moni
     monkeypatch.setattr(fleet_ops, "scan_studio_versions", fake_version_scan)
     job = {"id": "x", "status": "queued", "created_at": 0, "finished_at": None,
            "items": [{"studio": "image", "status": "queued", "detail": ""},
-                     {"studio": "music", "status": "queued", "detail": ""},
                      {"studio": "voice", "status": "queued", "detail": ""}]}
     await fleet_ops._run_updates(monitor, job)
-    assert calls == ["image", "music", "voice"]
+    assert calls == ["image", "voice"]
     assert job["status"] == "complete"
     assert job["degraded"] is True
     assert job["failed_count"] == 1
-    assert job["succeeded_count"] == 2
-    assert job["items"][0]["status"] == "complete"
-    assert job["items"][1]["status"] == "failed"
-    assert job["items"][2]["status"] == "complete"
+    assert job["succeeded_count"] == 1
+    assert job["items"][0]["status"] == "failed"
+    assert job["items"][1]["status"] == "complete"
     assert refreshed == [True]
 
 

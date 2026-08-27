@@ -61,6 +61,13 @@ def _mark_installed(app_dir: Path, launch_agents: Path, modality: str = "image")
     (launch_agents / f"{spec['watchdog_label']}.plist").touch()
 
 
+def _add_legacy_compat_target(modality: str) -> None:
+    main.monitor.registry.append({
+        "id": modality, "modality": modality, "machine": "local",
+        "host": "127.0.0.1", "port": startup_services.SERVICE_SPECS[modality]["port"],
+    })
+
+
 def test_startup_audit_distinguishes_missing_repair_and_installed(tmp_path, monkeypatch):
     app_dir, launch_agents = _seed_app(tmp_path, monkeypatch)
     loaded = set()
@@ -470,23 +477,16 @@ def test_startup_audit_api_aggregates_peer_hubs(authed, monkeypatch):
     assert authed.get("/api/hub/startup-services?local_only=true").json() == local
 
 
-def test_startup_snapshot_marks_disabled_legacy_service_retired(tmp_path, monkeypatch):
+def test_startup_snapshot_ignores_installed_untracked_studio(tmp_path, monkeypatch):
     _seed_app(tmp_path, monkeypatch, "music")
     monkeypatch.setattr(startup_services, "_launchd_loaded", lambda label: False)
     monkeypatch.setattr(
         registry, "load_registry",
         lambda: [{"id": "music", "modality": "music", "machine": "local"}],
     )
-    monkeypatch.setattr(
-        registry, "studio_enabled",
-        lambda machine, studio_id: not (machine == "local" and studio_id == "music"),
-    )
-
     snapshot = startup_services.local_snapshot()
-    music = next(row for row in snapshot["services"] if row["modality"] == "music")
 
-    assert music["retired"] is True
-    assert music["routing_enabled"] is False
+    assert {row["modality"] for row in snapshot["services"]} == {"image", "voice"}
 
 
 def test_startup_snapshot_omits_fully_removed_optional_studios(tmp_path, monkeypatch):
@@ -536,6 +536,7 @@ def test_startup_install_api_runs_locally_or_through_peer(authed, monkeypatch):
 def test_startup_retire_api_orders_updater_service_and_routing_changes(
     owner, monkeypatch,
 ):
+    _add_legacy_compat_target("music")
     events = []
     monkeypatch.setattr(fleet_ops, "studio_has_active_work", lambda studio_id: False)
 
@@ -612,6 +613,7 @@ def test_startup_retire_api_never_targets_active_production_families(
 def test_startup_retire_api_preserves_service_and_routing_when_work_is_active(
     owner, monkeypatch,
 ):
+    _add_legacy_compat_target("chat")
     events = []
     monkeypatch.setattr(fleet_ops, "studio_has_active_work", lambda studio_id: True)
     monkeypatch.setattr(
@@ -628,6 +630,7 @@ def test_startup_retire_api_preserves_service_and_routing_when_work_is_active(
 
 
 def test_startup_retire_api_refuses_an_active_managed_update(owner, monkeypatch):
+    _add_legacy_compat_target("music")
     events = []
     monkeypatch.setattr(fleet_ops, "studio_has_active_work", lambda studio_id: False)
     monkeypatch.setattr(
@@ -651,6 +654,7 @@ def test_startup_retire_api_refuses_an_active_managed_update(owner, monkeypatch)
 
 
 def test_startup_retire_refuses_direct_sibling_update(owner, monkeypatch):
+    _add_legacy_compat_target("music")
     events = []
     monkeypatch.setattr(fleet_ops, "studio_has_active_work", lambda studio_id: False)
     monkeypatch.setattr(main.fleet_auto_updates, "jobs", lambda: [])
@@ -675,6 +679,7 @@ def test_startup_retire_refuses_direct_sibling_update(owner, monkeypatch):
 
 
 def test_startup_retire_partial_failure_keeps_routing_disabled(owner, monkeypatch):
+    _add_legacy_compat_target("music")
     events = []
     monkeypatch.setattr(fleet_ops, "studio_has_active_work", lambda studio_id: False)
     monkeypatch.setattr(main.fleet_auto_updates, "jobs", lambda: [])
@@ -765,6 +770,7 @@ def test_startup_retire_api_keeps_routing_disabled_after_peer_failure(
 def test_full_remove_api_disables_routing_then_removes_local_checkout(
     owner, monkeypatch,
 ):
+    _add_legacy_compat_target("music")
     events = []
     monkeypatch.setattr(fleet_ops, "studio_has_active_work", lambda studio_id: False)
     monkeypatch.setattr(main.fleet_auto_updates, "jobs", lambda: [])
@@ -1061,25 +1067,18 @@ def test_full_remove_api_protects_production_studios(owner, monkeypatch, modalit
     assert called == []
 
 
-def test_dashboard_exposes_fleet_startup_controls():
+def test_dashboard_tracks_startup_for_image_and_voice_only():
     dashboard = (Path(__file__).parents[1] / "frontend" / "index.html").read_text()
     assert 'id="startup-refresh"' in dashboard
     assert 'id="startup-install-all"' in dashboard
-    assert 'id="startup-remove-unused"' in dashboard
     assert 'id="startup-body"' in dashboard
     assert "function loadStartupServices()" in dashboard
     assert "function installStartupService(" in dashboard
     assert "function installMissingStartupServices()" in dashboard
-    assert 'const REMOVABLE_STUDIO_MODALITIES = ["music", "chat", "video", "render"]' in dashboard
-    assert "function removeStartupStudio(" in dashboard
-    assert "function removeUnusedStudios()" in dashboard
-    assert "startupActionBusy ||" in dashboard
-    assert "startupOfflineMachines" in dashboard
-    assert "offline or unsupported" in dashboard
-    assert "Fully remove" in dashboard
-    assert "moved to Trash" in dashboard
-    assert "Image" not in dashboard.split("const REMOVABLE_STUDIO_MODALITIES =", 1)[1].split(";", 1)[0]
-    assert "Voice" not in dashboard.split("const REMOVABLE_STUDIO_MODALITIES =", 1)[1].split(";", 1)[0]
+    assert 'const TRACKED_STUDIO_MODALITIES = ["image", "voice"]' in dashboard
+    assert 'id="startup-remove-unused"' not in dashboard
+    assert "function removeStartupStudio(" not in dashboard
+    assert "function removeUnusedStudios()" not in dashboard
 
 
 def test_generation_install_api_is_a_separate_explicit_fleet_job(authed, monkeypatch):

@@ -20,12 +20,12 @@ class FakeMonitor:
         self.registry = [
             {"id": "voice@a", "title": "Voice A", "modality": "voice",
              "host": "127.0.0.1", "port": 47001, "machine": "a"},
-            {"id": "chat@b", "title": "Chat B", "modality": "chat",
+            {"id": "image@b", "title": "Image B", "modality": "image",
              "host": "127.0.0.1", "port": 47002, "machine": "b"},
             {"id": "render", "title": "Render Studio KH", "modality": "render",
              "host": "127.0.0.1", "port": 47874, "machine": "local"},
         ]
-        self.status = {"voice@a": {"status": "up"}, "chat@b": {"status": "up"},
+        self.status = {"voice@a": {"status": "up"}, "image@b": {"status": "up"},
                        "render": {"status": "up"}}
 
 
@@ -77,11 +77,11 @@ def test_updates_are_staggered_and_health_gated(monkeypatch):
     monkeypatch.setattr(coordinator, "_request", request)
     known = {target["id"]: target for target in coordinator.targets()
              if target["kind"] == "studio"}
-    job = _job("voice@a", "chat@b")
+    job = _job("voice@a", "image@b")
     asyncio.run(coordinator._run_updates(job, known))
 
     assert events == ["update:voice@a", "health:voice@a",
-                      "update:chat@b", "health:chat@b"]
+                      "update:image@b", "health:image@b"]
     assert job["status"] == "complete"
     assert [item["status"] for item in job["items"]] == ["complete", "complete"]
 
@@ -363,9 +363,7 @@ def test_inventory_shows_one_canonical_row_per_repository():
          "host": "127.0.0.1", "port": 47870, "machine": "local"},
     ])
     rows = FleetAutoUpdates(monitor, FakeHubUpdater()).targets()
-    assert [row["id"] for row in rows] == ["hub@local", "voice", "chat@b", "render"]
-    render = next(row for row in rows if row["id"] == "render")
-    assert render["settings_url"].endswith("/#automatic-updates")
+    assert [row["id"] for row in rows] == ["hub@local", "voice", "image@b"]
 
 
 def test_managed_selector_keeps_every_installed_image_and_voice():

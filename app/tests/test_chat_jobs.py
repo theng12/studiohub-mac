@@ -120,7 +120,10 @@ def _results(scene_ids: list[str], key: str = "visual_prompt") -> str:
 
 
 def _add_chat_workers(monitor, count: int) -> list[dict]:
-    local = next(studio for studio in monitor.registry if studio["id"] == "chat")
+    local = {
+        "id": "chat", "title": "Chat Studio KH", "modality": "chat",
+        "machine": "local", "host": "127.0.0.1", "port": 47871,
+    }
     workers = []
     monitor.registry = [studio for studio in monitor.registry if studio["modality"] != "chat"]
     for index in range(count):
