@@ -3,7 +3,7 @@
 Use this file as the implementation brief for a GenStudio KH coding session.
 The approved-model discovery contract is capability schema version 3 in Studio
 Hub KH `v2.8.0` and later. It includes exact managed-release convergence and
-routing quarantine evidence.
+nonblocking rollout evidence, while retaining fail-closed manifest-block data.
 
 The canonical response contract is documented in
 [`CAPABILITY_CONTRACT.md`](CAPABILITY_CONTRACT.md). If this handoff and that
@@ -82,9 +82,9 @@ current `main` branch.
 4. Wait for `complete`, or retain `degraded`/pending evidence for later retry.
    `blocked_release` stops only that immutable release. Do not require every
    machine to be online before allowing healthy exact-current supply.
-5. Resume routing only from a fresh schema-v3 capability snapshot whose worker
-   managed-release evidence is converged and whose ordinary model contract is
-   still available.
+5. Route only from a fresh schema-v3 capability snapshot whose ordinary model
+   contract is available. Managed-release lag remains observable and
+   nonblocking; a `blocked*` release or component state remains fail-closed.
 
 Set global site activation concurrency to one. Inside a site, Hub selects the
 first reachable remote machine as canary; updates Hub, installed Image, and

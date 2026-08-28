@@ -2,6 +2,7 @@ import hashlib
 import json
 import time
 
+import pytest
 from starlette.testclient import TestClient
 
 from backend import (auth, broker, capabilities, control_plane,
@@ -329,13 +330,16 @@ def test_private_capability_snapshot_contract_is_versioned_and_truthful(
     assert transcription["availability"]["available_now"] is True
 
 
-def test_pending_managed_release_quarantines_worker(
-        authed, monitor, monkeypatch):
+@pytest.mark.parametrize("image_state", [
+    "pending_offline", "pending_busy", "retryable_failure", "auth_blocked",
+])
+def test_managed_release_lag_remains_visible_without_quarantining_worker(
+        authed, monitor, monkeypatch, image_state):
     from backend import main
 
     _seed_capability_site(monitor)
     evidence = _managed_release_evidence(
-        image_state="pending_offline", site_state="degraded",
+        image_state=image_state, site_state="degraded",
     )
     monkeypatch.setattr(
         main, "release_reconciler", _ReleaseEvidenceService(evidence),
@@ -350,8 +354,10 @@ def test_pending_managed_release_quarantines_worker(
     assert payload["controller"]["managed_release"] == evidence["controller"]
     assert payload["machines"][0]["managed_release"] == evidence["machines"]["local"]
     assert image["managed_release"] == evidence["machines"]["local"]["components"]["image"]
-    assert model["availability"]["available_now"] is False
-    assert model["availability"]["reason"] == "managed_release_pending"
+    assert model["availability"]["available_now"] is True
+    assert model["availability"]["reason"] is None
+    assert image["available_capacity"]["slots"] == 1
+    assert payload["capacity"]["available_physical_machine_slots"] == 1
 
 
 def test_release_reconciler_capability_evidence_is_bounded_and_sanitized(
@@ -435,7 +441,7 @@ def test_blocked_managed_release_quarantines_worker_with_blocked_reason(
     assert model["availability"]["reason"] == "managed_release_blocked"
 
 
-def test_mismatched_managed_release_quarantines_worker_with_mismatch_reason(
+def test_mismatched_managed_release_remains_visible_without_quarantining_worker(
         authed, monitor, monkeypatch):
     from backend import main
 
@@ -453,8 +459,13 @@ def test_mismatched_managed_release_quarantines_worker_with_mismatch_reason(
         "image.text_to_image",
     )
 
-    assert model["availability"]["available_now"] is False
-    assert model["availability"]["reason"] == "managed_release_mismatch"
+    assert model["availability"]["available_now"] is True
+    assert model["availability"]["reason"] is None
+    assert evidence["machines"]["local"]["components"]["image"] == (
+        _worker(
+            authed.get("/api/hub/capabilities").json(), "image",
+        )["managed_release"]
+    )
 
 
 def test_current_managed_release_preserves_existing_availability_reason(

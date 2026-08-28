@@ -298,7 +298,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/maintenance/studio-update-repairs/{id}` · `POST …/{id}/retry` | Poll one durable repair / retry only its pending or failed Studios |
 | `GET /api/hub/studios` | Registry + live status per studio |
 | `GET /health/live` · `GET /health/ready` · `GET /health/capacity` | Controller liveness, site-execution readiness, and non-secret routing capacity; optional telemetry never gates readiness |
-| `GET /api/hub/capabilities` | Private cache-only GenStudio capability snapshot (schema v3); active managed intent adds exact-release convergence and quarantine evidence |
+| `GET /api/hub/capabilities` | Private cache-only GenStudio capability snapshot (schema v3); active managed intent adds exact-release convergence evidence, while only manifest-block states suppress otherwise healthy capacity |
 | `GET` · `PUT /api/hub/maintenance/release-intent` | Read sanitized managed-release status / controller-only machine-token write of one immutable desired manifest |
 | `POST /api/hub/maintenance/release-intent/{release_id}/activate` | Controller-only activation or adoption of the durable site release job; optional `{ "genstudio_run_reference": "..." }` |
 | `GET /api/hub/maintenance/release-jobs/{job_id}` | Read sanitized per-machine/component state, exact version/commit evidence, retry, and catalog request evidence |

@@ -10,6 +10,24 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.13.8] — 2026-08-28
+
+### Fixed — healthy transcription capacity during release lag
+
+- Managed-release lag no longer forces otherwise healthy Image or Voice
+  workers to advertise zero slots. Pending, busy, offline, retryable,
+  authentication, and version-mismatch states remain visible while the normal
+  model contract decides whether each worker can serve.
+- A true `blocked*` release or component contradiction still fails closed with
+  `managed_release_blocked`. Existing audit, approval, immutable-revision,
+  contract-hash, catalog-freshness, memory, health, busy, maintenance, and
+  execution-readiness gates are unchanged.
+
+### Safety and compatibility
+
+- This release changes capability reporting only. It does not activate a
+  managed release, update a fleet machine, submit work, or alter credentials.
+
 ## [2.13.7] — 2026-08-28
 
 ### Fixed — durable Agent Hub update failures

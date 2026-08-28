@@ -463,28 +463,22 @@ def _managed_release_reason(managed_release: dict | None,
                             component: str | None) -> str | None:
     if not isinstance(managed_release, dict) or not managed_release.get("desired"):
         return None
-    if managed_release.get("site_state") == "blocked_release":
+
+    def blocks(state) -> bool:
+        value = str(state or "")
+        return value.startswith("blocked") or value == "release_blocked"
+
+    if blocks(managed_release.get("site_state")):
         return "managed_release_blocked"
     components = (machine_release or {}).get("components") or {}
     rows = [components.get("hub")]
     if component in {"image", "voice"}:
         rows.append(components.get(component))
-    if any(not isinstance(row, dict) for row in rows):
-        return "managed_release_pending"
-    if any(row.get("state") == "release_blocked" for row in rows):
-        return "managed_release_blocked"
     if any(
-        (row.get("observed_version") is not None
-         or row.get("observed_commit") is not None)
-        and (
-            row.get("observed_version") != row.get("expected_version")
-            or row.get("observed_commit") != row.get("expected_commit")
-        )
+        isinstance(row, dict) and blocks(row.get("state"))
         for row in rows
     ):
-        return "managed_release_mismatch"
-    if any(row.get("converged") is not True for row in rows):
-        return "managed_release_pending"
+        return "managed_release_blocked"
     return None
 
 

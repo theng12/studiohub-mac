@@ -228,7 +228,7 @@ Older sibling versions that omit `qualified_revision_match` and
 `execution_ready` publish both as `null`; omission alone never makes a
 previously compatible model unavailable.
 
-## Managed release evidence and quarantine
+## Managed release evidence and admission
 
 Schema version 3 adds sanitized `managed_release` evidence at the response,
 controller, machine, and worker levels. With no desired release it is `null`
@@ -248,20 +248,19 @@ not contacted, does not hold the site open, and becomes pending again when the
 machine is re-enabled. `complete` and `blocked_release` are terminal;
 `degraded` remains retryable and survives controller restart.
 
-When managed intent is active, a model is routable only when its machine Hub
-and matching installed Image or Voice component are exact and current. The
-availability reason is exactly:
+Managed-release lag remains visible but does not by itself make an otherwise
+healthy model unavailable. Pending, offline, busy, retryable, authentication,
+and version-mismatch states describe rollout progress; GenStudio's exact
+per-model revision, contract, approval, freshness, and execution gates remain
+the routing authority while those machines converge. Only a `blocked*` release
+or component state, including the legacy `release_blocked` spelling, forces
+`available_now=false` with `managed_release_blocked` because it identifies an
+immutable manifest contradiction rather than ordinary lag.
 
-- `managed_release_pending` for missing, offline, busy, retryable, or otherwise
-  unconverged evidence;
-- `managed_release_blocked` for a release- or component-blocking failure;
-- `managed_release_mismatch` when observed version or commit differs from the
-  immutable target.
-
-These checks are additional to the existing audit, approval, revision, cache,
-memory, busy, maintenance, and health gates. A catalog acknowledgement records
-only that the approved-model reconciliation was requested; it is not proof
-that model downloads completed.
+Release evidence is additional observability alongside the existing audit,
+approval, revision, cache, memory, busy, maintenance, and health gates. A
+catalog acknowledgement records only that approved-model reconciliation was
+requested; it is not proof that model downloads completed.
 
 ## Privacy and authority boundary
 

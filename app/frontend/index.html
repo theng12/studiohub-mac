@@ -1198,6 +1198,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.13.8", date: "2026-08-28", items: [
+    "Healthy Image and Voice workers no longer advertise zero capacity merely because a managed release is pending, retrying, or behind.",
+    "Managed-release progress and mismatches remain visible while exact model contracts continue to decide whether each worker can serve.",
+    "True blocked release or component contradictions still fail closed. This update does not start a fleet rollout automatically.",
+  ]},
   { v: "2.13.7", date: "2026-08-28", items: [
     "Agent Hub update failures and their exact reasons now remain visible after the batch ends or versions are rescanned.",
     "A failed machine stays individually retryable until a later explicit update or verification succeeds.",
