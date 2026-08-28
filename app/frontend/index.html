@@ -272,6 +272,7 @@
   .auto-update-controls .field-label{display:flex;flex-direction:column;gap:7px}.auto-update-controls .selctl{width:100%;text-transform:none;letter-spacing:0;font-family:var(--sans)}.auto-update-idle{height:var(--control-min-height);margin:0;padding:0 8px;border:1px solid transparent;border-radius:10px;text-transform:none;letter-spacing:0;font:600 var(--font-body)/1.2 var(--sans)}
   .auto-update-actions{min-height:var(--control-min-height)}.auto-update-actions .sub{flex:1;min-width:220px}.auto-update-facts{display:grid;grid-template-columns:repeat(6,minmax(110px,1fr));gap:8px;margin:14px 0 5px}.auto-update-fact{min-width:0;padding:10px 11px;border:1px solid #dfe3da;border-radius:12px;background:#fbfbf6}.auto-update-fact span{display:block;margin-bottom:5px;color:var(--dim);font:700 var(--font-compact)/1 var(--mono);letter-spacing:.09em;text-transform:uppercase}.auto-update-fact b{display:block;overflow:hidden;text-overflow:ellipsis;color:var(--accent2);font:700 var(--font-secondary)/1.35 var(--mono);white-space:nowrap}
   .auto-update-table{min-width:1040px}.auto-update-table td{vertical-align:middle}.auto-update-table .selctl{min-width:112px;padding:7px 9px}.auto-update-table .actions{margin:0;flex-wrap:nowrap}.auto-update-status{max-width:210px;overflow-wrap:anywhere}.auto-update-app b{display:block}.auto-update-app .sub{display:block;margin-top:2px}.auto-update-unavailable{opacity:.62}.auto-update-spinner{display:inline-block;margin-right:5px;animation:autoSpin 1s linear infinite}@keyframes autoSpin{to{transform:rotate(360deg)}}
+  .hub-update-failure{margin-top:5px;color:var(--down);font-size:var(--font-secondary);line-height:1.35;overflow-wrap:anywhere}
   .managed-release-target{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:12px 0}.managed-release-machines{overflow-x:auto}.managed-release-table{min-width:820px}.managed-release-table td{vertical-align:middle}.managed-release-table code{display:block;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.managed-release-note{padding:10px 12px;border-radius:11px;background:var(--panel2);color:var(--dim);font-size:var(--font-secondary)}.managed-release-note.warn{background:#fff6e5;color:#765a21}.managed-release-note.err{background:#fbefeb;color:#8d3d31}
   .memory-modes{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin:15px 0}.memory-mode{position:relative;display:block;padding:15px;border:1px solid #d5dbd2;border-radius:14px;background:#f8f9f3;cursor:pointer;transition:.15s}.memory-mode:hover{border-color:#8bb49b;transform:translateY(-1px)}.memory-mode.on{border-color:var(--accent);background:#edf7ef;box-shadow:inset 0 0 0 1px var(--accent)}.memory-mode input{position:absolute;opacity:0;pointer-events:none}.memory-mode b{display:block;color:var(--accent2);font:750 14px/1.2 var(--display)}.memory-mode span{display:block;margin-top:6px;color:var(--dim);font-size:var(--font-secondary);line-height:1.4}.memory-default{display:inline-block;margin-left:5px;padding:2px 5px;border-radius:5px;background:#dce9dd;color:var(--accent);font:700 var(--font-compact)/1 var(--mono);text-transform:uppercase}.memory-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}.memory-actions .sub{flex:1;min-width:240px}.memory-table{min-width:1040px}.memory-table td{vertical-align:middle}.memory-studio b{display:block}.memory-studio .sub{display:block}.memory-model{max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.memory-row-muted{opacity:.68}
   .ram-admission-controls{display:grid;grid-template-columns:minmax(260px,2fr) minmax(150px,.7fr) minmax(150px,.7fr);gap:10px;margin:12px 0}.ram-admission-controls label{display:flex;flex-direction:column;gap:6px;color:var(--dim);font:700 var(--font-compact)/1.2 var(--mono);letter-spacing:.08em;text-transform:uppercase}.ram-admission-controls input,.ram-admission-controls select{width:100%}.ram-policy-main{display:block;color:var(--accent2);font-weight:750}.ram-policy-sub{display:block;margin-top:3px;color:var(--dim);font-size:var(--font-secondary);line-height:1.35}.ram-policy-override{color:var(--warn)}
@@ -1197,6 +1198,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.13.7", date: "2026-08-28", items: [
+    "Agent Hub update failures and their exact reasons now remain visible after the batch ends or versions are rescanned.",
+    "A failed machine stays individually retryable until a later explicit update or verification succeeds.",
+    "A 90-second Pinokio restart timeout is accepted as success only when the Agent proves the exact requested version, commit, and healthy state. No fleet update starts automatically.",
+  ]},
   { v: "2.13.6", date: "2026-08-27", items: [
     "Studio Hub now tracks only <b>Image Studio</b> and <b>Voice Studio</b>; saved legacy Music, Chat, Video, and Render registrations are ignored.",
     "Older Agent Hub payloads are filtered at the controller, so ghost rows disappear from Startup and Updates as soon as the controller updates.",
@@ -5591,16 +5597,18 @@ function renderHubVersions(data, lastJob = null) {
   body.innerHTML = entries.map(([m, v]) => {
     const ver = v.version ? "v" + esc(v.version) : "—";
     const hardware = _hubHardware(m, v);
+    const lastFailed = v.last_update && v.last_update.status === "failed";
     let st;
     if (!v.reachable) st = `<span class="pill no">last known · not reachable this scan</span>`;
     else if (latest && v.version && verGte(v.version, latest)) st = `<span class="pill ok">up to date</span>`;
     else if (latest && v.version) st = `<span class="pill warn">update available → v${esc(latest)}</span>`;
     else st = `<span class="pill dl">connected</span>`;
-    const canUpdate = v.reachable && (!latest || !v.version || !verGte(v.version, latest));
+    if (lastFailed) st += `<div class="hub-update-failure"><b>Last update failed</b>${v.last_update.attempted_at ? ` · ${fmtAgo(v.last_update.attempted_at)}` : ""}<br>${esc(v.last_update.detail || "No failure reason was reported")}</div>`;
+    const canUpdate = v.reachable && (lastFailed || !latest || !v.version || !verGte(v.version, latest));
     return `<tr><td><b>${esc(mlabel(m))}</b></td><td class="sub">${esc(hardware.chip || "—")}</td>
       <td class="sub">${_hubRamLabel(hardware.ram)}</td><td class="sub">${esc(v.host || "")}</td>
       <td class="sub">${ver}</td><td class="sub">${v.checked_at ? fmtAgo(v.checked_at) : "—"}</td><td>${st}</td>
-      <td>${canUpdate ? `<button class="btn primary compact" onclick="startHubUpdate(['${jsq(m)}'])">Update</button>` : "—"}</td></tr>`;
+      <td>${canUpdate ? `<button class="btn primary compact" onclick="startHubUpdate(['${jsq(m)}'])">${lastFailed ? "Retry" : "Update"}</button>` : "—"}</td></tr>`;
   }).join("");
   const conn = entries.filter(([, v]) => v.reachable).length;
   const upToDate = entries.filter(([, v]) => v.reachable && latest && v.version && verGte(v.version, latest)).length;

@@ -63,9 +63,36 @@ _updates: dict[str, dict] = {}
 _hub_updates: dict[str, dict] = {}
 _generation_installs: dict[str, dict] = {}
 _studio_update_repairs: dict[str, dict] = {}
-# machine -> {version, checked_at, host, reachable, chip, total_memory_gb}:
+# machine -> {version, checked_at, host, reachable, chip, total_memory_gb, last_update}:
 # last-known peer Hub versions and hardware identity.
 _hub_versions: dict[str, dict] = {}
+
+
+def _remember_hub_update(item: dict, attempted_at: float | None = None) -> None:
+    machine = item.get("machine")
+    if not machine or item.get("status") not in {"complete", "current", "failed"}:
+        return
+    previous = _hub_versions.get(machine, {})
+    attempted = item.get("finished_at") or attempted_at or time.time()
+    prior_attempt = previous.get("last_update") or {}
+    if prior_attempt.get("attempted_at", 0) > attempted:
+        return
+    _hub_versions[machine] = {
+        **previous,
+        "version": (
+            item.get("to_version")
+            if item.get("status") in {"complete", "current"} and item.get("to_version")
+            else previous.get("version") or item.get("from_version")
+        ),
+        "host": item.get("host") or previous.get("host"),
+        "last_update": {
+            "status": item.get("status"),
+            "detail": item.get("detail"),
+            "attempted_at": attempted,
+            "from_version": item.get("from_version"),
+            "to_version": item.get("to_version"),
+        },
+    }
 
 
 def finish_fleet_job(job: dict) -> None:
@@ -165,6 +192,10 @@ def _load_state() -> None:
                         detail="Primary Hub restarted during this operation; retry remotely from this Hub",
                     )
             finish_fleet_job(job)
+        for job in sorted(_hub_updates.values(), key=lambda value: value.get("created_at", 0)):
+            attempted_at = job.get("finished_at") or job.get("created_at")
+            for item in job.get("items", []):
+                _remember_hub_update(item, attempted_at)
         for job in _studio_update_repairs.values():
             if job.get("status") not in {"queued", "running"}:
                 continue
@@ -560,6 +591,7 @@ async def scan_hub_versions(monitor) -> dict:
                 if hardware.get("total_gb") is not None
                 else prev.get("total_memory_gb")
             ),
+            "last_update": prev.get("last_update"),
         }
         try:
             async with httpx.AsyncClient(timeout=6.0) as client:
@@ -1310,6 +1342,7 @@ async def _run_hub_updates(job: dict):
             await _update_hub_one(item, job.get("latest"), job.get("latest_commit"))
         except Exception as exc:
             item.update(status="failed", detail=str(exc)[:240], finished_at=time.time())
+        _remember_hub_update(item)
         _save_state()
     finish_fleet_job(job)
     _save_state()
@@ -1411,7 +1444,8 @@ async def _update_hub_one(item: dict, latest: str | None, latest_commit: str | N
         _hub_versions[item["machine"]] = {"version": ver, "host": host,
                                           "checked_at": time.time(), "reachable": True,
                                           "chip": previous.get("chip"),
-                                          "total_memory_gb": previous.get("total_memory_gb")}
+                                          "total_memory_gb": previous.get("total_memory_gb"),
+                                          "last_update": previous.get("last_update")}
         _save_state()
 
     async with httpx.AsyncClient(timeout=5.0) as client:
@@ -1425,6 +1459,24 @@ async def _update_hub_one(item: dict, latest: str | None, latest_commit: str | N
                 if state == "failed":
                     details = updater.get("details") or []
                     detail = str(details[-1] if details else updater.get("last_update_result") or "update failed")
+                    restart_timeout = (
+                        "timed out" in detail.lower()
+                        and ("start.js" in detail.lower() or "restart" in detail.lower())
+                    )
+                    if restart_timeout:
+                        try:
+                            health = await client.get(f"{url}/api/health", headers=headers)
+                            health.raise_for_status()
+                            evidence = health.json()
+                            ver = str(evidence.get("app_version") or "")
+                            commit = str(evidence.get("app_commit") or "")
+                            if (evidence.get("ok") is True and ver == latest
+                                    and commit == latest_commit):
+                                _record(ver, "complete",
+                                        f"updated to v{ver}; dependencies installed and health verified")
+                                return
+                        except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+                            pass
                     item.update(status="failed", detail=detail[:240], finished_at=time.time())
                     _save_state()
                     return

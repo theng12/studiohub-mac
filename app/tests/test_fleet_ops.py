@@ -678,6 +678,60 @@ def test_hub_version_snapshot_includes_peer_hardware(monitor):
 
 
 @pytest.mark.asyncio
+async def test_hub_version_rescan_preserves_last_update_attempt(monkeypatch, monitor):
+    monitor.registry.append({"id": "image@mac-b", "modality": "image",
+                             "host": "10.0.0.9", "port": 47868, "machine": "mac-b"})
+    fleet_ops._hub_versions["mac-b"] = {
+        "version": "2.13.1", "host": "10.0.0.9", "reachable": True,
+        "last_update": {
+            "status": "failed", "detail": "Pinokio restart timed out after 90 seconds",
+            "attempted_at": 1234.0, "from_version": "2.13.1", "to_version": None,
+        },
+    }
+
+    class Response:
+        def json(self):
+            return {"app_version": "2.13.1"}
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, *args, **kwargs): return Response()
+
+    monkeypatch.setattr(fleet_ops.httpx, "AsyncClient", lambda **kwargs: Client())
+
+    await fleet_ops.scan_hub_versions(monitor)
+
+    assert fleet_ops._hub_versions["mac-b"]["last_update"] == {
+        "status": "failed", "detail": "Pinokio restart timed out after 90 seconds",
+        "attempted_at": 1234.0, "from_version": "2.13.1", "to_version": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_agent_hub_batch_persists_latest_machine_attempt(monkeypatch, reset):
+    async def update_one(item, latest, latest_commit):
+        item.update(
+            status="failed", detail="restart command timed out", from_version="2.13.1",
+            finished_at=4321.0,
+        )
+
+    monkeypatch.setattr(fleet_ops, "_update_hub_one", update_one)
+    job = {
+        "id": "rolling-attempt", "status": "queued", "latest": "2.13.7",
+        "latest_commit": "b" * 40,
+        "items": [{"machine": "mac-a", "host": "10.0.0.8", "status": "queued"}],
+    }
+
+    await fleet_ops._run_hub_updates(job)
+
+    assert fleet_ops._hub_versions["mac-a"]["last_update"] == {
+        "status": "failed", "detail": "restart command timed out",
+        "attempted_at": 4321.0, "from_version": "2.13.1", "to_version": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_start_hub_updates_builds_job(monkeypatch, monitor):
     monitor.registry.append({"id": "image@mac-b", "modality": "image",
                              "host": "10.0.0.9", "port": 47868, "machine": "mac-b"})
@@ -844,6 +898,113 @@ async def test_agent_hub_update_uses_durable_exact_updater_and_verifies_dependen
 
 
 @pytest.mark.asyncio
+async def test_agent_hub_update_accepts_exact_health_after_restart_timeout(
+        monkeypatch, reset):
+    target_commit = "b" * 40
+    item = {
+        "machine": "mac-a", "host": "10.0.0.8", "status": "queued",
+        "detail": "waiting", "from_version": None, "to_version": None,
+        "operation_id": "fleet-hub-timeout",
+    }
+    status_calls = 0
+
+    class Response:
+        status_code = 200
+        def __init__(self, payload): self._payload = payload
+        def json(self): return self._payload
+        def raise_for_status(self): return None
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, url, **kwargs):
+            nonlocal status_calls
+            if url.endswith("/api/version"):
+                return Response({"app_version": "2.13.1", "app_commit": "a" * 40})
+            if url.endswith("/api/auto-update/status"):
+                status_calls += 1
+                if status_calls == 1:
+                    return Response({
+                        "state": "succeeded", "capabilities": {
+                            "managed_exact_commit": True, "dependency_convergence": 1,
+                        },
+                    })
+                return Response({
+                    "state": "failed",
+                    "details": ["pterm start start.js timed out after 90 seconds"],
+                })
+            if url.endswith("/api/health"):
+                return Response({
+                    "ok": True, "app_version": "2.13.7", "app_commit": target_commit,
+                })
+            raise AssertionError(url)
+        async def post(self, *args, **kwargs):
+            return Response({"state": "updating"})
+
+    monkeypatch.setattr(fleet_ops.httpx, "AsyncClient", lambda **kwargs: Client())
+    async def no_sleep(seconds): return None
+    monkeypatch.setattr(fleet_ops.asyncio, "sleep", no_sleep)
+
+    await fleet_ops._update_hub_one(item, "2.13.7", target_commit)
+
+    assert item["status"] == "complete"
+    assert item["to_version"] == "2.13.7"
+    assert "health verified" in item["detail"]
+
+
+@pytest.mark.asyncio
+async def test_agent_hub_restart_timeout_keeps_reason_when_health_is_unreachable(
+        monkeypatch, reset):
+    item = {
+        "machine": "mac-a", "host": "10.0.0.8", "status": "queued",
+        "detail": "waiting", "from_version": None, "to_version": None,
+        "operation_id": "fleet-hub-timeout",
+    }
+    status_calls = 0
+
+    class Response:
+        status_code = 200
+        def __init__(self, payload): self._payload = payload
+        def json(self): return self._payload
+        def raise_for_status(self): return None
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, url, **kwargs):
+            nonlocal status_calls
+            if url.endswith("/api/version"):
+                return Response({"app_version": "2.13.1", "app_commit": "a" * 40})
+            if url.endswith("/api/auto-update/status"):
+                status_calls += 1
+                if status_calls == 1:
+                    return Response({
+                        "state": "succeeded", "capabilities": {
+                            "managed_exact_commit": True, "dependency_convergence": 1,
+                        },
+                    })
+                return Response({
+                    "state": "failed",
+                    "details": ["pterm start start.js timed out after 90 seconds"],
+                })
+            if url.endswith("/api/health"):
+                raise httpx.ReadTimeout("Hub restart still reconnecting")
+            raise AssertionError(url)
+        async def post(self, *args, **kwargs):
+            return Response({"state": "updating"})
+
+    monkeypatch.setattr(fleet_ops.httpx, "AsyncClient", lambda **kwargs: Client())
+    async def no_sleep(seconds): return None
+    monkeypatch.setattr(fleet_ops.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(fleet_ops, "UPDATE_TIMEOUT", 0.01)
+
+    await fleet_ops._update_hub_one(item, "2.13.7", "b" * 40)
+
+    assert item["status"] == "failed"
+    assert item["detail"] == "pterm start start.js timed out after 90 seconds"
+
+
+@pytest.mark.asyncio
 async def test_agent_hub_update_refuses_updater_without_dependency_convergence(
         monkeypatch, reset):
     item = {
@@ -894,6 +1055,8 @@ def test_interrupted_remote_jobs_survive_restart_as_retryable_history(monkeypatc
     assert restored["status"] == "failed"
     assert restored["restart_interrupted"] is True
     assert "retry remotely" in restored["items"][0]["detail"]
+    assert fleet_ops._hub_versions["mac-a"]["last_update"]["status"] == "failed"
+    assert "retry remotely" in fleet_ops._hub_versions["mac-a"]["last_update"]["detail"]
 
 
 def test_legacy_fleet_ops_restart_history_is_not_managed_desired_state(

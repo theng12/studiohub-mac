@@ -10,6 +10,26 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.13.7] — 2026-08-28
+
+### Fixed — durable Agent Hub update failures
+
+- Each Agent Mac now retains its latest Hub update result alongside its live
+  version and reachability. A version rescan can no longer erase a failed
+  attempt or its exact reason from the Updates table.
+- Failed rows show the preserved error and remain individually retryable until
+  a later explicit update or verification succeeds.
+- A legacy Agent updater's 90-second Pinokio restart timeout is reconciled
+  against the Hub's exact version, commit, and health. An Agent already healthy
+  on the requested release is recorded as complete; otherwise the original
+  timeout reason remains visible.
+
+### Safety and compatibility
+
+- Fleet-token authentication, serial canary rollout, dependency convergence,
+  exact-commit verification, and idle-work draining are unchanged. Installing
+  this release does not automatically update any Agent Mac.
+
 ## [2.13.6] — 2026-08-27
 
 ### Changed — Image and Voice are the complete tracked fleet

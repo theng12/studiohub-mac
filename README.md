@@ -167,6 +167,11 @@ as the fleet target. You can change every app independently, **Check all**,
 update one app, or **Update idle apps**. Fleet updates run one at a time,
 reconnect through the expected restart connection drop, and require the updated
 app to reach the published version and answer healthy before the next one starts.
+Agent Hub rows retain their latest per-machine update outcome. A rescan refreshes
+version and reachability without hiding a failed attempt, its reason, or its
+Retry action; a later explicit successful attempt replaces that failure. A
+legacy Pinokio restart timeout counts as complete only when exact target version,
+commit, and health evidence already prove the new Hub is running.
 Render Studio participates in the same inventory and controls, including a
 shortcut to its local automatic-update card.
 If a downloaded Hub update remains on disk while the old process is still
