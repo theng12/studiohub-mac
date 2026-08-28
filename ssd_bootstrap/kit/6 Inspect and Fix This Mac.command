@@ -14,14 +14,14 @@ if (( $# == 1 )); then
   /usr/bin/python3 "$SCRIPT_DIR/runtime_state_migration.py" \
     --dry-run --update-current --preserve-machine-environment
   "$SCRIPT_DIR/.terranash-bootstrap.command" \
-    --models --dry-run --action restore
+    --models --dry-run --action restore --prune
   /usr/bin/python3 "$SCRIPT_DIR/repair_startup.py" --dry-run
   exit 0
 fi
 
 /usr/bin/python3 "$SCRIPT_DIR/runtime_state_migration.py" \
   --dry-run --update-current --preserve-machine-environment
-"$SCRIPT_DIR/.terranash-bootstrap.command" --models --action restore
+"$SCRIPT_DIR/.terranash-bootstrap.command" --models --action restore --prune
 /usr/bin/python3 "$SCRIPT_DIR/runtime_state_migration.py" \
   --update-current --preserve-machine-environment
 /usr/bin/python3 "$SCRIPT_DIR/repair_startup.py"

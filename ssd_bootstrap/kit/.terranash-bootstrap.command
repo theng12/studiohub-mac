@@ -135,7 +135,17 @@ run_models() {
       ;;
   esac
 
+  local option prune_requested="false"
+  for option in "${PASSTHROUGH[@]}"; do
+    [[ "$option" == "--dry-run" ]] || command+=("$option")
+    [[ "$option" == "--prune" ]] && prune_requested="true"
+  done
+
   if [[ "$DRY_RUN" == "true" ]]; then
+    if [[ "$prune_requested" == "true" && "$ACTION" != "stage" ]]; then
+      "${command[@]}" --plan
+      return $?
+    fi
     printf 'Would run:'
     printf ' %q' "${command[@]}"
     printf ' --plan\n'

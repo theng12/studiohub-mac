@@ -39,8 +39,9 @@ The canonical scripts and documentation live in Studio Hub's tracked
    open. It first refuses unsafe or unexpected checkout state, restores only
    the RAM-suitable Choice 2 models, safely migrates legacy update state or
    updates already-current Image, Voice, and Hub checkouts with dependency
-   convergence, then repairs startup ownership. It never selects restore-all,
-   prunes models, re-enrolls the Mac, or changes another fleet machine.
+   convergence, then repairs startup ownership. It prunes SSD-recognized model
+   packages outside the selected tier, but never selects restore-all, removes
+   unknown/private packages, re-enrolls the Mac, or changes another machine.
 
 All six commands are restartable. A completed app/environment/package is
 detected and skipped. When a command fails, fix the named prerequisite and run
@@ -66,7 +67,8 @@ existing Hugging Face cache layout need no script change after they have been
 downloaded in their Studio. Engines with a different storage layout require an
 explicit `studio_models.py` update and verification first.
 
-Normal restore never prunes. On an 8 GB Mac, Voice restore is an exact
+Normal Stage 3 restore never prunes; Step 6 explicitly prunes recognized
+packages outside the selected tier. On an 8 GB Mac, Voice restore is an exact
 allowlist: Qwen3-TTS 0.6B Base, its required
 `mlx-community/whisper-large-v3-turbo` quality checker, and
 `mlx-community/Kokoro-82M-bf16`. CustomVoice and every unrelated audio

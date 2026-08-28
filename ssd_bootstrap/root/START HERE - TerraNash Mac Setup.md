@@ -204,17 +204,19 @@ sure Image Studio, Voice Studio, and Studio Hub are idle. The command:
 
 1. performs a no-write safety inspection and refuses missing, active, dirty,
    divergent, detached, or unexpected checkouts before copying or updating;
-2. runs the same RAM-aware model restore as Stage 3 Choice B—never restore-all
-   and never prune—so an 8 GB Mac receives exactly Qwen3-TTS 0.6B Base,
-   Whisper Large v3 Turbo, and Kokoro for Voice;
+2. runs the same RAM-aware model restore as Stage 3 Choice B, then prunes
+   SSD-recognized packages outside that selection—never restore-all and never
+   unknown/private packages—so an 8 GB Mac retains exactly Qwen3-TTS 0.6B
+   Base, Whisper Large v3 Turbo, and Kokoro for Voice;
 3. safely migrates legacy update state, while already-migrated apps still run
    their normal dependency-converging updater, serially Image then Voice then
    Hub; and
 4. repairs independent startup ownership after successful updates.
 
-It does not enroll or re-enroll the Mac, modify fleet credentials, delete
-models or app data, or contact another fleet machine. It stops at the first
-failure and is safe to rerun after correcting the reported prerequisite. Use
+It does not enroll or re-enroll the Mac, modify fleet credentials, delete app
+data, or contact another fleet machine. Model deletion is limited to recognized
+packages outside the RAM-aware selection. It stops at the first failure and is
+safe to rerun after correcting the reported prerequisite. Use
 `./'6 Inspect and Fix This Mac.command' --dry-run` for a fully no-write report.
 
 ## Target SSD layout after implementation

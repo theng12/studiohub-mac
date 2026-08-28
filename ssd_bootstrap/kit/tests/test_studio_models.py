@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -69,6 +71,88 @@ class ModelStageIsolationTests(unittest.TestCase):
         self.assertFalse(studio_models.restore_allowed(
             "voice", "mlx-community/OmniVoice-bfloat16", 8.6, False
         ))
+
+    def test_shared_companion_uses_the_lowest_known_memory_floor(self) -> None:
+        models = [
+            {
+                "repo": "example/high",
+                "min_unified_memory_gb": 16,
+                "cache": {"companions": [{"repo": "example/shared-codec"}]},
+            },
+            {
+                "repo": "example/low",
+                "min_unified_memory_gb": 8,
+                "cache": {"companions": [{"repo": "example/shared-codec"}]},
+            },
+        ]
+
+        _families, floors, companions = studio_models.catalog_index(models)
+
+        self.assertEqual(floors["example/shared-codec"], 8)
+        self.assertIn("example/shared-codec", companions)
+
+    def test_prune_removes_recognized_unselected_voice_models_only(self) -> None:
+        with tempfile.TemporaryDirectory() as value:
+            root = Path(value) / "studio-models"
+            pinokio_home = Path(value) / "pinokio"
+            voice_studio = pinokio_home / "api/voicestudio-mac"
+            hub = voice_studio / "cache/HF_HOME/hub"
+            hub.mkdir(parents=True)
+            packages = (
+                (studio_models.QWEN_06B_BASE, 8),
+                (studio_models.QWEN_QUALITY_WHISPER, None),
+                (studio_models.KOKORO_82M_BF16, 8),
+                ("mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit", 8),
+            )
+            entries = []
+            for repo, floor in packages:
+                dirname = "models--" + repo.replace("/", "--")
+                package = hub / dirname
+                package.mkdir()
+                (package / "weights.bin").write_bytes(b"weights")
+                entries.append({
+                    "repo": repo,
+                    "dir": dirname,
+                    "family": "Voice",
+                    "floor_gb": floor,
+                    "bytes": 7,
+                })
+            unknown = hub / "models--local--owner-model"
+            unknown.mkdir()
+            (unknown / "weights.bin").write_bytes(b"private")
+            root.mkdir()
+            (root / "MANIFEST.json").write_text(json.dumps({
+                "schema_version": 2,
+                "studios": {
+                    "voice": {"packages": entries},
+                    "image": {"packages": []},
+                },
+                "voices": [],
+            }))
+
+            output = io.StringIO()
+            with mock.patch.object(studio_models, "machine_memory_gb", return_value=8.6), \
+                    contextlib.redirect_stdout(output):
+                result = studio_models.do_restore(
+                    root,
+                    plan_only=False,
+                    prune=True,
+                    restore_all=False,
+                    force=False,
+                    include_unqualified=False,
+                    keep_non_cloning=False,
+                    pinokio_home=pinokio_home,
+                )
+
+            custom = hub / "models--mlx-community--Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit"
+            self.assertEqual(result, 0)
+            self.assertFalse(custom.exists())
+            self.assertTrue((hub / ("models--" + studio_models.QWEN_06B_BASE.replace("/", "--"))).is_dir())
+            self.assertTrue((hub / ("models--" + studio_models.QWEN_QUALITY_WHISPER.replace("/", "--"))).is_dir())
+            self.assertTrue((hub / ("models--" + studio_models.KOKORO_82M_BF16.replace("/", "--"))).is_dir())
+            self.assertTrue(unknown.is_dir())
+            self.assertIn("not selected for this Mac's tier", output.getvalue())
+            self.assertNotIn("needing more memory than this Mac has", output.getvalue())
 
 
 if __name__ == "__main__":

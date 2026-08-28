@@ -1198,6 +1198,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.13.11", date: "2026-08-29", items: [
+    "<b>6 Inspect and Fix This Mac</b> now prunes SSD-recognized models outside each Mac's RAM-aware Choice 2 selection.",
+    "An 8 GB Voice worker retains Qwen3-TTS 0.6B Base, Whisper Large v3 Turbo, and Kokoro instead of keeping other recognized Voice models.",
+    "Shared companions use their lowest known RAM floor. Unknown/private packages, retained companions, voices, settings, jobs, enrollment, and other machines remain untouched.",
+  ]},
   { v: "2.13.10", date: "2026-08-28", items: [
     "The SSD kit now has <b>6 Inspect and Fix This Mac</b> for older Macs whose exact repair history is unknown.",
     "It safely preflights, restores only RAM-suitable Choice 2 models, refreshes dependencies and code, then repairs startup ownership.",
