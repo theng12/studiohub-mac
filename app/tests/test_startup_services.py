@@ -771,6 +771,15 @@ def test_full_remove_api_disables_routing_then_removes_local_checkout(
     owner, monkeypatch,
 ):
     _add_legacy_compat_target("music")
+    # This case covers the full-remove path for an *installed* Studio, so pin
+    # that precondition rather than inheriting it from the machine's real
+    # Pinokio layout. Without this, any checkout where `PINOKIO_HOME` does not
+    # resolve to a real install silently runs the ghost-cleanup branch instead
+    # and the test fails while production is correct.
+    monkeypatch.setattr(
+        startup_services, "inspect_service",
+        lambda modality: {"modality": modality, "app_installed": True},
+    )
     events = []
     monkeypatch.setattr(fleet_ops, "studio_has_active_work", lambda studio_id: False)
     monkeypatch.setattr(main.fleet_auto_updates, "jobs", lambda: [])
