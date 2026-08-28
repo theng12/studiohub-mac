@@ -114,6 +114,85 @@ class CommandWrapperTests(unittest.TestCase):
         self.assertNotIn("studio_models.py", result.stdout)
         self.assertNotIn("repair_startup.py", result.stdout)
 
+    def test_stage_six_preflights_then_restores_suitable_models_and_refreshes(self) -> None:
+        with tempfile.TemporaryDirectory() as value:
+            root = Path(value)
+            source = KIT_ROOT / "6 Inspect and Fix This Mac.command"
+            target = root / source.name
+            shutil.copy2(source, target)
+            target.chmod(0o755)
+            events = root / "events"
+            (root / "runtime_state_migration.py").write_text(
+                "import os, sys\n"
+                "with open(os.environ['EVENTS'], 'a') as out: "
+                "out.write('migration ' + ' '.join(sys.argv[1:]) + '\\n')\n"
+            )
+            (root / "repair_startup.py").write_text(
+                "import os, sys\n"
+                "with open(os.environ['EVENTS'], 'a') as out: "
+                "out.write('startup ' + ' '.join(sys.argv[1:]) + '\\n')\n"
+            )
+            dispatcher = root / ".terranash-bootstrap.command"
+            dispatcher.write_text(
+                "#!/bin/zsh\nprint -r -- \"models $*\" >> \"$EVENTS\"\n"
+            )
+            dispatcher.chmod(0o755)
+            env = os.environ.copy()
+            env["EVENTS"] = str(events)
+            env["TERRANASH_NONINTERACTIVE"] = "1"
+
+            result = subprocess.run(
+                [str(target)], text=True, capture_output=True, env=env,
+            )
+            observed = events.read_text()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(observed.splitlines(), [
+            "migration --dry-run --update-current --preserve-machine-environment",
+            "models --models --action restore",
+            "migration --update-current --preserve-machine-environment",
+            "startup ",
+        ])
+        self.assertNotIn("restore-all", observed)
+        self.assertNotIn("--prune", observed)
+
+    def test_stage_six_dry_run_is_entirely_no_write(self) -> None:
+        with tempfile.TemporaryDirectory() as value:
+            root = Path(value)
+            source = KIT_ROOT / "6 Inspect and Fix This Mac.command"
+            target = root / source.name
+            shutil.copy2(source, target)
+            target.chmod(0o755)
+            events = root / "events"
+            for name, label in (
+                ("runtime_state_migration.py", "migration"),
+                ("repair_startup.py", "startup"),
+            ):
+                (root / name).write_text(
+                    "import os, sys\n"
+                    f"with open(os.environ['EVENTS'], 'a') as out: out.write('{label} ' + ' '.join(sys.argv[1:]) + '\\n')\n"
+                )
+            dispatcher = root / ".terranash-bootstrap.command"
+            dispatcher.write_text(
+                "#!/bin/zsh\nprint -r -- \"models $*\" >> \"$EVENTS\"\n"
+            )
+            dispatcher.chmod(0o755)
+            env = os.environ.copy()
+            env["EVENTS"] = str(events)
+            env["TERRANASH_NONINTERACTIVE"] = "1"
+
+            result = subprocess.run(
+                [str(target), "--dry-run"], text=True, capture_output=True, env=env,
+            )
+            observed = events.read_text()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(observed.splitlines(), [
+            "migration --dry-run --update-current --preserve-machine-environment",
+            "models --models --dry-run --action restore",
+            "startup --dry-run",
+        ])
+
 
 if __name__ == "__main__":
     unittest.main()

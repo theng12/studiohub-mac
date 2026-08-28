@@ -1,7 +1,7 @@
 # TerraNash New-Mac Setup — Start Here
 
 Status: implemented and offline-verified on the SSD.
-Last reviewed: 2026-08-20 (Asia/Phnom_Penh)
+Last reviewed: 2026-08-28 (Asia/Phnom_Penh)
 
 This document is the durable owner handoff for the TerraNash fleet SSD. The
 canonical scripts, tests, manifest, and documentation live in Studio Hub's
@@ -196,6 +196,27 @@ updates can install both code and declared dependencies automatically. A new
 Mac installed from current Stage 2 may report `already_ready`; that is a safe
 no-op.
 
+### 6. Inspect and fix an older Mac with unknown history
+
+Run `6 Inspect and Fix This Mac.command` locally when it is unclear which of
+the earlier fleet fixes an old Mac has received. Keep Pinokio open and make
+sure Image Studio, Voice Studio, and Studio Hub are idle. The command:
+
+1. performs a no-write safety inspection and refuses missing, active, dirty,
+   divergent, detached, or unexpected checkouts before copying or updating;
+2. runs the same RAM-aware model restore as Stage 3 Choice B—never restore-all
+   and never prune—so an 8 GB Mac receives exactly Qwen3-TTS 0.6B Base,
+   Whisper Large v3 Turbo, and Kokoro for Voice;
+3. safely migrates legacy update state, while already-migrated apps still run
+   their normal dependency-converging updater, serially Image then Voice then
+   Hub; and
+4. repairs independent startup ownership after successful updates.
+
+It does not enroll or re-enroll the Mac, modify fleet credentials, delete
+models or app data, or contact another fleet machine. It stops at the first
+failure and is safe to rerun after correcting the reported prerequisite. Use
+`./'6 Inspect and Fix This Mac.command' --dry-run` for a fully no-write report.
+
 ## Target SSD layout after implementation
 
 ```text
@@ -208,6 +229,7 @@ ugreen-terranash/
 │   ├── 3 Manage AI Models.command
 │   ├── 4 Repair Studio Startup.command
 │   ├── 5 Migrate Studio Updates.command
+│   ├── 6 Inspect and Fix This Mac.command
 │   ├── .terranash-bootstrap.command
 │   ├── fleet_bootstrap.py
 │   ├── studio_models.py
@@ -242,8 +264,10 @@ Current SSD repair/update context refreshed on 2026-08-25:
 - Voice Studio 2.4.4.
 
 Stage 2 always installs the current published `main`, not a historical commit
-listed in this guide. Stage 5 performs the one-time migration needed by older
-checkouts before ordinary automatic dependency-converging updates.
+listed in this guide. Stage 5 performs the narrow one-time migration needed by
+older checkouts; Stage 6 combines its safety gate with RAM-aware model restore,
+a verified current-app refresh, and startup repair for old Macs with uncertain
+history.
 - Voice Studio 2.4.0 added internal Moonshine Base and Nemotron 3.5 ASR
   Streaming candidates. They were not downloaded on the source Mac during this
   audit, so they were not yet present in the SSD manifest.

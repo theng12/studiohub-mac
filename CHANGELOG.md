@@ -10,6 +10,25 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.13.10] — 2026-08-28
+
+### Added — one-step recovery for older fleet Macs
+
+- The SSD kit now includes **6 Inspect and Fix This Mac**, a restartable local
+  maintenance pass for Macs whose exact repair history is unknown. It
+  preflights all three checkouts, restores only RAM-suitable models, migrates
+  legacy update state or refreshes already-current apps with their normal
+  dependency-converging updater, and repairs startup ownership.
+- The model step is permanently equivalent to Choice 2. It never selects
+  restore-all or pruning; on an 8 GB Mac the Voice set remains Qwen3-TTS 0.6B
+  Base, Whisper Large v3 Turbo, and Kokoro.
+
+### Safety and compatibility
+
+- The command refuses active work and unknown Git state before making changes,
+  stops at the first failure, and never enrolls a Mac, changes fleet
+  credentials, deletes model/app data, or updates another machine.
+
 ## [2.13.9] — 2026-08-29
 
 ### Added — withdrawing a managed release intent

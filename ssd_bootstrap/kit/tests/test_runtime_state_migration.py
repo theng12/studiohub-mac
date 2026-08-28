@@ -599,6 +599,42 @@ class RuntimeStateMigrationTests(unittest.TestCase):
         self.assertEqual(second.for_name("studiohub-mac").status, "already_ready")
         self.assertEqual(exclude_path.read_bytes(), excludes)
 
+    def test_refresh_mode_updates_every_already_migrated_studio(self) -> None:
+        targets = self.prepare_old_fleet()
+        migrated = self.make_engine().run()
+        self.assertTrue(migrated.ok, migrated)
+        self.calls.clear()
+
+        refreshed = self.make_engine(update_already_ready=True).run()
+
+        self.assertTrue(refreshed.ok, refreshed)
+        self.assertEqual(self.calls, [
+            targets["imagestudio-mac"],
+            targets["voicestudio-mac"],
+            targets["studiohub-mac"],
+        ])
+        self.assertEqual(
+            [item.status for item in refreshed.repositories],
+            ["updated", "updated", "updated"],
+        )
+
+    def test_refresh_mode_dry_run_does_not_update_already_migrated_studios(self) -> None:
+        self.prepare_old_fleet()
+        first = self.make_engine().run()
+        self.assertTrue(first.ok, first)
+        self.calls.clear()
+
+        report = self.make_engine(
+            dry_run=True, update_already_ready=True,
+        ).run()
+
+        self.assertTrue(report.ok, report)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(
+            [item.status for item in report.repositories],
+            ["already_ready", "already_ready", "already_ready"],
+        )
+
     def test_hub_exclude_filesystem_error_is_a_failed_report_not_a_crash(self) -> None:
         remote, primary = make_remote(self.root, "hub-source", old_environment=False)
         linked = self.home / "api" / "studiohub-mac"
