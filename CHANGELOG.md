@@ -10,6 +10,27 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.13.10] — 2026-08-29
+
+### Changed — Step 6 optimizes each Mac's model cache
+
+- **6 Inspect and Fix This Mac** now prunes SSD-recognized model packages that
+  are outside the RAM-aware Choice 2 selection after restoring the selected
+  set. An 8 GB Voice worker therefore retains Qwen3-TTS 0.6B Base, Whisper
+  Large v3 Turbo, and Kokoro instead of keeping other recognized Voice models.
+- The model dispatcher now forwards explicit restore options such as
+  `--prune`, and both real and dry-run Step 6 flows use that option.
+- A companion shared by multiple models now records the lowest known RAM floor,
+  preventing a codec needed by a retained lower-tier model from being
+  misclassified using a higher-tier model's requirement.
+
+### Safety and compatibility
+
+- Unknown/private model packages, required retained companions, fleet voices,
+  settings, jobs, outputs, enrollment, credentials, and other machines remain
+  untouched. The dry run lists recognized prune candidates without deleting
+  them; ordinary Stage 3 Choice 2 restore still does not prune.
+
 ## [2.13.9] — 2026-08-28
 
 ### Added — one-step recovery for older fleet Macs

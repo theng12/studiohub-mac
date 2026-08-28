@@ -36,10 +36,9 @@ Three things it gets right that a naive copy does not:
    measured. Taking that at face value would have deleted a perfectly good Fish
    Audio cache off a 16 GB worker.
 
-Pruning is explicit and only removes a model whose floor is *known* and higher
-than this Mac's memory -- something this machine physically cannot run.
-Companions (codecs, tokenizers) are never pruned; they are small and a model
-without its codec is useless. Shared voices are never pruned.
+Pruning is explicit and only removes an SSD-recognized model outside the
+RAM-aware restore selection. Unknown/private packages are preserved. Required
+companions selected for retained models and shared voices are never pruned.
 """
 from __future__ import annotations
 
@@ -479,7 +478,7 @@ def catalog_index(models: list[dict]) -> tuple[dict, dict, set]:
             prev = floors.get(c["repo"])
             cur = m.get("min_unified_memory_gb")
             if prev is None or (cur is not None and cur < prev):
-                floors.setdefault(c["repo"], cur)
+                floors[c["repo"]] = cur
     return families, floors, companions
 
 
@@ -686,7 +685,6 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
             hub.mkdir(parents=True, exist_ok=True)
 
         families, local_floors, _all_companions = catalog_index(models)
-        companions = needed_companions(models)
         caps = {m["repo"]: (m.get("capabilities") or []) for m in models}
         ssd_floors = {e["repo"]: e.get("floor_gb") for e in staged}
         state_of = {m["repo"]: (m.get("cache") or {}).get("state")
@@ -768,8 +766,7 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
 
         skipped += len(defer)
         if defer:
-            print(f"  skipped {len(defer)} needing more memory than this Mac has"
-                  f" ({', '.join(sorted({str(f) + ' GB' for _, f in defer}))})")
+            print(f"  skipped {len(defer)} not selected for this Mac's tier")
         if unqualified:
             gb = sum(e["bytes"] for e, _ in unqualified) / 1e9
             print(f"  installing {len(unqualified)} with no measured memory floor "
@@ -781,20 +778,20 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
         # ---- prune
         if prune:
             victims = []
+            staged_repos = set(ssd_floors)
             for d in sorted(hub.iterdir()):
                 if not d.is_dir() or not d.name.startswith("models--"):
                     continue
                 repo = dirname_to_repo(d.name)
-                if repo is None or repo in companions:
-                    continue  # never prune a codec/tokenizer
+                if repo is None or repo not in staged_repos:
+                    continue  # preserve unknown/private local packages
                 floor = resolve_floor(repo, local_floors, ssd_floors)
-                if floor is not None and floor > ram:
-                    victims.append((d, repo, floor, dir_bytes(d)))
-            for d, repo, floor, b in victims:
-                if floor:
-                    why = f"needs {floor:>2.0f} GB"
-                else:
-                    why = "unqualified"
+                floor = restore_floor(name, repo, ram, floor)
+                selected = restore_allowed(name, repo, ram, restore_all)
+                if not selected or (floor is not None and floor > ram):
+                    why = "not selected" if not selected else f"needs {floor:>2.0f} GB"
+                    victims.append((d, repo, why, dir_bytes(d)))
+            for d, repo, why, b in victims:
                 print(f"  prune {repo[:48]:50} {why:>12}  {b / 1e9:5.2f} GB")
                 pruned += 1
                 pruned_bytes += b
@@ -838,7 +835,7 @@ def do_restore(root: Path, *, plan_only: bool, prune: bool, restore_all: bool,
 
     verb = "would " if plan_only else ""
     print(f"{verb}copy {copied} new, {verb}replace {replaced}, "
-          f"{intact} already complete, {skipped} above this Mac's memory.")
+          f"{intact} already complete, {skipped} not selected for this Mac's tier.")
     if staged_voices:
         print(f"Fleet voices: {voices_copied} copied, {voices_intact} already complete, "
               f"{voice_conflicts} protected conflicts.")
@@ -869,7 +866,7 @@ def main() -> int:
     r.add_argument("--plan", action="store_true",
                    help="show the plan, write and delete nothing")
     r.add_argument("--prune", action="store_true",
-                   help="also delete models this Mac has too little memory to run")
+                   help="delete SSD-recognized models outside this Mac's selected tier")
     r.add_argument("--all", action="store_true",
                    help="restore everything, ignoring this Mac's memory tier")
     r.add_argument("--force", action="store_true",

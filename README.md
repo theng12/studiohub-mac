@@ -224,7 +224,9 @@ For an old Mac whose exact maintenance history is unknown, SSD Stage 6 first
 preflights all three local checkouts, restores only RAM-suitable models, runs
 the same verified dependency-converging updater for legacy or already-current
 Image, Voice, and Hub checkouts, then repairs startup ownership. It never uses
-restore-all, prunes models, re-enrolls the Mac, or changes another fleet node.
+restore-all, re-enrolls the Mac, or changes another fleet node. It does prune
+SSD-recognized model packages outside that Mac's RAM-aware selection while
+preserving unknown/private packages, required retained companions, and voices.
 
 Every app independently enforces its expected GitHub origin and `main`, a clean
 fast-forward, free disk, dependency/import checks, healthy restart, and exact

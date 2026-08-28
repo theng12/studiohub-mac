@@ -81,6 +81,46 @@ class CommandWrapperTests(unittest.TestCase):
             self.assertNotIn("enrollment code", output)
             self.assertNotIn("--prune", output)
 
+    def test_pruning_dry_run_executes_the_no_write_model_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as value:
+            root = Path(value) / "terranash-bootstrap"
+            root.mkdir()
+            for name in ("3 Manage AI Models.command", ".terranash-bootstrap.command"):
+                shutil.copy2(KIT_ROOT / name, root / name)
+                (root / name).chmod(0o755)
+            pinokio_home = Path(value) / "pinokio"
+            for app in ("imagestudio-mac", "voicestudio-mac", "studiohub-mac"):
+                (pinokio_home / "api" / app / ".git").mkdir(parents=True)
+            (root / "fleet_bootstrap.py").write_text(
+                "import os\nfrom pathlib import Path\n"
+                "def resolve_pinokio_home(): return Path(os.environ['PINOKIO_HOME'])\n"
+            )
+            (root / "studio_models.py").write_text(
+                "import os, sys\n"
+                "with open(os.environ['EVENTS'], 'w') as out: out.write(' '.join(sys.argv[1:]))\n"
+            )
+            events = Path(value) / "events"
+            env = os.environ.copy()
+            env["HOME"] = str(Path(value) / "home")
+            env["PINOKIO_HOME"] = str(pinokio_home)
+            env["EVENTS"] = str(events)
+            env["TERRANASH_NONINTERACTIVE"] = "1"
+
+            result = subprocess.run(
+                [
+                    str(root / "3 Manage AI Models.command"),
+                    "--dry-run", "--action", "restore", "--prune",
+                ],
+                text=True,
+                capture_output=True,
+                env=env,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(events.is_file(), result.stdout)
+            self.assertIn("restore --root", events.read_text())
+            self.assertIn("--prune --plan", events.read_text())
+
     def test_stage_five_delegates_only_to_runtime_state_migration(self) -> None:
         with tempfile.TemporaryDirectory() as value:
             root = Path(value)
@@ -149,12 +189,12 @@ class CommandWrapperTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(observed.splitlines(), [
             "migration --dry-run --update-current --preserve-machine-environment",
-            "models --models --action restore",
+            "models --models --action restore --prune",
             "migration --update-current --preserve-machine-environment",
             "startup ",
         ])
         self.assertNotIn("restore-all", observed)
-        self.assertNotIn("--prune", observed)
+        self.assertIn("--prune", observed)
 
     def test_stage_six_dry_run_is_entirely_no_write(self) -> None:
         with tempfile.TemporaryDirectory() as value:
@@ -189,7 +229,7 @@ class CommandWrapperTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(observed.splitlines(), [
             "migration --dry-run --update-current --preserve-machine-environment",
-            "models --models --dry-run --action restore",
+            "models --models --dry-run --action restore --prune",
             "startup --dry-run",
         ])
 
