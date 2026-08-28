@@ -778,3 +778,72 @@ def test_capability_snapshot_uses_effective_flux_ram_policy(
     assert model["memory_admission"]["effective_min_total_memory_gb"] == 8
     assert model["memory_admission"]["eligible_now"] is True
     assert model["availability"]["available_now"] is True
+
+
+def test_withdrawn_release_intent_removes_convergence_signal_and_leaves_capacity(
+        authed, monitor, monkeypatch, tmp_path):
+    """Withdrawal must make the release signal disappear, not read as converged.
+
+    An intent nobody can satisfy is worse than no intent: it publishes
+    ``converged: false`` forever.  Readers already treat an absent intent as
+    clean, so after a withdrawal the field must be gone entirely, and capacity
+    must be byte-identical either side of it.
+    """
+    from backend import main
+    from backend.release_reconciliation import ReleaseReconciler
+
+    _seed_capability_site(monitor)
+    service = ReleaseReconciler(
+        monitor,
+        state_path=tmp_path / "release-reconciliation.json",
+        loaded_version="2.7.1",
+        loaded_commit="f" * 40,
+    )
+    manifest = _release_manifest()
+    service.replace_intent(manifest)
+    service.activate(manifest["release_id"], genstudio_run_reference=None)
+    monkeypatch.setattr(main, "release_reconciler", service)
+
+    before = authed.get("/api/hub/capabilities").json()
+    assert before["machines"][0]["managed_release"]["converged"] is False
+    assert "converged" in json.dumps(before)
+
+    record = service.withdraw_intent()
+
+    assert record["withdrawn"] is True
+    assert record["release_id"] == manifest["release_id"]
+    assert record["sequence"] == manifest["sequence"]
+    assert record["created_at"] == manifest["created_at"]
+    assert [job["release_id"] for job in record["jobs"]] == [manifest["release_id"]]
+
+    after = authed.get("/api/hub/capabilities").json()
+
+    assert "converged" not in json.dumps(after)
+    assert after["managed_release"]["desired"] is None
+    assert after["controller"]["managed_release"] is None
+    assert after["machines"][0]["managed_release"] is None
+    for service_id in ("image", "voice"):
+        assert _worker(after, service_id)["managed_release"] is None
+    assert _model(
+        _worker(after, "image"), "image.text_to_image",
+    )["availability"]["reason"] is None
+
+    assert after["capacity"] == before["capacity"]
+    # ``available_memory_gb`` is a live host reading and drifts on its own, so
+    # compare the slot arithmetic a withdrawal could actually have moved.
+    def _slots(payload, section):
+        return [
+            {
+                key: value
+                for key, value in row["available_capacity"].items()
+                if key != "available_memory_gb"
+            }
+            for row in payload[section]
+        ]
+
+    assert _slots(after, "machines") == _slots(before, "machines")
+    assert _slots(after, "workers") == _slots(before, "workers")
+    assert all(
+        row["available_capacity"]["available_memory_gb"] is not None
+        for row in after["machines"]
+    )

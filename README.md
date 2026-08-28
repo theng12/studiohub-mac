@@ -245,6 +245,20 @@ target version and `app_commit`, and each sibling must advertise
 Studio `1.30.1` and Voice Studio `2.3.0`; older installed siblings remain
 retryable and are never silently sent through an ordinary updater.
 
+A published intent can also be abandoned. `DELETE /api/hub/maintenance/release-intent`
+is the controller-only withdrawal path, taking the same fleet machine token as
+the publish and activate calls. It clears the desired manifest, its activation,
+and its jobs in one transaction and touches nothing else — no capacity, no
+worker records, no updater. This exists because a new intent is refused while a
+prior job is nonterminal, and a job can be permanently nonterminal by design: an
+intent pinning a release older than what a machine already runs is refused by
+the exact updater's ancestor check, so nothing ever terminates it. Withdrawal
+removes the release signal rather than inverting it — readers already treat an
+absent intent as clean, so no machine reports `converged: false` afterwards.
+Withdrawing when nothing is published succeeds as a no-op, and the withdrawn
+`release_id`, `sequence`, and `created_at` are recorded in the service log so
+the abandoned intent stays traceable.
+
 Offline, busy, disk-limited, authentication-blocked, and target-local failures
 remain nonterminal with bounded persisted retry. They reduce capacity but do
 not block later healthy machines or locations. Only a malformed or mismatched
@@ -300,6 +314,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /health/live` · `GET /health/ready` · `GET /health/capacity` | Controller liveness, site-execution readiness, and non-secret routing capacity; optional telemetry never gates readiness |
 | `GET /api/hub/capabilities` | Private cache-only GenStudio capability snapshot (schema v3); active managed intent adds exact-release convergence evidence, while only manifest-block states suppress otherwise healthy capacity |
 | `GET` · `PUT /api/hub/maintenance/release-intent` | Read sanitized managed-release status / controller-only machine-token write of one immutable desired manifest |
+| `DELETE /api/hub/maintenance/release-intent` | Controller-only withdrawal of the desired manifest, its activation, and its jobs in one transaction; idempotent no-op when none is published |
 | `POST /api/hub/maintenance/release-intent/{release_id}/activate` | Controller-only activation or adoption of the durable site release job; optional `{ "genstudio_run_reference": "..." }` |
 | `GET /api/hub/maintenance/release-jobs/{job_id}` | Read sanitized per-machine/component state, exact version/commit evidence, retry, and catalog request evidence |
 | `POST /api/hub/maintenance/managed-update` · `GET /api/hub/maintenance/managed-update/{job_id}` | Agent-only authenticated child admission/adoption and polling; used by the location controller, not GenStudio directly |

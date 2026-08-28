@@ -10,6 +10,36 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.13.9] — 2026-08-29
+
+### Added — withdrawing a managed release intent
+
+- `DELETE /api/hub/maintenance/release-intent` withdraws the desired manifest,
+  its activation, and its jobs in one transaction. It takes the same
+  controller-only fleet machine token as the existing publish and activate
+  calls and introduces no new authentication semantics.
+- This closes a permanent dead end. A new intent is refused while a prior job is
+  nonterminal, and a job can be nonterminal forever by design: an intent that
+  pins a release older than what a machine already runs is refused by the exact
+  updater's ancestor check, so nothing terminates it and every later intent is
+  rejected as retryable.
+- Withdrawal removes the release signal rather than inverting it. Readers
+  already treat an absent intent as clean state, so afterwards no machine or
+  worker reports `converged: false` and no managed-release routing reason is
+  emitted — the fields are absent, not false.
+- Withdrawing when nothing is published succeeds as a no-op. The withdrawn
+  `release_id`, `sequence`, `created_at`, and job list are written to the
+  service log as `release-intent-withdrawn`, so an abandoned intent stays
+  traceable after its durable state is gone.
+
+### Safety and compatibility
+
+- Withdrawal touches only the three release-intent fields. It does not change
+  capacity, worker records, model catalogues, credentials, or the ordinary
+  per-app updater, and it never updates a fleet machine.
+- The write is transactional and validated: a failure rolls the durable state
+  back whole and fails loudly rather than leaving a partial clear.
+
 ## [2.13.8] — 2026-08-28
 
 ### Fixed — healthy transcription capacity during release lag

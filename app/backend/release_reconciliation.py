@@ -1215,6 +1215,58 @@ class ReleaseReconciler:
 
         return self._write(mutate)
 
+    def withdraw_intent(self) -> dict[str, Any]:
+        """Abandon the desired release intent, its activation, and every job.
+
+        ``replace_intent`` refuses a new intent while any prior job is
+        nonterminal, and some jobs can never terminate -- an intent that pins a
+        release older than what a machine already runs is refused by the
+        updater's ancestor check by design, so the job stays nonterminal
+        forever.  Withdrawal is the operator's only exit from that state.
+
+        It clears exactly the three release-intent fields in one transaction and
+        touches nothing else: not capacity, not worker records, not the updater.
+        Readers already treat an absent intent as first-class clean state, so a
+        withdrawal removes the release signal rather than inverting it.
+
+        Returns the record of what was withdrawn, so the abandoned intent stays
+        traceable after its state is gone.  Withdrawing nothing is a no-op that
+        reports ``withdrawn: False``.
+        """
+
+        def mutate(state: dict[str, Any]) -> dict[str, Any]:
+            desired = state["desired"]
+            manifest = desired["manifest"] if desired else None
+            activation = state["activation"]
+            record = {
+                "withdrawn": bool(
+                    desired is not None or activation is not None or state["jobs"]
+                ),
+                "release_id": manifest["release_id"] if manifest else None,
+                "sequence": manifest["sequence"] if manifest else None,
+                "created_at": manifest["created_at"] if manifest else None,
+                "received_at": desired["received_at"] if desired else None,
+                "activation": deepcopy(activation),
+                "jobs": [
+                    {
+                        "id": job["id"],
+                        "release_id": job["release_id"],
+                        "state": job["state"],
+                        "created_at": job["created_at"],
+                        "leased": job["adoption_lease"] is not None,
+                    }
+                    for job in sorted(
+                        state["jobs"].values(), key=lambda job: job["id"]
+                    )
+                ],
+            }
+            state["desired"] = None
+            state["activation"] = None
+            state["jobs"] = {}
+            return record
+
+        return self._write(mutate)
+
     def _machines(
         self, manifest: dict[str, Any], *, operation_generation: int = 0,
     ) -> dict[str, Any]:

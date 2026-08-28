@@ -1198,6 +1198,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.13.9", date: "2026-08-29", items: [
+    "A published managed release intent can now be withdrawn, so a release job that can never finish no longer blocks every later intent forever.",
+    "Withdrawing clears the desired manifest, its activation, and its jobs together, and removes the release signal instead of reporting machines as not converged.",
+    "Withdrawal changes nothing else — no capacity, no worker records, no updater — and this update does not start or change a fleet rollout.",
+  ]},
   { v: "2.13.8", date: "2026-08-28", items: [
     "Healthy Image and Voice workers no longer advertise zero capacity merely because a managed release is pending, retrying, or behind.",
     "Managed-release progress and mismatches remain visible while exact model contracts continue to decide whether each worker can serve.",

@@ -3688,6 +3688,28 @@ def put_release_intent(request: Request, body: dict[str, Any]):
     }
 
 
+@app.delete("/api/hub/maintenance/release-intent")
+def withdraw_release_intent(request: Request):
+    """Withdraw the desired release intent so a fresh one can be published.
+
+    A release job that can never terminate blocks every later intent.  This is
+    the operator's exit: it clears the intent, its activation, and its jobs in
+    one transaction, and touches nothing else.  Withdrawing nothing succeeds as
+    a no-op.  The withdrawn intent is recorded in the service log so it stays
+    traceable after its state is gone.
+    """
+    settings = _require_managed_release_role(request, "controller")
+    try:
+        record = _managed_release_service().withdraw_intent()
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    _hub_log.warning(
+        "release-intent-withdrawn %s",
+        json.dumps({**record, **_release_identity(settings)}, sort_keys=True),
+    )
+    return {"ok": True, "accepted": True, **record, **_release_identity(settings)}
+
+
 @app.post(
     "/api/hub/maintenance/release-intent/{release_id}/activate",
     status_code=202,

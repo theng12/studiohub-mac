@@ -85,11 +85,11 @@ RELEASE_COMPONENTS = {
 }
 
 
-def _release_manifest() -> dict:
+def _release_manifest(sequence: int = 1) -> dict:
     manifest = {
         "schema": "genstudio.studio-fleet-release-intent",
         "schema_version": 1,
-        "sequence": 1,
+        "sequence": sequence,
         "created_at": "2026-08-15T00:00:00Z",
         "components": deepcopy(RELEASE_COMPONENTS),
     }
@@ -317,6 +317,178 @@ def test_release_intent_requires_machine_auth_and_controller_role(
     assert accepted.json()["release_id"] == manifest["release_id"]
     assert accepted.json()["site_id"] == "site-a"
     assert accepted.json()["controller_id"] == "controller-a"
+
+
+def _controller_site() -> None:
+    from backend import control_plane
+
+    control_plane.save_settings({
+        "role": "controller",
+        "site_id": "site-a",
+        "site_name": "Site A",
+        "controller_id": "controller-a",
+    })
+
+
+def test_withdrawing_release_intent_unblocks_an_intent_a_stuck_job_had_frozen(
+    authed, monkeypatch, tmp_path,
+):
+    """A job that can never terminate must not freeze the intent forever.
+
+    ``replace_intent`` refuses a new intent while a prior job is nonterminal.
+    Some jobs never terminate by design, so without a withdrawal path the
+    controller is permanently stuck on an intent it cannot satisfy or replace.
+    """
+    service = _release_service(monkeypatch, tmp_path)
+    _controller_site()
+    stuck = _release_manifest()
+    assert authed.put(
+        "/api/hub/maintenance/release-intent", json=stuck,
+    ).status_code == 200
+
+    async def no_execution(_release_id):
+        return None
+
+    monkeypatch.setattr(service, "run", no_execution)
+    activated = authed.post(
+        f"/api/hub/maintenance/release-intent/{stuck['release_id']}/activate"
+    )
+    assert activated.status_code == 202
+
+    successor = _release_manifest(sequence=2)
+    blocked = authed.put("/api/hub/maintenance/release-intent", json=successor)
+    assert blocked.status_code == 422
+    assert "nonterminal" in blocked.json()["detail"]
+
+    withdrawn = authed.delete("/api/hub/maintenance/release-intent")
+
+    assert withdrawn.status_code == 200
+    body = withdrawn.json()
+    assert body["ok"] is True
+    assert body["withdrawn"] is True
+    assert body["release_id"] == stuck["release_id"]
+    assert body["sequence"] == 1
+    assert body["created_at"] == "2026-08-15T00:00:00Z"
+    assert body["received_at"] is not None
+    assert body["activation"]["release_id"] == stuck["release_id"]
+    assert [job["id"] for job in body["jobs"]] == [activated.json()["job_id"]]
+    assert body["jobs"][0]["release_id"] == stuck["release_id"]
+    assert body["site_id"] == "site-a"
+    assert body["controller_id"] == "controller-a"
+
+    cleared = authed.get("/api/hub/maintenance/release-intent").json()
+    assert cleared["desired"] is None
+    assert cleared["activation"] is None
+    assert cleared["jobs"] == []
+    assert service.capability_evidence()["desired"] is None
+
+    accepted = authed.put("/api/hub/maintenance/release-intent", json=successor)
+    assert accepted.status_code == 200
+    assert accepted.json()["release_id"] == successor["release_id"]
+
+
+def test_withdrawing_release_intent_records_the_abandoned_release(
+    authed, monkeypatch, tmp_path, caplog,
+):
+    """The withdrawn intent stays traceable after its durable state is gone."""
+    import logging
+
+    from backend import main
+
+    _release_service(monkeypatch, tmp_path)
+    _controller_site()
+    manifest = _release_manifest()
+    assert authed.put(
+        "/api/hub/maintenance/release-intent", json=manifest,
+    ).status_code == 200
+
+    main._hub_log.propagate = True
+    try:
+        with caplog.at_level(logging.WARNING, logger="studiohub"):
+            assert authed.delete(
+                "/api/hub/maintenance/release-intent",
+            ).status_code == 200
+    finally:
+        main._hub_log.propagate = False
+
+    line = next(
+        record.getMessage() for record in caplog.records
+        if record.getMessage().startswith("release-intent-withdrawn ")
+    )
+    recorded = json.loads(line.split(" ", 1)[1])
+    assert recorded["withdrawn"] is True
+    assert recorded["release_id"] == manifest["release_id"]
+    assert recorded["sequence"] == 1
+    assert recorded["created_at"] == "2026-08-15T00:00:00Z"
+    assert recorded["site_id"] == "site-a"
+    assert recorded["controller_id"] == "controller-a"
+
+
+def test_withdrawing_release_intent_is_a_safe_no_op_when_none_is_published(
+    authed, monkeypatch, tmp_path,
+):
+    _release_service(monkeypatch, tmp_path)
+    _controller_site()
+
+    first = authed.delete("/api/hub/maintenance/release-intent")
+
+    assert first.status_code == 200
+    assert first.json()["withdrawn"] is False
+    assert first.json()["release_id"] is None
+    assert first.json()["jobs"] == []
+
+    manifest = _release_manifest()
+    assert authed.put(
+        "/api/hub/maintenance/release-intent", json=manifest,
+    ).status_code == 200
+    assert authed.delete(
+        "/api/hub/maintenance/release-intent",
+    ).json()["withdrawn"] is True
+
+    repeated = authed.delete("/api/hub/maintenance/release-intent")
+
+    assert repeated.status_code == 200
+    assert repeated.json()["withdrawn"] is False
+    assert authed.get(
+        "/api/hub/maintenance/release-intent",
+    ).json()["desired"] is None
+
+
+def test_withdrawing_release_intent_requires_the_same_credentials_as_publishing(
+    app, client, authed, token, monkeypatch, tmp_path,
+):
+    from starlette.testclient import TestClient
+    from backend import auth, control_plane
+
+    _release_service(monkeypatch, tmp_path)
+
+    assert client.delete(
+        "/api/hub/maintenance/release-intent",
+    ).status_code == 401
+    assert authed.delete(
+        "/api/hub/maintenance/release-intent",
+    ).status_code == 409
+
+    _controller_site()
+    owner = TestClient(app)
+    owner.cookies.set(auth.SESSION_COOKIE_NAME, auth.create_browser_session())
+    assert owner.delete(
+        "/api/hub/maintenance/release-intent",
+    ).status_code in {401, 403}
+    assert authed.delete(
+        "/api/hub/maintenance/release-intent",
+        headers={"Origin": "https://attacker.invalid"},
+    ).status_code == 403
+
+    control_plane.save_settings({
+        "role": "agent",
+        "site_id": "site-a",
+        "site_name": "Site A",
+        "controller_id": "controller-a",
+    })
+    assert authed.delete(
+        "/api/hub/maintenance/release-intent",
+    ).status_code == 403
 
 
 def test_activation_replay_adopts_one_job(authed, monkeypatch, tmp_path):
