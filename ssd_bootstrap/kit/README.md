@@ -4,7 +4,7 @@ Start with [`../START HERE - TerraNash Mac Setup.md`](../START%20HERE%20-%20Terr
 The canonical scripts and documentation live in Studio Hub's tracked
 `ssd_bootstrap/` directory; this SSD folder is the synchronized deployment copy.
 
-## The five owner commands
+## The six owner commands
 
 1. Double-click **1 Install Mac Apps.command**. It installs only Pinokio, Yam
    Display, and Latest from the signed, checksum-pinned DMGs in `installers/`.
@@ -34,8 +34,15 @@ The canonical scripts and documentation live in Studio Hub's tracked
    A refusal names the checkout that needs manual review; it never stashes,
    resets, deletes, or hides unrelated changes. A healthy enrolled Mac should
    instead receive Hub, Image, and Voice updates from the controller.
+6. On an older Mac with unknown history, double-click **6 Inspect and Fix This
+   Mac.command** after making sure all three Studios are idle and Pinokio is
+   open. It first refuses unsafe or unexpected checkout state, restores only
+   the RAM-suitable Choice 2 models, safely migrates legacy update state or
+   updates already-current Image, Voice, and Hub checkouts with dependency
+   convergence, then repairs startup ownership. It never selects restore-all,
+   prunes models, re-enrolls the Mac, or changes another fleet machine.
 
-All five commands are restartable. A completed app/environment/package is
+All six commands are restartable. A completed app/environment/package is
 detected and skipped. When a command fails, fix the named prerequisite and run
 that same command again.
 
@@ -46,8 +53,10 @@ For a reachable enrolled Mac, update the controller Hub first, then use
 reachable Agent Hub is current, update only Image and Voice from **Studio
 updates**. No SSD is required for that normal path. Bring this SSD to a Mac only
 when its Hub is unreachable, too old to accept the controller update, or blocked
-by a legacy checkout; then run Stage 5 locally once. Future code and declared
-dependency updates can run through the controller or overnight schedule.
+by a legacy checkout. Run Stage 5 for the narrow update-state repair, or Stage
+6 when its history is uncertain and it should also receive RAM-suitable models
+and startup repair. Future code and declared dependency updates can run through
+the controller or overnight schedule.
 
 ## Model-library meaning
 
@@ -91,6 +100,7 @@ TERRANASH_NONINTERACTIVE=1 './3 Manage AI Models.command' --dry-run --action sta
 TERRANASH_NONINTERACTIVE=1 './3 Manage AI Models.command' --dry-run --action restore
 ./'4 Repair Studio Startup.command' --dry-run
 ./'5 Migrate Studio Updates.command' --dry-run
+./'6 Inspect and Fix This Mac.command' --dry-run
 ```
 
 Developer verification:

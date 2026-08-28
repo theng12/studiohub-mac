@@ -115,6 +115,7 @@ class MigrationEngine:
         post_update_probe: PostUpdateProbe | None = None,
         app_specs: tuple[tuple[str, str, str, int], ...] = APP_SPECS,
         preserve_machine_environment: bool = False,
+        update_already_ready: bool = False,
     ) -> None:
         self.home = home
         self.backup_root = backup_root or (
@@ -129,6 +130,7 @@ class MigrationEngine:
         self.post_update_probe = post_update_probe or self._post_update_state
         self.app_specs = app_specs
         self.preserve_machine_environment = preserve_machine_environment
+        self.update_already_ready = update_already_ready
         self._pterm: Path | None = None
 
     def plan(self) -> MigrationReport:
@@ -161,8 +163,29 @@ class MigrationEngine:
         for index, repository in enumerate(repositories):
             result = planned[repository.name]
             if result.status == "already_ready":
-                results.append(result)
-                continue
+                if not self.update_already_ready:
+                    results.append(result)
+                    continue
+                try:
+                    self._invoke_update(repository)
+                    self._verify_update_state(repository)
+                    if self._plan_repository(repository).status != "already_ready":
+                        raise MigrationError(
+                            f"{repository.title} changed after its update; rerun after review"
+                        )
+                    results.append(RepositoryResult(repository.name, repository.path, "updated"))
+                    continue
+                except MigrationError as exc:
+                    results.append(RepositoryResult(
+                        repository.name,
+                        repository.path,
+                        "failed",
+                        refusal_reason=str(exc),
+                    ))
+                    results.extend(RepositoryResult(
+                        future.name, future.path, "not_run"
+                    ) for future in repositories[index + 1:])
+                    return MigrationReport(tuple(results))
             try:
                 backup = self._migrate_repository(repository)
                 results.append(RepositoryResult(repository.name, repository.path, "migrated", backup))
@@ -843,12 +866,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--preserve-machine-environment", action="store_true",
-        help="preserve the complete machine-owned ENVIRONMENT file for an explicitly selected Studio",
+        help="preserve complete machine-owned Image and Voice ENVIRONMENT files",
+    )
+    parser.add_argument(
+        "--update-current", action="store_true",
+        help="also run each already-migrated app's normal dependency-converging updater",
     )
     parser.add_argument("--json", action="store_true", help="emit one machine-readable report")
     args = parser.parse_args(argv)
-    if args.preserve_machine_environment and not args.app:
-        parser.error("--preserve-machine-environment requires at least one explicit --app")
+    if args.preserve_machine_environment and not args.app and not args.update_current:
+        parser.error(
+            "--preserve-machine-environment requires an explicit --app or --update-current"
+        )
     if args.preserve_machine_environment and any(
         app not in {"imagestudio-mac", "voicestudio-mac"} for app in args.app or ()
     ):
@@ -859,6 +888,7 @@ def main(argv: list[str] | None = None) -> int:
         dry_run=args.dry_run,
         app_specs=app_specs,
         preserve_machine_environment=args.preserve_machine_environment,
+        update_already_ready=args.update_current,
     ).run()
     if args.json:
         print(json.dumps({
