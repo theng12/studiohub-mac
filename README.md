@@ -340,6 +340,8 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/setup/join` | Guided worker setup using a private controller address, permanent enrollment code, and local hardware profile; accepted locally or from an owner-authenticated browser |
 | `GET /api/hub/startup-services` | Audit sibling Studio launchd service and watchdog readiness on this Hub and authenticated peer Hubs |
 | `POST /api/hub/startup-services/{machine}/{studio}/install` | Install or repair one sibling's startup service on its own machine; refuses Hub-tracked active work |
+| `POST /api/hub/startup-services/{machine}/{studio}/retire` | Music/Chat/Video/Render only: turn off routing, the updater, and automatic startup, keeping the launcher, models, caches, outputs, and settings |
+| `POST /api/hub/startup-services/{machine}/{studio}/remove` | Music/Chat/Video/Render only: retire as above, then move the Studio checkout — and any model cache no other Studio uses — to the Trash. Deletes only a real folder directly inside `PINOKIO_HOME/api` bearing that Studio's own name; refuses a symlinked or out-of-tree path, and Image/Voice with a 400 |
 | `POST /api/hub/registry/studios/{id}/enabled` | Pause/resume new jobs for one Studio with `{"enabled": false/true}`; running work and the process are untouched |
 | `GET /api/hub/health` | Aggregate: totals + per-studio statuses |
 | `GET /api/hub/catalog` | Local per-studio catalog rows (annotated `hub_cached`, `hub_machine`). Query: `q`, `modality`, `downloaded`, `force` |

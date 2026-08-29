@@ -10,6 +10,41 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.13.14] — 2026-08-29
+
+### Fixed — removing a retired Studio now actually removes it
+
+- Since *stop tracking legacy studios*, the Hub's registry has held only Image
+  and Voice. Full-remove looked its target up in that registry, so a Music,
+  Chat, Video, or Render Studio that was still physically installed answered
+  **404 — not registered on this Mac** and the checkout stayed on disk. The
+  request promised a removal and delivered an error.
+- Removal is about the folder on disk, not the registration. When the checkout
+  is installed and no registry row exists, the Hub now keys the removal off the
+  modality — the same key its removal flags already use — and completes the
+  removal it named: routing and updater remnants disabled, the launchd server,
+  watchdog and updater agents unloaded and their plists deleted, Pinokio
+  autolaunch turned off, the port verified closed, and the checkout (plus any
+  `.git`-suffixed duplicate, and any model cache no other Studio uses) moved to
+  the Trash.
+- Nothing about *what* may be deleted changed. Only a real directory directly
+  inside `PINOKIO_HOME/api` whose name is one of the four legacy Studios' own
+  folder names is ever touched; a symlinked checkout, or one that resolves
+  outside that directory, is refused with **Refusing an unsafe Studio checkout
+  path** and nothing is moved.
+- Image and Voice are still refused outright with a 400 before any removal
+  decision is made, installed or not.
+- A Studio that is *not* installed is unchanged: the request stays an honest
+  no-op that clears named launchd remnants, verifies the port, and reports the
+  Studio as already removed without deleting anything.
+
+### Changed — the legacy-registry test note now describes what actually happens
+
+- v2.13.13 documented that 404 as intended behaviour, on the test helper that
+  seeds a legacy registry row. That note now records the corrected behaviour:
+  the retire endpoints still need the seeded row, full-remove does not, and the
+  removal tests exercise the real production shape with no row at all.
+
 ## [2.13.13] — 2026-08-29
 
 ### Fixed — a busy Mac no longer makes this site look like it is flapping

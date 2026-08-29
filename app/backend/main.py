@@ -3537,12 +3537,15 @@ async def _remove_local_studio(modality: str) -> dict:
             raise HTTPException(409, str(exc)) from exc
         monitor.reload_registry()
         return {**result, "routing_enabled": False}
+    # The checkout is installed. Legacy families are no longer tracked, so it
+    # usually has no registry row at all — removal is about the folder on disk,
+    # not the registration, so an absent row must not refuse the request and
+    # leave the Studio installed. Fall back to the modality, which is also the
+    # key `startup_services` already uses for these families' removal flags.
     target = next((row for row in monitor.registry
                    if row.get("machine", "local") == "local"
                    and row.get("modality") == modality), None)
-    if target is None:
-        raise HTTPException(404, f"{modality.title()} Studio is not registered on this Mac")
-    studio_id = target["id"]
+    studio_id = target["id"] if target is not None else modality
     broker.set_maintenance(studio_id, True)
     try:
         if fleet_ops.studio_has_active_work(studio_id):

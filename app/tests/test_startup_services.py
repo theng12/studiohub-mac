@@ -67,12 +67,13 @@ def _add_legacy_compat_target(modality: str) -> None:
     `registry.TRACKED_MODALITIES` is ("image", "voice") while
     `startup_services.RETIRABLE_MODALITIES` is the four legacy families, so the
     two sets are disjoint: production never registers a legacy row any more.
-    Retire/remove endpoints look their target up in `monitor.registry`, so these
-    cases must seed the row themselves or they only ever exercise the 404 /
-    ghost-cleanup branches. A still-installed legacy checkout therefore reaches
-    the full-remove branch only through this shim; on a real Mac the same
-    request answers 404 and the checkout is left alone, which is what "their
-    physical app folders are untouched" was meant to mean.
+
+    The *retire* endpoints still look their target up in `monitor.registry` and
+    answer 404 without one, so those cases must seed the row themselves. The
+    *full-remove* endpoint no longer does: a still-installed legacy checkout is
+    removed on the strength of the folder on disk, keying its removal flags off
+    the modality when no row exists. Removal tests should therefore leave the
+    registry alone and exercise the real production shape.
     """
     main.monitor.registry.append({
         "id": modality, "modality": modality, "machine": "local",
@@ -782,7 +783,8 @@ def test_startup_retire_api_keeps_routing_disabled_after_peer_failure(
 def test_full_remove_api_disables_routing_then_removes_local_checkout(
     owner, monkeypatch,
 ):
-    _add_legacy_compat_target("music")
+    # No registry row on purpose: that is the real production shape for a
+    # legacy family, and full-remove must not depend on one.
     # This case covers the full-remove path for an *installed* Studio, so pin
     # that precondition rather than inheriting it from the machine's real
     # Pinokio layout. Without this, any checkout where `PINOKIO_HOME` does not
@@ -836,6 +838,120 @@ def test_full_remove_api_disables_routing_then_removes_local_checkout(
         ("complete", "local", "music", True),
         ("reload",),
     ]
+
+
+def test_full_remove_deletes_an_installed_legacy_checkout_without_a_registry_row(
+    owner, tmp_path, monkeypatch,
+):
+    """The owner-visible promise: "remove" deletes the folder, registration or not.
+
+    Legacy families are no longer tracked in `studios.json`, so an installed
+    Music/Chat/Video/Render checkout normally has no `monitor.registry` row at
+    all. Removal is about the checkout on disk, so the missing row must not
+    turn a full-remove into a 404 that leaves the Studio installed.
+    """
+    app_dir, launch_agents = _seed_app(tmp_path, monkeypatch, "music")
+    (app_dir / "ENVIRONMENT").write_text("PINOKIO_SCRIPT_AUTOLAUNCH_ENABLED=true\n")
+    (app_dir / "outputs").mkdir()
+    _mark_installed(app_dir, launch_agents, "music")
+    assert not any(row.get("modality") == "music" for row in main.monitor.registry)
+
+    monkeypatch.setattr(fleet_ops, "studio_has_active_work", lambda _studio_id: False)
+    monkeypatch.setattr(main.fleet_auto_updates, "jobs", lambda: [])
+    monkeypatch.setattr(control, "stop_studio_sync", lambda studio: {"ok": True})
+    monkeypatch.setattr(startup_services, "_remove_launch_agent", lambda _label: None)
+    monkeypatch.setattr(startup_services, "_wait_port_closed", lambda _port: True)
+    trash = tmp_path / "Trash"
+    monkeypatch.setattr(startup_services, "_trash_dir", lambda: trash)
+
+    response = owner.post("/api/hub/startup-services/local/music/remove")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["removed"] is True and body["routing_enabled"] is False
+    assert not app_dir.exists()
+    assert [Path(value).name.split("-removed-", 1)[0]
+            for value in body["trashed_checkouts"]] == ["musicstudio-mac"]
+    assert registry.studio_enabled("local", "music") is False
+    assert registry.studio_removed("local", "music") is True
+    assert registry.studio_removal_complete("local", "music") is True
+
+
+def test_full_remove_of_an_absent_legacy_studio_deletes_nothing(
+    owner, tmp_path, monkeypatch,
+):
+    """A Studio that is not installed is an honest no-op, never a blind delete."""
+    monkeypatch.setattr(control, "PINOKIO_HOME", tmp_path)
+    (tmp_path / "api").mkdir()
+    launch_agents = tmp_path / "LaunchAgents"
+    launch_agents.mkdir()
+    monkeypatch.setattr(startup_services, "_launch_agents_dir", lambda: launch_agents)
+    monkeypatch.setattr(startup_services, "_launchd_loaded", lambda _label: False)
+    monkeypatch.setattr(startup_services, "_wait_port_closed", lambda _port: True)
+    monkeypatch.setattr(fleet_ops, "studio_has_active_work", lambda _studio_id: False)
+    monkeypatch.setattr(main.fleet_auto_updates, "jobs", lambda: [])
+    removed = []
+    monkeypatch.setattr(
+        startup_services, "fully_remove_studio", removed.append, raising=False,
+    )
+    monkeypatch.setattr(
+        startup_services.shutil, "move",
+        lambda *args: pytest.fail("an absent Studio must never move a path"),
+    )
+
+    response = owner.post("/api/hub/startup-services/local/chat/remove")
+
+    assert response.status_code == 200
+    assert response.json()["already_removed"] is True
+    assert removed == []
+
+
+def test_full_remove_refuses_a_symlinked_legacy_checkout_instead_of_deleting(
+    owner, tmp_path, monkeypatch,
+):
+    """Only a real folder inside PINOKIO_HOME/api may be deleted — never a link out."""
+    api_root = tmp_path / "api"
+    api_root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("protected")
+    (api_root / "musicstudio-mac").symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(control, "PINOKIO_HOME", tmp_path)
+    launch_agents = tmp_path / "LaunchAgents"
+    launch_agents.mkdir()
+    monkeypatch.setattr(startup_services, "_launch_agents_dir", lambda: launch_agents)
+    monkeypatch.setattr(startup_services, "_launchd_loaded", lambda _label: False)
+    monkeypatch.setattr(fleet_ops, "studio_has_active_work", lambda _studio_id: False)
+    monkeypatch.setattr(main.fleet_auto_updates, "jobs", lambda: [])
+    monkeypatch.setattr(
+        startup_services.shutil, "move",
+        lambda *args: pytest.fail("an unsafe checkout path must never be moved"),
+    )
+
+    response = owner.post("/api/hub/startup-services/local/music/remove")
+
+    assert response.status_code == 409
+    assert "unsafe Studio checkout" in response.json()["detail"]
+    assert (api_root / "musicstudio-mac").is_symlink()
+    assert (outside / "keep.txt").read_text() == "protected"
+
+
+@pytest.mark.parametrize("modality", ["image", "voice"])
+def test_full_remove_leaves_an_installed_production_checkout_untouched(
+    owner, tmp_path, monkeypatch, modality,
+):
+    """The 400 refusal for Image/Voice still precedes every removal decision."""
+    app_dir, launch_agents = _seed_app(tmp_path, monkeypatch, modality)
+    _mark_installed(app_dir, launch_agents, modality)
+    monkeypatch.setattr(
+        startup_services.shutil, "move",
+        lambda *args: pytest.fail("a production Studio must never be moved"),
+    )
+
+    response = owner.post(f"/api/hub/startup-services/local/{modality}/remove")
+
+    assert response.status_code == 400
+    assert app_dir.is_dir()
 
 
 def test_remote_full_remove_lost_response_retry_prunes_controller_registration(

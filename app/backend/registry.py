@@ -203,7 +203,8 @@ def prune_machine_metadata(known_machines: set[str]) -> None:
 
 # Studio Hub intentionally tracks only the two production worker products.
 # Legacy Chat, Music, Video, and Render records are ignored even when an old
-# studios.json still contains them; their physical app folders are untouched.
+# studios.json still contains them. Ignoring a record never touches its app
+# folder; only an explicit full-remove request deletes a legacy checkout.
 TRACKED_MODALITIES = ("image", "voice")
 
 # The tracked sibling studios and their fixed family ports. `app` is the Pinokio

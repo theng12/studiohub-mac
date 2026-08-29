@@ -1199,6 +1199,12 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.13.14", date: "2026-08-29", items: [
+    "<b>Removing a retired Studio now actually removes it.</b> Since the Hub stopped tracking Music, Chat, Video and Render, a full-remove of one that was still installed answered <b>404 — not registered on this Mac</b> and left the folder exactly where it was. It now completes the removal it promised: routing and updater turned off, the startup server, watchdog and updater agents unloaded and their files deleted, Pinokio autolaunch disabled, the port checked, and the Studio folder moved to the Trash.",
+    "Model caches are moved too, but only ones no other Studio still uses. Everything is moved to the Trash, never erased, so you can put it back.",
+    "What may be deleted has not changed. Only a real folder sitting directly in your Pinokio <b>api</b> directory, named after one of those four Studios, is ever touched — a shortcut or a link pointing somewhere else is refused and nothing is moved.",
+    "<b>Image and Voice cannot be removed this way at all</b>, installed or not, and a Studio that is already gone is still a harmless no-op that deletes nothing.",
+  ]},
   { v: "2.13.13", date: "2026-08-29", items: [
     "<b>A busy Mac no longer makes this site look like it is flapping.</b> Three background jobs ran slow work directly on the Hub's single worker — Caddy inspection every 5 seconds, which walks every process on the Mac, and two hourly storage sweeps that walk the whole transcription folder. While they ran, the Hub could not answer <b>/health/live</b> at all, for as long as 75 seconds, and the fleet read that silence as an outage.",
     "All three now run on a side thread, so the Hub keeps answering. What they check, how often, and what they clean up is unchanged — and storage cleanups are now serialized so two sweeps can never delete each other's files.",
