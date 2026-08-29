@@ -502,6 +502,41 @@ def test_startup_snapshot_ignores_installed_untracked_studio(tmp_path, monkeypat
     assert {row["modality"] for row in snapshot["services"]} == {"image", "voice"}
 
 
+def test_leftover_studios_lists_installed_legacy_checkouts_only(tmp_path, monkeypatch):
+    """The dashboard's remove list: retired families still on disk, nothing else.
+
+    Image and Voice must never appear — they cannot be removed by that button,
+    and the endpoint behind it refuses them with a 400.
+    """
+    monkeypatch.setattr(control, "PINOKIO_HOME", tmp_path)
+    monkeypatch.setattr(registry, "load_registry", lambda: [])
+    monkeypatch.setattr(startup_services, "_launchd_loaded", lambda _label: False)
+    for name in ("musicstudio-mac", "musicstudio-mac.git", "videostudio-mac",
+                 "imagestudio-mac", "voicestudio-mac.git"):
+        (tmp_path / "api" / name).mkdir(parents=True)
+
+    leftovers = startup_services.leftover_studios()
+
+    assert [row["modality"] for row in leftovers] == ["music", "video"]
+    assert leftovers[0]["title"] == "Music Studio KH"
+    assert sorted(leftovers[0]["folders"]) == ["musicstudio-mac", "musicstudio-mac.git"]
+    assert leftovers[1]["folders"] == ["videostudio-mac"]
+    assert startup_services.local_snapshot()["leftover_studios"] == leftovers
+
+
+def test_leftover_studios_is_empty_when_no_legacy_checkout_remains(
+    tmp_path, monkeypatch,
+):
+    """A clean Mac reports nothing, so the dashboard renders no section at all."""
+    monkeypatch.setattr(control, "PINOKIO_HOME", tmp_path)
+    monkeypatch.setattr(registry, "load_registry", lambda: [])
+    monkeypatch.setattr(startup_services, "_launchd_loaded", lambda _label: False)
+    (tmp_path / "api" / "voicestudio-mac.git").mkdir(parents=True)
+
+    assert startup_services.leftover_studios() == []
+    assert startup_services.local_snapshot()["leftover_studios"] == []
+
+
 def test_startup_snapshot_omits_fully_removed_optional_studios(tmp_path, monkeypatch):
     monkeypatch.setattr(control, "PINOKIO_HOME", tmp_path)
     monkeypatch.setattr(registry, "load_registry", lambda: [])
@@ -952,6 +987,71 @@ def test_full_remove_leaves_an_installed_production_checkout_untouched(
 
     assert response.status_code == 400
     assert app_dir.is_dir()
+
+
+def test_remote_full_remove_reaches_a_mac_through_any_row_it_still_has(
+    owner, monkeypatch,
+):
+    """A fleet Mac's leftover Studio has no row either — reach it via a tracked one.
+
+    The dashboard lists remote leftovers, so this must not 404 the way the
+    local path used to.
+    """
+    main.monitor.registry.append({
+        "id": "image@mac-b", "modality": "image", "machine": "mac-b",
+        "host": "100.70.0.9", "port": 47868,
+    })
+    events = []
+    monkeypatch.setattr(fleet_ops, "studio_has_active_work", lambda _studio_id: False)
+
+    async def remote_remove(client, studio, modality):
+        events.append(("peer", studio["id"], modality))
+        return {"ok": True, "changed": True, "removed": True}
+
+    monkeypatch.setattr(peers, "remove_remote_studio", remote_remove)
+    monkeypatch.setattr(
+        registry, "set_studio_enabled",
+        lambda machine, studio_id, enabled: events.append(
+            ("routing", machine, studio_id, enabled)
+        ),
+    )
+    monkeypatch.setattr(
+        registry, "remove_studio",
+        lambda studio_id: events.append(("prune", studio_id)) or 0,
+    )
+    monkeypatch.setattr(
+        main.monitor, "forget_studios",
+        lambda studio_ids: events.append(("forget", sorted(studio_ids))),
+    )
+
+    response = owner.post("/api/hub/startup-services/mac-b/video/remove")
+
+    assert response.status_code == 200
+    assert response.json()["removed"] is True
+    # Reached through the Image row, but only the removed Studio is purged —
+    # the Mac keeps every Studio it really has registered.
+    assert events == [
+        ("routing", "mac-b", "video@mac-b", False),
+        ("peer", "image@mac-b", "video"),
+        ("prune", "video@mac-b"),
+        ("forget", ["video@mac-b"]),
+    ]
+
+
+def test_remote_full_remove_still_refuses_a_machine_the_hub_does_not_know(
+    owner, monkeypatch,
+):
+    called = []
+    monkeypatch.setattr(
+        peers, "remove_remote_studio",
+        lambda *args: called.append(args), raising=False,
+    )
+
+    response = owner.post("/api/hub/startup-services/mac-nowhere/music/remove")
+
+    assert response.status_code == 404
+    assert "unknown machine" in response.json()["detail"]
+    assert called == []
 
 
 def test_remote_full_remove_lost_response_retry_prunes_controller_registration(

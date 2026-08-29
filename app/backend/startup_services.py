@@ -249,6 +249,27 @@ def inspect_service(modality: str) -> dict:
     }
 
 
+def leftover_studios() -> list[dict]:
+    """Retired families whose checkout is still physically installed here.
+
+    Deliberately costs only a handful of `is_dir()` calls. This runs on every
+    startup audit and that audit also fans out to peer Hubs, so no disk size is
+    reported: measuring a checkout means walking a conda env plus model
+    weights, which is exactly the tree walk v2.13.13 moved off this path.
+    """
+    rows = []
+    for modality in sorted(RETIRABLE_MODALITIES):
+        app_dirs = _app_dirs(modality)
+        if not app_dirs:
+            continue
+        rows.append({
+            "modality": modality,
+            "title": SERVICE_SPECS[modality]["title"],
+            "folders": [app_dir.name for app_dir in app_dirs],
+        })
+    return rows
+
+
 def local_snapshot() -> dict:
     from . import registry
 
@@ -273,6 +294,7 @@ def local_snapshot() -> dict:
         "reachable": True,
         "supported": True,
         "services": services,
+        "leftover_studios": leftover_studios(),
     }
 
 

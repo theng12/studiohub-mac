@@ -3602,9 +3602,16 @@ async def remove_fleet_studio(request: Request, machine: str, modality: str):
     target = next((row for row in monitor.registry
                    if row.get("machine") == machine
                    and row.get("modality") == modality), None)
-    if target is None:
-        raise HTTPException(404, f"unknown {modality} Studio on machine: {machine}")
-    studio_id = target["id"]
+    # As on the local path, a retired family has no registry row of its own, so
+    # reach the machine through any row it does have — the same fallback the
+    # startup-install route already uses. Removal is about that Mac's checkout,
+    # not its registration here; every id-scoped cleanup below is a no-op for a
+    # row that never existed, and `forget_machine` only evicts a peer cache.
+    peer = target or next((row for row in monitor.registry
+                           if row.get("machine") == machine), None)
+    if peer is None:
+        raise HTTPException(404, f"unknown machine: {machine}")
+    studio_id = target["id"] if target is not None else f"{modality}@{machine}"
     broker.set_maintenance(studio_id, True)
     try:
         if fleet_ops.studio_has_active_work(studio_id):
@@ -3612,7 +3619,7 @@ async def remove_fleet_studio(request: Request, machine: str, modality: str):
                 409, "This Studio has active Hub work; wait for it to finish before removing it.")
         from . import registry
         registry.set_studio_enabled(machine, studio_id, False)
-        result = await peers.remove_remote_studio(monitor._client, target, modality)
+        result = await peers.remove_remote_studio(monitor._client, peer, modality)
         if not result.get("ok"):
             raise HTTPException(409, {
                 "code": "routing_disabled_pending_retry",

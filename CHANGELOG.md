@@ -32,11 +32,46 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
   folder names is ever touched; a symlinked checkout, or one that resolves
   outside that directory, is refused with **Refusing an unsafe Studio checkout
   path** and nothing is moved.
+- The fleet path had the identical defect and is fixed the same way: removing a
+  retired Studio from another Mac answered **404 — unknown video Studio on
+  machine** because that Mac had no row for it either. The Hub now reaches the
+  Mac through any row it does have — the fallback the startup-install route
+  already used — and only the removed Studio is pruned, so the Mac keeps every
+  Studio it really has registered. A machine the Hub knows nothing about is
+  still refused, now saying plainly that the *machine* is unknown.
 - Image and Voice are still refused outright with a 400 before any removal
   decision is made, installed or not.
 - A Studio that is *not* installed is unchanged: the request stays an honest
   no-op that clears named launchd remnants, verifies the port, and reports the
   Studio as already removed without deleting anything.
+
+### Added — a button for it, on the Updates page
+
+- Removal was reachable only as an API call. **Automatic startup across the
+  fleet** now grows a **Leftover retired studios** list whenever the startup
+  audit finds a retired family still installed on any reachable Mac, with a
+  **Remove** button per Studio and machine.
+- The section does not exist when every Mac is clean: no heading, no empty
+  table, no placeholder row.
+- The confirmation names the Studio and the Mac and states the outcome before
+  anything happens — stops its services, removes it from startup, moves the
+  folder to the Trash, keeps models other Studios still use, erases nothing.
+- A refusal is shown in the Hub's own words rather than a generic failure, so
+  the unsafe-checkout-path refusal reads as itself. The list is re-read from
+  the Hub after every attempt, so a row disappears because the Studio is really
+  gone, never because the page assumed success.
+- Detection reuses the existing `GET /api/hub/startup-services` audit — one new
+  `leftover_studios` field per machine, costing a handful of directory checks.
+  No disk size is reported: measuring a checkout means walking a conda env plus
+  model weights, which is exactly the tree walk v2.13.13 moved off this path. A
+  peer Hub too old to report the field is read as having no leftovers.
+
+### Added — the dashboard's script is now parsed by the suite
+
+- The page is one hand-edited file, and the existing frontend tests run
+  *extracted fragments* through node — a fragment can parse while the file
+  around it is broken, which blanks the whole dashboard. The suite now parses
+  every inline script block as the browser receives it.
 
 ### Changed — the legacy-registry test note now describes what actually happens
 

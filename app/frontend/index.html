@@ -993,10 +993,11 @@
         <button class="btn primary" id="startup-install-all" onclick="installMissingStartupServices()" disabled>Install missing</button>
       </div>
       <p class="muted" style="font-size:13px;margin-bottom:10px">
-        Checks whether Image and Voice Studio start automatically and have their watchdogs loaded on every fleet Mac. Other legacy Studio products are not registered, monitored, updated, or shown by Studio Hub.
+        Checks whether Image and Voice Studio start automatically and have their watchdogs loaded on every fleet Mac. Retired Studio products are not registered, monitored, or updated — they appear below only if their folder is still installed somewhere, so you can remove it.
       </p>
       <div id="startup-status" class="update-progress hide" role="status" aria-live="polite"></div>
       <div style="overflow-x:auto"><table><thead><tr><th>Studio</th><th>Machine</th><th>Startup status</th><th>Service check</th><th></th></tr></thead><tbody id="startup-body"><tr><td colspan="5" class="empty">Click “Check startup” to audit the fleet.</td></tr></tbody></table></div>
+      <div id="startup-leftover" class="hide"></div>
     </div>
 
     <div class="card section" id="generation-dependencies-card">
@@ -1201,6 +1202,7 @@ let LIVE_RELEASE_NOTES = null;
 const RELEASE_NOTES = [
   { v: "2.13.14", date: "2026-08-29", items: [
     "<b>Removing a retired Studio now actually removes it.</b> Since the Hub stopped tracking Music, Chat, Video and Render, a full-remove of one that was still installed answered <b>404 — not registered on this Mac</b> and left the folder exactly where it was. It now completes the removal it promised: routing and updater turned off, the startup server, watchdog and updater agents unloaded and their files deleted, Pinokio autolaunch disabled, the port checked, and the Studio folder moved to the Trash.",
+    "<b>And there is now a button for it.</b> When the startup check finds a retired Studio still sitting on a Mac, <b>Automatic startup across the fleet</b> shows a <b>Leftover retired studios</b> list with a <b>Remove</b> button for each one. It asks you to confirm and tells you exactly what will happen first. When every Mac is clean the list is not there at all.",
     "Model caches are moved too, but only ones no other Studio still uses. Everything is moved to the Trash, never erased, so you can put it back.",
     "What may be deleted has not changed. Only a real folder sitting directly in your Pinokio <b>api</b> directory, named after one of those four Studios, is ever touched — a shortcut or a link pointing somewhere else is refused and nothing is moved.",
     "<b>Image and Voice cannot be removed this way at all</b>, installed or not, and a Studio that is already gone is still a harmless no-op that deletes nothing.",
@@ -5463,6 +5465,51 @@ function renderStartupServices(data) {
   status.className = "update-progress";
   status.innerHTML = `<div class="update-progress-head"><span class="update-progress-title">✓ Startup audit complete</span><span class="update-progress-count">${installed}/${startupServiceRows.length} ready</span></div><div class="update-progress-detail">${actionable} service${actionable === 1 ? "" : "s"} can be installed or repaired${machineRows.some(([, row]) => !row.reachable) ? " · offline machines can be retried later" : ""}</div>`;
 }
+let startupLeftoverRows = [];
+// Only Music, Chat, Video and Render can ever appear here: the Hub stopped
+// tracking them, but their folders can still be sitting on a Mac. Nothing is
+// rendered at all when every Mac is clean.
+function renderStartupLeftovers(data) {
+  const panel = $("#startup-leftover");
+  startupLeftoverRows = [];
+  Object.entries(data?.machines || {}).forEach(([machine, snapshot]) => {
+    (snapshot?.leftover_studios || []).forEach(row => startupLeftoverRows.push({...row, machine}));
+  });
+  if (!startupLeftoverRows.length) { panel.className = "hide"; panel.innerHTML = ""; return; }
+  panel.className = "";
+  const rows = startupLeftoverRows.map(row => {
+    const folders = (row.folders || []).map(name => esc(name)).join(", ");
+    return `<tr><td><b>${esc(row.title)}</b></td><td>${esc(mlabel(row.machine))}</td><td class="sub">${folders}</td>`
+      + `<td><div class="actions"><button class="btn compact" data-startup-remove onclick="removeLeftoverStudio('${jsq(row.machine)}','${jsq(row.modality)}')">Remove</button></div></td></tr>`;
+  }).join("");
+  panel.innerHTML = `<h4 style="margin:18px 0 6px">Leftover retired studios</h4>`
+    + `<p class="muted" style="font-size:13px;margin-bottom:10px">These Studios are retired and no longer used, but their folders are still installed. Removing one stops its services, takes it out of startup, and moves the folder to the Trash. Models still used by other Studios are kept, and nothing is erased — you can restore it from the Trash. Image and Voice can never be removed here.</p>`
+    + `<div style="overflow-x:auto"><table><thead><tr><th>Studio</th><th>Machine</th><th>Folder</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+async function removeLeftoverStudio(machine, modality) {
+  const row = startupLeftoverRows.find(item => item.machine === machine && item.modality === modality);
+  if (!row || startupActionBusy) return;
+  if (!confirm(`Remove ${row.title} from ${mlabel(machine)}?\n\nThis stops its services, removes it from startup, and moves the folder to the Trash. Models still used by other Studios are kept.\n\nNothing is erased — you can restore it from the Trash.`)) return;
+  startupActionBusy = true;
+  const status = $("#startup-status");
+  document.querySelectorAll("[data-startup-remove]").forEach(button => button.disabled = true);
+  status.className = "update-progress";
+  status.innerHTML = `<div class="update-progress-title">↻ Removing ${esc(row.title)} from ${esc(mlabel(machine))}…</div>`;
+  const response = await api(`/api/hub/startup-services/${encodeURIComponent(machine)}/${encodeURIComponent(modality)}/remove`, { method: "POST" }).catch(() => null);
+  const data = response ? await response.json().catch(() => ({})) : {};
+  startupActionBusy = false;
+  await loadStartupServices();
+  if (!response?.ok) {
+    // The Hub refuses an unsafe checkout path rather than deleting anything.
+    // Show its own words; never restate them as a generic failure.
+    const detail = typeof data.detail === "string" ? data.detail : data.detail?.message;
+    status.className = "update-progress error";
+    status.innerHTML = `<div class="update-progress-title">! ${esc(row.title)} was not removed</div><div class="update-progress-detail">${esc(detail || "Try again.")}</div>`;
+    return;
+  }
+  status.className = "update-progress";
+  status.innerHTML = `<div class="update-progress-title">✓ ${esc(row.title)} removed from ${esc(mlabel(machine))}</div><div class="update-progress-detail">Its folder was moved to the Trash on that Mac.</div>`;
+}
 async function loadStartupServices() {
   const refresh = $("#startup-refresh"), status = $("#startup-status");
   refresh.disabled = true; refresh.setAttribute("aria-busy", "true");
@@ -5473,6 +5520,7 @@ async function loadStartupServices() {
   refresh.disabled = false; refresh.removeAttribute("aria-busy");
   if (!response?.ok) { status.className = "update-progress error"; status.innerHTML = `<div class="update-progress-title">! Startup audit failed</div><div class="update-progress-detail">${esc(data.detail || "Try again.")}</div>`; return; }
   renderStartupServices(data);
+  renderStartupLeftovers(data);
 }
 async function runStartupInstall(machine, modality) {
   const response = await api(`/api/hub/startup-services/${encodeURIComponent(machine)}/${encodeURIComponent(modality)}/install`, { method: "POST" }).catch(() => null);
