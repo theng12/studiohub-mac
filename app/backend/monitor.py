@@ -274,8 +274,13 @@ class StudioMonitor:
         # metrics sample + watchdog revival pass (late import: no cycle)
         from . import metrics, peers
         metrics.on_poll(self.registry, self.status)
-        from .resources import check_proxy_health
-        check_proxy_health()
+        # `check_proxy_health` walks every process on the Mac (name + cmdline
+        # per candidate) to find Caddy, and that walk gets slower exactly when
+        # the machine is busy. Run it in a worker thread: on the loop it froze
+        # this single-worker process for the whole walk, so `/health/live`
+        # timed out and the site read as flapping while it was merely busy.
+        from . import resources
+        await asyncio.to_thread(resources.check_proxy_health)
         # refresh peer-Hub resources in the background (TTL-guarded + in-flight
         # guarded inside) so a slow/offline fleet never stalls the health poll.
         asyncio.create_task(peers.refresh(self.registry, self._client))

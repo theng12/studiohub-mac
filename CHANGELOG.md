@@ -10,7 +10,55 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
-## [2.13.12] — 2026-08-29
+## [2.13.13] — 2026-08-29
+
+### Fixed — a busy Mac no longer makes this site look like it is flapping
+
+- The Hub serves from a single worker, so anything slow that runs directly on
+  its event loop stops the whole process from answering — including
+  `/health/live`, which is what the fleet uses to decide a site is up.
+  Liveness was observed timing out for 75+ seconds under load while the Hub
+  was healthy, only busy.
+- Three periodic jobs were doing exactly that, all the same defect:
+  - the 5-second health poll called Caddy inspection inline, and that walks
+    **every** process on the Mac, reading name, command line, memory and
+    descriptor counts per candidate — slowest precisely when the Mac is busy;
+  - the hourly fleet-storage cleanup measured the Hub's own store with a full
+    `rglob` + `stat` tree walk, and the reclaim re-walks that tree once per
+    candidate batch;
+  - the hourly transcription cleanup did the same walk again.
+- All three now run in a worker thread, so the Hub keeps answering while they
+  work. What they do, how often, and what they clean up is unchanged.
+- Because the reclaim now genuinely runs in parallel with the cleanup route
+  that Starlette was already dispatching to its threadpool, storage mutations
+  are serialized: two reclaims would otherwise delete each other's candidates
+  and double-count the bytes they freed. Reads stay unserialized so a long
+  reclaim never delays the dashboard.
+
+### Fixed — the repair scheduler's tests no longer depend on how busy the Mac is
+
+- Three enrollment-repair coordinator tests waited a fixed 20 ms of wall clock
+  for the dispatch loop to drain, then asserted how many targets it had
+  reached. On a loaded Mac the loop had often completed only its first
+  dispatch inside that budget, so the suite reported a failure that no code
+  change had caused — seen at 52 s and 142 s total suite time against a ~26 s
+  typical run.
+- They now await the scheduler task itself, which finishes exactly when the
+  durable queue is empty. The assertions are unchanged, and the remaining
+  timeout is only a hang guard rather than the thing being measured, so the
+  result no longer varies with machine load.
+
+### Changed — the legacy full-remove test says which path it actually covers
+
+- `_add_legacy_compat_target` now documents that
+  `registry.TRACKED_MODALITIES` (Image, Voice) and
+  `startup_services.RETIRABLE_MODALITIES` (Music, Chat, Video, Render) have
+  been disjoint since *stop tracking legacy studios*, so a legacy Studio row is
+  seeded by the test rather than produced by `load_registry()`.
+- The note also records the consequence for operators: on a real Mac, fully
+  removing a still-installed Music, Chat, Video, or Render checkout answers
+  404 and leaves the folder in place, matching that release's stated intent
+  that legacy app folders stay untouched.
 
 ### Fixed — the manual update buttons no longer answer to the nightly idle gate
 

@@ -7,11 +7,20 @@ worker Studios' own protected cleanup APIs.
 """
 
 import json
+import threading
 from pathlib import Path
 
 from fastapi import HTTPException
 
 from .registry import DATA_DIR
+
+# The mutating entry points below now run in worker threads (the fleet storage
+# coordinator and the transcription cleanup loop hand them to `to_thread`, and
+# Starlette already dispatches the plain-`def` routes to its threadpool), so
+# two can be in flight at once. Serialize them: `save` writes through one fixed
+# temp-file name and `enforce_budget` deletes spool files, and neither wants a
+# partner. Reads stay unlocked so a long reclaim never delays the dashboard.
+_MUTATION_LOCK = threading.RLock()
 
 SETTINGS_FILE = DATA_DIR / "job_storage_settings.json"
 POLICY_VERSION = 2
@@ -96,11 +105,12 @@ def save(enabled: object, max_gb: object, retention_days: object = None) -> dict
         raise HTTPException(400, "retention_days must be 1, 3, 7, 15, 30, or 90")
     value = {"enabled": enabled, "max_bytes": max_bytes,
              "retention_days": retention_days}
-    _write(value)
-    # Keep the transcription queue's existing retention endpoint in sync.
-    from . import transcription_jobs
-    transcription_jobs.set_retention(retention_days)
-    return status()
+    with _MUTATION_LOCK:
+        _write(value)
+        # Keep the transcription queue's existing retention endpoint in sync.
+        from . import transcription_jobs
+        transcription_jobs.set_retention(retention_days)
+        return status()
 
 
 def enforce_budget(target_bytes: int | None = None) -> dict:
@@ -108,7 +118,15 @@ def enforce_budget(target_bytes: int | None = None) -> dict:
 
     Batch metadata remains in the Jobs UI; only its local input/output files are
     removed. Active transcription work is never eligible.
+
+    One reclaim at a time: two concurrent passes would delete each other's
+    candidates and double-count the bytes they reclaimed.
     """
+    with _MUTATION_LOCK:
+        return _enforce_budget(target_bytes)
+
+
+def _enforce_budget(target_bytes: int | None = None) -> dict:
     from . import transcription_jobs
 
     value = _read()

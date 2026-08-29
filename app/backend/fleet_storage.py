@@ -199,15 +199,20 @@ async def local_status(monitor, *, apply_policy: bool = False,
             _worker_status(monitor._client, studio, policy, apply_policy, cleanup)
             for studio in local_studios
         ))
-        hub_before = job_storage.status()
+        # Every job_storage call below walks the whole transcription tree with
+        # rglob+stat, and enforce_budget re-walks it once per candidate batch.
+        # On the event loop that froze this single-worker process for the whole
+        # walk, so `/health/live` timed out and the site read as flapping.
+        hub_before = await asyncio.to_thread(job_storage.status)
         if apply_policy:
-            hub_before = job_storage.save(policy["enabled"], policy["max_gb"],
-                                          policy["retention_days"])
+            hub_before = await asyncio.to_thread(
+                job_storage.save, policy["enabled"], policy["max_gb"],
+                policy["retention_days"])
         reclaimed = 0
         if cleanup and policy["enabled"]:
-            hub_cleaned = job_storage.enforce_budget()
+            hub_cleaned = await asyncio.to_thread(job_storage.enforce_budget)
             reclaimed += int(hub_cleaned.get("reclaimed_bytes") or 0)
-            hub_before = {**job_storage.status(), **hub_cleaned}
+            hub_before = {**await asyncio.to_thread(job_storage.status), **hub_cleaned}
         stores = [*rows, _hub_row(hub_before)]
 
         maximum = round(float(policy["max_gb"]) * 1024 ** 3)
@@ -226,8 +231,9 @@ async def local_status(monitor, *, apply_policy: bool = False,
                 target = max(0, current["used_bytes"] - excess)
                 before = current["used_bytes"]
                 if current["id"] == "studiohub":
-                    value = job_storage.enforce_budget(target)
-                    replacement = _hub_row({**job_storage.status(), **value})
+                    value = await asyncio.to_thread(job_storage.enforce_budget, target)
+                    replacement = _hub_row(
+                        {**await asyncio.to_thread(job_storage.status), **value})
                     reclaimed += int(value.get("reclaimed_bytes") or 0)
                 else:
                     replacement = await _shrink_worker(

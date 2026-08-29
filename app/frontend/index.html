@@ -1199,6 +1199,12 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.13.13", date: "2026-08-29", items: [
+    "<b>A busy Mac no longer makes this site look like it is flapping.</b> Three background jobs ran slow work directly on the Hub's single worker — Caddy inspection every 5 seconds, which walks every process on the Mac, and two hourly storage sweeps that walk the whole transcription folder. While they ran, the Hub could not answer <b>/health/live</b> at all, for as long as 75 seconds, and the fleet read that silence as an outage.",
+    "All three now run on a side thread, so the Hub keeps answering. What they check, how often, and what they clean up is unchanged — and storage cleanups are now serialized so two sweeps can never delete each other's files.",
+    "Three enrollment-repair scheduler tests judged the dispatch loop by a fixed 20 ms stopwatch, so a busy Mac could report a failure that no code change had caused. They now wait for the loop to actually drain its queue.",
+    "The legacy full-remove test now states plainly that it seeds its own Music/Chat/Video/Render row, because the registry has tracked only Image and Voice since <i>stop tracking legacy studios</i>.",
+  ]},
   { v: "2.13.12", date: "2026-08-29", items: [
     "<b>Update now</b> and <b>Update after current work</b> no longer stall on a permanent <b>Deferred</b> — they were answering to the nightly schedule's idle check, which never clears on a busy fleet.",
     "<b>Update after current work</b> now withdraws this site from fleet routing at once, waits for work already leased here, then installs and rejoins. Progress reads Draining site → Installing → Rejoining.",

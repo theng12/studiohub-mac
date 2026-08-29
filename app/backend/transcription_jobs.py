@@ -751,8 +751,12 @@ async def _cleanup_loop() -> None:
         # Fleet policy controls both age and capacity cleanup. Importing here
         # avoids a module cycle during app startup.
         from . import job_storage
-        if job_storage.status()["enabled"]:
-            job_storage.enforce_budget()
+        # Both calls walk the whole transcription tree with rglob+stat, and
+        # enforce_budget re-walks it once per candidate batch. On the event
+        # loop that froze this single-worker process for the whole walk, so
+        # `/health/live` timed out and the site read as flapping.
+        if (await asyncio.to_thread(job_storage.status))["enabled"]:
+            await asyncio.to_thread(job_storage.enforce_budget)
         await asyncio.sleep(3600)
 
 

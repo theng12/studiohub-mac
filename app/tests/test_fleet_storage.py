@@ -1,5 +1,8 @@
-from pathlib import Path
+import asyncio
 import json
+import threading
+import time
+from pathlib import Path
 
 import pytest
 
@@ -180,3 +183,69 @@ def test_dashboard_has_modern_fleet_storage_controls():
     assert 'class="storage-machine${offline ? " offline" : ""}' in text
     assert "cleared after 30 days" in text
     assert '<option value="30" selected>30 days</option>' in text
+
+
+@pytest.mark.asyncio
+async def test_hub_store_walk_runs_off_the_event_loop(reset, monkeypatch):
+    """The Hub's own store is measured with a full rglob+stat tree walk.
+
+    `enforce_budget` re-walks that tree once per candidate batch, so on a large
+    spool this is seconds of work. Run on the event loop it froze this
+    single-worker process for the whole walk and `/health/live` timed out,
+    which is what made the site look like it was flapping.
+
+    The blocking stub can only be released by another task on the loop, so it
+    completes if and only if the walk really happens off-loop.
+    """
+    entered, release = threading.Event(), threading.Event()
+
+    def blocking_status():
+        entered.set()
+        assert release.wait(10), "job_storage.status ran on the event loop"
+        return {"used_bytes": 0, "supported": True, "scope": "Hub transcription"}
+
+    monkeypatch.setattr(fleet_storage.job_storage, "status", blocking_status)
+    client = StorageClient({
+        "image": {"used_bytes": GIB, "supported": True},
+        "voice": {"used_bytes": GIB, "supported": True},
+        "chat": {"used_bytes": 0, "supported": False},
+    })
+
+    task = asyncio.create_task(fleet_storage.local_status(Monitor(client)))
+    assert await asyncio.to_thread(entered.wait, 10), "the Hub store was never measured"
+    release.set()
+    result = await asyncio.wait_for(task, 10)
+    assert any(row["id"] == "studiohub" for row in result["machines"][0]["stores"])
+
+
+def test_two_reclaims_never_delete_at_the_same_time(reset, monkeypatch):
+    """Both hourly loops now hand the reclaim to a worker thread, and the
+    `/api/hub/job-storage/cleanup` route already ran in Starlette's threadpool,
+    so two passes can be in flight at once. They must not be: concurrent passes
+    would delete each other's candidates and double-count reclaimed bytes."""
+    from backend import job_storage
+
+    guard = threading.Lock()
+    active, peak = [], []
+
+    def slow_measure():
+        with guard:
+            active.append(1)
+            peak.append(len(active))
+        time.sleep(0.05)
+        with guard:
+            active.pop()
+        return 0
+
+    monkeypatch.setattr(job_storage, "storage_bytes", slow_measure)
+    monkeypatch.setattr(job_storage, "_read", lambda: {
+        "enabled": False, "max_bytes": 80 * GIB, "retention_days": 30})
+
+    workers = [threading.Thread(target=job_storage.enforce_budget) for _ in range(4)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(30)
+
+    assert not any(worker.is_alive() for worker in workers)
+    assert peak and max(peak) == 1

@@ -1,3 +1,5 @@
+import asyncio
+import threading
 from pathlib import Path
 
 import pytest
@@ -201,3 +203,42 @@ async def test_whisper_models_join_fleet_inventory(monitor, seed_catalog):
     assert inventory["endpoint_count"] == 1
     assert inventory["ready_count"] == 1
     assert len(inventory["models"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_health_poll_runs_caddy_inspection_off_the_event_loop(
+    reset, monitor, monkeypatch,
+):
+    """A busy Mac must not make this single-worker process stop answering.
+
+    `check_proxy_health` walks every process on the machine (name + cmdline per
+    candidate) and gets slower exactly when the Mac is loaded. Run on the event
+    loop by the 5s health poll, it froze the whole Hub for the length of that
+    walk, so `/health/live` timed out and the site read as flapping.
+
+    The blocking stub can only be released by another task on the loop, so it
+    completes if and only if the walk really happens off-loop.
+    """
+    from backend import peers, resources
+
+    entered, release = threading.Event(), threading.Event()
+
+    def blocking_check():
+        entered.set()
+        assert release.wait(10), "check_proxy_health ran on the event loop"
+        return {"status": "not_running"}
+
+    async def no_poll(_studio):
+        return None
+
+    async def no_refresh(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(resources, "check_proxy_health", blocking_check)
+    monkeypatch.setattr(monitor, "_poll_one", no_poll)
+    monkeypatch.setattr(peers, "refresh", no_refresh)
+
+    poll = asyncio.create_task(monitor.poll_all())
+    assert await asyncio.to_thread(entered.wait, 10), "poll never inspected the proxy"
+    release.set()
+    await asyncio.wait_for(poll, 10)

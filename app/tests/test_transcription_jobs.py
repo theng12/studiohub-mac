@@ -1,6 +1,8 @@
 import asyncio
+import contextlib
 import io
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -465,3 +467,37 @@ def test_manual_cleanup_removes_terminal_files_but_keeps_lifetime_stats(authed):
     assert response.json()["cleaned"] == 1 and not root.exists()
     assert jobs.statistics()["done"] == 1
     assert jobs.get_batch("cleaned")["storage_cleaned_at"] > 0
+
+
+@pytest.mark.asyncio
+async def test_storage_cleanup_loop_runs_off_the_event_loop(reset, monkeypatch):
+    """The hourly reclaim measures the spool with a full rglob+stat tree walk.
+
+    Run on the event loop it froze this single-worker process for the whole
+    walk, so `/health/live` timed out and the site read as flapping. The
+    blocking stub can only be released by another task on the loop, so it
+    completes if and only if the walk really happens off-loop.
+    """
+    from backend import job_storage
+
+    entered, release = threading.Event(), threading.Event()
+
+    def blocking_status():
+        entered.set()
+        assert release.wait(10), "job_storage.status ran on the event loop"
+        return {"enabled": False}
+
+    monkeypatch.setattr(job_storage, "status", blocking_status)
+
+    loop_task = asyncio.create_task(jobs._cleanup_loop())
+    try:
+        assert await asyncio.to_thread(entered.wait, 10), "the loop never checked policy"
+        release.set()
+        # Policy is disabled, so the loop parks in its hour-long sleep instead
+        # of reclaiming; it must still be alive and must not have raised.
+        await asyncio.sleep(0)
+        assert not loop_task.done()
+    finally:
+        loop_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await loop_task
