@@ -57,6 +57,21 @@ def _coordinator(repair_store, rows, addresses):
     )
 
 
+async def _drain_scheduler(coordinator, timeout: float = 10.0) -> None:
+    """Wait for the coordinator's dispatch loop to drain its durable queue.
+
+    `_scheduler_loop` returns as soon as `dispatch_next` reports an empty
+    queue, so awaiting that task is the exact "all scheduled work has run"
+    event. Sleeping a fixed wall-clock budget instead is load-sensitive: on a
+    busy machine the loop may only have completed one dispatch by the time the
+    sleep expires, which makes the ticket-count assertions fail spuriously.
+    The timeout is only a hang guard, never the thing being measured.
+    """
+    task = coordinator._scheduler_task
+    assert task is not None, "start()/create_batch() did not wake a scheduler"
+    await asyncio.wait_for(task, timeout)
+
+
 class MutableClock:
     def __init__(self, value=1000.0):
         self.value = value
@@ -1009,7 +1024,7 @@ async def test_foreground_wait_parks_uncertain_mac_then_dispatches_next(
     coordinator.dispatch_next = dispatch
     monkeypatch.setattr(enrollment_repair, "DISPATCH_TIMEOUT_SECONDS", 0.001)
     await coordinator.start()
-    await asyncio.sleep(0.02)
+    await _drain_scheduler(coordinator)
     await coordinator.stop()
 
     assert dispatched == ["mac-a", "mac-b"]
@@ -1062,7 +1077,7 @@ async def test_unresolved_same_target_gets_no_second_ticket_while_later_mac_proc
     coordinator.dispatch_next = dispatch
     monkeypatch.setattr(enrollment_repair, "DISPATCH_TIMEOUT_SECONDS", 0.001)
     await coordinator.start()
-    await asyncio.sleep(0.02)
+    await _drain_scheduler(coordinator)
     await coordinator.stop()
 
     assert ticket_calls["count"] == 2
@@ -1187,7 +1202,7 @@ async def test_idle_start_wakes_one_scheduler_for_a_later_batch_and_stops_cleanl
 
     first = coordinator.create_batch(["mac-a"])
     replay = coordinator.create_batch(["mac-a"])
-    await asyncio.sleep(0.02)
+    await _drain_scheduler(coordinator)
 
     assert replay["requests"][0]["request_id"] == first["requests"][0]["request_id"]
     assert dispatched == [first["requests"][0]["request_id"]]

@@ -62,6 +62,18 @@ def _mark_installed(app_dir: Path, launch_agents: Path, modality: str = "image")
 
 
 def _add_legacy_compat_target(modality: str) -> None:
+    """Seed a retirable (legacy) Studio row that `load_registry()` no longer emits.
+
+    `registry.TRACKED_MODALITIES` is ("image", "voice") while
+    `startup_services.RETIRABLE_MODALITIES` is the four legacy families, so the
+    two sets are disjoint: production never registers a legacy row any more.
+    Retire/remove endpoints look their target up in `monitor.registry`, so these
+    cases must seed the row themselves or they only ever exercise the 404 /
+    ghost-cleanup branches. A still-installed legacy checkout therefore reaches
+    the full-remove branch only through this shim; on a real Mac the same
+    request answers 404 and the checkout is left alone, which is what "their
+    physical app folders are untouched" was meant to mean.
+    """
     main.monitor.registry.append({
         "id": modality, "modality": modality, "machine": "local",
         "host": "127.0.0.1", "port": startup_services.SERVICE_SPECS[modality]["port"],
