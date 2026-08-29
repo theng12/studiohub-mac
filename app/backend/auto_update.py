@@ -24,13 +24,13 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Callable, Optional
+from typing import Callable, Optional, Protocol
 from urllib.request import Request, urlopen
 
 
 MODES = {"off", "notify", "auto"}
 FREQUENCIES = {"daily", "weekly"}
-STATES = {"idle", "checking", "available", "deferred", "updating",
+STATES = {"idle", "checking", "available", "deferred", "draining", "updating",
           "restarting", "succeeded", "failed"}
 BRANCH_RE = re.compile(r"^[A-Za-z0-9._/-]{1,100}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -40,6 +40,8 @@ SECRET_RE = re.compile(r"(?i)(token|secret|password|authorization|api[_-]?key)\s
 MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024
 RUN_MODES = {"service", "pinokio", "stopped"}
 MANAGED_PHASES = {"prepared", "stopping", "stopped", "merged", "verified", "restarting"}
+# Owner-editable in Settings; this is only the value a fresh install starts with.
+DEFAULT_DRAIN_TIMEOUT_MINUTES = 30
 
 
 class UpdateError(RuntimeError):
@@ -48,6 +50,26 @@ class UpdateError(RuntimeError):
 
 class UpdateDeferred(UpdateError):
     """Work is active, so the update must be retried later."""
+
+
+class SiteDrain(Protocol):
+    """Site-local withdrawal used by "Update after current work".
+
+    Idle-gated updates are unsound on a production fleet: the machines are never
+    spontaneously free, so waiting for idleness never ends. Instead the site
+    declares a maintenance intent, stops granting new leases so the global
+    scheduler routes work elsewhere, waits a bounded time for already-leased
+    work to finish, and then installs through the ordinary manual path.
+    """
+
+    def begin(self) -> list[str]:
+        """Stop granting new work here. Returns the workers newly withdrawn."""
+
+    def pending(self) -> list[str]:
+        """Human-readable work the drain is still waiting for."""
+
+    def release(self) -> None:
+        """Rejoin the fleet by undoing exactly what ``begin`` withdrew."""
 
 
 class _UpdateBusy(UpdateError):
@@ -120,13 +142,15 @@ def _atomic_json(path: Path, payload: dict) -> None:
 
 class AutoUpdater:
     def __init__(self, spec: dict, readiness: Optional[Callable[[], list[str]]] = None,
-                 *, runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+                 *, drain: Optional["SiteDrain"] = None,
+                 runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
                  now: Callable[[], dt.datetime] = _utc_now) -> None:
         self.spec = dict(spec)
         requested_root = Path(self.spec["root"])
         self._root_is_symlink = requested_root.is_symlink()
         self.root = requested_root.resolve()
         self.readiness = readiness
+        self.drain = drain
         self.runner = runner
         self.now = now
         self.state_dir = self.root / "auto_update"
@@ -139,6 +163,7 @@ class AutoUpdater:
         self.agent_path = Path.home() / "Library" / "LaunchAgents" / f"{self.agent_label}.plist"
         self.wrapper_path = self.state_dir / f"{self.spec['slug']}-updater.sh"
         self._thread_lock = threading.Lock()
+        self._drain_lock = threading.Lock()
         self._state_thread_lock = threading.RLock()
         self._state_depth = threading.local()
         self._validate_spec()
@@ -200,6 +225,7 @@ class AutoUpdater:
             "maintenance_hour": int(self.spec["default_hour"]),
             "idle_only": True,
             "weekday": int(self.spec.get("default_weekday", 6)),
+            "drain_timeout_minutes": DEFAULT_DRAIN_TIMEOUT_MINUTES,
         }
 
     def _load_json(self, path: Path, fallback: dict) -> dict:
@@ -217,6 +243,13 @@ class AutoUpdater:
             data["frequency"] = "daily"
         data["maintenance_hour"] = max(0, min(23, int(data.get("maintenance_hour", self.defaults["maintenance_hour"]))))
         data["idle_only"] = bool(data.get("idle_only", True))
+        # No upper bound: how long a site may wait for its own work is the
+        # owner's call, not a constant baked into the updater.
+        try:
+            data["drain_timeout_minutes"] = max(1, int(data.get(
+                "drain_timeout_minutes", DEFAULT_DRAIN_TIMEOUT_MINUTES)))
+        except (TypeError, ValueError):
+            data["drain_timeout_minutes"] = DEFAULT_DRAIN_TIMEOUT_MINUTES
         return data
 
     def _read_status_unlocked(self) -> dict:
@@ -426,6 +459,7 @@ class AutoUpdater:
         frequency = payload.get("frequency", current["frequency"])
         hour = payload.get("maintenance_hour", current["maintenance_hour"])
         idle_only = payload.get("idle_only", current["idle_only"])
+        drain_timeout = payload.get("drain_timeout_minutes", current["drain_timeout_minutes"])
         if mode not in MODES:
             raise UpdateError("Mode must be off, notify, or auto.")
         if frequency not in FREQUENCIES:
@@ -434,8 +468,11 @@ class AutoUpdater:
             raise UpdateError("Maintenance hour must be from 0 through 23.")
         if not isinstance(idle_only, bool):
             raise UpdateError("Idle-only must be true or false.")
+        if isinstance(drain_timeout, bool) or not isinstance(drain_timeout, int) or drain_timeout < 1:
+            raise UpdateError("Drain timeout must be a whole number of minutes, 1 or more.")
         saved = {"mode": mode, "frequency": frequency, "maintenance_hour": hour,
-                 "idle_only": idle_only, "weekday": int(current.get("weekday", 6))}
+                 "idle_only": idle_only, "weekday": int(current.get("weekday", 6)),
+                 "drain_timeout_minutes": drain_timeout}
         with self._status_transaction():
             _atomic_json(self.config_path, saved)
             status = self._read_status_unlocked()
@@ -965,8 +1002,16 @@ class AutoUpdater:
                         managed_state = {**managed, "requested_commit": managed["target_commit"],
                                          **rollback, "run_mode": mode, "phase": phase}
                         self._write_status(active_managed_update=managed_state, pending_manual=True)
-                reasons = (self.readiness_reasons(managed=True) if managed
-                           else self.readiness_reasons())
+                # The idle gate belongs to the *automatic* schedule and to
+                # controller-managed releases. A person pressing a button has
+                # already decided; on a production fleet the site is never
+                # spontaneously idle, so gating manual updates on idleness made
+                # both "Update now" and "Update after current work" no-ops that
+                # only ever reported "Deferred". "Update after current work"
+                # reaches this method having already drained the site.
+                reasons = ((self.readiness_reasons(managed=True) if managed
+                            else self.readiness_reasons())
+                           if (automatic or managed) else [])
                 if reasons:
                     reason = "; ".join(reasons)
                     self._write_status(state="deferred", defer_reason=reason,
@@ -1098,6 +1143,94 @@ class AutoUpdater:
                            pending_manual=True, managed_helper_pid=getattr(process, "pid", None))
         return self.public_status()
 
+    def _drain_timeout_seconds(self) -> float:
+        return float(self.settings()["drain_timeout_minutes"]) * 60.0
+
+    def _release_drain(self) -> None:
+        """Always give the site back; a failed install must not withdraw it."""
+        if self.drain is None:
+            return
+        try:
+            self.drain.release()
+        except Exception:
+            self.log.exception("could not clear the site drain")
+
+    def _start_drain_update(self) -> dict:
+        """Withdraw this site now, then install once leased work has finished."""
+        if not self._drain_lock.acquire(blocking=False):
+            raise UpdateError("A drained update is already in progress.")
+        try:
+            withdrawn = list(self.drain.begin() or [])
+        except Exception:
+            self._drain_lock.release()
+            raise
+        self._write_status(
+            state="draining", defer_reason=None, next_retry=None, pending_manual=True,
+            last_update_result="Draining this site before updating",
+            details=[f"Stopped granting new work to {len(withdrawn)} worker(s) at this site.",
+                     "Waiting for work already leased here to finish."])
+        threading.Thread(target=self._drain_and_update, name="hub-update-drain",
+                         daemon=True).start()
+        return self.public_status()
+
+    def _drain_and_update(self) -> None:
+        try:
+            skipped = self._wait_for_drain()
+            self.trigger_update(after_current=False)
+            self._hold_drain_until_settled(skipped)
+        except Exception as exc:
+            self.log.exception("drained update failed")
+            self._release_drain()
+            self._write_status(state="failed", defer_reason=None, pending_manual=False,
+                               last_update_result="Update failed",
+                               details=[str(_redact(str(exc)))])
+        finally:
+            self._drain_lock.release()
+
+    def _wait_for_drain(self) -> list[str]:
+        """Wait a bounded time for leased work, then say what was not waited for.
+
+        A lease whose worker never reports the attempt as finished (a ghost
+        lease) must not hold the site out of the fleet forever, so the wait ends
+        at the owner-configured timeout and the update proceeds regardless.
+        """
+        minutes = self.settings()["drain_timeout_minutes"]
+        deadline = time.monotonic() + self._drain_timeout_seconds()
+        pending = list(self.drain.pending() or [])
+        while pending and time.monotonic() < deadline:
+            self._write_status(
+                state="draining", last_update_result="Draining this site before updating",
+                details=[f"Waiting for {len(pending)} item(s) already in flight here.",
+                         *pending[:6]])
+            time.sleep(2)
+            pending = list(self.drain.pending() or [])
+        if pending:
+            self.log.warning("drain timed out after %s minute(s); proceeding without: %s",
+                             minutes, "; ".join(pending))
+            self._write_status(
+                state="draining", last_update_result="Draining this site before updating",
+                details=[f"Drain timed out after {minutes} minute(s); installing anyway.",
+                         *[f"Not waited for: {value}" for value in pending[:6]]])
+        return pending
+
+    def _hold_drain_until_settled(self, skipped: list[str]) -> None:
+        """Hold the withdrawal while the installer runs, then always release it.
+
+        On success the service restart clears the in-process drain anyway; this
+        loop exists so a failed or stalled install still rejoins the fleet.
+        """
+        deadline = time.monotonic() + self._drain_timeout_seconds()
+        while time.monotonic() < deadline:
+            time.sleep(2)
+            if self._read_status().get("state") not in {"draining", "updating", "restarting"}:
+                break
+        self._release_drain()
+        if skipped:
+            status = self._read_status()
+            details = status.get("details") if isinstance(status.get("details"), list) else []
+            self._write_status(details=[*details, *[f"Not waited for: {value}"
+                                                    for value in skipped[:6]]])
+
     def trigger_update(self, *, after_current: bool = False, target_commit: Optional[str] = None,
                        target_version: Optional[str] = None, operation_id: Optional[str] = None) -> dict:
         managed = self._managed_request(target_commit=target_commit, target_version=target_version,
@@ -1134,6 +1267,8 @@ class AutoUpdater:
             if active:
                 raise UpdateError("A managed update operation is already active.")
             self._write_status(active_managed_update=None, managed_helper_pid=None)
+            if after_current and self.drain is not None:
+                return self._start_drain_update()
             if after_current:
                 reasons = self.readiness_reasons()
                 self._write_status(state="deferred", defer_reason="; ".join(reasons) if reasons else "Queued for the next idle check",

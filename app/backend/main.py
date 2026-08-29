@@ -78,6 +78,7 @@ class AutoUpdateSettingsBody(BaseModel):
     frequency: str
     maintenance_hour: int
     idle_only: bool = True
+    drain_timeout_minutes: int | None = None
 
 
 class AutoUpdateRequestBody(BaseModel):
@@ -340,7 +341,64 @@ def _automatic_update_blockers() -> list[str]:
     return reasons
 
 
-auto_updater = create_updater(readiness=_automatic_update_blockers)
+# Blockers a drain cannot clear by withdrawing the site: queued batch items stop
+# dispatching the moment every worker is in maintenance, and an in-flight item is
+# already counted as a lease, so the drain waits on leases and on Hub-owned
+# maintenance operations only. Waiting on the batch queues themselves is what
+# made "Update after current work" wait forever on a production fleet.
+_DRAIN_NEUTRALISED_BLOCKERS = frozenset({
+    "a fleet worker owns an active lease",
+    "a generation batch is queued or running",
+    "a Chat batch is queued or running",
+    "a transcription batch is queued or running",
+})
+
+
+class _SiteDrain:
+    """Withdraw this site from fleet routing so an update can install now.
+
+    Every registered worker is put into the same maintenance state the rolling
+    Studio updater already uses, which stops new lease grants in the broker and
+    reports ``drained`` for each worker — and therefore for the controller — in
+    the capability snapshot GenStudio reads, so GenStudio routes elsewhere.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._withdrawn: list[str] = []
+        self._active = False
+
+    def active(self) -> bool:
+        return self._active
+
+    def begin(self) -> list[str]:
+        with self._lock:
+            # Only workers this drain withdrew are given back later, so a
+            # concurrent Studio update keeps the worker it already owns.
+            newly = [studio["id"] for studio in monitor.registry
+                     if not broker.in_maintenance(studio["id"])]
+            for studio_id in newly:
+                broker.set_maintenance(studio_id, True)
+            self._withdrawn = newly
+            self._active = True
+            return newly
+
+    def pending(self) -> list[str]:
+        leases = [f"{studio_id} is still running an item"
+                  for studio_id in sorted(fleet_ops.active_studio_leases())]
+        return leases + [reason for reason in _automatic_update_blockers()
+                         if reason not in _DRAIN_NEUTRALISED_BLOCKERS]
+
+    def release(self) -> None:
+        with self._lock:
+            for studio_id in self._withdrawn:
+                broker.set_maintenance(studio_id, False)
+            self._withdrawn = []
+            self._active = False
+
+
+hub_site_drain = _SiteDrain()
+auto_updater = create_updater(readiness=_automatic_update_blockers, drain=hub_site_drain)
 
 
 def _schedule_auto_update_reconciliation() -> None:
@@ -1371,7 +1429,9 @@ def automatic_update_readiness():
 @app.post("/api/auto-update/settings")
 def automatic_update_settings(body: AutoUpdateSettingsBody):
     try:
-        return auto_updater.save_settings(body.model_dump())
+        # exclude_none keeps an older client that never sends the drain timeout
+        # from silently resetting the owner's stored value.
+        return auto_updater.save_settings(body.model_dump(exclude_none=True))
     except UpdateError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

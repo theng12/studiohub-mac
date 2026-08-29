@@ -1302,3 +1302,15 @@ def test_hub_restart_cannot_bypass_repository_safety(monkeypatch, authed):
     response = authed.post("/api/hub/maintenance/restart", json={"force": True})
     assert response.status_code == 409
     assert "local changes" in response.json()["detail"]
+
+
+def test_settings_body_carries_drain_timeout_without_resetting_it():
+    """An older client that omits the field must not wipe the owner's value."""
+    from backend.main import AutoUpdateSettingsBody
+
+    legacy = AutoUpdateSettingsBody(mode="off", frequency="daily", maintenance_hour=1)
+    assert "drain_timeout_minutes" not in legacy.model_dump(exclude_none=True)
+
+    explicit = AutoUpdateSettingsBody(mode="off", frequency="daily",
+                                      maintenance_hour=1, drain_timeout_minutes=90)
+    assert explicit.model_dump(exclude_none=True)["drain_timeout_minutes"] == 90

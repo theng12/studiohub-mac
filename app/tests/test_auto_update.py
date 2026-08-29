@@ -125,7 +125,7 @@ def _save(updater: AutoUpdater, mode: str) -> dict:
 def test_default_is_off_and_idle_only(updater: AutoUpdater):
     assert updater.settings() == {
         "mode": "off", "frequency": "daily", "maintenance_hour": 1,
-        "idle_only": True, "weekday": 6,
+        "idle_only": True, "weekday": 6, "drain_timeout_minutes": 30,
     }
     assert updater.public_status()["scheduler"]["installed"] is False
 
@@ -1071,3 +1071,157 @@ def test_build_suffix_version_matching(updater: AutoUpdater):
     updater.spec["allow_build_suffix"] = True
     assert updater._version_matches("1.22.0.abcdef0", "1.22.0")
     assert not updater._version_matches("1.21.9.abcdef0", "1.22.0")
+
+
+# ---------------------------------------------------------------------------
+# Drain-based "Update after current work"
+#
+# Owner ruling: idle-gated updates are unsound for a production fleet, because
+# the machines are never spontaneously free. A person pressing a manual button
+# has already decided, so neither manual button may consult the automatic idle
+# gate; "Update after current work" withdraws the site instead of waiting.
+# ---------------------------------------------------------------------------
+
+
+class FakeDrain:
+    """Records the withdraw/wait/rejoin calls a drained update must make."""
+
+    def __init__(self, pending: list[list[str]] | None = None) -> None:
+        self.calls: list[str] = []
+        self._pending = list(pending or [[]])
+        self.workers = ["voice@a", "image@b"]
+
+    def begin(self) -> list[str]:
+        self.calls.append("begin")
+        return list(self.workers)
+
+    def pending(self) -> list[str]:
+        self.calls.append("pending")
+        return self._pending.pop(0) if self._pending else []
+
+    def release(self) -> None:
+        self.calls.append("release")
+
+
+def _drained(updater: AutoUpdater, drain: FakeDrain, monkeypatch) -> None:
+    monkeypatch.setattr(updater, "drain", drain)
+    monkeypatch.setattr(updater, "_drain_and_update", lambda: None)
+
+
+def test_manual_update_ignores_the_automatic_idle_gate(updater: AutoUpdater, monkeypatch):
+    """The reported defect: "Update now" deferred on the nightly path's gate."""
+    monkeypatch.setattr(updater, "readiness_reasons", lambda **_: [
+        "a fleet worker owns an active lease",
+        "a generation batch is queued or running",
+        "a staggered automatic fleet update is active",
+    ])
+    monkeypatch.setattr(updater, "_git_preflight",
+                        lambda **_kwargs: {"available": False, "local": "a" * 40,
+                                           "remote": "a" * 40, "latest": "1.0.0"})
+    updater.update(automatic=False)
+    assert updater.public_status()["state"] == "succeeded"
+
+
+def test_automatic_update_still_respects_the_idle_gate(updater: AutoUpdater, monkeypatch):
+    monkeypatch.setattr(updater, "readiness_reasons",
+                        lambda **_: ["a fleet worker owns an active lease"])
+    with pytest.raises(UpdateDeferred):
+        updater.update(automatic=True)
+    assert updater.public_status()["state"] == "deferred"
+
+
+def test_after_current_work_withdraws_the_site_instead_of_deferring(
+    updater: AutoUpdater, monkeypatch,
+):
+    drain = FakeDrain()
+    _drained(updater, drain, monkeypatch)
+    monkeypatch.setattr(updater, "readiness_reasons",
+                        lambda **_: ["a generation batch is queued or running"])
+    status = updater.trigger_update(after_current=True)
+    assert status["state"] == "draining"
+    assert status["defer_reason"] is None
+    assert drain.calls == ["begin"]
+    assert "2 worker(s)" in status["details"][0]
+
+
+def test_drain_waits_for_leases_then_installs_through_the_manual_path(
+    updater: AutoUpdater, monkeypatch,
+):
+    drain = FakeDrain([["voice@a is still running an item"], []])
+    monkeypatch.setattr(updater, "drain", drain)
+    monkeypatch.setattr("backend.auto_update.time.sleep", lambda _seconds: None)
+    triggered = []
+    monkeypatch.setattr(updater, "trigger_update",
+                        lambda **kwargs: triggered.append(kwargs))
+    monkeypatch.setattr(updater, "_hold_drain_until_settled", lambda skipped: None)
+    updater._drain_lock.acquire()
+    updater._drain_and_update()
+    assert triggered == [{"after_current": False}]
+    assert drain.calls.count("pending") == 2
+    assert "release" not in drain.calls
+
+
+def test_a_ghost_lease_cannot_block_the_drain_forever(updater: AutoUpdater, monkeypatch):
+    """A lease its worker never finishes must bound the wait, not stop it."""
+    drain = FakeDrain()
+    drain._pending = []
+    monkeypatch.setattr(drain, "pending", lambda: ["voice@a is still running an item"])
+    monkeypatch.setattr(updater, "drain", drain)
+    monkeypatch.setattr("backend.auto_update.time.sleep", lambda _seconds: None)
+    updater.save_settings({"mode": "off", "frequency": "daily", "maintenance_hour": 1,
+                           "idle_only": True, "drain_timeout_minutes": 1})
+    clock = iter([0.0] + [61.0] * 20)
+    monkeypatch.setattr("backend.auto_update.time.monotonic", lambda: next(clock))
+    skipped = updater._wait_for_drain()
+    assert skipped == ["voice@a is still running an item"]
+    details = updater.public_status()["details"]
+    assert any("timed out after 1 minute(s)" in line for line in details)
+    assert any("Not waited for: voice@a" in line for line in details)
+
+
+def test_a_failed_install_gives_the_site_back(updater: AutoUpdater, monkeypatch):
+    drain = FakeDrain()
+    monkeypatch.setattr(updater, "drain", drain)
+    monkeypatch.setattr("backend.auto_update.time.sleep", lambda _seconds: None)
+
+    def explode(**_kwargs):
+        raise UpdateError("git fetch failed")
+
+    monkeypatch.setattr(updater, "trigger_update", explode)
+    updater._drain_lock.acquire()
+    updater._drain_and_update()
+    assert "release" in drain.calls
+    status = updater.public_status()
+    assert status["state"] == "failed"
+    assert "git fetch failed" in " ".join(status["details"])
+
+
+def test_a_stalled_install_still_rejoins_the_fleet(updater: AutoUpdater, monkeypatch):
+    drain = FakeDrain()
+    monkeypatch.setattr(updater, "drain", drain)
+    monkeypatch.setattr("backend.auto_update.time.sleep", lambda _seconds: None)
+    clock = iter([0.0] + [10_000.0] * 20)
+    monkeypatch.setattr("backend.auto_update.time.monotonic", lambda: next(clock))
+    updater._write_status(state="updating")
+    updater._hold_drain_until_settled([])
+    assert drain.calls == ["release"]
+
+
+def test_a_second_drained_update_is_refused_while_one_runs(updater: AutoUpdater, monkeypatch):
+    drain = FakeDrain()
+    _drained(updater, drain, monkeypatch)
+    updater.trigger_update(after_current=True)
+    with pytest.raises(UpdateError, match="already in progress"):
+        updater.trigger_update(after_current=True)
+
+
+def test_drain_timeout_is_owner_editable_and_has_no_upper_bound(updater: AutoUpdater):
+    saved = updater.save_settings({"mode": "off", "frequency": "daily",
+                                   "maintenance_hour": 1, "idle_only": True,
+                                   "drain_timeout_minutes": 4320})
+    assert saved["settings"]["drain_timeout_minutes"] == 4320
+    assert updater._drain_timeout_seconds() == 4320 * 60
+    with pytest.raises(UpdateError, match="1 or more"):
+        updater.save_settings({"mode": "off", "frequency": "daily",
+                               "maintenance_hour": 1, "idle_only": True,
+                               "drain_timeout_minutes": 0})

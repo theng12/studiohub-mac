@@ -847,3 +847,72 @@ def test_withdrawn_release_intent_removes_convergence_signal_and_leaves_capacity
         row["available_capacity"]["available_memory_gb"] is not None
         for row in after["machines"]
     )
+
+
+def test_site_drain_withdraws_every_worker_so_genstudio_routes_elsewhere(
+        authed, monitor):
+    """"Update after current work" must make this site unroutable immediately.
+
+    GenStudio reads this snapshot, so the drain is only real if the controller
+    and every worker report ``drained`` and no slots the moment it begins.
+    """
+    from backend import broker
+    from backend.main import hub_site_drain
+
+    _seed_capability_site(monitor)
+    before = authed.get("/api/hub/capabilities").json()
+    assert before["controller"]["drained"] is False
+    assert before["capacity"]["available_physical_machine_slots"] > 0
+
+    withdrawn = hub_site_drain.begin()
+    try:
+        during = authed.get("/api/hub/capabilities").json()
+        assert sorted(withdrawn) == ["image", "voice"]
+        assert during["controller"]["drained"] is True
+        assert during["controller"]["ready"] is False
+        assert all(worker["drained"] and worker["maintenance"]
+                   for worker in during["workers"])
+        assert during["capacity"]["available_physical_machine_slots"] == 0
+        assert during["capacity"]["eligible_worker_services"] == 0
+    finally:
+        hub_site_drain.release()
+
+    after = authed.get("/api/hub/capabilities").json()
+    assert after["controller"]["drained"] is False
+    assert not broker.in_maintenance("image") and not broker.in_maintenance("voice")
+
+
+def test_site_drain_gives_back_only_the_workers_it_withdrew(authed, monitor):
+    """A rolling Studio update already owns its worker; the drain must not free it."""
+    from backend import broker
+    from backend.main import hub_site_drain
+
+    _seed_capability_site(monitor)
+    broker.set_maintenance("voice", True)
+    try:
+        assert hub_site_drain.begin() == ["image"]
+        hub_site_drain.release()
+        assert broker.in_maintenance("voice") is True
+        assert broker.in_maintenance("image") is False
+    finally:
+        broker.set_maintenance("voice", False)
+
+
+def test_drain_waits_for_leases_but_never_for_a_queued_batch(authed, monitor):
+    """The queued-batch reasons are exactly what made the old wait endless."""
+    from backend import broker, fleet_ops
+    from backend.main import hub_site_drain
+
+    _seed_capability_site(monitor)
+    broker.batches["b1"] = {
+        "modality": "image", "cancelled": False,
+        "items": [{"state": "queued"}],
+    }
+    try:
+        assert "a generation batch is queued or running" in fleet_ops.hub_update_blockers()
+        assert hub_site_drain.pending() == []
+        broker._busy.add("image")
+        assert hub_site_drain.pending() == ["image is still running an item"]
+    finally:
+        broker._busy.discard("image")
+        broker.batches.pop("b1", None)

@@ -62,3 +62,38 @@ def test_completed_hub_batch_keeps_machine_failure_visible_and_retryable():
     assert "pterm restart timed out after 90 seconds" in payload["html"]
     assert 'class="hub-update-failure"' in payload["html"]
     assert ">Retry<" in payload["html"]
+
+
+def test_updates_page_shows_drain_progress_instead_of_a_permanent_deferral():
+    """The manual buttons must read as draining/installing/rejoining, not "Deferred"."""
+    source = FRONTEND.read_text()
+    states = _javascript(source, "function autoState", "function updateHubAutoControlState")
+    render = _javascript(source, "function renderHubAutoUpdate", "function renderFleetAutoProgress")
+
+    assert 'draining: ["gen", "Draining site"]' in states
+    # The fleet table shares autoState, so the three phase names are the Hub
+    # card's own and must not rename every sibling Studio row.
+    assert 'updating: ["gen", "Updating"]' in states
+    assert 'draining: "Draining site", updating: "Installing", restarting: "Rejoining"' in render
+    # "draining" must count as busy everywhere the other in-flight states do,
+    # otherwise the page stops polling and the drain looks like a no-op again.
+    assert source.count('["checking", "draining", "updating", "restarting"]') == 3
+    assert '["checking", "updating", "restarting"]' not in source
+
+
+def test_update_now_documents_that_it_does_not_wait_for_idle():
+    source = FRONTEND.read_text()
+    action = _javascript(source, "async function hubAutoAction", "let hubRestartPolling")
+
+    assert "does not wait for this site to become idle" in action
+    assert "Studio workers are separate processes and keep running" in action
+    assert "Withdrawing this site from fleet routing" in action
+    assert "the next idle window" not in action
+
+
+def test_drain_wait_is_an_owner_editable_setting_that_is_saved():
+    source = FRONTEND.read_text()
+
+    assert 'id="hau-drain" type="number" min="1" step="1"' in source
+    assert "settings.drain_timeout_minutes" in source
+    assert 'drain_timeout_minutes: Number($("#hau-drain").value)' in source

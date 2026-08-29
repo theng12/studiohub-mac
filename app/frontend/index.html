@@ -779,12 +779,13 @@
   <section id="tab-updates" class="hide">
     <div class="card section auto-update-own">
       <div class="top"><span class="emoji">🛡️</span><h3>This Studio Hub</h3><span id="hau-state" class="pill">Loading</span></div>
-      <p class="muted" style="font-size:13px;margin-bottom:12px">Optional and Off by default. The Hub waits for generation, Chat, transcription, and fleet maintenance work to finish, then verifies the exact running version and health before reporting success.</p>
+      <p class="muted" style="font-size:13px;margin-bottom:12px" id="hau-drain-help">Optional and Off by default. <b>Automatic</b> updates wait until this site is idle. The two manual buttons never wait for idleness: <b>Update now</b> installs immediately, and <b>Update after current work</b> first withdraws this site from fleet routing, waits up to the drain wait for work already leased here to finish, then installs and rejoins. Each update verifies the exact running version and health before reporting success.</p>
       <div class="auto-update-controls">
         <label class="field-label">Mode<select class="selctl" id="hau-mode"><option value="off">Off</option><option value="notify">Notify only</option><option value="auto">Download and install automatically</option></select></label>
         <label class="field-label">Schedule<select class="selctl" id="hau-frequency"><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
         <label class="field-label">Maintenance hour<select class="selctl" id="hau-hour"></select></label>
-        <label class="wd auto-update-idle"><input type="checkbox" id="hau-idle" checked> Update only while idle</label>
+        <label class="wd auto-update-idle"><input type="checkbox" id="hau-idle" checked> Automatic updates wait for idle</label>
+        <label class="field-label">Drain wait (minutes)<input class="selctl" id="hau-drain" type="number" min="1" step="1" value="30" aria-describedby="hau-drain-help"></label>
       </div>
       <div class="actions auto-update-actions">
         <button class="btn primary" id="hau-save" onclick="saveHubAutoUpdate()">Save &amp; validate</button>
@@ -1198,6 +1199,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.13.12", date: "2026-08-29", items: [
+    "<b>Update now</b> and <b>Update after current work</b> no longer stall on a permanent <b>Deferred</b> — they were answering to the nightly schedule's idle check, which never clears on a busy fleet.",
+    "<b>Update after current work</b> now withdraws this site from fleet routing at once, waits for work already leased here, then installs and rejoins. Progress reads Draining site → Installing → Rejoining.",
+    "New <b>Drain wait (minutes)</b> setting bounds that wait, so a stuck lease can never hold this site out of the fleet; anything not waited for is named in the status details.",
+  ]},
   { v: "2.13.11", date: "2026-08-29", items: [
     "<b>6 Inspect and Fix This Mac</b> now prunes SSD-recognized models outside each Mac's RAM-aware Choice 2 selection.",
     "An 8 GB Voice worker retains Qwen3-TTS 0.6B Base, Whisper Large v3 Turbo, and Kokoro instead of keeping other recognized Voice models.",
@@ -4815,7 +4821,7 @@ function fmtAutoTime(value) {
 function autoState(value) {
   const states = {
     idle: ["", "Idle"], checking: ["warn", "Checking"], available: ["warn", "Update available"], update_available: ["warn", "Update available"],
-    up_to_date: ["ok", "Up to date"], updating: ["gen", "Updating"], restarting: ["gen", "Restarting"],
+    up_to_date: ["ok", "Up to date"], draining: ["gen", "Draining site"], updating: ["gen", "Updating"], restarting: ["gen", "Restarting"],
     restart_required: ["warn", "Restart required"], deferred: ["warn", "Deferred"], scheduled: ["warn", "Queued until idle"], failed: ["err", "Needs attention"], succeeded: ["ok", "Updated"],
     unavailable: ["no", "Unavailable"]
   };
@@ -4837,12 +4843,17 @@ function renderHubAutoUpdate(status) {
   $("#hau-frequency").value = settings.frequency || "daily";
   $("#hau-hour").value = String(settings.maintenance_hour ?? 1);
   $("#hau-idle").checked = settings.idle_only !== false;
+  $("#hau-drain").value = String(settings.drain_timeout_minutes ?? 30);
   updateHubAutoControlState();
 
-  const [tone, label] = autoState(hubAutoStatus.state);
+  // This card drives a drained update, so it names the phases the operator is
+  // waiting on rather than the generic labels the fleet table shares.
+  const HUB_UPDATE_PHASES = { draining: "Draining site", updating: "Installing", restarting: "Rejoining" };
+  const [tone, sharedLabel] = autoState(hubAutoStatus.state);
+  const label = HUB_UPDATE_PHASES[hubAutoStatus.state] || sharedLabel;
   const badge = $("#hau-state");
   badge.className = `pill ${tone}`;
-  badge.innerHTML = `${["checking", "updating", "restarting"].includes(hubAutoStatus.state) ? '<span class="auto-update-spinner">↻</span>' : ""}${esc(label)}`;
+  badge.innerHTML = `${["checking", "draining", "updating", "restarting"].includes(hubAutoStatus.state) ? '<span class="auto-update-spinner">↻</span>' : ""}${esc(label)}`;
   const scheduler = hubAutoStatus.scheduler || {};
   const result = hubAutoStatus.defer_reason || hubAutoStatus.last_update_result || "No update activity yet";
   const facts = [
@@ -4861,7 +4872,7 @@ function renderHubAutoUpdate(status) {
   notes.href = notesUrl || "#";
   notes.style.display = notesUrl ? "inline-flex" : "none";
 
-  const busy = ["checking", "updating", "restarting"].includes(hubAutoStatus.state);
+  const busy = ["checking", "draining", "updating", "restarting"].includes(hubAutoStatus.state);
   $("#hau-save").disabled = busy;
   $("#hau-check").disabled = busy;
   $("#hau-update").disabled = busy || !hubAutoStatus.update_available;
@@ -4946,7 +4957,7 @@ async function loadAutoUpdates() {
     ]);
     renderHubAutoUpdate(hub);
     renderFleetAutoUpdates(fleet);
-    const ownBusy = ["checking", "updating", "restarting"].includes(hub.state);
+    const ownBusy = ["checking", "draining", "updating", "restarting"].includes(hub.state);
     const fleetBusy = fleet.job && ["queued", "running"].includes(fleet.job.status);
     if (ownBusy || fleetBusy) scheduleAutoUpdatePoll();
     else clearTimeout(fleetAutoPollTimer);
@@ -4967,7 +4978,8 @@ async function saveHubAutoUpdate() {
     const status = await autoJson("/api/auto-update/settings", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode: $("#hau-mode").value, frequency: $("#hau-frequency").value,
-        maintenance_hour: Number($("#hau-hour").value), idle_only: $("#hau-idle").checked })
+        maintenance_hour: Number($("#hau-hour").value), idle_only: $("#hau-idle").checked,
+        drain_timeout_minutes: Number($("#hau-drain").value) })
     });
     renderHubAutoUpdate(status);
     $("#hau-message").textContent = status.settings.mode === "off" ? "Saved. Automatic checks are Off and the schedule is unloaded." : "Saved. The schedule was validated and loaded.";
@@ -4981,13 +4993,18 @@ async function saveHubAutoUpdate() {
 }
 
 async function hubAutoAction(action, afterCurrent = false) {
+  if (action === "update" && !afterCurrent && !confirm(
+      "Update Studio Hub now?\n\nThe update installs immediately and does not wait for this site to become idle. "
+      + "Studio workers are separate processes and keep running; Hub-side dispatch pauses over the restart and resumes "
+      + "from its durable queue.\n\nTo stop taking new work first, use \u201cUpdate after current work\u201d instead."
+    )) return;
   const id = action === "check" ? "hau-check" : action === "retry" ? "hau-retry" : afterCurrent ? "hau-after" : "hau-update";
   const button = $("#" + id);
   fleetAutoBusy = true;
   button.disabled = true; button.setAttribute("aria-busy", "true");
-  const labels = { check: "Checking…", update: afterCurrent ? "Queuing…" : "Starting…", retry: "Retrying…" };
+  const labels = { check: "Checking…", update: afterCurrent ? "Draining…" : "Starting…", retry: "Retrying…" };
   const old = button.textContent; button.textContent = labels[action];
-  $("#hau-message").textContent = action === "check" ? "Checking GitHub for a clean fast-forward update…" : afterCurrent ? "Queuing the update for the next idle window…" : "Starting the safe updater…";
+  $("#hau-message").textContent = action === "check" ? "Checking GitHub for a clean fast-forward update…" : afterCurrent ? "Withdrawing this site from fleet routing, then waiting for work already leased here…" : "Starting the safe updater…";
   try {
     const path = action === "check" ? "/api/auto-update/check" : action === "retry" ? "/api/auto-update/retry" : "/api/auto-update/update";
     const status = await autoJson(path, {

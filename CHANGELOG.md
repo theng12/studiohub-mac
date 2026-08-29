@@ -10,6 +10,51 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.13.12] — 2026-08-29
+
+### Fixed — the manual update buttons no longer answer to the nightly idle gate
+
+- **Update now** and **Update after current work** both reported a permanent
+  `Deferred` with reasons such as *"a fleet worker owns an active lease; a
+  generation batch is queued or running; a staggered automatic fleet update is
+  active"*. Both funnelled through the readiness gate that belongs to the
+  automatic nightly schedule, and on a production fleet those reasons never
+  clear, so neither button ever installed anything.
+- The idle gate now applies only to automatic scheduled updates and to
+  controller-managed releases. A person pressing a button has already decided.
+
+### Added — "Update after current work" drains this site instead of waiting
+
+- The button now withdraws this site from fleet routing immediately: every
+  registered worker enters the same maintenance state the rolling Studio
+  updater uses, so the broker stops granting leases and the site capability
+  snapshot reports the controller and every worker as `drained` with no
+  available slots — GenStudio therefore routes elsewhere.
+- It then waits for work already leased here to finish, and installs through
+  exactly the path **Update now** uses, restarts, and rejoins.
+- **Drain wait (minutes)** is a new owner-editable setting on the Updates page
+  (default 30, minimum 1, no upper limit). A lease whose worker never reports
+  the attempt as finished cannot hold the site out of the fleet forever: the
+  wait ends at the timeout, the install proceeds, and the status details name
+  every lease that was not waited for.
+- A failed or stalled install always gives the site back rather than leaving it
+  withdrawn.
+- The Updates page now reads **Draining site → Installing → Rejoining** instead
+  of `Deferred`, and keeps polling through all three.
+- **Update now** asks for confirmation and states plainly that it does not wait
+  for idleness, that Studio workers are separate processes and keep running,
+  and that Hub-side dispatch resumes from its durable queue after the restart.
+
+### Safety and compatibility
+
+- Automatic update behaviour, managed releases, rolling Studio updates, and the
+  staggered fleet updater are unchanged. The staggered-fleet-update blocker is
+  site-local (this Hub's own rolling job over its own Studios), not a
+  fleet-wide semaphore; it no longer blocks manual per-site action.
+- A drain gives back only the workers it withdrew, so a Studio update that
+  already owns a worker keeps it.
+- Older clients that do not send the drain timeout no longer reset it.
+
 ## [2.13.11] — 2026-08-29
 
 ### Changed — Step 6 optimizes each Mac's model cache

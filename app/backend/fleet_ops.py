@@ -795,6 +795,11 @@ def _active_studio_leases() -> set[str]:
             | set(transcription_jobs.busy_studios))
 
 
+def active_studio_leases() -> set[str]:
+    """Studios holding work that a drained maintenance operation must wait for."""
+    return _active_studio_leases()
+
+
 def studio_has_active_work(studio_id: str) -> bool:
     """Public safety check shared by drained maintenance operations."""
     return studio_id in _active_studio_leases()
