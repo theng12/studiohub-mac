@@ -80,7 +80,7 @@ def _job(value: object) -> dict | None:
            for later in (started, updated, finished)) or any(
                started is not None and later is not None and started > later
                for later in (updated, finished)
-           ):
+           ) or (updated is not None and finished is not None and updated > finished):
         return None
     if runtime is not None and started is not None and finished is not None:
         # Runtime is worker evidence, but cannot exceed the reported wall span.
@@ -156,6 +156,17 @@ def _reachable(status: str | None) -> bool:
     return status in {"up", "degraded"}
 
 
+def _reporter_support(status: dict, now: float) -> str | None:
+    """Classify direct evidence without treating rejected clock data as empty."""
+    snapshot = validate_snapshot(status.get("activity"))
+    received_at = _finite(status.get("activity_received_at"), minimum=0)
+    if snapshot and received_at is not None and (
+        abs(snapshot["observed_at"] - received_at) > REPORTER_CLOCK_SKEW_S
+    ):
+        return "skew"
+    return status.get("activity_support")
+
+
 def _observed_jobs(registry: list[dict], statuses: dict, batches: dict,
                    now: float) -> list[dict]:
     """Merge Studio observations with broker ownership without double-counting."""
@@ -188,7 +199,9 @@ def _observed_jobs(registry: list[dict], statuses: dict, batches: dict,
                 continue
             # Repeated terminal snapshots must not resurrect a transition once
             # it aged beyond the fixed controller retention window.
-            if key == "latest" and now - job.get("finished_at", now) > RETENTION_S + REPORTER_CLOCK_SKEW_S:
+            # Account for allowed worker clock skew before controller pruning:
+            # stop accepting before the immutable receipt can be deleted.
+            if key == "latest" and now - job.get("finished_at", now) >= RETENTION_S - REPORTER_CLOCK_SKEW_S:
                 continue
             owned = next((row for row in broker_jobs.get(job["id"], [])
                           if row["studio"] == studio_id), None)
@@ -265,7 +278,7 @@ def _state_at(machine: str, statuses: dict, studios: list[dict], live: list[dict
         if age >= LONG_IDLE_S:
             return "long_idle", latest_time, None, latest
         return "ready", latest_time, None, latest
-    support = {row.get("activity_support") for row in status_rows}
+    support = {_reporter_support(row, now) for row in status_rows}
     if reachable and support == {"available"}:
         return "ready", now, None, latest
     return "unknown", now, None, latest
@@ -371,10 +384,12 @@ def fleet_snapshot(registry: list[dict], statuses: dict, batches: dict,
             machine, statuses, studios, live, events, now,
         )
         status_rows = [statuses.get(studio.get("id")) or {} for studio in studios]
-        support = {row.get("activity_support") for row in status_rows}
+        support = {_reporter_support(row, now) for row in status_rows}
         limitation = None
         complete = support == {"available"}
-        if support == {"unavailable"}:
+        if "skew" in support:
+            limitation = "Activity reporter clock skew exceeds policy"
+        elif support == {"unavailable"}:
             limitation = "Direct activity unavailable"
         elif "error" in support:
             limitation = "Activity reporter temporarily unavailable"

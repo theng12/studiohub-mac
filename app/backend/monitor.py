@@ -451,8 +451,13 @@ class StudioMonitor:
             snapshot = activity.validate_snapshot(response.json())
             if snapshot is None:
                 raise RuntimeError("activity reporter returned an invalid snapshot")
+            received_at = time.time()
+            if abs(snapshot["observed_at"] - received_at) > activity.REPORTER_CLOCK_SKEW_S:
+                previous["activity_support"] = "skew"
+                previous["activity_error"] = "reporter clock is outside policy"
+                return
             previous["activity"] = snapshot
-            previous["activity_received_at"] = time.time()
+            previous["activity_received_at"] = received_at
             previous["activity_support"] = "available"
             previous.pop("activity_error", None)
         except Exception:

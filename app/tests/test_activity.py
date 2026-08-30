@@ -389,11 +389,16 @@ def test_controller_receipt_handles_clock_skew_rollback_and_old_terminal(reset):
     terminal["observed_at"] = 110.0
     statuses[studio["id"]].update(activity=terminal, activity_received_at=110.0)
     activity.observe_poll([studio], statuses, {}, now=110.0)
-    later = 110.0 + 31 * 86400
+    boundary = 110.0 + activity.RETENTION_S + 5.0
+    terminal["observed_at"] = boundary
+    statuses[studio["id"]]["activity_received_at"] = boundary
+    activity.observe_poll([studio], statuses, {}, now=boundary)
+    activity.observe_poll([studio], statuses, {}, now=boundary + 5.0)
+    assert not any(row["job_id"] == "old" for row in ledger.activity_events(machine="mac-a"))
+    later = 110.0 + activity.RETENTION_S + activity.REPORTER_CLOCK_SKEW_S + 5.0
     terminal["observed_at"] = later
     statuses[studio["id"]]["activity_received_at"] = later
     activity.observe_poll([studio], statuses, {}, now=later)
-    activity.observe_poll([studio], statuses, {}, now=later + 5.0)
     assert not any(row["job_id"] == "old" for row in ledger.activity_events(machine="mac-a"))
 
 
@@ -424,6 +429,10 @@ def test_validator_rejects_missing_start_order_and_future_terminal(reset):
     future = _snapshot(latest=_job("future", state="done", finished_at=101.0))
     future["observed_at"] = 100.0
     assert activity.validate_snapshot(future) is None
+    after_finish = _snapshot(latest=_job("late-update", state="done", finished_at=100.0))
+    after_finish["latest"]["updated_at"] = 101.0
+    after_finish["observed_at"] = 101.0
+    assert activity.validate_snapshot(after_finish) is None
 
 
 def test_prune_keeps_one_stable_predecessor_without_rewrite_churn(reset):
@@ -433,3 +442,19 @@ def test_prune_keeps_one_stable_predecessor_without_rewrite_churn(reset):
     first = ledger.machine_state_transitions("mac-a")
     ledger.prune_activity(105.0)
     assert ledger.machine_state_transitions("mac-a") == first
+
+
+def test_out_of_policy_clock_skew_is_partial_unknown_evidence(reset):
+    from backend import activity
+
+    studio = _studio()
+    for observed_at in (1.0, 2000.0):
+        snapshot = _snapshot(active=_job("skew", started_at=0.0))
+        snapshot["active"].update(created_at=0.0, updated_at=0.0)
+        snapshot["observed_at"] = observed_at
+        statuses = {studio["id"]: _status(snapshot)}
+        statuses[studio["id"]]["activity_received_at"] = 1000.0
+        machine = activity.fleet_snapshot([studio], statuses, {}, since_s=0.0, now=1000.0)["machines"][0]
+        assert machine["state"] == "unknown"
+        assert machine["limitation"] == "Activity reporter clock skew exceeds policy"
+        assert machine["utilization"]["evidence"] == "partial"

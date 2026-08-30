@@ -156,6 +156,28 @@ async def test_activity_success_records_controller_receipt(monitor, monkeypatch)
     assert monitor.status[studio["id"]]["activity_received_at"] == 123.0
 
 
+@pytest.mark.asyncio
+async def test_activity_clock_skew_is_a_visible_reporter_limitation(monitor, monkeypatch):
+    studio = next(row for row in monitor.registry if row["id"] == "image")
+
+    class Reporter:
+        status_code = 200
+        def json(self):
+            return {
+                "schema": "kh-studio.activity.v1", "studio": "image",
+                "observed_at": 1000.0, "active": None, "latest": None,
+            }
+
+    async def get(*_args, **_kwargs):
+        return Reporter()
+
+    monkeypatch.setattr(monitor._client, "get", get)
+    monkeypatch.setattr("backend.monitor.time.time", lambda: 100.0)
+    monitor.status[studio["id"]] = {"status": "up"}
+    await monitor._poll_activity(studio)
+    assert monitor.status[studio["id"]]["activity_support"] == "skew"
+
+
 def test_repeated_worker_restart_alert_is_edge_triggered(reset, monitor):
     from backend import alerts
 
