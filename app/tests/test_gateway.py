@@ -2,6 +2,7 @@ import asyncio
 
 import httpx
 import pytest
+from starlette.requests import ClientDisconnect, Request
 from starlette.testclient import TestClient
 
 from backend import gateway
@@ -131,12 +132,19 @@ def test_gateway_closes_upstream_response_after_media_stream_error(
     assert fc.resp.closed is True
 
 
-def test_gateway_closes_upstream_response_after_asgi_send_disconnect(
-    app, monkeypatch,
+def test_gateway_response_closes_upstream_before_asgi_send_disconnect_returns(
+    monitor, monkeypatch,
 ):
     fc = FakeClient(resp=FakeResp(chunks=(b"media",)))
     monkeypatch.setattr(gateway, "_client", fc)
     path = "/studio/image/api/fleet/jobs/job-1/media/opaque"
+    scope = {
+        "type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"},
+        "http_version": "1.1", "method": "GET", "scheme": "http",
+        "path": path, "raw_path": path.encode(), "query_string": b"",
+        "headers": [(b"host", b"testserver")], "client": ("127.0.0.1", 50000),
+        "server": ("testserver", 80), "root_path": "", "extensions": {},
+    }
 
     async def receive():
         return {"type": "http.request", "body": b"", "more_body": False}
@@ -146,15 +154,11 @@ def test_gateway_closes_upstream_response_after_asgi_send_disconnect(
             raise OSError("client disconnected")
 
     async def request():
-        await app({
-            "type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"},
-            "http_version": "1.1", "method": "GET", "scheme": "http",
-            "path": path, "raw_path": path.encode(), "query_string": b"",
-            "headers": [(b"host", b"testserver")], "client": ("127.0.0.1", 50000),
-            "server": ("testserver", 80), "root_path": "", "extensions": {},
-        }, receive, send)
+        response = await gateway.proxy(
+            "image", "api/fleet/jobs/job-1/media/opaque", Request(scope, receive),
+        )
+        with pytest.raises(ClientDisconnect):
+            await response(scope, receive, send)
+        assert fc.resp.closed is True
 
-    with pytest.raises(OSError, match="client disconnected"):
-        asyncio.run(request())
-
-    assert fc.resp.closed is True
+    asyncio.run(request())

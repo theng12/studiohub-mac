@@ -37,6 +37,18 @@ TIMEOUT = httpx.Timeout(connect=5.0, read=None, write=30.0, pool=5.0)
 _client = httpx.AsyncClient(timeout=TIMEOUT)
 
 
+class _ClosingStreamingResponse(StreamingResponse):
+    def __init__(self, *args, upstream_resp, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._upstream_resp = upstream_resp
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            await self._upstream_resp.aclose()
+
+
 def _monitor():
     from .main import monitor  # late import — main wires everything together
     return monitor
@@ -82,18 +94,12 @@ async def proxy(studio_id: str, path: str, request: Request):
         if k.lower() not in DOWNSTREAM_BLOCKED_HEADERS
     }
 
-    async def stream_and_close():
-        try:
-            async for chunk in upstream_resp.aiter_raw():
-                yield chunk
-        finally:
-            await upstream_resp.aclose()
-
     # CRITICAL: close the upstream streamed response when this response finishes
     # (or the client disconnects), or the httpx connection leaks — over a long-
     # running service that exhausts the pool and hangs the gateway.
-    return StreamingResponse(
-        stream_and_close(),
+    return _ClosingStreamingResponse(
+        upstream_resp.aiter_raw(),
+        upstream_resp=upstream_resp,
         status_code=upstream_resp.status_code,
         headers=resp_headers,
         background=BackgroundTask(upstream_resp.aclose),
