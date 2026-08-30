@@ -30,11 +30,38 @@ HOP_HEADERS = {
 
 # Studios must never set controller-browser cookies through this gateway.
 DOWNSTREAM_BLOCKED_HEADERS = HOP_HEADERS | {"set-cookie", "set-cookie2"}
+FLEET_JOB_SAFE_HEADERS = {
+    "Cache-Control": "no-store, private, max-age=0",
+    "Pragma": "no-cache",
+    "X-Content-Type-Options": "nosniff",
+}
 
 # No read timeout: generation and download streams can be quiet for minutes.
 TIMEOUT = httpx.Timeout(connect=5.0, read=None, write=30.0, pool=5.0)
 
 _client = httpx.AsyncClient(timeout=TIMEOUT)
+
+
+def _is_fleet_job_path(path: str) -> bool:
+    parts = path.strip("/").split("/")
+    return (
+        len(parts) == 7
+        and parts[0] == "studio"
+        and parts[2:5] == ["api", "fleet", "jobs"]
+        and parts[6] == "details"
+    ) or (
+        len(parts) == 8
+        and parts[0] == "studio"
+        and parts[2:5] == ["api", "fleet", "jobs"]
+        and parts[6] == "media"
+    )
+
+
+async def fleet_job_safe_headers(request: Request, call_next):
+    response = await call_next(request)
+    if _is_fleet_job_path(request.url.path):
+        response.headers.update(FLEET_JOB_SAFE_HEADERS)
+    return response
 
 
 class _ClosingStreamingResponse(StreamingResponse):

@@ -8,6 +8,18 @@ from starlette.testclient import TestClient
 from backend import gateway
 
 
+SAFE_FLEET_JOB_HEADERS = {
+    "cache-control": "no-store, private, max-age=0",
+    "pragma": "no-cache",
+    "x-content-type-options": "nosniff",
+}
+
+
+def assert_safe_fleet_job_headers(response):
+    for name, value in SAFE_FLEET_JOB_HEADERS.items():
+        assert response.headers[name] == value
+
+
 class FakeResp:
     def __init__(self, status=200, headers=None, chunks=(b"body",), stream_error=None):
         self.status_code = status
@@ -54,6 +66,7 @@ def test_gateway_routes_to_correct_studio(app, token, monkeypatch):
     r = _authed(app, token).get("/studio/image/api/catalog")
     assert r.status_code == 200 and r.content == b"body"
     assert fc.captured["url"] == "http://127.0.0.1:47868/api/catalog"
+    assert not SAFE_FLEET_JOB_HEADERS.keys() & r.headers.keys()
 
 
 def test_gateway_strips_hub_token_from_upstream(app, token, monitor, monkeypatch):
@@ -77,7 +90,9 @@ def test_gateway_contains_studio_cookies_and_browser_credentials(
         "set-cookie": "kh_studio_token=fleet-secret; HttpOnly",
         "set-cookie2": "kh_studio_token=fleet-secret; Version=1",
         "cache-control": "no-store, private, max-age=0",
+        "pragma": "no-cache",
         "x-content-type-options": "nosniff",
+        "x-worker-evidence": "preserved",
         "content-type": "audio/wav",
         "content-range": "bytes 0-3/4",
     }))
@@ -93,7 +108,9 @@ def test_gateway_contains_studio_cookies_and_browser_credentials(
     assert "set-cookie" not in response.headers
     assert "set-cookie2" not in response.headers
     assert response.headers["cache-control"] == "no-store, private, max-age=0"
+    assert response.headers["pragma"] == "no-cache"
     assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-worker-evidence"] == "preserved"
     assert response.headers["content-type"] == "audio/wav"
     assert response.headers["content-range"] == "bytes 0-3/4"
     upstream_headers = {k.lower(): v for k, v in fc.captured["headers"].items()}
@@ -110,6 +127,41 @@ def test_gateway_unknown_studio_404(authed):
 def test_gateway_unreachable_502(app, token, monkeypatch):
     monkeypatch.setattr(gateway, "_client", FakeClient(exc=httpx.ConnectError("boom")))
     assert _authed(app, token).get("/studio/image/api/x").status_code == 502
+
+
+def test_fleet_job_gateway_generated_errors_are_private(app, token, monkeypatch):
+    remote = TestClient(app, client=("203.0.113.5", 50000))
+    unauthorized = remote.get("/studio/image/api/fleet/jobs/job-1/details")
+    unknown = _authed(app, token).get(
+        "/studio/missing/api/fleet/jobs/job-1/details",
+    )
+    monkeypatch.setattr(
+        gateway, "_client", FakeClient(exc=httpx.ConnectError("boom")),
+    )
+    unreachable = _authed(app, token).get(
+        "/studio/image/api/fleet/jobs/job-1/details",
+    )
+
+    assert [unauthorized.status_code, unknown.status_code, unreachable.status_code] == [
+        401, 404, 502,
+    ]
+    for response in (unauthorized, unknown, unreachable):
+        assert_safe_fleet_job_headers(response)
+
+
+def test_fleet_job_gateway_adds_safe_headers_to_legacy_upstream_errors(
+    app, token, monkeypatch,
+):
+    fc = FakeClient(resp=FakeResp(status=404, headers={"x-worker-error": "legacy"}))
+    monkeypatch.setattr(gateway, "_client", fc)
+
+    response = _authed(app, token).get(
+        "/studio/image/api/fleet/jobs/missing/details",
+    )
+
+    assert response.status_code == 404
+    assert response.headers["x-worker-error"] == "legacy"
+    assert_safe_fleet_job_headers(response)
 
 
 def test_gateway_closes_upstream_response(app, token, monkeypatch):

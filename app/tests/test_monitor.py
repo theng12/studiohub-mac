@@ -4,7 +4,58 @@ from pathlib import Path
 
 import pytest
 
-from backend import monitor as mon
+from backend import activity, monitor as mon
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    (
+        {
+            "schema": "kh-studio.activity.v1",
+            "studio": "image",
+            "observed_at": 100.0,
+            "active": {
+                "id": "image-job", "state": "running", "model": "org/image",
+                "progress": 0.4, "created_at": 80.0, "started_at": 90.0,
+                "updated_at": 100.0, "source": "direct", "origin": "unknown",
+            },
+            "latest": None,
+        },
+        {
+            "schema": "kh-studio.activity.v1",
+            "studio": "voice",
+            "observed_at": 100.0,
+            "active": {
+                "id": "voice-job", "state": "running", "model": "org/voice",
+                "progress": 0.6, "created_at": 80.0, "started_at": 90.0,
+                "updated_at": 100.0, "source": "direct", "origin": "unknown",
+                "chunk_index": 1, "chunk_total": 3,
+            },
+            "latest": None,
+        },
+    ),
+)
+def test_actual_studio_projection_without_optional_device_survives_hub_handoff(
+    snapshot,
+):
+    studio_id = f'{snapshot["studio"]}@fixture'
+    registry = [{
+        "id": studio_id, "modality": snapshot["studio"], "machine": "fixture-mac",
+    }]
+    statuses = {studio_id: {
+        "status": "up", "activity_support": "available",
+        "activity_received_at": 100.0, "activity": snapshot,
+    }}
+
+    _, statuses_view, _ = mon._activity_poll_inputs(registry, statuses, {})
+    handed_off = statuses_view[studio_id]["activity"]
+    validated = activity.validate_snapshot(
+        handed_off, expected_studio=snapshot["studio"],
+    )
+
+    assert validated is not None
+    assert validated["active"]["id"] == snapshot["active"]["id"]
+    assert "origin_device" not in validated["active"]
 
 
 def test_activity_poll_handoff_preserves_origin_but_excludes_sensitive_detail():

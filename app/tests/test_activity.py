@@ -75,6 +75,9 @@ def test_activity_contract_allowlists_bounded_origin_scalars(reset):
     assert activity.validate_snapshot({
         **valid, "active": {**valid["active"], "origin_device": "x" * 161},
     }) is None
+    assert activity.validate_snapshot({
+        **valid, "active": {**valid["active"], "origin_device": None},
+    }) is None
 
     projected = activity.validate_snapshot(_snapshot(active={
         **_job(), "prompt": "private", "path": "/private", "handle": "opaque",

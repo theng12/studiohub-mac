@@ -678,6 +678,7 @@ app.add_middleware(
 # Token auth: loopback is exempt; remote clients need the Hub token.
 HUB_TOKEN = load_token()
 app.middleware("http")(make_middleware(HUB_TOKEN))
+app.middleware("http")(gateway.fleet_job_safe_headers)
 
 # Unified gateway: {HUB}/studio/{id}/{path} -> the right studio.
 app.include_router(gateway.router)
