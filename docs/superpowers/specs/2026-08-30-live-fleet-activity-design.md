@@ -14,13 +14,14 @@ Proof comes from observed Studio job state and Hub broker records, not process p
 
 ### Reporter contract
 
-Image Studio and Voice Studio extend their existing `/api/health` payload with one optional `activity` object. Reusing the health poll avoids callbacks, another authentication path, and another background service.
+Image Studio and Voice Studio expose one authenticated, read-only `/api/fleet/activity` endpoint. It reuses the fleet credential and the existing health-poll cadence, so it adds no callback, daemon, port, or credential. Keeping detailed activity out of the public `/api/health` response preserves that endpoint's deliberate rule against exposing job identities.
 
 The versioned payload is:
 
 ```json
 {
   "schema": "kh-studio.activity.v1",
+  "observed_at": 1788120012.0,
   "studio": "image",
   "active": {
     "id": "job-id",
@@ -51,7 +52,7 @@ Only `queued`, `running`, `done`, `error`, and `cancelled` are valid states. Pro
 
 ### Hub observation and retention
 
-Studio Hub already stores each successful health response verbatim. On every poll it validates the optional activity object and records meaningful state transitions in a small `machine_activity` table in the existing ledger. Observations are idempotent by machine, Studio, job ID, and state. Rows older than 30 days are pruned opportunistically.
+Studio Hub already polls every registered Studio every five seconds. After a successful health probe it fetches the optional authenticated activity snapshot, validates it, and records meaningful state transitions in a small `machine_activity` table in the existing ledger. A 404 means the Studio is an older compatible version. Observations are idempotent by machine, Studio, job ID, and state. Rows older than 30 days are pruned opportunistically.
 
 Hub-dispatched broker evidence remains authoritative when the same job is visible through both paths. Reporter observations fill the direct-generation gap and provide recent local state. The Hub never double-counts a job solely because it was observed repeatedly.
 
@@ -91,7 +92,7 @@ The machine board updates through the dashboard's existing summary/refresh mecha
 
 ## Compatibility and safety
 
-- The `activity` health field is optional, so all existing Hub and Studio versions continue to interoperate.
+- The activity endpoint is optional, so all existing Hub and Studio versions continue to interoperate; a 404 becomes an explicit compatibility limitation rather than a health failure.
 - No new network port, daemon, dependency, credential, or write endpoint is introduced.
 - The payload excludes prompts, filesystem paths, reference audio, generated assets, and tokens.
 - GenStudio APIs, routing, lease behavior, updates, enrollment, and memory controls are unchanged.
