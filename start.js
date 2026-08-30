@@ -28,6 +28,7 @@ module.exports = {
       }
     },
     {
+      when: "{{input.event && input.event[1]}}",
       method: "local.set",
       params: {
         url: "{{input.event[1]}}"

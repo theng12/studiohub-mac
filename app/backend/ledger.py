@@ -11,7 +11,9 @@ plus (when known) the studio's serving URL.
 """
 
 import json
+import shutil
 import sqlite3
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -21,6 +23,7 @@ from .registry import LAUNCHER_ROOT
 
 from .registry import DATA_DIR
 DB_FILE = DATA_DIR / "hub.db"
+_PREPARE_LOCK = threading.Lock()
 
 MEDIA_EXT = {
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image",
@@ -68,17 +71,118 @@ CREATE INDEX IF NOT EXISTS idx_assets_batch ON assets(batch_id);
 
 def _conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    conn.executescript(_SCHEMA)
-    # Migrations for DBs created before newer columns existed.
-    for ddl in ("ALTER TABLE assets ADD COLUMN duration_s REAL",
-                "ALTER TABLE assets ADD COLUMN runtime_s REAL"):
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.executescript(_SCHEMA)
+        # Migrations for DBs created before newer columns existed.
+        for ddl in ("ALTER TABLE assets ADD COLUMN duration_s REAL",
+                    "ALTER TABLE assets ADD COLUMN runtime_s REAL"):
+            try:
+                conn.execute(ddl)
+                conn.commit()
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
+        return conn
+    except BaseException:
+        conn.close()
+        raise
+
+
+def _is_corruption_error(exc: sqlite3.DatabaseError) -> bool:
+    if getattr(exc, "sqlite_errorname", None) in {"SQLITE_CORRUPT", "SQLITE_NOTADB"}:
+        return True
+    message = str(exc).lower()
+    return "database disk image is malformed" in message or "file is not a database" in message
+
+
+def _database_family() -> tuple[Path, ...]:
+    return tuple(
+        Path(f"{DB_FILE}{suffix}")
+        for suffix in ("", "-wal", "-shm", "-journal")
+    )
+
+
+def _validate_database() -> None:
+    with _conn() as conn:
+        result = conn.execute("PRAGMA quick_check(1)").fetchone()
+    if result is None or result[0] != "ok":
+        detail = result[0] if result else "no result"
+        raise sqlite3.DatabaseError(
+            f"database disk image is malformed: quick_check reported {detail}"
+        )
+
+
+def prepare_database() -> Path | None:
+    """Validate the shared ledger before background work begins.
+
+    A corrupt ledger must not keep the whole Hub offline. Preserve the complete
+    SQLite file family for manual recovery, then create a clean ledger. Other
+    machine state (enrollment, settings, voices, models, and outputs) lives in
+    separate files and is never touched here.
+    """
+    with _PREPARE_LOCK:
+        recovery_root = DB_FILE.parent / ".database-recovery"
+        recovery: Path | None = None
+        recovery_name = (
+            f"hub-db-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{uuid.uuid4().hex[:8]}"
+        )
+        # SQLite may discard an unusable WAL while opening a damaged main file,
+        # so snapshot only the small sidecars before inspection. The main DB is
+        # moved (not copied) if corruption is confirmed, avoiding a 100+ MB copy
+        # on every healthy startup.
+        for source in _database_family()[1:]:
+            if not source.exists():
+                continue
+            if recovery is None:
+                recovery = recovery_root / recovery_name
+                recovery.mkdir(parents=True)
+            shutil.copy2(source, recovery / source.name)
         try:
-            conn.execute(ddl)
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass  # column already present
-    return conn
+            _validate_database()
+        except sqlite3.DatabaseError as exc:
+            if not _is_corruption_error(exc):
+                if recovery is not None:
+                    shutil.rmtree(recovery)
+                    try:
+                        recovery_root.rmdir()
+                    except OSError:
+                        pass
+                raise
+        else:
+            if recovery is not None:
+                shutil.rmtree(recovery)
+                try:
+                    recovery_root.rmdir()
+                except OSError:
+                    pass
+            return None
+
+        if recovery is None:
+            recovery = recovery_root / recovery_name
+            recovery.mkdir(parents=True)
+        try:
+            for source in _database_family():
+                if not source.exists():
+                    continue
+                target = recovery / source.name
+                if target.exists():
+                    target = recovery / f"post-probe-{source.name}"
+                source.replace(target)
+            _validate_database()
+        except BaseException:
+            # Never trade the preserved ledger for a failed rebuild. Keep any
+            # newly-created files alongside it, then restore byte-for-byte
+            # copies of the originals.
+            for fresh in _database_family():
+                if fresh.exists():
+                    fresh.replace(recovery / f"fresh-{fresh.name}")
+            for source in _database_family():
+                original = recovery / source.name
+                if original.exists():
+                    shutil.copy2(original, source)
+            raise
+        return recovery
 
 
 def save_batch(batch: dict):

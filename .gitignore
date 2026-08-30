@@ -24,6 +24,7 @@ ENVIRONMENT
 .hub_sessions.json
 .alerts.json
 hub.db
+/.database-recovery/
 hub_state.json
 .fleet_token
 

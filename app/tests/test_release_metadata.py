@@ -38,6 +38,13 @@ def test_update_uses_canonical_script_stop_uri():
     )
 
 
+def test_start_only_saves_a_captured_dashboard_url():
+    start = (ROOT / "start.js").read_text()
+
+    assert 'when: "{{input.event && input.event[1]}}"' in start
+    assert 'url: "{{input.event[1]}}"' in start
+
+
 def test_managed_release_contract_is_documented():
     readme = (ROOT / "README.md").read_text()
     capability_contract = (ROOT / "CAPABILITY_CONTRACT.md").read_text()

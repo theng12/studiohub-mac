@@ -541,6 +541,13 @@ async def lifespan(app: FastAPI):
     repair_coordinator = None
     primary_error: BaseException | None = None
     try:
+        recovered_ledger = ledger.prepare_database()
+        if recovered_ledger is not None:
+            print(
+                "[hub] recovered startup from a corrupt hub.db; "
+                f"the original database is preserved at {recovered_ledger}",
+                flush=True,
+            )
         _reconcile_auto_update_scheduler()
         for cleanup in startup_services.reconcile_removal_intents():
             if not cleanup.get("ok"):

@@ -473,6 +473,17 @@ or internal route during migration:
 3. Or poll `GET /api/hub/jobs/{batch_id}` — this survives Hub restarts
    (batches are persisted in `hub.db`; in-flight items are safely re-queued).
 
+### Corrupt ledger recovery
+
+Studio Hub validates `hub.db` before starting any scheduler or dispatcher. If
+SQLite identifies a corrupt ledger, the Hub preserves `hub.db` and its sidecars
+under `.database-recovery/hub-db-<timestamp>-<id>/`, creates a clean ledger, and
+continues startup. No reinstall is needed. Enrollment, fleet credentials,
+machine registration, settings, models, shared voices, generated files, and
+sibling Studios are stored separately and remain untouched. Ledger-backed job
+and asset history begins clean; the preserved database remains available for
+manual recovery. I/O and permission errors are not treated as corruption.
+
 ### Terminal Image result (reproducible evidence)
 
 Completed Image items include a path-free `terminal_result` with the stable Hub

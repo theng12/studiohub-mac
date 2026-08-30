@@ -10,6 +10,30 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.13.15] — 2026-08-30
+
+### Fixed — a damaged job ledger no longer keeps Studio Hub offline
+
+- Studio Hub now validates `hub.db` before any scheduler or dispatcher starts.
+  If SQLite reports a corrupt database, the Hub preserves the complete database
+  family under `.database-recovery/hub-db-<timestamp>-<id>/`, creates a clean
+  ledger, and continues starting. Reinstalling the app is not required.
+- The recovery is deliberately narrow. Enrollment, fleet credentials, machine
+  registration, settings, models, shared voices, generated files, and sibling
+  Studios are separate state and are never changed. Only ledger-backed job and
+  asset history begins clean; the damaged original remains available for manual
+  forensic recovery.
+- Healthy databases are not replaced. A non-corruption SQLite error such as an
+  I/O or permissions failure still stops startup instead of being mistaken for
+  corruption, and a failed clean-ledger rebuild restores the preserved original.
+
+### Fixed — failed startup no longer becomes a broken dashboard path
+
+- Pinokio now saves the dashboard URL only after Uvicorn actually emits the
+  captured address. If startup fails first, the launcher stays on its terminal
+  instead of trying to open a literal `{{input.event[1]}}` path and reporting a
+  misleading `ENOENT` error.
+
 ## [2.13.14] — 2026-08-29
 
 ### Fixed — removing a retired Studio now actually removes it
