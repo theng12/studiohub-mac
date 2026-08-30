@@ -58,6 +58,64 @@ def test_activity_contract_ignores_malformed_snapshot_and_job_values(reset):
     assert activity.validate_snapshot(invalid) is None
 
 
+def test_activity_contract_allowlists_bounded_origin_scalars(reset):
+    from backend import activity
+
+    legacy = _snapshot(active=_job())
+    valid = _snapshot(active={
+        **_job(), "origin": "local_ui", "origin_device": "  Mac Mini  ",
+    })
+    assert activity.validate_snapshot(legacy)["active"]["origin"] == "unknown"
+    validated = activity.validate_snapshot(valid)["active"]
+    assert validated["origin"] == "local_ui"
+    assert validated["origin_device"] == "Mac Mini"
+    assert activity.validate_snapshot({
+        **valid, "active": {**valid["active"], "origin": "spoof"},
+    }) is None
+    assert activity.validate_snapshot({
+        **valid, "active": {**valid["active"], "origin_device": "x" * 161},
+    }) is None
+
+    projected = activity.validate_snapshot(_snapshot(active={
+        **_job(), "prompt": "private", "path": "/private", "handle": "opaque",
+    }))["active"]
+    assert not {"prompt", "path", "handle"} & projected.keys()
+
+
+def test_broker_origin_overrides_worker_claim_and_persisted_ownership(reset, monkeypatch):
+    from backend import activity, control_plane
+
+    monkeypatch.setattr(control_plane, "load_settings", lambda: {"site_name": "PPS"})
+    studio = _studio()
+    statuses = {studio["id"]: _status(_snapshot(active={
+        **_job("broker-job"), "origin": "api", "origin_device": "worker claim",
+    }))}
+    batches = {"batch": {"model": "broker/model", "items": [{
+        "studio": studio["id"], "studio_job_id": "broker-job", "state": "running",
+    }]}}
+    row = activity._observed_jobs([studio], statuses, batches, 100.0)[0]
+    assert row["origin"] == "hub"
+    assert row["origin_device"] == "Studio Hub KH · PPS"
+    assert row["source"] == "job"
+
+    non_owned = activity._observed_jobs([studio], {
+        studio["id"]: _status(_snapshot(active={**_job("api-job"), "origin": "api"})),
+    }, {}, 100.0)[0]
+    assert non_owned["origin"] == "api"
+    assert non_owned.get("origin_device") is None
+
+    ledger.record_activity_ownership(machine="mac-a", studio=studio["id"],
+                                     job_id="owned-before-poll", model="broker/model",
+                                     observed_at=100.0)
+    owned_before_poll = activity._observed_jobs([studio], {
+        studio["id"]: _status(_snapshot(active={
+            **_job("owned-before-poll"), "origin": "api",
+        })),
+    }, {}, 101.0)[0]
+    assert owned_before_poll["origin"] == "hub"
+    assert owned_before_poll["origin_device"] == "Studio Hub KH · PPS"
+
+
 def test_activity_observation_is_idempotent_and_broker_owns_matching_job(reset):
     from backend import activity
 

@@ -12,7 +12,7 @@ import statistics
 import time
 from collections import defaultdict
 
-from . import ledger
+from . import control_plane, ledger
 
 SCHEMA = "kh-studio.activity.v1"
 VALID_STATES = frozenset({"queued", "running", "done", "error", "cancelled"})
@@ -26,6 +26,8 @@ REPORTER_CLOCK_SKEW_S = 5 * 60
 _MAX_ID = 160
 _MAX_MODEL = 500
 _MAX_ERROR_CODE = 80
+VALID_ORIGINS = frozenset({"hub", "local_ui", "api", "unknown"})
+_MAX_ORIGIN_DEVICE = 160
 
 
 def _finite(value, *, minimum: float | None = None) -> float | None:
@@ -55,6 +57,14 @@ def _job(value: object) -> dict | None:
     source = value.get("source")
     if not job_id or state not in VALID_STATES or not model or source not in {"direct", "job"}:
         return None
+    origin = value.get("origin", "unknown")
+    if origin not in VALID_ORIGINS:
+        return None
+    origin_device = None
+    if "origin_device" in value:
+        origin_device = _text(value["origin_device"], _MAX_ORIGIN_DEVICE)
+        if origin_device is None:
+            return None
     progress = value.get("progress")
     if progress is not None:
         progress = _finite(progress, minimum=0)
@@ -90,8 +100,9 @@ def _job(value: object) -> dict | None:
     # Reporters may publish a safe generic error message; the Hub never
     # persists arbitrary error text from the worker.
     return {
-        "id": job_id, "state": state, "model": model, "source": source,
+        "id": job_id, "state": state, "model": model, "source": source, "origin": origin,
         "progress": progress, "error_code": error_code, **timestamps,
+        **({"origin_device": origin_device} if origin_device else {}),
     }
 
 
@@ -126,7 +137,16 @@ def validate_snapshot(value: object, *, expected_studio: str | None = None) -> d
     return result
 
 
-def _broker_jobs(registry: list[dict], batches: dict) -> dict[str, list[dict]]:
+def _hub_origin_device(settings: dict) -> str:
+    prefix = "Studio Hub KH · "
+    site_name = _text(settings.get("site_name"), _MAX_ORIGIN_DEVICE - len(prefix))
+    return f"{prefix}{site_name}" if site_name else "Studio Hub KH"
+
+
+def _broker_jobs(registry: list[dict], batches: dict,
+                 *, hub_origin_device: str | None = None) -> dict[str, list[dict]]:
+    if hub_origin_device is None:
+        hub_origin_device = _hub_origin_device(control_plane.load_settings())
     by_id = {studio.get("id"): studio for studio in registry}
     result: dict[str, list[dict]] = defaultdict(list)
     for batch in (batches or {}).values():
@@ -146,6 +166,7 @@ def _broker_jobs(registry: list[dict], batches: dict) -> dict[str, list[dict]]:
                 "id": job_id, "state": state, "studio": studio_id,
                 "machine": studio.get("machine", "local"),
                 "model": model, "source": "job", "progress": _finite(item.get("progress"), minimum=0),
+                "origin": "hub", "origin_device": hub_origin_device,
                 "started_at": _finite(item.get("started_at"), minimum=0),
                 "finished_at": _finite(item.get("finished_at"), minimum=0),
             })
@@ -170,7 +191,8 @@ def _reporter_support(status: dict, now: float) -> str | None:
 def _observed_jobs(registry: list[dict], statuses: dict, batches: dict,
                    now: float, conn=None) -> list[dict]:
     """Merge Studio observations with broker ownership without double-counting."""
-    broker_jobs = _broker_jobs(registry, batches)
+    hub_origin_device = _hub_origin_device(control_plane.load_settings())
+    broker_jobs = _broker_jobs(registry, batches, hub_origin_device=hub_origin_device)
     result = []
     seen: set[tuple[str, str, str, str]] = set()
     for studio in registry:
@@ -216,12 +238,16 @@ def _observed_jobs(registry: list[dict], statuses: dict, batches: dict,
             if owned:
                 row["source"] = "job"
                 row["model"] = owned.get("model") or row["model"]
+                row["origin"] = "hub"
+                row["origin_device"] = hub_origin_device
             elif ledger.activity_job_is_hub_owned(
                     row["machine"], studio_id, row["id"], conn=conn):
                 # The broker may have released a completed batch before the
                 # worker's terminal snapshot arrives. Its earlier recorded
                 # studio_job_id remains the authoritative ownership proof.
                 row["source"] = "job"
+                row["origin"] = "hub"
+                row["origin_device"] = hub_origin_device
             marker = (row["machine"], studio_id, row["id"], row["state"])
             if marker not in seen:
                 result.append(row)
@@ -348,6 +374,7 @@ def observe_poll(registry: list[dict], statuses: dict, batches: dict,
             ledger.record_activity_event(
                 machine=row["machine"], studio=row["studio"], job_id=row["id"],
                 state=row["state"], model=row.get("model"), source=row["source"],
+                origin=row.get("origin"), origin_device=row.get("origin_device"),
                 progress=row.get("progress"), started_at=row.get("started_at"),
                 finished_at=row.get("finished_at"), runtime_s=row.get("runtime_s"),
                 error_code=row.get("error_code"), reported_at=row.get("reported_at"),
@@ -421,6 +448,8 @@ def fleet_snapshot(registry: list[dict], statuses: dict, batches: dict,
             "model": (current or latest or {}).get("model"),
             "job_id": (current or latest or {}).get("job_id") or (current or latest or {}).get("id"),
             "source": (current or latest or {}).get("source"),
+            "origin": (current or latest or {}).get("origin", "unknown"),
+            "origin_device": (current or latest or {}).get("origin_device"),
             "progress": (current or {}).get("progress"),
             "last_activity_at": ((current or latest or {}).get("updated_at")
                                  or (current or latest or {}).get("finished_at")

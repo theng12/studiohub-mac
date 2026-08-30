@@ -31,6 +31,8 @@ MEDIA_EXT = {
     ".wav": "audio", ".mp3": "audio", ".flac": "audio", ".ogg": "audio",
     ".mp4": "video", ".mov": "video", ".webm": "video",
 }
+_VALID_ORIGINS = frozenset({"hub", "local_ui", "api", "unknown"})
+_MAX_ORIGIN_DEVICE = 160
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS batches (
@@ -75,6 +77,8 @@ CREATE TABLE IF NOT EXISTS activity_events (
   state TEXT NOT NULL,
   model TEXT,
   source TEXT NOT NULL,
+  origin TEXT,
+  origin_device TEXT,
   progress REAL,
   started_at REAL,
   finished_at REAL,
@@ -115,6 +119,8 @@ def _conn() -> sqlite3.Connection:
                     "ALTER TABLE activity_events ADD COLUMN activity_received_at REAL",
                     "ALTER TABLE activity_events ADD COLUMN reported_at REAL",
                     "ALTER TABLE activity_events ADD COLUMN hub_owned INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE activity_events ADD COLUMN origin TEXT",
+                    "ALTER TABLE activity_events ADD COLUMN origin_device TEXT",
                     "ALTER TABLE machine_state_transitions ADD COLUMN state TEXT NOT NULL DEFAULT 'unknown'",
                     "ALTER TABLE machine_state_transitions ADD COLUMN state_since REAL"):
             try:
@@ -145,6 +151,7 @@ def activity_transaction():
 
 def record_activity_event(*, machine: str, studio: str, job_id: str, state: str,
                           model: str | None, source: str, progress: float | None = None,
+                          origin: str | None = None, origin_device: str | None = None,
                           started_at: float | None = None,
                           finished_at: float | None = None,
                           runtime_s: float | None = None,
@@ -167,24 +174,27 @@ def record_activity_event(*, machine: str, studio: str, job_id: str, state: str,
     )
     reported_at = float(observed_at if reported_at is None else reported_at)
     hub_owned = bool(hub_owned or source == "job")
+    origin = origin if origin in _VALID_ORIGINS else "unknown"
+    origin_device = origin_device.strip()[:_MAX_ORIGIN_DEVICE] if isinstance(origin_device, str) else None
+    origin_device = origin_device or None
     owns_connection = conn is None
     if conn is None:
         conn = _conn()
     try:
         existing = conn.execute(
-            "SELECT activity_received_at, hub_owned FROM activity_events WHERE "
+            "SELECT activity_received_at, hub_owned, origin_device FROM activity_events WHERE "
             "machine = ? AND studio = ? AND job_id = ? AND state = ?",
             (machine, studio, job_id, state),
         ).fetchone()
         if existing is None:
             conn.execute(
                 """INSERT INTO activity_events (
-                    machine, studio, job_id, state, model, source, progress,
+                    machine, studio, job_id, state, model, source, origin, origin_device, progress,
                     started_at, finished_at, runtime_s, error_code, observed_at,
                     activity_received_at, reported_at, hub_owned
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (machine, studio, job_id, state, model,
-                 "job" if hub_owned else source, progress, started_at,
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (machine, studio, job_id, state, model, "job" if hub_owned else source,
+                 "hub" if hub_owned else origin, origin_device, progress, started_at,
                  finished_at, runtime_s, error_code, observed_at, activity_received_at, reported_at,
                  int(hub_owned)),
             )
@@ -194,11 +204,13 @@ def record_activity_event(*, machine: str, studio: str, job_id: str, state: str,
             is_newer = previous_received is None or activity_received_at >= previous_received
             if is_newer:
                 conn.execute(
-                    """UPDATE activity_events SET model = ?, source = ?, progress = ?,
+                    """UPDATE activity_events SET model = ?, source = ?, origin = ?, origin_device = ?, progress = ?,
                        started_at = ?, finished_at = ?, runtime_s = ?, error_code = ?,
                        activity_received_at = ?, reported_at = ?, hub_owned = ?
                        WHERE machine = ? AND studio = ? AND job_id = ? AND state = ?""",
                     (model, "job" if hub_owned or existing["hub_owned"] else source,
+                     "hub" if hub_owned or existing["hub_owned"] else origin,
+                     origin_device if hub_owned or not existing["hub_owned"] else existing["origin_device"],
                      progress, started_at, finished_at, runtime_s, error_code,
                      activity_received_at, reported_at, int(hub_owned or existing["hub_owned"]),
                      machine, studio, job_id, state),
@@ -206,9 +218,9 @@ def record_activity_event(*, machine: str, studio: str, job_id: str, state: str,
                 changed = True
             elif hub_owned and not existing["hub_owned"]:
                 conn.execute(
-                    "UPDATE activity_events SET hub_owned = 1, source = 'job' "
+                    "UPDATE activity_events SET hub_owned = 1, source = 'job', origin = 'hub', origin_device = ? "
                     "WHERE machine = ? AND studio = ? AND job_id = ? AND state = ?",
-                    (machine, studio, job_id, state),
+                    (origin_device, machine, studio, job_id, state),
                 )
                 changed = True
             else:
@@ -236,7 +248,7 @@ def activity_events(*, machine: str | None = None,
         conn = _conn()
     try:
         rows = conn.execute(
-            "SELECT machine, studio, job_id, state, model, source, progress, "
+            "SELECT machine, studio, job_id, state, model, source, origin, origin_device, progress, "
             "started_at, finished_at, runtime_s, error_code, observed_at, activity_received_at, reported_at, hub_owned "
             f"FROM activity_events WHERE {' AND '.join(where)} "
             "ORDER BY observed_at DESC, id DESC", args,
