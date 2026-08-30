@@ -1,0 +1,83 @@
+"""Behaviour checks for the operator-first portion of the Stats page."""
+
+import json
+import subprocess
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+FRONTEND = ROOT / "app" / "frontend" / "index.html"
+
+
+def _javascript(source: str, start: str, end: str) -> str:
+    return source[source.index(start):source.index(end, source.index(start))]
+
+
+def _render(activity: dict | None) -> dict:
+    source = FRONTEND.read_text()
+    helper = _javascript(source, "const FLEET_ACTIVITY_STATES =", "async function loadStats")
+    program = f"""
+const nodes = Object.fromEntries([
+  "#st-fleet-pulse", "#st-fleet-note", "#st-fleet-body", "#st-fleet-meta",
+].map(id => [id, {{ innerHTML: "", textContent: "", className: "", dataset: {{}}, setAttribute() {{}} }}]));
+function $(id) {{ return nodes[id]; }}
+function esc(value) {{ return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;"); }}
+function mlabel(value) {{ return String(value || "local"); }}
+function fmtDur(value) {{
+  value = Math.round(Number(value || 0));
+  if (value < 60) return value + "s";
+  if (value < 3600) return Math.floor(value / 60) + "m";
+  return Math.floor(value / 3600) + "h";
+}}
+{helper}
+renderFleetActivity({json.dumps(activity)});
+console.log(JSON.stringify({{
+  pulse: nodes["#st-fleet-pulse"].innerHTML,
+  note: nodes["#st-fleet-note"].textContent,
+  rows: nodes["#st-fleet-body"].innerHTML,
+  meta: nodes["#st-fleet-meta"].textContent,
+}}));
+"""
+    result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
+    return json.loads(result.stdout)
+
+
+def test_fleet_activity_renders_all_operational_states_attention_first_with_safe_evidence():
+    activity = {
+        "window": {"since_s": 0, "now": 1000},
+        "pulse": {"working": 1, "just_finished": 1, "ready": 1, "long_idle": 1, "offline": 1, "needs_attention": 1, "unknown": 1},
+        "machines": [
+            {"machine": "ready", "state": "ready", "state_duration_s": 90, "completed": 2, "failed": 0, "utilization": {"ratio": 0.4, "evidence": "complete"}},
+            {"machine": "idle", "state": "long_idle", "state_duration_s": 7200, "completed": 0, "failed": 0, "utilization": {"ratio": None, "evidence": "partial"}, "limitation": "Direct activity partially unavailable"},
+            {"machine": "offline", "state": "offline", "state_duration_s": 120, "completed": 0, "failed": 0, "utilization": {"ratio": None, "evidence": "partial"}},
+            {"machine": "working", "state": "working", "state_duration_s": 70, "studio": "image@working", "model": "org/model", "progress": 0.42, "job_id": "job-42", "source": "direct", "completed": 4, "failed": 0, "utilization": {"ratio": 0.5, "evidence": "complete"}},
+            {"machine": "finished", "state": "just_finished", "state_duration_s": 31, "studio": "voice@finished", "model": "org/voice", "latest": {"state": "done", "runtime_s": 13}, "completed": 3, "failed": 0, "utilization": {"ratio": 0.2, "evidence": "complete"}},
+            {"machine": "attention", "state": "needs_attention", "state_duration_s": 61, "studio": "voice@attention", "model": "org/voice", "latest": {"state": "error", "error_code": "worker_failed"}, "completed": 0, "failed": 1, "utilization": {"ratio": None, "evidence": "partial"}},
+            {"machine": "unknown", "state": "unknown", "state_duration_s": 0, "completed": 0, "failed": 0, "utilization": {"ratio": None, "evidence": "partial"}, "limitation": "Direct activity unavailable"},
+        ],
+    }
+
+    rendered = _render(activity)
+
+    for label in ("Needs attention", "Working", "Just finished", "Ready", "Long idle", "Offline", "Unknown"):
+        assert label in rendered["pulse"]
+        assert label in rendered["rows"]
+    assert rendered["rows"].index("attention") < rendered["rows"].index("working") < rendered["rows"].index("finished")
+    assert "42% complete" in rendered["rows"]
+    assert "Unavailable / partial" in rendered["rows"]
+    assert ">0% observed" not in rendered["rows"]
+    assert "Direct activity unavailable" in rendered["note"]
+    assert "<details" in rendered["rows"]
+    assert 'aria-label="Show activity details for attention"' in rendered["rows"]
+    assert "Last 16m" in rendered["meta"]
+
+
+def test_fleet_activity_has_loading_empty_and_error_copy_without_hiding_historical_stats():
+    source = FRONTEND.read_text()
+
+    assert "function renderFleetActivityLoading()" in source
+    assert "function renderFleetActivityError()" in source
+    assert "Loading current fleet activity" in source
+    assert "No Image or Voice machines are registered" in source
+    assert "Current fleet activity could not be loaded" in source
+    assert "Historical performance" in source

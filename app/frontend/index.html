@@ -288,12 +288,16 @@
   .voice-status{display:flex;align-items:center;min-height:40px;margin:10px 0 0;padding:9px 11px;border:1px solid #d6ddd2;border-radius:10px;background:#f7f9f4;color:var(--dim);font-size:var(--font-secondary);line-height:1.4}.voice-status[data-state="working"]{border-color:#c7d8cc;background:#edf6ef;color:var(--accent2);font-weight:700}.voice-status[data-state="success"]{border-color:#b8d8c3;background:#eaf6ed;color:var(--accent);font-weight:700}.voice-status[data-state="error"]{border-color:#e2c0b8;background:#fbefeb;color:var(--down);font-weight:700}
   .voice-consent{display:flex;align-items:flex-start;gap:8px;margin:12px 0;color:var(--dim);font-size:var(--font-secondary)}.voice-consent input{margin-top:3px}.voice-help{margin:-2px 0 12px;color:var(--dim);font-size:var(--font-secondary)}
   .voice-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(350px,1fr));gap:14px}.voice-card{display:flex;flex-direction:column;min-width:0}.voice-card .voice-name{font:700 20px/1.1 var(--display);color:var(--accent2)}.voice-card .voice-meta{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.voice-card code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.voice-sync-line{display:flex;align-items:center;gap:8px;margin-top:auto;padding-top:10px;border-top:1px solid #e1e5dc}.voice-sync-line .sub{flex:1}.voice-targets{margin-top:10px}.voice-targets summary{cursor:pointer;color:var(--accent);font-size:var(--font-secondary);font-weight:700}.voice-target{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 10px;padding:8px 0;border-bottom:1px solid #e6e8e1}.voice-target:last-child{border-bottom:0}.voice-target .message{grid-column:1/-1;color:var(--dim);font-size:var(--font-compact);overflow-wrap:anywhere}
+  /* Stats begins with the actual fleet, then keeps the established history below. */
+  .fleet-activity{margin:0 0 30px}.fleet-activity-copy{max-width:760px;margin:-4px 0 15px;color:var(--dim);font-size:var(--font-secondary)}.fleet-pulse{display:grid;grid-template-columns:repeat(6,minmax(118px,1fr));gap:8px;margin:0 0 10px}.fleet-pulse-item{min-height:76px;padding:11px 12px;border:1px solid #dce2d8;border-radius:13px;background:#fbfbf6}.fleet-pulse-item b{display:block;color:var(--accent2);font:700 23px/1 var(--display);font-variant-numeric:tabular-nums}.fleet-pulse-item span{display:flex;align-items:center;gap:6px;margin-top:7px;color:var(--dim);font:700 var(--font-compact)/1 var(--mono);letter-spacing:.04em;text-transform:uppercase}.fleet-pulse-item span:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}.fleet-pulse-item.needs_attention span{color:var(--down)}.fleet-pulse-item.working span{color:#b27610}.fleet-pulse-item.just_finished span{color:var(--accent)}.fleet-pulse-item.ready span{color:var(--up)}.fleet-pulse-item.long_idle span,.fleet-pulse-item.unknown span{color:#6d746d}.fleet-pulse-item.offline span{color:#925147}.fleet-activity-note{min-height:20px;margin:0 0 12px;color:var(--dim);font-size:var(--font-secondary)}.fleet-activity-note[data-state="error"]{color:#a84135;font-weight:700}.fleet-activity-note[data-state="loading"]{display:flex;align-items:center;gap:8px}.fleet-activity-note[data-state="loading"]:before{content:"";width:13px;height:13px;border:2px solid #cfdbcf;border-top-color:var(--accent);border-radius:50%;animation:autoSpin 1s linear infinite}.fleet-machine-wrap{overflow-x:auto}.fleet-machine-table{min-width:1080px;table-layout:fixed}.fleet-machine-table th:nth-child(1){width:17%}.fleet-machine-table th:nth-child(2){width:15%}.fleet-machine-table th:nth-child(3){width:20%}.fleet-machine-table th:nth-child(4){width:15%}.fleet-machine-table th:nth-child(5){width:12%}.fleet-machine-table th:nth-child(6){width:11%}.fleet-machine-table th:nth-child(7){width:10%}.fleet-machine-table td{vertical-align:top}.fleet-machine-name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--accent2);font-weight:750}.fleet-machine-meta{display:block;margin-top:4px;color:var(--dim);font-size:var(--font-compact);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fleet-state{display:inline-flex;align-items:center;gap:6px;padding:4px 7px;border:1px solid currentColor;border-radius:999px;font:700 var(--font-compact)/1 var(--mono);letter-spacing:.02em;white-space:nowrap}.fleet-state:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}.fleet-state.needs_attention{color:#b7463b;background:#fbeae6}.fleet-state.working{color:#98650d;background:#fcf2dd}.fleet-state.just_finished{color:#176e42;background:#e9f5eb}.fleet-state.ready{color:#176e42;background:#e9f5eb}.fleet-state.long_idle,.fleet-state.unknown{color:#6d746d;background:#f0f1ec}.fleet-state.offline{color:#8f5047;background:#f8ece9}.fleet-machine-progress{margin:7px 0 0}.fleet-machine-progress .prog{margin:0 0 4px}.fleet-machine-progress .prog i{background:linear-gradient(90deg,#ca8b22,#e3b05a)}.fleet-machine-result{font-size:var(--font-secondary);line-height:1.35}.fleet-machine-result.attention{color:#a84135;font-weight:700}.fleet-utilization.partial{color:#8a6d1f}.fleet-detail-row>td{padding:0!important;background:#fbfbf7}.fleet-detail-row details{padding:0 12px}.fleet-detail-row summary{padding:10px 0;cursor:pointer;color:var(--accent);font-size:var(--font-secondary);font-weight:700;outline-offset:4px}.fleet-detail-row summary:focus-visible{outline:3px solid #167a5540;border-radius:5px}.fleet-detail{display:grid;grid-template-columns:minmax(180px,.8fr) minmax(230px,1.2fr);gap:12px;padding:0 0 13px}.fleet-detail p{margin:0;color:var(--dim);font-size:var(--font-secondary)}.fleet-timeline{display:grid;gap:5px}.fleet-timeline-item{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-top:1px solid #e4e7df;color:var(--dim);font-size:var(--font-compact)}.fleet-timeline-item b{color:var(--text);font-weight:700}.historical-performance{padding-top:4px;border-top:1px solid #dfe3da}
   #bell-dropdown{top:37px;right:0;width:370px;padding:8px;border-color:var(--border);border-radius:16px;background:#fffef9;box-shadow:0 22px 55px #18362935}#bell-dropdown .bd-row:hover{background:#eff2ea}
   .modal-backdrop{background:rgba(12,35,26,.66);backdrop-filter:blur(7px)}.modal{max-width:650px;padding:26px;border:1px solid #d9ded5;border-radius:22px;background:#fffef9;box-shadow:0 30px 80px #0a241950}.modal h2{font:700 29px/1 var(--display)}.wn-rel{padding:16px 0;border-color:#dfe2d8}.wn-rel h3{font:700 14px/1.2 var(--mono);color:var(--accent2)}.wn-rel li{font-size:13px}
   .empty{padding:44px;color:#7b847d}.muted,.sub{color:var(--dim)}
   @media(max-width:1050px){header{margin-left:210px;padding:0 24px}nav{width:210px}main{margin-left:210px;padding:26px 24px 60px}.lrow{grid-template-columns:22px minmax(0,1.7fr) minmax(0,1fr) 90px minmax(0,1.15fr) 170px}.lrow>div:nth-child(6),.lrow.lhead>span:nth-child(6){display:none}.auto-update-controls{grid-template-columns:repeat(2,minmax(180px,1fr))}.auto-update-facts{grid-template-columns:repeat(3,minmax(110px,1fr))}.memory-modes{grid-template-columns:repeat(2,minmax(150px,1fr))}.ram-admission-controls{grid-template-columns:1fr 1fr}.ram-admission-controls label:first-child{grid-column:1/-1}.voice-form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.hardware-profile-builder .fields{grid-template-columns:repeat(2,minmax(150px,1fr))}.setup-fields{grid-template-columns:repeat(2,minmax(170px,1fr))}}
   @media(max-width:820px){header{margin-left:0;height:68px;padding:0 18px}header .summary{display:none}nav{position:sticky;top:68px;width:auto;height:58px;padding:7px 12px;flex-direction:row;overflow-x:auto;background:#123126;box-shadow:0 8px 20px #1736281c}nav:before,nav:after{display:none}nav button{width:auto;flex:0 0 auto;padding:8px 11px}nav button:hover{transform:none}main{margin-left:0;padding:22px 18px 54px}.workspace-head{padding:25px 26px}.live-chip{display:none}.grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}}
   @media(max-width:600px){header>span:first-child{display:none}header{gap:9px;padding:0 14px}header h1{font-size:18px}header #last-refresh{display:none}nav button{font-size:var(--font-compact);gap:7px;padding:7px 12px}nav button:before{font-size:14px}nav button.active{font-size:var(--font-compact);gap:7px}main{padding:16px 12px 45px}main>section,.card{min-width:0}.workspace-head{margin-bottom:16px;padding:22px 20px;border-radius:18px}.workspace-head h2{font-size:32px}.workspace-head p{font-size:12.5px}.controls,.toolbar{padding:10px}.controls .grp{width:100%;justify-content:space-between}.seg{max-width:100%;overflow-x:auto}.grid{grid-template-columns:1fr}.card{overflow:hidden;border-radius:15px;padding:16px}table{display:block;max-width:100%;overflow-x:auto}table thead,table tbody{display:table;width:max-content;min-width:100%;table-layout:auto}.lrow{grid-template-columns:20px 1.5fr .8fr auto;gap:8px}.lrow>div:nth-child(3),.lrow>div:nth-child(5),.lrow>div:nth-child(6),.lrow.lhead>span:nth-child(3),.lrow.lhead>span:nth-child(5),.lrow.lhead>span:nth-child(6){display:none}.modal{padding:20px;border-radius:18px}#bell-dropdown{position:fixed;left:12px;right:12px;top:72px;width:auto}.auto-update-controls{grid-template-columns:1fr;padding:11px}.auto-update-idle{height:auto;padding:7px 2px}.auto-update-actions .btn{flex:1 1 145px}.auto-update-actions .sub{flex-basis:100%}.auto-update-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.memory-modes{grid-template-columns:1fr}.memory-actions .btn{flex:1 1 135px}.ram-admission-controls{grid-template-columns:1fr}.ram-admission-controls label:first-child{grid-column:auto}.voice-form-grid{grid-template-columns:1fr}.voice-field.wide{grid-column:auto}.voice-list{grid-template-columns:1fr}.voice-audio-row .voice-field,.voice-audio-row .voice-field.model{min-width:100%}.setup-fields{grid-template-columns:1fr}.setup-fields .wide,.setup-fields .full,.setup-intro,.setup-connection{grid-column:auto}}
+  @media(max-width:850px){.fleet-pulse{grid-template-columns:repeat(3,minmax(130px,1fr))}.fleet-detail{grid-template-columns:1fr}}
+  @media(max-width:600px){.fleet-pulse{grid-template-columns:repeat(2,minmax(0,1fr))}.fleet-activity{margin-bottom:24px}.fleet-machine-wrap{margin:0 -4px}.fleet-machine-table{min-width:920px}}
   @media(max-width:600px){.managed-release-target{grid-template-columns:1fr}.managed-release-note{line-height:1.5}}
   @media(max-width:600px){.repair-row{grid-template-columns:1fr;align-items:stretch}.repair-action{width:100%}.repair-dialog-actions .btn,.repair-dialog-actions .go{flex:1 1 132px}}
   @media(max-width:600px){.resource-studio-table thead,.resource-studio-table tbody{min-width:720px}}
@@ -731,6 +735,22 @@
 
   <!-- STATS -->
   <section id="tab-stats" class="hide">
+    <section class="fleet-activity" aria-labelledby="fleet-activity-heading">
+      <div class="group-head"><h2 id="fleet-activity-heading">Fleet activity</h2><span class="meta" id="st-fleet-meta">Current operations</span></div>
+      <p class="fleet-activity-copy">See what every Image and Voice Mac is doing now before comparing historical output. Activity comes from each Studio’s private fleet report; older Studios remain visible with an honest limitation.</p>
+      <div id="st-fleet-pulse" class="fleet-pulse" aria-live="polite" aria-label="Fleet activity summary">
+        <div class="fleet-pulse-item"><b>—</b><span>Loading</span></div>
+      </div>
+      <p id="st-fleet-note" class="fleet-activity-note" data-state="loading" role="status" aria-live="polite">Loading current fleet activity</p>
+      <div class="table-wrap fleet-machine-wrap">
+        <table class="fleet-machine-table"><thead><tr>
+          <th>Machine</th><th>State</th><th>Now / latest activity</th><th>Result</th><th class="num">Window work</th><th>Comparable speed</th><th>Utilization</th>
+        </tr></thead><tbody id="st-fleet-body"><tr><td colspan="7" class="empty">Loading current fleet activity</td></tr></tbody></table>
+      </div>
+    </section>
+
+    <div class="historical-performance">
+      <div class="group-head"><h2>Historical performance</h2><span class="meta">Output, speed, and contribution over time</span></div>
     <div class="controls">
       <div class="grp"><label>Window</label>
         <div class="seg" id="st-win">
@@ -773,6 +793,7 @@
       <table><thead><tr><th>Model</th><th>Type</th><th class="num">Count</th><th style="width:40%">Avg speed</th></tr></thead><tbody id="st-models"></tbody></table>
     </div>
     <p class="muted" style="font-size:13px;margin-top:10px">Counts include both <b>Hub</b>-dispatched jobs and <b>direct</b> generations made inside each studio (indexed from their output folders) — use the <b>Source</b> toggle to separate them, and click an app tile or pick a machine to filter. Generation speed and per-model stats are only known for Hub jobs; direct/scanned files contribute to counts only. Voice vs. music is split by the studio that produced each file. Chat/LLM turns aren't recorded as assets.</p>
+    </div>
   </section>
 
   <!-- AUTOMATIC UPDATES -->
@@ -3934,7 +3955,123 @@ $("#st-mach").addEventListener("change", () => { stMach = $("#st-mach").value; l
 $("#st-clear").addEventListener("click", () => { stOp = ""; stMach = ""; $("#st-mach").value = ""; loadStats(); });
 function setStatOp(m) { stOp = (stOp === m ? "" : m); loadStats(); }   // toggle app filter
 const WIN_LABEL = { "720": "30 d", "168": "7 d", "24": "24 h", "1": "1 h" };
+const FLEET_ACTIVITY_STATES = {
+  needs_attention: { label: "Needs attention", detail: "needs attention" },
+  working: { label: "Working", detail: "working" },
+  just_finished: { label: "Just finished", detail: "just finished" },
+  ready: { label: "Ready", detail: "ready" },
+  long_idle: { label: "Long idle", detail: "long idle" },
+  offline: { label: "Offline", detail: "offline" },
+  unknown: { label: "Unknown", detail: "unknown" },
+};
+const FLEET_ACTIVITY_ORDER = ["needs_attention", "working", "just_finished", "ready", "long_idle", "offline", "unknown"];
+
+function fleetActivityModelName(model) {
+  if (!model) return "No activity reported";
+  const parts = String(model).split("/");
+  return parts[parts.length - 1] || model;
+}
+function fleetActivityWindowLabel(activity) {
+  const window = activity && activity.window;
+  const seconds = Number(window?.now) - Number(window?.since_s);
+  return Number.isFinite(seconds) && seconds >= 0 ? `Last ${fmtDur(seconds)}` : "Selected window";
+}
+function fleetActivityUtilization(utilization) {
+  if (!utilization || utilization.evidence !== "complete" || !Number.isFinite(utilization.ratio)) {
+    return { label: "Unavailable / partial", className: "partial" };
+  }
+  return { label: `${Math.round(Math.max(0, Math.min(1, utilization.ratio)) * 100)}% observed`, className: "" };
+}
+function fleetActivityResult(row) {
+  const latest = row.latest || {};
+  if (row.state === "working") {
+    const progress = Number(row.progress);
+    if (Number.isFinite(progress)) return { text: `${Math.round(Math.max(0, Math.min(1, progress)) * 100)}% complete`, progress };
+    return { text: "Processing", progress: null };
+  }
+  if (latest.state === "error") return { text: latest.error_code ? `Failed · ${latest.error_code}` : "Failed", attention: true };
+  if (latest.state === "cancelled") return { text: "Cancelled" };
+  if (latest.state === "done") return { text: latest.runtime_s != null ? `Completed in ${fmtDur(latest.runtime_s)}` : "Completed" };
+  if (row.state === "offline") return { text: "No current connection" };
+  if (row.state === "unknown") return { text: "Waiting for compatible activity evidence" };
+  return { text: "No active job" };
+}
+function fleetActivityTimeline(row) {
+  const entries = Array.isArray(row.timeline) ? row.timeline.slice(0, 5) : [];
+  if (!entries.length) return `<p>No recent activity events are available for this machine.</p>`;
+  return `<div class="fleet-timeline">${entries.map(entry => {
+    const state = FLEET_ACTIVITY_STATES[entry.state] || FLEET_ACTIVITY_STATES.unknown;
+    const at = entry.finished_at || entry.updated_at || entry.observed_at;
+    return `<div class="fleet-timeline-item"><b>${esc(state.label)}</b><span>${esc(entry.model ? fleetActivityModelName(entry.model) : "No model")} · ${esc(fmtAgo(at))}</span></div>`;
+  }).join("")}</div>`;
+}
+function fleetActivityViewModel(activity) {
+  const source = activity && typeof activity === "object" ? activity : {};
+  const pulse = source.pulse && typeof source.pulse === "object" ? source.pulse : {};
+  const machines = Array.isArray(source.machines) ? source.machines.slice() : [];
+  const priority = Object.fromEntries(FLEET_ACTIVITY_ORDER.map((state, index) => [state, index]));
+  machines.sort((a, b) => (priority[a.state] ?? 99) - (priority[b.state] ?? 99) || String(a.machine || "").localeCompare(String(b.machine || "")));
+  return { pulse, machines, windowLabel: fleetActivityWindowLabel(source) };
+}
+function renderFleetActivityLoading() {
+  $("#st-fleet-pulse").innerHTML = `<div class="fleet-pulse-item"><b>—</b><span>Loading</span></div>`;
+  const note = $("#st-fleet-note"); note.textContent = "Loading current fleet activity"; note.dataset.state = "loading";
+  $("#st-fleet-meta").textContent = "Current operations";
+  $("#st-fleet-body").innerHTML = `<tr><td colspan="7" class="empty">Loading current fleet activity</td></tr>`;
+}
+function renderFleetActivityError() {
+  $("#st-fleet-pulse").innerHTML = `<div class="fleet-pulse-item unknown"><b>—</b><span>Unavailable</span></div>`;
+  const note = $("#st-fleet-note"); note.textContent = "Current fleet activity could not be loaded. Historical performance is still available below; refresh to try again."; note.dataset.state = "error";
+  $("#st-fleet-meta").textContent = "Current operations unavailable";
+  $("#st-fleet-body").innerHTML = `<tr><td colspan="7" class="empty">Current fleet activity could not be loaded. Try refreshing this page.</td></tr>`;
+}
+function renderFleetActivity(activity) {
+  const view = fleetActivityViewModel(activity);
+  const note = $("#st-fleet-note");
+  $("#st-fleet-meta").textContent = view.windowLabel;
+  $("#st-fleet-pulse").innerHTML = FLEET_ACTIVITY_ORDER.map(state => {
+    const info = FLEET_ACTIVITY_STATES[state];
+    return `<div class="fleet-pulse-item ${state}"><b>${Number(view.pulse[state] || 0)}</b><span>${esc(info.label)}</span></div>`;
+  }).join("");
+  if (!view.machines.length) {
+    note.textContent = "No Image or Voice machines are registered for fleet activity yet."; note.dataset.state = "empty";
+    $("#st-fleet-body").innerHTML = `<tr><td colspan="7" class="empty">No Image or Voice machines are registered. Historical performance remains below.</td></tr>`;
+    return;
+  }
+  const limitations = [...new Set(view.machines.map(row => row.limitation).filter(Boolean))];
+  note.textContent = limitations.length
+    ? limitations.join(" · ")
+    : "Live activity is current for every compatible Image and Voice Studio.";
+  note.dataset.state = limitations.length ? "partial" : "ready";
+  $("#st-fleet-body").innerHTML = view.machines.map(row => {
+    const state = FLEET_ACTIVITY_STATES[row.state] || FLEET_ACTIVITY_STATES.unknown;
+    const result = fleetActivityResult(row);
+    const utilization = fleetActivityUtilization(row.utilization);
+    const relative = row.relative_performance;
+    const speed = row.median_runtime_s != null ? `${fmtDur(row.median_runtime_s)} median` : "Not enough like-for-like work";
+    const comparison = relative && Number.isFinite(relative.percent_faster)
+      ? `${relative.percent_faster >= 0 ? Math.abs(relative.percent_faster) + "% faster" : Math.abs(relative.percent_faster) + "% slower"} than fleet median`
+      : "";
+    const activity = row.state === "working"
+      ? `${row.studio ? String(row.studio).split("@", 1)[0] : "Studio"} · ${fleetActivityModelName(row.model)}`
+      : `${row.studio ? String(row.studio).split("@", 1)[0] + " · " : ""}${fleetActivityModelName(row.model)}`;
+    const source = row.source ? ` · ${row.source === "job" ? "Hub job" : "Direct"}` : "";
+    const resultMarkup = result.progress == null ? esc(result.text) : `${esc(result.text)}<div class="fleet-machine-progress"><div class="prog" aria-label="${esc(result.text)}"><i style="width:${Math.round(Math.max(0, Math.min(1, result.progress)) * 100)}%"></i></div></div>`;
+    const timeline = fleetActivityTimeline(row);
+    const limitation = row.limitation ? `<p>${esc(row.limitation)}</p>` : `<p>Activity evidence is complete for this machine in the selected window.</p>`;
+    return `<tr>
+      <td><span class="fleet-machine-name">${esc(mlabel(row.machine))}</span><span class="fleet-machine-meta">${esc(row.machine || "local")}</span></td>
+      <td><span class="fleet-state ${esc(row.state || "unknown")}">${esc(state.label)}</span><span class="fleet-machine-meta">for ${esc(fmtDur(row.state_duration_s || 0))}</span></td>
+      <td><b>${esc(activity)}</b><span class="fleet-machine-meta">${row.last_activity_at ? `Last activity ${esc(fmtAgo(row.last_activity_at))}` : "No observed activity yet"}${esc(source)}</span></td>
+      <td><span class="fleet-machine-result${result.attention ? " attention" : ""}">${resultMarkup}</span></td>
+      <td class="num"><b>${Number(row.completed || 0)}</b> completed<br><span class="sub">${Number(row.failed || 0)} failed</span></td>
+      <td><b>${esc(speed)}</b>${comparison ? `<span class="fleet-machine-meta">${esc(comparison)}</span>` : ""}</td>
+      <td><span class="fleet-utilization ${utilization.className}">${esc(utilization.label)}</span></td>
+    </tr><tr class="fleet-detail-row"><td colspan="7"><details><summary aria-label="Show activity details for ${esc(mlabel(row.machine))}">Activity details</summary><div class="fleet-detail"><div>${limitation}</div><div>${timeline}</div></div></details></td></tr>`;
+  }).join("");
+}
 async function loadStats() {
+  renderFleetActivityLoading();
   const p = new URLSearchParams();
   if (stWin !== "0") p.set("hours", stWin);
   if (stSrc !== "all") p.set("source", stSrc);
@@ -3942,7 +4079,9 @@ async function loadStats() {
   if (stMach) p.set("machine", stMach);
   const qs = p.toString();
   const d = await api("/api/hub/stats" + (qs ? "?" + qs : "")).then(r => r.json()).catch(() => null);
-  if (!d) { $("#st-total").textContent = "stats unavailable"; return; }
+  if (!d) { $("#st-total").textContent = "stats unavailable"; renderFleetActivityError(); return; }
+
+  renderFleetActivity(d.fleet_activity);
 
   // Auto-clear a filter that no longer applies (e.g. after switching source/window).
   if (stOp && !(d.available_modalities || []).includes(stOp)) { stOp = ""; return loadStats(); }
