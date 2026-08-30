@@ -10,6 +10,21 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.15.0] — 2026-08-31
+
+### Added — on-demand fleet job details in Stats
+
+- **View details** now fetches one selected Image or Voice job through the
+  existing authenticated Studio gateway. Normal fleet polling remains
+  content-free; prompts, transcripts, parameters, paths, media, handles, and
+  credentials stay off the activity feed and Hub history.
+- Sensitive detail stays on its originating worker until the owner requests it.
+  Media uses authenticated, path-free, exact-job handles that expire after five
+  minutes; the Studio's own cleanup and retention policy remains authoritative.
+- Closing the details drawer aborts active requests and clears fetched text and
+  media URLs from browser memory. Studio Hub adds no central content archive.
+- This release changes no dependency, model, installation flow, or launcher.
+
 ## [2.14.0] — 2026-08-30
 
 ### Added — live fleet activity in Stats

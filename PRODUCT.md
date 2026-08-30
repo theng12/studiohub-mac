@@ -35,6 +35,10 @@ Studio Hub combines local-first generation infrastructure with fleet-wide contro
 - Direct Studio activity and Hub-dispatched activity both belong in operational statistics.
 - Historical performance comparisons must compare like-for-like work and must not imply confidence when evidence is sparse.
 - Existing throughput, model, and machine analytics remain useful and must be preserved beneath the live operational view.
+- Fleet activity polling is content-free. An owner can select **View details**
+  for one Image or Voice job, which fetches authenticated details and media
+  from the originating worker only on demand; local Studio retention remains
+  authoritative and Hub keeps no central content archive.
 - The feature must not change GenStudio-facing behavior or job routing.
 - Older Studios that cannot report direct activity remain compatible and are labelled honestly instead of being guessed about.
 

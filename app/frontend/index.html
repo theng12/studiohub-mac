@@ -1234,6 +1234,12 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.15.0", date: "2026-08-31", items: [
+    "<b>Stats can now show one job's details on demand.</b> Select <b>View details</b> for an Image or Voice job to fetch its approved content only after you ask; ordinary fleet polling remains content-free.",
+    "Sensitive text, reference media, outputs, and settings stay on the originating worker until requested. Authenticated, path-free media handles are tied to the exact job and expire after five minutes.",
+    "Closing the details drawer aborts active requests and removes fetched text and media URLs from browser memory. Studio Hub keeps no central content archive; each Studio's local cleanup and retention remains authoritative.",
+    "This release changes no dependency, model, installation flow, or launcher. <b>Ordinary Update is enough</b>; it does not update any fleet Mac automatically.",
+  ]},
   { v: "2.14.0", date: "2026-08-30", items: [
     "<b>Stats now begins with live fleet activity.</b> See seven clear states — needs attention, working, offline, just finished, long idle, ready, and unknown — before the existing historical performance, plus safe job/model/progress/result evidence and whether work came through the Hub or directly to a Studio.",
     "Each machine keeps a compact safe job ID and bounded recent history. The default 30-day evidence and like-for-like comparisons remain below; older Studios stay compatible and show partial or unknown activity until they are updated.",

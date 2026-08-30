@@ -413,7 +413,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/render-assets/by-sha/{sha256}` | Look up and refresh a retained render input by checksum before uploading it again |
 | `GET /api/hub/jobs/{batch}/items/{index}/artifact` | Stream a completed worker video through Hub authentication |
 | `POST /api/hub/jobs/{batch}/items/{index}/ack` | Confirm the main copy was verified and start worker retention |
-| `GET /api/hub/stats[?hours=N]` | Generation analytics plus sanitized private fleet activity: seven operational states, Hub/direct attribution, safe job/model/progress/result evidence, bounded recent history, and honest partial/unknown mixed-version rows. Existing history defaults to 30 days and keeps like-for-like comparisons; prompts, paths, assets, credentials, and reference media are never returned. |
+| `GET /api/hub/stats[?hours=N]` | Generation analytics plus sanitized private fleet activity: seven operational states, Hub/direct attribution, safe job/model/progress/result evidence, bounded recent history, and honest partial/unknown mixed-version rows. Existing history defaults to 30 days and keeps like-for-like comparisons; prompts, transcripts, paths, media, handles, credentials, and full parameters are never returned. Select **View details** to make an authenticated, on-demand worker request for one exact job. |
 | `POST /api/hub/recipes/run` | Run a recipe chain (`{recipe, brief}`) |
 | `GET /api/hub/recipes/runs[/{id}]` | Recipe run status |
 | `POST /api/hub/director` | `{brief, auto_run?}` — LLM plans a recipe from plain English |
@@ -1193,6 +1193,35 @@ five studio addresses:
 
 Works for local and remote registry entries alike. Intended for API traffic;
 for browsing a studio's web UI, use the dashboard's direct "Open UI" links.
+
+### On-demand fleet job details
+
+Stats keeps its normal fleet polling content-free: prompts, transcripts, full
+parameters, filesystem paths, media, handles, and credentials do not enter the
+activity feed or Hub history. When an owner selects **View details**, the Hub
+uses the existing authenticated gateway to ask the originating worker for one
+exact job. The content remains on that worker until requested; the Hub creates
+no central archive and the worker's local cleanup/retention policy remains
+authoritative. Closing the drawer aborts active requests and clears fetched
+text and media URLs from browser memory.
+
+```bash
+HUB=http://localhost:47873
+HUB_TOKEN='owner-hub-token'
+STUDIO_ID='image-or-voice-studio-id'
+JOB_ID='job-id-from-stats'
+
+curl --fail \
+  -H "X-Hub-Token: $HUB_TOKEN" \
+  "$HUB/studio/$STUDIO_ID/api/fleet/jobs/$JOB_ID/details" | jq .
+
+# Use the opaque handle returned in the details response; it expires in five minutes.
+curl --fail --output media.bin \
+  -H "X-Hub-Token: $HUB_TOKEN" \
+  "$HUB/studio/$STUDIO_ID/api/fleet/jobs/$JOB_ID/media/<opaque-handle>"
+```
+
+The release changes no dependency, model, installation flow, or launcher.
 
 ### curl
 
