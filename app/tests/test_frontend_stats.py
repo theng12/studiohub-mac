@@ -116,6 +116,25 @@ def test_fleet_activity_reports_health_attention_unknown_progress_job_identity_a
         assert label in rendered["rows"]
 
 
+def test_fleet_activity_attention_disclosure_matches_the_failure_or_health_cause():
+    rendered = _render({
+        "schema": "studiohub.fleet_activity.v1",
+        "window": {"since_s": 0, "now": 1000},
+        "pulse": {"needs_attention": 2},
+        "machines": [
+            {"machine": "failed-job", "state": "needs_attention", "latest": {"state": "error", "error_code": "worker_failed"}},
+            {"machine": "health-check", "state": "needs_attention", "latest": {"state": "done", "runtime_s": 9}},
+        ],
+    })
+
+    failed = rendered["rows"].split("health-check")[0]
+    health = rendered["rows"].split("health-check", 1)[1]
+    assert "Failed · worker_failed" in failed
+    assert "Latest job failed with worker_failed" in failed
+    assert "Studio health needs attention. Check this Mac’s Studio health" not in failed
+    assert "Studio health needs attention. Check this Mac’s Studio health" in health
+
+
 def test_fleet_activity_refresh_and_contract_guards_preserve_the_existing_board():
     source = FRONTEND.read_text()
     loader = _javascript(source, "async function loadStats", "// Auto-clear")
@@ -129,6 +148,8 @@ def test_fleet_activity_refresh_and_contract_guards_preserve_the_existing_board(
     assert "fleetActivityCaptureView" in source and "fleetActivityRestoreView" in source
     assert 'aria-live="off"' in source
     assert "repeat(7," in source
+    assert "@media(max-width:1200px){.fleet-pulse{grid-template-columns:repeat(4," in source
+    assert ".fleet-detail code{overflow-wrap:anywhere" in source
     assert "detail:" not in _javascript(source, "const FLEET_ACTIVITY_STATES =", "const FLEET_ACTIVITY_ORDER")
 
 
@@ -143,7 +164,26 @@ console.log(JSON.stringify([
   isFleetActivitySnapshot(valid), isFleetActivitySnapshot(null),
   isFleetActivitySnapshot([]), isFleetActivitySnapshot({{}}),
   isFleetActivitySnapshot({{ ...valid, machines: {{}} }}),
+  isFleetActivitySnapshot({{ ...valid, window: [] }}),
+  isFleetActivitySnapshot({{ ...valid, pulse: [] }}),
 ]));
 """
     result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
-    assert json.loads(result.stdout) == [True, False, False, False, False]
+    assert json.loads(result.stdout) == [True, False, False, False, False, False, False]
+
+
+def test_fleet_activity_focus_guard_suppresses_background_rebuilds_for_native_disclosures():
+    source = FRONTEND.read_text()
+    helper = _javascript(source, "function fleetActivityHasFocus", "function renderFleetActivityLoading")
+    program = f"""
+const fleetSummary = {{ closest: selector => selector === ".fleet-activity" ? {{}} : null }};
+global.document = {{ activeElement: fleetSummary }};
+{helper}
+const focused = fleetActivityHasFocus();
+document.activeElement = {{ closest: () => null }};
+const outside = fleetActivityHasFocus();
+console.log(JSON.stringify([focused, outside]));
+"""
+    result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout) == [True, False]
+    assert "vis(\"stats\") && !fleetActivityHasFocus()" in source
