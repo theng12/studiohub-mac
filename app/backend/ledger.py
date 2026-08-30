@@ -256,7 +256,8 @@ def activity_events(*, machine: str | None = None,
     finally:
         if owns_connection:
             conn.close()
-    return [dict(row) for row in rows]
+    return [{**dict(row), "origin": row["origin"] if row["origin"] in _VALID_ORIGINS else "unknown"}
+            for row in rows]
 
 
 def activity_job_is_hub_owned(machine: str, studio: str, job_id: str,

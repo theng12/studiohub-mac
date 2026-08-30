@@ -82,6 +82,38 @@ def test_activity_contract_allowlists_bounded_origin_scalars(reset):
     assert not {"prompt", "path", "handle"} & projected.keys()
 
 
+def test_legacy_activity_row_uses_unknown_origin_in_events_and_timeline(reset):
+    import sqlite3
+
+    from backend import activity
+
+    studio = _studio()
+    conn = sqlite3.connect(ledger.DB_FILE)
+    conn.execute("""CREATE TABLE activity_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, machine TEXT NOT NULL,
+        studio TEXT NOT NULL, job_id TEXT NOT NULL, state TEXT NOT NULL,
+        model TEXT, source TEXT NOT NULL, progress REAL, started_at REAL,
+        finished_at REAL, runtime_s REAL, error_code TEXT, observed_at REAL NOT NULL,
+        activity_received_at REAL NOT NULL, reported_at REAL,
+        hub_owned INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(machine, studio, job_id, state))""")
+    conn.execute("""INSERT INTO activity_events (
+        machine, studio, job_id, state, model, source, finished_at, observed_at,
+        activity_received_at, reported_at, hub_owned
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+        "mac-a", studio["id"], "legacy", "done", "org/model", "direct", 100.0,
+        100.0, 100.0, 100.0, 0,
+    ))
+    conn.commit()
+    conn.close()
+
+    assert ledger.activity_events(machine="mac-a")[0]["origin"] == "unknown"
+    snapshot = activity.fleet_snapshot(
+        [studio], {studio["id"]: _status()}, {}, since_s=0.0, now=101.0,
+    )
+    assert snapshot["machines"][0]["timeline"][0]["origin"] == "unknown"
+
+
 def test_broker_origin_overrides_worker_claim_and_persisted_ownership(reset, monkeypatch):
     from backend import activity, control_plane
 
