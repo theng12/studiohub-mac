@@ -66,6 +66,35 @@ CREATE TABLE IF NOT EXISTS assets (
 );
 CREATE INDEX IF NOT EXISTS idx_assets_created ON assets(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_assets_batch ON assets(batch_id);
+CREATE TABLE IF NOT EXISTS activity_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  machine TEXT NOT NULL,
+  studio TEXT NOT NULL,
+  job_id TEXT NOT NULL,
+  state TEXT NOT NULL,
+  model TEXT,
+  source TEXT NOT NULL,
+  progress REAL,
+  started_at REAL,
+  finished_at REAL,
+  runtime_s REAL,
+  error_code TEXT,
+  observed_at REAL NOT NULL,
+  UNIQUE(machine, studio, job_id, state)
+);
+CREATE INDEX IF NOT EXISTS idx_activity_events_machine_time
+  ON activity_events(machine, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_events_comparable
+  ON activity_events(studio, model, machine, finished_at DESC);
+CREATE TABLE IF NOT EXISTS machine_state_transitions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  machine TEXT NOT NULL,
+  reachable INTEGER NOT NULL,
+  working INTEGER NOT NULL,
+  observed_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_machine_state_transitions_machine_time
+  ON machine_state_transitions(machine, observed_at ASC);
 """
 
 
@@ -87,6 +116,115 @@ def _conn() -> sqlite3.Connection:
     except BaseException:
         conn.close()
         raise
+
+
+def record_activity_event(*, machine: str, studio: str, job_id: str, state: str,
+                          model: str | None, source: str, progress: float | None = None,
+                          started_at: float | None = None,
+                          finished_at: float | None = None,
+                          runtime_s: float | None = None,
+                          error_code: str | None = None,
+                          observed_at: float | None = None) -> bool:
+    """Insert one meaningful Studio job transition, or refresh its evidence.
+
+    The unique transition identity deliberately excludes observation time and
+    progress: five-second health polling must not inflate counts merely because
+    a worker is still running. The latest bounded scalar evidence remains
+    useful for an operator-facing live board.
+    """
+    observed_at = float(time.time() if observed_at is None else observed_at)
+    values = (machine, studio, job_id, state, model, source, progress, started_at,
+              finished_at, runtime_s, error_code, observed_at)
+    with _conn() as conn:
+        before = conn.total_changes
+        conn.execute(
+            """INSERT INTO activity_events (
+                machine, studio, job_id, state, model, source, progress,
+                started_at, finished_at, runtime_s, error_code, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(machine, studio, job_id, state) DO UPDATE SET
+                model=excluded.model, source=excluded.source,
+                progress=excluded.progress, started_at=excluded.started_at,
+                finished_at=excluded.finished_at, runtime_s=excluded.runtime_s,
+                error_code=excluded.error_code,
+                observed_at=MAX(activity_events.observed_at, excluded.observed_at)
+            """, values,
+        )
+        conn.commit()
+        return conn.total_changes > before
+
+
+def activity_events(*, machine: str | None = None,
+                    since_s: float | None = None) -> list[dict]:
+    where, args = ["1=1"], []
+    if machine:
+        where.append("machine = ?")
+        args.append(machine)
+    if since_s is not None:
+        where.append("observed_at >= ?")
+        args.append(float(since_s))
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT machine, studio, job_id, state, model, source, progress, "
+            "started_at, finished_at, runtime_s, error_code, observed_at "
+            f"FROM activity_events WHERE {' AND '.join(where)} "
+            "ORDER BY observed_at DESC, id DESC", args,
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def activity_job_is_hub_owned(machine: str, studio: str, job_id: str) -> bool:
+    """Whether an earlier broker observation established job ownership."""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM activity_events WHERE machine = ? AND studio = ? "
+            "AND job_id = ? AND source = 'job' LIMIT 1",
+            (machine, studio, job_id),
+        ).fetchone()
+    return row is not None
+
+
+def record_machine_state(*, machine: str, reachable: bool, working: bool,
+                         observed_at: float | None = None) -> bool:
+    """Store only actual machine reachability/working transitions."""
+    observed_at = float(time.time() if observed_at is None else observed_at)
+    with _conn() as conn:
+        previous = conn.execute(
+            "SELECT reachable, working FROM machine_state_transitions "
+            "WHERE machine = ? ORDER BY observed_at DESC, id DESC LIMIT 1",
+            (machine,),
+        ).fetchone()
+        current = (int(bool(reachable)), int(bool(working)))
+        if previous and (previous["reachable"], previous["working"]) == current:
+            return False
+        conn.execute(
+            "INSERT INTO machine_state_transitions "
+            "(machine, reachable, working, observed_at) VALUES (?, ?, ?, ?)",
+            (machine, *current, observed_at),
+        )
+        conn.commit()
+    return True
+
+
+def machine_state_transitions(machine: str, *, before_s: float | None = None) -> list[dict]:
+    where, args = ["machine = ?"], [machine]
+    if before_s is not None:
+        where.append("observed_at <= ?")
+        args.append(float(before_s))
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT reachable, working, observed_at FROM machine_state_transitions "
+            f"WHERE {' AND '.join(where)} ORDER BY observed_at ASC, id ASC", args,
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def prune_activity(before_s: float) -> None:
+    """Keep the operational ledger deliberately bounded to the approved 30 days."""
+    with _conn() as conn:
+        conn.execute("DELETE FROM activity_events WHERE observed_at < ?", (before_s,))
+        conn.execute("DELETE FROM machine_state_transitions WHERE observed_at < ?", (before_s,))
+        conn.commit()
 
 
 def _is_corruption_error(exc: sqlite3.DatabaseError) -> bool:

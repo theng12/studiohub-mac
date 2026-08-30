@@ -80,6 +80,60 @@ async def test_down_studio_needs_two_good_probes_to_rejoin(monitor, monkeypatch)
     assert monitor.status["image"]["health_recovering"] is False
 
 
+@pytest.mark.asyncio
+async def test_activity_404_is_compatible_and_does_not_degrade_health(monitor, monkeypatch):
+    studio = next(row for row in monitor.registry if row["id"] == "image")
+
+    class Health:
+        status_code = 200
+        def json(self):
+            return {"ok": True, "app_version": "1.2.3"}
+
+    class Missing:
+        status_code = 404
+        def json(self):
+            return {}
+
+    calls = []
+    async def get(url, **kwargs):
+        calls.append((url, kwargs))
+        return Health() if url.endswith("/api/health") else Missing()
+
+    monkeypatch.setattr(monitor._client, "get", get)
+    await monitor._poll_one(studio)
+    assert monitor.status["image"]["status"] == "up"
+    assert monitor.status["image"]["activity_support"] == "unavailable"
+    assert calls[1][0].endswith("/api/fleet/activity")
+    assert "headers" in calls[1][1]
+
+
+@pytest.mark.asyncio
+async def test_activity_failure_preserves_last_good_snapshot(monitor, monkeypatch):
+    studio = next(row for row in monitor.registry if row["id"] == "image")
+    last_good = {
+        "schema": "kh-studio.activity.v1", "studio": "image", "observed_at": 10.0,
+        "active": None, "latest": None,
+    }
+    monitor.status["image"] = {"status": "up", "activity": last_good,
+                                "activity_support": "available"}
+
+    class Health:
+        status_code = 200
+        def json(self):
+            return {"ok": True, "app_version": "1.2.3"}
+
+    async def get(url, **kwargs):
+        if url.endswith("/api/health"):
+            return Health()
+        raise RuntimeError("activity transport lost")
+
+    monkeypatch.setattr(monitor._client, "get", get)
+    await monitor._poll_one(studio)
+    assert monitor.status["image"]["status"] == "up"
+    assert monitor.status["image"]["activity"] == last_good
+    assert monitor.status["image"]["activity_support"] == "error"
+
+
 def test_repeated_worker_restart_alert_is_edge_triggered(reset, monitor):
     from backend import alerts
 

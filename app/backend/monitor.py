@@ -271,6 +271,14 @@ class StudioMonitor:
 
     async def poll_all(self):
         await asyncio.gather(*(self._poll_one(s) for s in self.registry))
+        # Activity is an optional extension of an already successful health
+        # probe. Persisting its compact transitions here keeps Stats entirely
+        # local and never lets a slow/old reporter affect worker health.
+        from . import activity, broker
+        try:
+            activity.observe_poll(self.registry, self.status, broker.batches)
+        except Exception:
+            log.warning("activity observation failed (continuing)", exc_info=True)
         # metrics sample + watchdog revival pass (late import: no cycle)
         from . import metrics, peers
         metrics.on_poll(self.registry, self.status)
@@ -375,6 +383,15 @@ class StudioMonitor:
                 "health_recovering": recovering,
                 "health_probe_degraded": False,
             }
+            # The optional reporter may have one temporary failed request.
+            # Retain its last valid observation across every ordinary health
+            # refresh so the live board does not falsely forget a job.
+            if previous.get("activity") is not None:
+                self.status[sid]["activity"] = previous["activity"]
+            if previous.get("activity_support"):
+                self.status[sid]["activity_support"] = previous["activity_support"]
+            if health.get("ok"):
+                await self._poll_activity(studio)
             self._note_transition(studio, prev_status, effective_status)
         except Exception as exc:
             prev = self.status.get(sid, {})
@@ -404,6 +421,40 @@ class StudioMonitor:
             if down:
                 self.status[sid]["health"] = None
             self._note_transition(studio, prev_status, effective_status)
+
+    async def _poll_activity(self, studio: dict) -> None:
+        """Fetch the optional private activity contract after health succeeds.
+
+        Activity reporting is intentionally not a health dependency: a 404 is
+        an older compatible Studio, while any other fault keeps the last good
+        evidence for Stats and only marks its evidence limitation.
+        """
+        from . import activity
+
+        sid = studio["id"]
+        previous = self.status.get(sid, {})
+        try:
+            url, headers = studio_request(studio, "/api/fleet/activity")
+            response = await self._client.get(
+                url, headers=headers, timeout=HEALTH_TIMEOUT_S,
+            )
+            status_code = getattr(response, "status_code", 200)
+            if status_code == 404:
+                previous.pop("activity", None)
+                previous["activity_support"] = "unavailable"
+                previous.pop("activity_error", None)
+                return
+            if status_code >= 400:
+                raise RuntimeError("activity reporter request failed")
+            snapshot = activity.validate_snapshot(response.json())
+            if snapshot is None:
+                raise RuntimeError("activity reporter returned an invalid snapshot")
+            previous["activity"] = snapshot
+            previous["activity_support"] = "available"
+            previous.pop("activity_error", None)
+        except Exception:
+            previous["activity_support"] = "error"
+            previous["activity_error"] = "reporter request failed"
 
     # ── catalog ──────────────────────────────────────────────────────────
     async def get_catalog(self, studio: dict, force: bool = False) -> dict | None:
