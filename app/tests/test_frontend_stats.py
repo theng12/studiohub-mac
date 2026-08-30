@@ -336,6 +336,174 @@ console.log(JSON.stringify({{ events, body: body.textContent, status: status.tex
     assert closed["urls"] == []
 
 
+def test_replacing_details_or_error_destroys_detached_ephemeral_media_first():
+    source = FRONTEND.read_text()
+    helper = _details_javascript(source)
+    program = f"""
+const events = [];
+const audio = {{ pause() {{ events.push("pause"); }}, removeAttribute(name) {{ events.push("remove:" + name); }}, load() {{ events.push("load"); }} }};
+function element(tag) {{ return {{ tag, textContent: "", className: "", dataset: {{}}, children: [], append(...items) {{ this.children.push(...items); events.push("append:" + tag); }}, addEventListener() {{}} }}; }}
+const dialog = {{ dataset: {{ machine: "Mac", origin: "api", originDevice: "" }} }};
+const status = {{ textContent: "", dataset: {{}} }}, title = {{ textContent: "" }};
+const body = {{
+  value: "old content",
+  querySelectorAll(selector) {{ return selector === "audio" ? [audio] : []; }},
+  set textContent(value) {{ this.value = value; events.push("clear"); }},
+  get textContent() {{ return this.value; }},
+  append(...items) {{ events.push("append:body"); }},
+}};
+function $(id) {{ return id === "#fleet-job-details" ? dialog : id === "#fleet-job-details-body" ? body : id === "#fleet-job-details-status" ? status : title; }}
+function esc(value) {{ return String(value ?? ""); }}
+function jsq(value) {{ return String(value ?? ""); }}
+function fmtDur(value) {{ return String(value); }}
+global.document = {{ createElement: element }};
+global.URL = {{ revokeObjectURL(value) {{ events.push("revoke:" + value); }} }};
+{helper}
+fleetJobDetailsState.objectUrls = ["blob:render"];
+renderFleetJobDetails({{ schema: "kh-studio.job-details.v1", studio: "image", job: {{ id: "one" }}, inputs: {{}}, references: [], outputs: [] }});
+const renderEvents = events.slice();
+events.length = 0;
+fleetJobDetailsState.objectUrls = ["blob:error"];
+showFleetJobDetailsError("temporarily_unavailable");
+console.log(JSON.stringify({{ renderEvents, errorEvents: events, urls: fleetJobDetailsState.objectUrls }}));
+"""
+    result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
+    replaced = json.loads(result.stdout)
+    assert replaced["renderEvents"][:5] == ["pause", "remove:src", "load", "revoke:blob:render", "clear"]
+    assert replaced["errorEvents"][:5] == ["pause", "remove:src", "load", "revoke:blob:error", "clear"]
+    assert replaced["urls"] == []
+
+
+def test_overlapping_detail_refreshes_ignore_an_older_response_that_finishes_last():
+    source = FRONTEND.read_text()
+    helper = _details_javascript(source)
+    program = f"""
+const pending = [];
+const rendered = [];
+function $(id) {{ return {{ textContent: "", dataset: {{}} }}; }}
+function esc(value) {{ return String(value ?? ""); }}
+function jsq(value) {{ return String(value ?? ""); }}
+function fmtDur(value) {{ return String(value); }}
+async function api() {{ return new Promise(resolve => pending.push(resolve)); }}
+global.document = {{ createElement() {{ return {{ addEventListener() {{}}, append() {{}} }}; }} }};
+global.URL = {{ revokeObjectURL() {{}} }};
+{helper}
+fleetJobDetailsState.controller = new AbortController();
+fleetJobDetailsState.studio = "image@mac";
+fleetJobDetailsState.jobId = "job-1";
+renderFleetJobDetails = details => rendered.push(details.job.id);
+const older = refreshFleetJobDetails();
+const newer = refreshFleetJobDetails();
+pending[1]({{ ok: true, json: async () => ({{ schema: "kh-studio.job-details.v1", job: {{ id: "newer" }} }}) }});
+setImmediate(() => {{
+  pending[0]({{ ok: true, json: async () => ({{ schema: "kh-studio.job-details.v1", job: {{ id: "older" }} }}) }});
+  Promise.all([older, newer]).then(results => console.log(JSON.stringify({{ rendered, results: results.map(item => item?.job?.id || null) }})));
+}});
+"""
+    result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout) == {"rendered": ["newer"], "results": [None, "newer"]}
+
+
+def test_expired_open_and_download_replay_once_with_fresh_metadata():
+    source = FRONTEND.read_text()
+    helper = _details_javascript(source)
+    for mode in ("open", "download"):
+        program = f"""
+const mode = {json.dumps(mode)};
+const paths = [], events = [];
+const target = {{ children: [], textContent: "", replaceChildren(...items) {{ this.children = items; }}, append(...items) {{ this.children.push(...items); }} }};
+function element(tag) {{ return {{ tag, textContent: "", className: "", hidden: false, children: [], addEventListener() {{}}, append(...items) {{ this.children.push(...items); }}, click() {{ events.push("download"); }}, remove() {{}} }}; }}
+function $(id) {{ return {{ textContent: "", dataset: {{}} }}; }}
+function esc(value) {{ return String(value ?? ""); }}
+function jsq(value) {{ return String(value ?? ""); }}
+function fmtDur(value) {{ return String(value); }}
+global.document = {{ createElement: element, body: {{ append() {{}} }} }};
+global.URL = {{ revokeObjectURL() {{}}, createObjectURL() {{ return "blob:fresh"; }} }};
+const popup = {{ opener: {{}}, location: {{ href: "about:blank" }}, close() {{ events.push("popup-close"); }} }};
+global.window = {{ open(url) {{ events.push("open:" + url); return popup; }} }};
+let mediaCalls = 0;
+async function api(path) {{
+  paths.push(path);
+  if (path.endsWith("/details")) return {{ ok: true, json: async () => ({{
+    schema: "kh-studio.job-details.v1", job: {{ id: "job-1" }}, references: [],
+    outputs: [{{ handle: "fresh", name: "result.png", media_type: "image/png" }}],
+  }}) }};
+  mediaCalls += 1;
+  if (mediaCalls === 1) return {{ ok: false, status: 410, json: async () => ({{ detail: {{ code: "handle_expired" }} }}) }};
+  return {{ ok: true, blob: async () => ({{ safe: true }}) }};
+}}
+{helper}
+fleetJobDetailsState.controller = new AbortController();
+fleetJobDetailsState.studio = "image@mac";
+fleetJobDetailsState.jobId = "job-1";
+renderFleetJobDetails = details => {{ Object.defineProperty(details.outputs[0], "_previewElement", {{ value: target }}); }};
+const item = {{ handle: "expired", name: "result.png", media_type: "image/png" }};
+Object.defineProperty(item, "_previewElement", {{ value: target }});
+Object.defineProperty(item, "_mediaIdentity", {{ value: {{ collection: "outputs", index: 0 }} }});
+loadFleetJobMedia(item, mode).then(() => console.log(JSON.stringify({{ paths, events, href: popup.location.href }})));
+"""
+        result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
+        replayed = json.loads(result.stdout)
+        assert replayed["paths"] == [
+            f"/studio/image%40mac/api/fleet/jobs/job-1/media/expired{'?download=true' if mode == 'download' else ''}",
+            "/studio/image%40mac/api/fleet/jobs/job-1/details",
+            f"/studio/image%40mac/api/fleet/jobs/job-1/media/fresh{'?download=true' if mode == 'download' else ''}",
+        ]
+        if mode == "open":
+            assert replayed["events"] == ["open:about:blank"]
+            assert replayed["href"] == "blob:fresh"
+        else:
+            assert replayed["events"] == ["download"]
+
+
+def test_open_reserves_a_safe_popup_before_fetch_and_closes_it_on_failure():
+    source = FRONTEND.read_text()
+    helper = _details_javascript(source)
+    program = f"""
+const events = [];
+let resolveFetch;
+const target = {{ replaceChildren() {{}}, append() {{}}, textContent: "" }};
+function element() {{ return {{ textContent: "", addEventListener() {{}}, append() {{}} }}; }}
+function $(id) {{ return {{ textContent: "", dataset: {{}} }}; }}
+function esc(value) {{ return String(value ?? ""); }}
+function jsq(value) {{ return String(value ?? ""); }}
+function fmtDur(value) {{ return String(value); }}
+global.document = {{ createElement: element }};
+global.URL = {{ revokeObjectURL() {{}}, createObjectURL() {{ return "blob:safe"; }} }};
+const popups = [];
+global.window = {{ open(url, targetName) {{
+  events.push("open:" + url + ":" + targetName);
+  const popup = {{ opener: "unsafe", location: {{ href: url }}, close() {{ events.push("close"); }} }};
+  popups.push(popup);
+  return popup;
+}} }};
+async function api() {{ events.push("api"); return new Promise(resolve => {{ resolveFetch = resolve; }}); }}
+{helper}
+fleetJobDetailsState.controller = new AbortController();
+fleetJobDetailsState.studio = "image@mac";
+fleetJobDetailsState.jobId = "job-1";
+const item = {{ handle: "https://evil.invalid/", media_type: "image/png" }};
+Object.defineProperty(item, "_previewElement", {{ value: target }});
+const success = loadFleetJobMedia(item, "open");
+const beforeFetch = events.slice();
+resolveFetch({{ ok: true, blob: async () => ({{}}) }});
+success.then(async () => {{
+  const first = {{ opener: popups[0].opener, href: popups[0].location.href }};
+  const failure = loadFleetJobMedia(item, "open");
+  const beforeFailureFetch = events.slice(-2);
+  resolveFetch({{ ok: false, status: 503, json: async () => ({{}}) }});
+  await failure;
+  console.log(JSON.stringify({{ beforeFetch, beforeFailureFetch, first, events }}));
+}});
+"""
+    result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
+    opened = json.loads(result.stdout)
+    assert opened["beforeFetch"] == ["open:about:blank:_blank", "api"]
+    assert opened["beforeFailureFetch"] == ["open:about:blank:_blank", "api"]
+    assert opened["first"] == {"opener": None, "href": "blob:safe"}
+    assert opened["events"][-1] == "close"
+
+
 def test_expired_media_refreshes_once_then_exposes_retry_without_persistent_storage():
     source = FRONTEND.read_text()
     helper = _details_javascript(source)
@@ -345,6 +513,7 @@ def test_expired_media_refreshes_once_then_exposes_retry_without_persistent_stor
     assert ".innerHTML" not in helper
     program = f"""
 let refreshes = 0;
+let popupOpens = 0, popupCloses = 0;
 const target = {{ children: [], textContent: "", replaceChildren(...items) {{ this.children = items; }}, append(...items) {{ this.children.push(...items); }} }};
 function element(tag) {{ return {{ tag, textContent: "", className: "", disabled: false, addEventListener() {{}}, append(...items) {{ this.children = items; }} }}; }}
 function $(id) {{ return {{ textContent: "", dataset: {{}} }}; }}
@@ -353,23 +522,29 @@ function jsq(value) {{ return String(value ?? ""); }}
 function fmtDur(value) {{ return String(value); }}
 global.document = {{ createElement: element }};
 global.URL = {{ revokeObjectURL() {{}}, createObjectURL() {{ return "blob:new"; }} }};
-global.window = {{ open() {{}} }};
+global.window = {{ open() {{ popupOpens += 1; return {{ opener: {{}}, close() {{ popupCloses += 1; }} }}; }} }};
 async function api() {{ return {{ ok: false, status: 410, json: async () => ({{ detail: {{ code: "handle_expired" }} }}) }}; }}
 {helper}
 fleetJobDetailsState.controller = new AbortController();
 fleetJobDetailsState.studio = "image@mac";
 fleetJobDetailsState.jobId = "job-1";
-refreshFleetJobDetails = async () => {{ refreshes += 1; }};
+refreshFleetJobDetails = async () => {{
+  refreshes += 1;
+  const fresh = {{ handle: "fresh", media_type: "image/png" }};
+  Object.defineProperty(fresh, "_previewElement", {{ value: target }});
+  Object.defineProperty(fresh, "_mediaIdentity", {{ value: {{ collection: "outputs", index: 0 }} }});
+  return {{ outputs: [fresh] }};
+}};
 const item = {{ handle: "opaque", media_type: "image/png" }};
 Object.defineProperty(item, "_previewElement", {{ value: target }});
+Object.defineProperty(item, "_mediaIdentity", {{ value: {{ collection: "outputs", index: 0 }} }});
 (async () => {{
-  await loadFleetJobMedia(item, "preview");
-  await loadFleetJobMedia(item, "preview");
-  console.log(JSON.stringify({{ refreshes, labels: target.children.map(child => child.textContent) }}));
+  await loadFleetJobMedia(item, "open");
+  console.log(JSON.stringify({{ refreshes, popupOpens, popupCloses, labels: target.children.map(child => child.textContent) }}));
 }})();
 """
     result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
-    assert json.loads(result.stdout) == {"refreshes": 1, "labels": [
+    assert json.loads(result.stdout) == {"refreshes": 1, "popupOpens": 1, "popupCloses": 1, "labels": [
         "The secure media link expired. Retry to request a fresh one.", "Retry",
     ]}
 

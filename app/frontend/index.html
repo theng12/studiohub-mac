@@ -4005,7 +4005,7 @@ const FLEET_DETAIL_PARAMETER_LABELS = {
 };
 const fleetJobDetailsState = {
   controller: null, objectUrls: [], invoker: null,
-  studio: "", jobId: "", refreshedExpiredHandle: false,
+  studio: "", jobId: "", refreshedExpiredHandle: false, detailRequestId: 0,
 };
 let fleetActivityHasRendered = false;
 
@@ -4075,9 +4075,20 @@ function setFleetJobDetailsStatus(message, state = "") {
   status.textContent = message;
   status.dataset.state = state;
 }
+function clearFleetJobDetailsContent() {
+  const body = $("#fleet-job-details-body");
+  body.querySelectorAll?.("audio").forEach(audio => {
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+  });
+  fleetJobDetailsState.objectUrls.forEach(url => URL.revokeObjectURL(url));
+  fleetJobDetailsState.objectUrls = [];
+  body.textContent = "";
+}
 function showFleetJobDetailsError(code) {
   const body = $("#fleet-job-details-body");
-  body.textContent = "";
+  clearFleetJobDetailsContent();
   setFleetJobDetailsStatus(FLEET_DETAIL_ERRORS[code] || FLEET_DETAIL_ERRORS.temporarily_unavailable, "error");
   const retry = fleetDetailNode("button", "btn", "Retry");
   retry.type = "button";
@@ -4102,12 +4113,13 @@ function appendFleetCopySection(body, title, value) {
   });
   actions.append(copy); box.append(actions); section.append(box); body.append(section);
 }
-function renderFleetJobMediaSection(body, title, items) {
-  const safeItems = Array.isArray(items) ? items.filter(item => item && typeof item.handle === "string" && /^(image|audio)\//.test(item.media_type || "")) : [];
+function renderFleetJobMediaSection(body, title, items, collection) {
+  const safeItems = Array.isArray(items) ? items.map((item, index) => ({ item, index }))
+    .filter(({ item }) => item && typeof item.handle === "string" && /^(image|audio)\//.test(item.media_type || "")) : [];
   if (!safeItems.length) return;
   const section = fleetDetailSection(title);
   const list = fleetDetailNode("div", "fleet-job-media-list");
-  safeItems.forEach(item => {
+  safeItems.forEach(({ item, index }) => {
     const card = fleetDetailNode("article", "fleet-job-media");
     const head = fleetDetailNode("div", "fleet-job-media-head");
     const copy = fleetDetailNode("div");
@@ -4116,6 +4128,7 @@ function renderFleetJobMediaSection(body, title, items) {
     head.append(copy);
     const preview = fleetDetailNode("div", "fleet-job-media-preview", "Loading preview…");
     Object.defineProperty(item, "_previewElement", { value: preview });
+    Object.defineProperty(item, "_mediaIdentity", { value: { collection, index } });
     const actions = fleetDetailNode("div", "actions");
     for (const [mode, label] of [["open", "Open"], ["download", "Download"]]) {
       const button = fleetDetailNode("button", "btn compact", label);
@@ -4135,7 +4148,7 @@ function renderFleetJobDetails(details) {
   }
   const dialog = $("#fleet-job-details"), body = $("#fleet-job-details-body"), job = details.job;
   const studio = details.studio === "voice" ? "Voice Studio" : details.studio === "image" ? "Image Studio" : "Studio";
-  body.textContent = "";
+  clearFleetJobDetailsContent();
   setFleetJobDetailsStatus("Job details loaded.", "ready");
   const summary = fleetDetailSection("Overview"), values = fleetDetailNode("dl", "fleet-job-detail-grid");
   const origin = dialog.dataset.origin === "hub" ? "hub" : (Object.hasOwn(FLEET_ORIGIN_LABELS, job.origin) ? job.origin : "unknown");
@@ -4166,24 +4179,31 @@ function renderFleetJobDetails(details) {
     allowedParameters.forEach(([key, value]) => appendFleetDetailValue(list, FLEET_DETAIL_PARAMETER_LABELS[key], value));
     section.append(list); body.append(section);
   }
-  renderFleetJobMediaSection(body, "References", details.references);
-  renderFleetJobMediaSection(body, "Outputs", details.outputs);
+  renderFleetJobMediaSection(body, "References", details.references, "references");
+  renderFleetJobMediaSection(body, "Outputs", details.outputs, "outputs");
 }
 async function refreshFleetJobDetails(controller = fleetJobDetailsState.controller) {
   if (!controller || controller.signal.aborted) return;
+  const requestId = ++fleetJobDetailsState.detailRequestId;
+  const isCurrent = () => fleetJobDetailsState.controller === controller &&
+    fleetJobDetailsState.detailRequestId === requestId && !controller.signal.aborted;
   setFleetJobDetailsStatus("Loading job details…", "loading");
   try {
     const response = await api(fleetJobDetailsPath(), { signal: controller.signal });
-    if (fleetJobDetailsState.controller !== controller) return;
+    if (!isCurrent()) return null;
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
+      if (!isCurrent()) return null;
       showFleetJobDetailsError(fleetDetailErrorCode(response, payload, true));
-      return;
+      return null;
     }
     const details = await response.json();
-    if (fleetJobDetailsState.controller === controller) renderFleetJobDetails(details);
+    if (!isCurrent()) return null;
+    renderFleetJobDetails(details);
+    return details;
   } catch (error) {
-    if (error?.name !== "AbortError" && fleetJobDetailsState.controller === controller) showFleetJobDetailsError("temporarily_unavailable");
+    if (error?.name !== "AbortError" && isCurrent()) showFleetJobDetailsError("temporarily_unavailable");
+    return null;
   }
 }
 async function openFleetJobDetails(rawContext, invoker = document.activeElement) {
@@ -4204,18 +4224,12 @@ async function openFleetJobDetails(rawContext, invoker = document.activeElement)
   await refreshFleetJobDetails(controller);
 }
 function closeFleetJobDetails({ restoreFocus = true } = {}) {
-  const dialog = $("#fleet-job-details"), body = $("#fleet-job-details-body"), status = $("#fleet-job-details-status");
+  const dialog = $("#fleet-job-details"), status = $("#fleet-job-details-status");
   const invoker = fleetJobDetailsState.invoker;
   if (fleetJobDetailsState.controller) fleetJobDetailsState.controller.abort();
   fleetJobDetailsState.controller = null;
-  body.querySelectorAll("audio").forEach(audio => {
-    audio.pause();
-    audio.removeAttribute("src");
-    audio.load();
-  });
-  fleetJobDetailsState.objectUrls.forEach(url => URL.revokeObjectURL(url));
-  fleetJobDetailsState.objectUrls = [];
-  body.textContent = "";
+  fleetJobDetailsState.detailRequestId += 1;
+  clearFleetJobDetailsContent();
   status.textContent = "";
   if (dialog.open) dialog.close();
   dialog.dataset.machine = "";
@@ -4236,36 +4250,73 @@ function showFleetJobMediaError(item, code, mode) {
   retry.addEventListener("click", async () => {
     if (code === "handle_expired") {
       fleetJobDetailsState.refreshedExpiredHandle = false;
-      await refreshFleetJobDetails(fleetJobDetailsState.controller);
+      await loadFleetJobMedia(item, mode);
     } else {
       await loadFleetJobMedia(item, mode);
     }
   });
   target.replaceChildren(message, retry);
 }
-async function loadFleetJobMedia(item, mode) {
+function closeFleetJobPopup(popup) {
+  if (!popup) return;
+  try { popup.close(); } catch (_) {}
+}
+async function loadFleetJobMedia(item, mode, options = {}) {
   const controller = fleetJobDetailsState.controller;
   if (!controller || controller.signal.aborted || !item || typeof item.handle !== "string") return;
+  let popup = Object.hasOwn(options, "popup") ? options.popup : null;
+  if (mode === "open" && !Object.hasOwn(options, "popup")) {
+    popup = window.open("about:blank", "_blank");
+    if (popup) {
+      try { popup.opener = null; } catch (_) {}
+    }
+  }
+  const detailRequestId = fleetJobDetailsState.detailRequestId;
+  const isCurrent = () => fleetJobDetailsState.controller === controller &&
+    fleetJobDetailsState.detailRequestId === detailRequestId && !controller.signal.aborted;
   const target = item._previewElement;
   if (mode === "preview" && target) target.textContent = "Loading preview…";
   try {
     const response = await api(fleetJobMediaPath(item, mode === "download"), { signal: controller.signal });
-    if (fleetJobDetailsState.controller !== controller) return;
+    if (!isCurrent()) {
+      closeFleetJobPopup(popup);
+      return;
+    }
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
-      const code = fleetDetailErrorCode(response, payload);
-      if (code === "handle_expired" && !fleetJobDetailsState.refreshedExpiredHandle) {
-        fleetJobDetailsState.refreshedExpiredHandle = true;
-        await refreshFleetJobDetails(controller);
+      if (!isCurrent()) {
+        closeFleetJobPopup(popup);
         return;
       }
+      const code = fleetDetailErrorCode(response, payload);
+      if (code === "handle_expired" && options.allowExpiredRefresh !== false && !fleetJobDetailsState.refreshedExpiredHandle) {
+        fleetJobDetailsState.refreshedExpiredHandle = true;
+        const identity = item._mediaIdentity;
+        const details = await refreshFleetJobDetails(controller);
+        if (mode === "preview") return;
+        const freshItem = identity && Array.isArray(details?.[identity.collection]) ? details[identity.collection][identity.index] : null;
+        if (freshItem && typeof freshItem.handle === "string") {
+          await loadFleetJobMedia(freshItem, mode, { allowExpiredRefresh: false, popup });
+          return;
+        }
+        closeFleetJobPopup(popup);
+        return;
+      }
+      closeFleetJobPopup(popup);
       showFleetJobMediaError(item, code, mode);
       return;
     }
-    const objectUrl = URL.createObjectURL(await response.blob());
+    const blob = await response.blob();
+    if (!isCurrent()) {
+      closeFleetJobPopup(popup);
+      return;
+    }
+    const objectUrl = URL.createObjectURL(blob);
     fleetJobDetailsState.objectUrls.push(objectUrl);
     if (mode === "open") {
-      window.open(objectUrl, "_blank", "noopener");
+      if (popup) {
+        try { popup.location.href = objectUrl; } catch (_) { closeFleetJobPopup(popup); }
+      }
       return;
     }
     if (mode === "download") {
@@ -4295,7 +4346,8 @@ async function loadFleetJobMedia(item, mode) {
       target.append(audio);
     }
   } catch (error) {
-    if (error?.name !== "AbortError" && fleetJobDetailsState.controller === controller) showFleetJobMediaError(item, "temporarily_unavailable", mode);
+    closeFleetJobPopup(popup);
+    if (error?.name !== "AbortError" && isCurrent()) showFleetJobMediaError(item, "temporarily_unavailable", mode);
   }
 }
 
