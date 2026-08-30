@@ -29,6 +29,7 @@ function fmtDur(value) {{
   if (value < 3600) return Math.floor(value / 60) + "m";
   return Math.floor(value / 3600) + "h";
 }}
+function fmtAgo(value) {{ return value ? "1m ago" : "never"; }}
 {helper}
 renderFleetActivity({json.dumps(activity)});
 console.log(JSON.stringify({{
@@ -76,8 +77,73 @@ def test_fleet_activity_has_loading_empty_and_error_copy_without_hiding_historic
     source = FRONTEND.read_text()
 
     assert "function renderFleetActivityLoading()" in source
-    assert "function renderFleetActivityError()" in source
+    assert "function renderFleetActivityError({ preserve = false } = {})" in source
     assert "Loading current fleet activity" in source
     assert "No Image or Voice machines are registered" in source
     assert "Current fleet activity could not be loaded" in source
     assert "Historical performance" in source
+
+
+def test_fleet_activity_reports_health_attention_unknown_progress_job_identity_and_real_timeline_states():
+    rendered = _render({
+        "schema": "studiohub.fleet_activity.v1",
+        "window": {"since_s": 0, "now": 1000},
+        "pulse": {"needs_attention": 1, "working": 2},
+        "machines": [
+            {"machine": "health", "state": "needs_attention", "state_duration_s": 4,
+             "latest": {"state": "done", "runtime_s": 8}, "job_id": "safe-job-42",
+             "completed": 1, "failed": 0, "utilization": {"ratio": 0.2, "evidence": "complete"}},
+            {"machine": "no-progress", "state": "working", "state_duration_s": 4,
+             "progress": None, "completed": 0, "failed": 0,
+             "utilization": {"ratio": 0.2, "evidence": "complete"}},
+            {"machine": "zero-progress", "state": "working", "state_duration_s": 4,
+             "progress": 0, "completed": 0, "failed": 0,
+             "utilization": {"ratio": 0.2, "evidence": "complete"},
+             "timeline": [
+                 {"state": "queued", "observed_at": 10}, {"state": "running", "observed_at": 11},
+                 {"state": "done", "finished_at": 12}, {"state": "error", "finished_at": 13},
+                 {"state": "cancelled", "finished_at": 14},
+             ]},
+        ],
+    })
+
+    assert "Studio health needs attention" in rendered["rows"]
+    assert "Completed in 8s" not in rendered["rows"].split("no-progress")[0]
+    assert "Processing" in rendered["rows"]
+    assert "0% complete" in rendered["rows"]
+    assert "safe-job-42" in rendered["rows"]
+    for label in ("Queued", "Running", "Completed", "Failed", "Cancelled"):
+        assert label in rendered["rows"]
+
+
+def test_fleet_activity_refresh_and_contract_guards_preserve_the_existing_board():
+    source = FRONTEND.read_text()
+    loader = _javascript(source, "async function loadStats", "// Auto-clear")
+
+    assert "loadStats({ background: true })" in source
+    assert "!background && !fleetActivityHasRendered" in loader
+    assert "response.ok" in loader
+    assert "!d || typeof d !== \"object\" || Array.isArray(d)" in loader
+    assert "isFleetActivitySnapshot(d.fleet_activity)" in loader
+    assert "renderFleetActivityError({ preserve: fleetActivityHasRendered })" in loader
+    assert "fleetActivityCaptureView" in source and "fleetActivityRestoreView" in source
+    assert 'aria-live="off"' in source
+    assert "repeat(7," in source
+    assert "detail:" not in _javascript(source, "const FLEET_ACTIVITY_STATES =", "const FLEET_ACTIVITY_ORDER")
+
+
+def test_fleet_activity_contract_requires_a_real_additive_snapshot_but_allows_an_empty_fleet():
+    source = FRONTEND.read_text()
+    helper = _javascript(source, "const FLEET_ACTIVITY_STATES =", "async function loadStats")
+    program = f"""
+function fmtDur(value) {{ return String(value); }}
+{helper}
+const valid = {{ schema: "studiohub.fleet_activity.v1", window: {{}}, pulse: {{}}, machines: [] }};
+console.log(JSON.stringify([
+  isFleetActivitySnapshot(valid), isFleetActivitySnapshot(null),
+  isFleetActivitySnapshot([]), isFleetActivitySnapshot({{}}),
+  isFleetActivitySnapshot({{ ...valid, machines: {{}} }}),
+]));
+"""
+    result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout) == [True, False, False, False, False]
