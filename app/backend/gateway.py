@@ -82,19 +82,18 @@ async def proxy(studio_id: str, path: str, request: Request):
         if k.lower() not in DOWNSTREAM_BLOCKED_HEADERS
     }
 
-    async def stream_and_close_on_error():
+    async def stream_and_close():
         try:
             async for chunk in upstream_resp.aiter_raw():
                 yield chunk
-        except BaseException:
+        finally:
             await upstream_resp.aclose()
-            raise
 
     # CRITICAL: close the upstream streamed response when this response finishes
     # (or the client disconnects), or the httpx connection leaks — over a long-
     # running service that exhausts the pool and hangs the gateway.
     return StreamingResponse(
-        stream_and_close_on_error(),
+        stream_and_close(),
         status_code=upstream_resp.status_code,
         headers=resp_headers,
         background=BackgroundTask(upstream_resp.aclose),

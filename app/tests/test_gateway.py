@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 import pytest
 from starlette.testclient import TestClient
@@ -125,5 +127,34 @@ def test_gateway_closes_upstream_response_after_media_stream_error(
 
     with pytest.raises(RuntimeError, match="media stream failed"):
         _authed(app, token).get("/studio/image/api/fleet/jobs/job-1/media/opaque")
+
+    assert fc.resp.closed is True
+
+
+def test_gateway_closes_upstream_response_after_asgi_send_disconnect(
+    app, monkeypatch,
+):
+    fc = FakeClient(resp=FakeResp(chunks=(b"media",)))
+    monkeypatch.setattr(gateway, "_client", fc)
+    path = "/studio/image/api/fleet/jobs/job-1/media/opaque"
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        if message["type"] == "http.response.body" and message.get("body"):
+            raise OSError("client disconnected")
+
+    async def request():
+        await app({
+            "type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"},
+            "http_version": "1.1", "method": "GET", "scheme": "http",
+            "path": path, "raw_path": path.encode(), "query_string": b"",
+            "headers": [(b"host", b"testserver")], "client": ("127.0.0.1", 50000),
+            "server": ("testserver", 80), "root_path": "", "extensions": {},
+        }, receive, send)
+
+    with pytest.raises(OSError, match="client disconnected"):
+        asyncio.run(request())
 
     assert fc.resp.closed is True
