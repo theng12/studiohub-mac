@@ -340,3 +340,116 @@ async def test_health_poll_runs_caddy_inspection_off_the_event_loop(
     assert await asyncio.to_thread(entered.wait, 10), "poll never inspected the proxy"
     release.set()
     await asyncio.wait_for(poll, 10)
+
+
+@pytest.mark.asyncio
+async def test_health_poll_runs_activity_observation_off_the_event_loop(
+    reset, monitor, monkeypatch,
+):
+    """A slow activity ledger write must not delay other loop callbacks."""
+    from backend import activity, broker, peers, resources
+
+    entered, release, tick = threading.Event(), threading.Event(), threading.Event()
+    tick_before_release = []
+    snapshots = []
+    loop = asyncio.get_running_loop()
+
+    def blocking_observe(registry, statuses, batches):
+        snapshots.append((registry, statuses, batches))
+        entered.set()
+        assert release.wait(1), "activity observation did not receive release"
+
+    def release_after_tick():
+        assert entered.wait(1), "activity observation never started"
+        loop.call_soon_threadsafe(tick.set)
+        tick_before_release.append(tick.wait(0.25))
+        release.set()
+
+    async def no_poll(_studio):
+        return None
+
+    async def no_refresh(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(activity, "observe_poll", blocking_observe)
+    monkeypatch.setattr(monitor, "_poll_one", no_poll)
+    monkeypatch.setattr(peers, "refresh", no_refresh)
+    monkeypatch.setattr(resources, "check_proxy_health", lambda: {"status": "not_running"})
+    releaser = threading.Thread(target=release_after_tick, daemon=True)
+    releaser.start()
+    await asyncio.wait_for(monitor.poll_all(), 2)
+    releaser.join()
+
+    assert tick_before_release == [True]
+    registry, statuses, batches = snapshots[0]
+    assert registry is not monitor.registry
+    assert statuses is not monitor.status
+    assert batches is not broker.batches
+
+
+@pytest.mark.asyncio
+async def test_health_poll_projects_only_activity_scalars_before_offloading(
+    reset, monitor, monkeypatch,
+):
+    """Activity observation must never copy a broker prompt or parameter blob."""
+    from backend import activity, broker, peers, resources
+
+    class NeverCopied:
+        def __deepcopy__(self, _memo):
+            raise AssertionError("private batch payload was copied")
+
+    private = NeverCopied()
+    studio = {"id": "image@mac-a", "modality": "image", "machine": "mac-a",
+              "prompt": private, "host": "private-host"}
+    monitor.registry[:] = [studio]
+    monitor.status.clear()
+    monitor.status[studio["id"]] = {
+        "status": "up", "activity_support": "available",
+        "activity_received_at": 100.0,
+        "activity": {
+            "schema": "kh-studio.activity.v1", "studio": "image", "observed_at": 100.0,
+            "active": {"id": "job-1", "state": "running", "model": "org/model",
+                       "source": "direct", "progress": 0.5, "updated_at": 100.0,
+                       "prompt": private},
+            "latest": None,
+        },
+        "health": {"private": private},
+    }
+    monkeypatch.setattr(broker, "batches", {
+        "batch-private": {
+            "model": "org/model", "shared_params": private,
+            "items": [{"studio_job_id": "job-1", "studio": studio["id"],
+                       "state": "running", "progress": 0.5, "started_at": 90.0,
+                       "finished_at": None, "params": private}],
+        },
+    })
+    snapshots = []
+
+    def observe(registry, statuses, batches):
+        snapshots.append((registry, statuses, batches))
+
+    async def no_poll(_studio):
+        return None
+
+    async def no_refresh(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(activity, "observe_poll", observe)
+    monkeypatch.setattr(monitor, "_poll_one", no_poll)
+    monkeypatch.setattr(peers, "refresh", no_refresh)
+    monkeypatch.setattr(resources, "check_proxy_health", lambda: {"status": "not_running"})
+
+    await monitor.poll_all()
+
+    registry, statuses, batches = snapshots[0]
+    assert registry == [{"id": "image@mac-a", "modality": "image", "machine": "mac-a"}]
+    assert set(statuses[studio["id"]]) == {
+        "status", "activity_support", "activity_received_at", "activity",
+    }
+    assert set(statuses[studio["id"]]["activity"]["active"]) == {
+        "id", "state", "model", "source", "progress", "updated_at",
+    }
+    assert batches == {"batch-private": {"model": "org/model", "items": [{
+        "studio_job_id": "job-1", "studio": "image@mac-a", "state": "running",
+        "progress": 0.5, "started_at": 90.0, "finished_at": None,
+    }]}}

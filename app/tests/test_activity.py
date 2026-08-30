@@ -85,6 +85,27 @@ def test_activity_observation_is_idempotent_and_broker_owns_matching_job(reset):
     assert done["source"] == "job"
 
 
+def test_activity_observation_uses_one_ledger_connection_per_poll(reset, monkeypatch):
+    """A five-second poll must not reopen and migrate SQLite for each row."""
+    from backend import activity
+
+    calls = 0
+    original = ledger._conn
+
+    def counted_connection():
+        nonlocal calls
+        calls += 1
+        return original()
+
+    monkeypatch.setattr(ledger, "_conn", counted_connection)
+    studio = _studio()
+    activity.observe_poll(
+        [studio], {studio["id"]: _status(_snapshot(active=_job()))}, {}, now=100.0,
+    )
+
+    assert calls == 1
+
+
 def test_machine_state_distinguishes_recent_completion_from_long_idle(reset):
     from backend import activity
 

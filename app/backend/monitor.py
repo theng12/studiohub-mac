@@ -30,6 +30,79 @@ CATALOG_STALE_S = 5 * 60.0
 HEALTH_FAILURES_TO_DOWN = 3
 HEALTH_SUCCESSES_TO_RECOVER = 2
 
+_ACTIVITY_JOB_FIELDS = (
+    "id", "state", "model", "source", "progress", "created_at",
+    "started_at", "updated_at", "finished_at", "runtime_s", "error_code",
+)
+_ACTIVITY_BATCH_ITEM_FIELDS = (
+    "studio_job_id", "studio", "state", "progress", "started_at", "finished_at",
+)
+
+
+def _activity_value(value):
+    """Keep the poll handoff scalar-only; params and prompts stay on the loop."""
+    return value if value is None or isinstance(value, (str, int, float, bool)) else None
+
+
+def _activity_job_view(job):
+    if not isinstance(job, dict):
+        return None
+    return {name: _activity_value(job.get(name)) for name in _ACTIVITY_JOB_FIELDS if name in job}
+
+
+def _activity_snapshot_view(snapshot):
+    if not isinstance(snapshot, dict):
+        return None
+    result = {
+        name: _activity_value(snapshot.get(name))
+        for name in ("schema", "studio", "observed_at") if name in snapshot
+    }
+    for name in ("active", "latest"):
+        if name in snapshot:
+            result[name] = _activity_job_view(snapshot[name])
+    return result
+
+
+def _activity_poll_inputs(registry: list[dict], statuses: dict, batches: dict):
+    """Build the tiny, value-only view consumed by the optional activity ledger."""
+    registry_view = []
+    statuses_view = {}
+    for studio in registry:
+        if not isinstance(studio, dict):
+            continue
+        view = {
+            name: _activity_value(studio.get(name))
+            for name in ("id", "modality", "machine") if name in studio
+        }
+        registry_view.append(view)
+        studio_id = view.get("id")
+        status = statuses.get(studio_id)
+        if not isinstance(status, dict):
+            continue
+        status_view = {
+            name: _activity_value(status.get(name))
+            for name in ("status", "activity_support", "activity_received_at")
+            if name in status
+        }
+        if "activity" in status:
+            status_view["activity"] = _activity_snapshot_view(status["activity"])
+        statuses_view[studio_id] = status_view
+
+    batches_view = {}
+    for batch_id, batch in (batches or {}).items():
+        if not isinstance(batch, dict):
+            continue
+        items = []
+        for item in batch.get("items") or ():
+            if not isinstance(item, dict):
+                continue
+            items.append({
+                name: _activity_value(item.get(name))
+                for name in _ACTIVITY_BATCH_ITEM_FIELDS if name in item
+            })
+        batches_view[batch_id] = {"model": _activity_value(batch.get("model")), "items": items}
+    return registry_view, statuses_view, batches_view
+
 
 def is_cached(model: dict) -> bool:
     """Whether a studio has this model fully downloaded.
@@ -276,7 +349,10 @@ class StudioMonitor:
         # local and never lets a slow/old reporter affect worker health.
         from . import activity, broker
         try:
-            activity.observe_poll(self.registry, self.status, broker.batches)
+            registry, statuses, batches = _activity_poll_inputs(
+                self.registry, self.status, broker.batches,
+            )
+            await asyncio.to_thread(activity.observe_poll, registry, statuses, batches)
         except Exception:
             log.warning("activity observation failed (continuing)", exc_info=True)
         # metrics sample + watchdog revival pass (late import: no cycle)

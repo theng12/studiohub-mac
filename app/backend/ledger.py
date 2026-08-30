@@ -11,6 +11,7 @@ plus (when known) the studio's serving URL.
 """
 
 import json
+import contextlib
 import shutil
 import sqlite3
 import threading
@@ -128,6 +129,20 @@ def _conn() -> sqlite3.Connection:
         raise
 
 
+@contextlib.contextmanager
+def activity_transaction():
+    """Reuse one prepared SQLite connection for a complete observer cycle."""
+    conn = _conn()
+    try:
+        yield conn
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def record_activity_event(*, machine: str, studio: str, job_id: str, state: str,
                           model: str | None, source: str, progress: float | None = None,
                           started_at: float | None = None,
@@ -137,7 +152,8 @@ def record_activity_event(*, machine: str, studio: str, job_id: str, state: str,
                           activity_received_at: float | None = None,
                           reported_at: float | None = None,
                           hub_owned: bool = False,
-                          observed_at: float | None = None) -> bool:
+                          observed_at: float | None = None,
+                          conn: sqlite3.Connection | None = None) -> bool:
     """Insert one meaningful Studio job transition, or refresh its evidence.
 
     The unique transition identity deliberately excludes observation time and
@@ -151,7 +167,10 @@ def record_activity_event(*, machine: str, studio: str, job_id: str, state: str,
     )
     reported_at = float(observed_at if reported_at is None else reported_at)
     hub_owned = bool(hub_owned or source == "job")
-    with _conn() as conn:
+    owns_connection = conn is None
+    if conn is None:
+        conn = _conn()
+    try:
         existing = conn.execute(
             "SELECT activity_received_at, hub_owned FROM activity_events WHERE "
             "machine = ? AND studio = ? AND job_id = ? AND state = ?",
@@ -194,12 +213,17 @@ def record_activity_event(*, machine: str, studio: str, job_id: str, state: str,
                 changed = True
             else:
                 changed = False
-        conn.commit()
+        if owns_connection:
+            conn.commit()
         return changed
+    finally:
+        if owns_connection:
+            conn.close()
 
 
 def activity_events(*, machine: str | None = None,
-                    since_s: float | None = None) -> list[dict]:
+                    since_s: float | None = None,
+                    conn: sqlite3.Connection | None = None) -> list[dict]:
     where, args = ["1=1"], []
     if machine:
         where.append("machine = ?")
@@ -207,24 +231,37 @@ def activity_events(*, machine: str | None = None,
     if since_s is not None:
         where.append("observed_at >= ?")
         args.append(float(since_s))
-    with _conn() as conn:
+    owns_connection = conn is None
+    if conn is None:
+        conn = _conn()
+    try:
         rows = conn.execute(
             "SELECT machine, studio, job_id, state, model, source, progress, "
             "started_at, finished_at, runtime_s, error_code, observed_at, activity_received_at, reported_at, hub_owned "
             f"FROM activity_events WHERE {' AND '.join(where)} "
             "ORDER BY observed_at DESC, id DESC", args,
         ).fetchall()
+    finally:
+        if owns_connection:
+            conn.close()
     return [dict(row) for row in rows]
 
 
-def activity_job_is_hub_owned(machine: str, studio: str, job_id: str) -> bool:
+def activity_job_is_hub_owned(machine: str, studio: str, job_id: str,
+                              *, conn: sqlite3.Connection | None = None) -> bool:
     """Whether an earlier broker observation established job ownership."""
-    with _conn() as conn:
+    owns_connection = conn is None
+    if conn is None:
+        conn = _conn()
+    try:
         row = conn.execute(
             "SELECT 1 FROM activity_events WHERE machine = ? AND studio = ? "
             "AND job_id = ? AND (hub_owned = 1 OR source = 'job') LIMIT 1",
             (machine, studio, job_id),
         ).fetchone()
+    finally:
+        if owns_connection:
+            conn.close()
     return row is not None
 
 
@@ -240,10 +277,14 @@ def record_activity_ownership(*, machine: str, studio: str, job_id: str,
 
 
 def record_machine_state(*, machine: str, reachable: bool, working: bool,
-                         state: str = "unknown", observed_at: float | None = None) -> bool:
+                         state: str = "unknown", observed_at: float | None = None,
+                         conn: sqlite3.Connection | None = None) -> bool:
     """Store only actual machine reachability/working transitions."""
     observed_at = float(time.time() if observed_at is None else observed_at)
-    with _conn() as conn:
+    owns_connection = conn is None
+    if conn is None:
+        conn = _conn()
+    try:
         previous = conn.execute(
             "SELECT reachable, working, state FROM machine_state_transitions "
             "WHERE machine = ? ORDER BY observed_at DESC, id DESC LIMIT 1",
@@ -258,7 +299,11 @@ def record_machine_state(*, machine: str, reachable: bool, working: bool,
             "VALUES (?, ?, ?, ?, ?, ?)",
             (machine, *current, state, observed_at, observed_at),
         )
-        conn.commit()
+        if owns_connection:
+            conn.commit()
+    finally:
+        if owns_connection:
+            conn.close()
     return True
 
 
@@ -275,9 +320,12 @@ def machine_state_transitions(machine: str, *, before_s: float | None = None) ->
     return [dict(row) for row in rows]
 
 
-def prune_activity(before_s: float) -> None:
+def prune_activity(before_s: float, *, conn: sqlite3.Connection | None = None) -> None:
     """Keep the operational ledger deliberately bounded to the approved 30 days."""
-    with _conn() as conn:
+    owns_connection = conn is None
+    if conn is None:
+        conn = _conn()
+    try:
         conn.execute("DELETE FROM activity_events WHERE observed_at < ?", (before_s,))
         machines = conn.execute(
             "SELECT DISTINCT machine FROM machine_state_transitions WHERE observed_at < ?",
@@ -301,7 +349,11 @@ def prune_activity(before_s: float) -> None:
                     "DELETE FROM machine_state_transitions WHERE machine = ? AND observed_at < ?",
                     (machine, before_s),
                 )
-        conn.commit()
+        if owns_connection:
+            conn.commit()
+    finally:
+        if owns_connection:
+            conn.close()
 
 
 def _is_corruption_error(exc: sqlite3.DatabaseError) -> bool:
