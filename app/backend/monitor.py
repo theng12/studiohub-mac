@@ -33,6 +33,7 @@ HEALTH_SUCCESSES_TO_RECOVER = 2
 _ACTIVITY_JOB_FIELDS = (
     "id", "state", "model", "source", "progress", "created_at",
     "started_at", "updated_at", "finished_at", "runtime_s", "error_code",
+    "origin", "origin_device",
 )
 _ACTIVITY_BATCH_ITEM_FIELDS = (
     "studio_job_id", "studio", "state", "progress", "started_at", "finished_at",

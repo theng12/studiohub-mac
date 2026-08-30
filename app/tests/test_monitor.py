@@ -7,6 +7,38 @@ import pytest
 from backend import monitor as mon
 
 
+def test_activity_poll_handoff_preserves_origin_but_excludes_sensitive_detail():
+    registry = [{"id": "image@fixture", "modality": "image", "machine": "fixture-mac"}]
+    statuses = {"image@fixture": {
+        "status": "up", "activity_support": "supported",
+        "activity_received_at": 100.0,
+        "activity": {
+            "schema": "kh-studio.activity.v1", "studio": "image", "observed_at": 100.0,
+            "active": {
+                "id": "job-1", "state": "running", "model": "org/model",
+                "source": "direct", "origin": "local_ui", "origin_device": "Fixture Mac",
+                "prompt": "private prompt", "transcript": "private transcript",
+                "path": "/private/path", "output_path": "/private/output.png",
+                "image_path": "/private/image.png", "reference_audio": "/private/ref.wav",
+                "handle": "opaque-handle", "media": {"path": "/private/media.png"},
+                "credentials": "secret",
+                "params": {"prompt": "private prompt"},
+            },
+            "latest": None,
+        },
+    }}
+
+    _, statuses_view, _ = mon._activity_poll_inputs(registry, statuses, {})
+
+    active = statuses_view["image@fixture"]["activity"]["active"]
+    assert active["origin"] == "local_ui"
+    assert active["origin_device"] == "Fixture Mac"
+    assert not {
+        "prompt", "transcript", "path", "output_path", "image_path", "reference_audio",
+        "handle", "media", "credentials", "params",
+    } & active.keys()
+
+
 def test_catalog_observation_runtime_state_is_ignored_by_git() -> None:
     root = Path(__file__).parents[2]
     ignored = (root / ".gitignore").read_text(encoding="utf-8").splitlines()
