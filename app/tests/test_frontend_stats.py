@@ -22,6 +22,7 @@ const nodes = Object.fromEntries([
 ].map(id => [id, {{ innerHTML: "", textContent: "", className: "", dataset: {{}}, setAttribute() {{}} }}]));
 function $(id) {{ return nodes[id]; }}
 function esc(value) {{ return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;"); }}
+function jsq(value) {{ return JSON.stringify(String(value ?? "")).slice(1, -1); }}
 function mlabel(value) {{ return String(value || "local"); }}
 function fmtDur(value) {{
   value = Math.round(Number(value || 0));
@@ -41,6 +42,10 @@ console.log(JSON.stringify({{
 """
     result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
     return json.loads(result.stdout)
+
+
+def _details_javascript(source: str) -> str:
+    return _javascript(source, "const FLEET_ORIGIN_LABELS =", "function fleetActivityModelName")
 
 
 def test_fleet_activity_renders_all_operational_states_attention_first_with_safe_evidence():
@@ -177,15 +182,18 @@ def test_fleet_activity_focus_guard_suppresses_background_rebuilds_for_native_di
     helper = _javascript(source, "function fleetActivityHasFocus", "function renderFleetActivityLoading")
     program = f"""
 const fleetSummary = {{ closest: selector => selector === ".fleet-activity" ? {{}} : null }};
-global.document = {{ activeElement: fleetSummary }};
+const dialog = {{ open: false }};
+global.document = {{ activeElement: fleetSummary, querySelector: selector => selector === "#fleet-job-details" ? dialog : null }};
 {helper}
 const focused = fleetActivityHasFocus();
 document.activeElement = {{ closest: () => null }};
 const outside = fleetActivityHasFocus();
-console.log(JSON.stringify([focused, outside]));
+dialog.open = true;
+const drawer = fleetActivityHasFocus();
+console.log(JSON.stringify([focused, outside, drawer]));
 """
     result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
-    assert json.loads(result.stdout) == [True, False]
+    assert json.loads(result.stdout) == [True, False, True]
     assert "vis(\"stats\") && !fleetActivityHasFocus()" in source
 
 
@@ -207,3 +215,198 @@ request.then(rendered => console.log(JSON.stringify([rendered, renders])));
     result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
     assert json.loads(result.stdout) == [False, 0]
     assert "renderFleetActivityIfSafe(d.fleet_activity" in source
+
+
+def test_fleet_activity_renders_stable_origins_and_allowlisted_detail_actions():
+    rendered = _render({
+        "schema": "studiohub.fleet_activity.v1",
+        "window": {"since_s": 0, "now": 1000},
+        "pulse": {"working": 4},
+        "machines": [
+            {"machine": "hub", "state": "working", "studio": "image@hub", "job_id": "hub-job",
+             "origin": "hub", "origin_device": "Studio Hub KH · PPS", "model": "org/image",
+             "timeline": [{"studio": "voice@hub", "job_id": "timeline-job", "state": "done",
+                           "origin": "local_ui", "origin_device": "Worker Mac", "model": "org/voice"}]},
+            {"machine": "local", "state": "working", "studio": "voice@local", "job_id": "local-job",
+             "origin": "local_ui", "model": "org/voice"},
+            {"machine": "api", "state": "working", "studio": "image@api", "job_id": "api-job",
+             "origin": "api", "model": "org/image"},
+            {"machine": "legacy", "state": "working", "studio": "voice@legacy", "job_id": "legacy-job",
+             "origin": "unknown", "model": "org/voice"},
+        ],
+    })
+
+    rows = rendered["rows"]
+    for label in ("Studio Hub", "Local Studio UI", "API/automation", "Unknown/legacy"):
+        assert label in rows
+    assert rows.index("Studio Hub") < rows.index("Studio Hub KH · PPS")
+    assert rows.index("Local Studio UI") < rows.index("Worker Mac")
+    assert rows.count("View details") == 5
+    assert "openFleetJobDetails({studio:" in rows
+    for forbidden in ("prompt", "transcript", "handle", "parameters", "output_path"):
+        assert forbidden not in rows
+
+
+def test_stats_render_and_load_never_prefetch_job_details():
+    source = FRONTEND.read_text()
+    helper = _javascript(source, "const FLEET_ACTIVITY_STATES =", "async function loadStats")
+    loader = _javascript(source, "async function loadStats", "// ── remote")
+    program = f"""
+const paths = [];
+const nodes = new Proxy({{}}, {{ get(target, key) {{
+  if (!target[key]) target[key] = {{ innerHTML: "", textContent: "", dataset: {{}}, style: {{}}, value: "", querySelectorAll() {{ return []; }}, addEventListener() {{}} }};
+  return target[key];
+}} }});
+function $(id) {{ return nodes[id]; }}
+function esc(value) {{ return String(value ?? ""); }}
+function jsq(value) {{ return String(value ?? ""); }}
+function mlabel(value) {{ return String(value || "local"); }}
+function fmtDur(value) {{ return String(value || 0) + "s"; }}
+function fmtAgo() {{ return "now"; }}
+function renderThroughput() {{}}
+const MOD_EMOJI = {{}}, MOD_COLOR = {{ image: "#000" }}, WIN_LABEL = {{}};
+let stWin = "0", stSrc = "all", stOp = "", stMach = "";
+async function api(path) {{ paths.push(path); return {{ ok: true, json: async () => null }}; }}
+{helper}
+renderFleetActivity({{ schema: "studiohub.fleet_activity.v1", window: {{}}, pulse: {{}}, machines: [] }});
+{loader}
+loadStats().then(() => console.log(JSON.stringify(paths)));
+"""
+    result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout) == ["/api/hub/stats"]
+
+
+def test_opening_details_uses_one_encoded_url_and_aborts_the_previous_open():
+    source = FRONTEND.read_text()
+    helper = _details_javascript(source)
+    program = f"""
+const calls = [];
+const status = {{ textContent: "", dataset: {{}} }};
+const body = {{ textContent: "", querySelectorAll() {{ return []; }} }};
+const dialog = {{ open: false, dataset: {{}}, showModal() {{ this.open = true; }}, close() {{ this.open = false; }} }};
+function $(id) {{ return id === "#fleet-job-details" ? dialog : id === "#fleet-job-details-status" ? status : body; }}
+async function api(path, options) {{ calls.push([path, options]); return new Promise(() => {{}}); }}
+function esc(value) {{ return String(value ?? ""); }}
+function jsq(value) {{ return String(value ?? ""); }}
+function fmtDur(value) {{ return String(value); }}
+global.document = {{ activeElement: null }};
+global.URL = {{ revokeObjectURL() {{}} }};
+{helper}
+openFleetJobDetails({{ studio: "image@Mac / A", jobId: "job / 1", machine: "Mac", origin: "hub", originDevice: "Hub" }});
+const first = fleetJobDetailsState.controller;
+openFleetJobDetails({{ studio: "voice@Mac / B", jobId: "job / 2", machine: "Mac", origin: "api", originDevice: "" }});
+setImmediate(() => console.log(JSON.stringify({{ paths: calls.map(call => call[0]), firstAborted: first.signal.aborted }})));
+"""
+    result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout) == {
+        "paths": [
+            "/studio/image%40Mac%20%2F%20A/api/fleet/jobs/job%20%2F%201/details",
+            "/studio/voice%40Mac%20%2F%20B/api/fleet/jobs/job%20%2F%202/details",
+        ],
+        "firstAborted": True,
+    }
+
+
+def test_closing_details_destroys_ephemeral_content_and_restores_focus():
+    source = FRONTEND.read_text()
+    helper = _details_javascript(source)
+    program = f"""
+const events = [];
+const audio = {{ pause() {{ events.push("pause"); }}, removeAttribute(name) {{ events.push("remove:" + name); }}, load() {{ events.push("load"); }} }};
+const status = {{ textContent: "secret status" }};
+const body = {{ textContent: "secret prompt", querySelectorAll(selector) {{ return selector === "audio" ? [audio] : []; }} }};
+const dialog = {{ open: true, dataset: {{}}, close() {{ this.open = false; events.push("close"); }} }};
+function $(id) {{ return id === "#fleet-job-details" ? dialog : id === "#fleet-job-details-status" ? status : body; }}
+function esc(value) {{ return String(value ?? ""); }}
+function jsq(value) {{ return String(value ?? ""); }}
+function fmtDur(value) {{ return String(value); }}
+global.document = {{ activeElement: null }};
+global.URL = {{ revokeObjectURL(value) {{ events.push("revoke:" + value); }} }};
+{helper}
+fleetJobDetailsState.controller = {{ abort() {{ events.push("abort"); }} }};
+fleetJobDetailsState.objectUrls = ["blob:one", "blob:two"];
+fleetJobDetailsState.invoker = {{ focus() {{ events.push("focus"); }} }};
+closeFleetJobDetails();
+console.log(JSON.stringify({{ events, body: body.textContent, status: status.textContent, urls: fleetJobDetailsState.objectUrls }}));
+"""
+    result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
+    closed = json.loads(result.stdout)
+    assert closed["events"] == ["abort", "pause", "remove:src", "load", "revoke:blob:one", "revoke:blob:two", "close", "focus"]
+    assert closed["body"] == closed["status"] == ""
+    assert closed["urls"] == []
+
+
+def test_expired_media_refreshes_once_then_exposes_retry_without_persistent_storage():
+    source = FRONTEND.read_text()
+    helper = _details_javascript(source)
+    assert all(token not in helper for token in (
+        "localStorage", "sessionStorage", "indexedDB", "serviceWorker", "caches.", "history.pushState",
+    ))
+    assert ".innerHTML" not in helper
+    program = f"""
+let refreshes = 0;
+const target = {{ children: [], textContent: "", replaceChildren(...items) {{ this.children = items; }}, append(...items) {{ this.children.push(...items); }} }};
+function element(tag) {{ return {{ tag, textContent: "", className: "", disabled: false, addEventListener() {{}}, append(...items) {{ this.children = items; }} }}; }}
+function $(id) {{ return {{ textContent: "", dataset: {{}} }}; }}
+function esc(value) {{ return String(value ?? ""); }}
+function jsq(value) {{ return String(value ?? ""); }}
+function fmtDur(value) {{ return String(value); }}
+global.document = {{ createElement: element }};
+global.URL = {{ revokeObjectURL() {{}}, createObjectURL() {{ return "blob:new"; }} }};
+global.window = {{ open() {{}} }};
+async function api() {{ return {{ ok: false, status: 410, json: async () => ({{ detail: {{ code: "handle_expired" }} }}) }}; }}
+{helper}
+fleetJobDetailsState.controller = new AbortController();
+fleetJobDetailsState.studio = "image@mac";
+fleetJobDetailsState.jobId = "job-1";
+refreshFleetJobDetails = async () => {{ refreshes += 1; }};
+const item = {{ handle: "opaque", media_type: "image/png" }};
+Object.defineProperty(item, "_previewElement", {{ value: target }});
+(async () => {{
+  await loadFleetJobMedia(item, "preview");
+  await loadFleetJobMedia(item, "preview");
+  console.log(JSON.stringify({{ refreshes, labels: target.children.map(child => child.textContent) }}));
+}})();
+"""
+    result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout) == {"refreshes": 1, "labels": [
+        "The secure media link expired. Retry to request a fresh one.", "Retry",
+    ]}
+
+
+def test_detail_heading_uses_broker_origin_only_when_the_activity_row_proves_hub_ownership():
+    source = FRONTEND.read_text()
+    helper = _details_javascript(source)
+    program = f"""
+function element(tag) {{ return {{ tag, textContent: "", className: "", children: [], append(...items) {{ this.children.push(...items); }}, addEventListener() {{}} }}; }}
+const dialog = {{ dataset: {{ machine: "Mac", origin: "hub", originDevice: "Controller" }} }};
+const body = element("div"), status = {{ textContent: "", dataset: {{}} }}, title = {{ textContent: "" }};
+function $(id) {{ return id === "#fleet-job-details" ? dialog : id === "#fleet-job-details-body" ? body : id === "#fleet-job-details-status" ? status : title; }}
+function esc(value) {{ return String(value ?? ""); }}
+function jsq(value) {{ return String(value ?? ""); }}
+function fmtDur(value) {{ return String(value) + "s"; }}
+global.document = {{ createElement: element }};
+{helper}
+renderFleetJobDetails({{ schema: "kh-studio.job-details.v1", studio: "image", job: {{ id: "1", origin: "api" }}, inputs: {{}}, references: [], outputs: [] }});
+const broker = title.textContent;
+dialog.dataset.origin = "api";
+renderFleetJobDetails({{ schema: "kh-studio.job-details.v1", studio: "voice", job: {{ id: "2", origin: "local_ui" }}, inputs: {{}}, references: [], outputs: [] }});
+console.log(JSON.stringify([broker, title.textContent]));
+"""
+    result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout) == [
+        "Image Studio job details · Studio Hub",
+        "Voice Studio job details · Local Studio UI",
+    ]
+
+
+def test_details_drawer_uses_native_accessible_responsive_markup():
+    source = FRONTEND.read_text()
+
+    assert '<dialog id="fleet-job-details" aria-labelledby="fleet-job-details-title">' in source
+    assert 'id="fleet-job-details-status" role="status" aria-live="polite"' in source
+    assert 'id="fleet-job-details-close" aria-label="Close job details"' in source
+    assert ".fleet-job-details-shell" in source and "min(720px, 92vw)" in source
+    assert "#fleet-job-details :focus-visible" in source
+    assert "object-fit:contain" in source
+    assert "@media(max-width:600px)" in source and "min-height:44px" in source

@@ -290,6 +290,8 @@
   .voice-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(350px,1fr));gap:14px}.voice-card{display:flex;flex-direction:column;min-width:0}.voice-card .voice-name{font:700 20px/1.1 var(--display);color:var(--accent2)}.voice-card .voice-meta{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.voice-card code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.voice-sync-line{display:flex;align-items:center;gap:8px;margin-top:auto;padding-top:10px;border-top:1px solid #e1e5dc}.voice-sync-line .sub{flex:1}.voice-targets{margin-top:10px}.voice-targets summary{cursor:pointer;color:var(--accent);font-size:var(--font-secondary);font-weight:700}.voice-target{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 10px;padding:8px 0;border-bottom:1px solid #e6e8e1}.voice-target:last-child{border-bottom:0}.voice-target .message{grid-column:1/-1;color:var(--dim);font-size:var(--font-compact);overflow-wrap:anywhere}
   /* Stats begins with the actual fleet, then keeps the established history below. */
   .fleet-activity{margin:0 0 30px}.fleet-activity-copy{max-width:760px;margin:-4px 0 15px;color:var(--dim);font-size:var(--font-secondary)}.fleet-pulse{display:grid;grid-template-columns:repeat(7,minmax(112px,1fr));gap:8px;margin:0 0 10px}.fleet-pulse-item{min-height:76px;padding:11px 12px;border:1px solid #dce2d8;border-radius:13px;background:#fbfbf6}.fleet-pulse-item b{display:block;color:var(--accent2);font:700 23px/1 var(--display);font-variant-numeric:tabular-nums}.fleet-pulse-item span{display:flex;align-items:center;gap:6px;margin-top:7px;color:var(--dim);font:700 var(--font-compact)/1 var(--mono);letter-spacing:.04em;text-transform:uppercase}.fleet-pulse-item span:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}.fleet-pulse-item.needs_attention span{color:var(--down)}.fleet-pulse-item.working span{color:#b27610}.fleet-pulse-item.just_finished span{color:var(--accent)}.fleet-pulse-item.ready span{color:var(--up)}.fleet-pulse-item.long_idle span,.fleet-pulse-item.unknown span{color:#6d746d}.fleet-pulse-item.offline span{color:#925147}.fleet-activity-note{min-height:20px;margin:0 0 12px;color:var(--dim);font-size:var(--font-secondary)}.fleet-activity-note[data-state="error"]{color:#a84135;font-weight:700}.fleet-activity-note[data-state="loading"]{display:flex;align-items:center;gap:8px}.fleet-activity-note[data-state="loading"]:before{content:"";width:13px;height:13px;border:2px solid #cfdbcf;border-top-color:var(--accent);border-radius:50%;animation:autoSpin 1s linear infinite}.fleet-machine-wrap{overflow-x:auto}.fleet-machine-table{min-width:1080px;table-layout:fixed}.fleet-machine-table th:nth-child(1){width:17%}.fleet-machine-table th:nth-child(2){width:15%}.fleet-machine-table th:nth-child(3){width:20%}.fleet-machine-table th:nth-child(4){width:15%}.fleet-machine-table th:nth-child(5){width:12%}.fleet-machine-table th:nth-child(6){width:11%}.fleet-machine-table th:nth-child(7){width:10%}.fleet-machine-table td{vertical-align:top}.fleet-machine-name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--accent2);font-weight:750}.fleet-machine-meta{display:block;margin-top:4px;color:var(--dim);font-size:var(--font-compact);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fleet-state{display:inline-flex;align-items:center;gap:6px;padding:4px 7px;border:1px solid currentColor;border-radius:999px;font:700 var(--font-compact)/1 var(--mono);letter-spacing:.02em;white-space:nowrap}.fleet-state:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}.fleet-state.needs_attention{color:#b7463b;background:#fbeae6}.fleet-state.working{color:#98650d;background:#fcf2dd}.fleet-state.just_finished{color:#176e42;background:#e9f5eb}.fleet-state.ready{color:#176e42;background:#e9f5eb}.fleet-state.long_idle,.fleet-state.unknown{color:#6d746d;background:#f0f1ec}.fleet-state.offline{color:#8f5047;background:#f8ece9}.fleet-machine-progress{margin:7px 0 0}.fleet-machine-progress .prog{margin:0 0 4px}.fleet-machine-progress .prog i{background:linear-gradient(90deg,#ca8b22,#e3b05a)}.fleet-machine-result{font-size:var(--font-secondary);line-height:1.35}.fleet-machine-result.attention{color:#a84135;font-weight:700}.fleet-utilization.partial{color:#8a6d1f}.fleet-detail-row>td{padding:0!important;background:#fbfbf7}.fleet-detail-row details{padding:0 12px}.fleet-detail-row summary{padding:10px 0;cursor:pointer;color:var(--accent);font-size:var(--font-secondary);font-weight:700;outline-offset:4px}.fleet-detail-row summary:focus-visible{outline:3px solid #167a5540;border-radius:5px}.fleet-detail{display:grid;grid-template-columns:minmax(180px,.8fr) minmax(230px,1.2fr);gap:12px;padding:0 0 13px}.fleet-detail p{margin:0;color:var(--dim);font-size:var(--font-secondary)}.fleet-detail code{overflow-wrap:anywhere}.fleet-timeline{display:grid;gap:5px}.fleet-timeline-item{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-top:1px solid #e4e7df;color:var(--dim);font-size:var(--font-compact)}.fleet-timeline-item b{color:var(--text);font-weight:700}.historical-performance{padding-top:4px;border-top:1px solid #dfe3da}
+  .fleet-origin{display:block;margin-top:4px;color:var(--accent2);font-size:var(--font-compact);font-weight:700;overflow-wrap:anywhere}.fleet-detail-action{min-height:34px;margin-top:8px}.fleet-timeline-copy{min-width:0;overflow-wrap:anywhere}.fleet-timeline-actions{display:flex;align-items:flex-start;gap:7px;flex:0 0 auto}
+  #fleet-job-details{inset:0 0 0 auto;width:100%;max-width:min(720px, 92vw);height:100dvh;max-height:none;margin:0;padding:0;border:0;background:transparent;color:var(--text);overflow:hidden}#fleet-job-details::backdrop{background:rgba(12,35,26,.58);backdrop-filter:blur(4px)}.fleet-job-details-shell{height:100%;overflow:auto;padding:28px 30px 36px;background:var(--panel);box-shadow:-14px 0 38px rgba(19,45,33,.2)}.fleet-job-details-shell>header{position:static;height:auto;margin:0 0 14px;padding:0 0 16px;display:flex;align-items:flex-start;gap:18px;border:0;border-bottom:1px solid var(--border);background:none;box-shadow:none;backdrop-filter:none}.fleet-job-details-shell>header>div{flex:1;min-width:0}.fleet-job-details-shell .eyebrow{display:block;margin-bottom:5px;color:var(--accent);font:700 var(--font-compact)/1 var(--mono);letter-spacing:.08em;text-transform:uppercase}.fleet-job-details-shell h2{margin:0;color:var(--accent2);font:700 30px/1.1 var(--display);overflow-wrap:anywhere}.fleet-job-details-status{min-height:22px;margin:0 0 14px;color:var(--dim);font-size:var(--font-secondary);overflow-wrap:anywhere}.fleet-job-details-status[data-state="error"]{color:#a84135;font-weight:700}.fleet-job-details-body{display:grid;gap:20px;min-width:0}.fleet-job-detail-section{min-width:0}.fleet-job-detail-section h3{margin:0 0 9px;color:var(--accent2);font:700 17px/1.2 var(--display)}.fleet-job-detail-grid{display:grid;grid-template-columns:minmax(130px,.45fr) minmax(0,1fr);gap:1px 14px;border-top:1px solid #e1e5dc}.fleet-job-detail-grid dt,.fleet-job-detail-grid dd{min-width:0;padding:8px 0;border-bottom:1px solid #e1e5dc}.fleet-job-detail-grid dt{color:var(--dim);font-size:var(--font-secondary)}.fleet-job-detail-grid dd{overflow-wrap:anywhere}.fleet-job-detail-copy{padding:12px 13px;border:1px solid #dde2d9;border-radius:12px;background:#f8f9f4}.fleet-job-detail-copy p{max-width:72ch;white-space:pre-wrap;overflow-wrap:anywhere}.fleet-job-detail-copy .actions{margin-top:9px}.fleet-job-media-list{display:grid;gap:12px}.fleet-job-media{min-width:0;padding:13px;border:1px solid #dce1d8;border-radius:13px;background:#fafaf5}.fleet-job-media-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.fleet-job-media-head>div{min-width:0}.fleet-job-media-name{display:block;color:var(--accent2);font-weight:750;overflow-wrap:anywhere}.fleet-job-media-preview{display:grid;place-items:center;min-height:70px;margin-top:11px;color:var(--dim);font-size:var(--font-secondary);overflow-wrap:anywhere}.fleet-job-media-preview img{display:block;width:100%;max-height:440px;object-fit:contain;border-radius:10px;background:var(--panel2)}.fleet-job-media-preview audio{display:block;width:100%}.fleet-job-media .actions{margin-top:11px}#fleet-job-details :focus-visible{outline:3px solid #167a5560;outline-offset:3px}.fleet-job-details-error{margin:0;color:#a84135;overflow-wrap:anywhere}
   #bell-dropdown{top:37px;right:0;width:370px;padding:8px;border-color:var(--border);border-radius:16px;background:#fffef9;box-shadow:0 22px 55px #18362935}#bell-dropdown .bd-row:hover{background:#eff2ea}
   .modal-backdrop{background:rgba(12,35,26,.66);backdrop-filter:blur(7px)}.modal{max-width:650px;padding:26px;border:1px solid #d9ded5;border-radius:22px;background:#fffef9;box-shadow:0 30px 80px #0a241950}.modal h2{font:700 29px/1 var(--display)}.wn-rel{padding:16px 0;border-color:#dfe2d8}.wn-rel h3{font:700 14px/1.2 var(--mono);color:var(--accent2)}.wn-rel li{font-size:13px}
   .empty{padding:44px;color:#7b847d}.muted,.sub{color:var(--dim)}
@@ -297,7 +299,7 @@
   @media(max-width:820px){header{margin-left:0;height:68px;padding:0 18px}header .summary{display:none}nav{position:sticky;top:68px;width:auto;height:58px;padding:7px 12px;flex-direction:row;overflow-x:auto;background:#123126;box-shadow:0 8px 20px #1736281c}nav:before,nav:after{display:none}nav button{width:auto;flex:0 0 auto;padding:8px 11px}nav button:hover{transform:none}main{margin-left:0;padding:22px 18px 54px}.workspace-head{padding:25px 26px}.live-chip{display:none}.grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}}
   @media(max-width:600px){header>span:first-child{display:none}header{gap:9px;padding:0 14px}header h1{font-size:18px}header #last-refresh{display:none}nav button{font-size:var(--font-compact);gap:7px;padding:7px 12px}nav button:before{font-size:14px}nav button.active{font-size:var(--font-compact);gap:7px}main{padding:16px 12px 45px}main>section,.card{min-width:0}.workspace-head{margin-bottom:16px;padding:22px 20px;border-radius:18px}.workspace-head h2{font-size:32px}.workspace-head p{font-size:12.5px}.controls,.toolbar{padding:10px}.controls .grp{width:100%;justify-content:space-between}.seg{max-width:100%;overflow-x:auto}.grid{grid-template-columns:1fr}.card{overflow:hidden;border-radius:15px;padding:16px}table{display:block;max-width:100%;overflow-x:auto}table thead,table tbody{display:table;width:max-content;min-width:100%;table-layout:auto}.lrow{grid-template-columns:20px 1.5fr .8fr auto;gap:8px}.lrow>div:nth-child(3),.lrow>div:nth-child(5),.lrow>div:nth-child(6),.lrow.lhead>span:nth-child(3),.lrow.lhead>span:nth-child(5),.lrow.lhead>span:nth-child(6){display:none}.modal{padding:20px;border-radius:18px}#bell-dropdown{position:fixed;left:12px;right:12px;top:72px;width:auto}.auto-update-controls{grid-template-columns:1fr;padding:11px}.auto-update-idle{height:auto;padding:7px 2px}.auto-update-actions .btn{flex:1 1 145px}.auto-update-actions .sub{flex-basis:100%}.auto-update-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.memory-modes{grid-template-columns:1fr}.memory-actions .btn{flex:1 1 135px}.ram-admission-controls{grid-template-columns:1fr}.ram-admission-controls label:first-child{grid-column:auto}.voice-form-grid{grid-template-columns:1fr}.voice-field.wide{grid-column:auto}.voice-list{grid-template-columns:1fr}.voice-audio-row .voice-field,.voice-audio-row .voice-field.model{min-width:100%}.setup-fields{grid-template-columns:1fr}.setup-fields .wide,.setup-fields .full,.setup-intro,.setup-connection{grid-column:auto}}
   @media(max-width:1200px){.fleet-pulse{grid-template-columns:repeat(4,minmax(130px,1fr))}.fleet-detail{grid-template-columns:1fr}}
-  @media(max-width:600px){.fleet-pulse{grid-template-columns:repeat(2,minmax(0,1fr))}.fleet-activity{margin-bottom:24px}.fleet-machine-wrap{margin:0 -4px}.fleet-machine-table{min-width:920px}}
+  @media(max-width:600px){.fleet-pulse{grid-template-columns:repeat(2,minmax(0,1fr))}.fleet-activity{margin-bottom:24px}.fleet-machine-wrap{margin:0 -4px}.fleet-machine-table{min-width:920px}#fleet-job-details{width:100vw;max-width:none}.fleet-job-details-shell{padding:20px 16px 28px}.fleet-job-details-shell .btn{min-height:44px}.fleet-job-detail-grid{grid-template-columns:1fr}.fleet-job-detail-grid dt{padding-bottom:2px;border-bottom:0}.fleet-job-detail-grid dd{padding-top:0}.fleet-job-media-head{display:block}.fleet-job-media .actions .btn{flex:1 1 100px}}
   @media(max-width:600px){.managed-release-target{grid-template-columns:1fr}.managed-release-note{line-height:1.5}}
   @media(max-width:600px){.repair-row{grid-template-columns:1fr;align-items:stretch}.repair-action{width:100%}.repair-dialog-actions .btn,.repair-dialog-actions .go{flex:1 1 132px}}
   @media(max-width:600px){.resource-studio-table thead,.resource-studio-table tbody{min-width:720px}}
@@ -1192,6 +1194,17 @@
     </div>
   </form>
 </div>
+
+<dialog id="fleet-job-details" aria-labelledby="fleet-job-details-title">
+  <div class="fleet-job-details-shell">
+    <header>
+      <div><span class="eyebrow">Fleet job</span><h2 id="fleet-job-details-title">Job details</h2></div>
+      <button type="button" class="btn" id="fleet-job-details-close" aria-label="Close job details">Close</button>
+    </header>
+    <p id="fleet-job-details-status" role="status" aria-live="polite" class="fleet-job-details-status"></p>
+    <div id="fleet-job-details-body" class="fleet-job-details-body"></div>
+  </div>
+</dialog>
 
 <div id="repair-confirmation" class="modal-backdrop hide" role="dialog" aria-modal="true" aria-labelledby="repair-confirmation-title" aria-describedby="repair-confirmation-copy">
   <div class="modal" role="document">
@@ -3968,7 +3981,323 @@ const FLEET_ACTIVITY_STATES = {
 };
 const FLEET_ACTIVITY_ORDER = ["needs_attention", "working", "just_finished", "ready", "long_idle", "offline", "unknown"];
 const FLEET_JOB_STATES = { queued: "Queued", running: "Running", done: "Completed", error: "Failed", cancelled: "Cancelled" };
+const FLEET_ORIGIN_LABELS = {
+  hub: "Studio Hub", local_ui: "Local Studio UI",
+  api: "API/automation", unknown: "Unknown/legacy",
+};
+const FLEET_DETAIL_ERRORS = {
+  unsupported_version: "Update this Studio to enable job details.",
+  machine_offline: "This Mac is offline. Retry when its Agent Hub is reachable.",
+  job_not_found: "This Studio no longer has that job in local history.",
+  media_removed: "The job remains available, but this file was already pruned.",
+  handle_expired: "The secure media link expired. Retry to request a fresh one.",
+  permission_denied: "Fleet authentication needs attention on this Mac.",
+  temporarily_unavailable: "Job details are temporarily unavailable. Retry shortly.",
+};
+const FLEET_DETAIL_PARAMETER_LABELS = {
+  width: "Width", height: "Height", aspect_ratio: "Aspect ratio", resolution: "Resolution",
+  steps: "Steps", guidance: "Guidance", seed: "Seed", image_strength: "Image strength",
+  quantize: "Quantization", lora_names: "LoRAs", lora_scales: "LoRA scales",
+  voice_library_id: "Voice", voice: "Voice", speaker: "Speaker", language: "Language",
+  speed: "Speed", instruct: "Delivery", voice_design_prompt: "Voice design", emotion: "Emotion",
+  temperature: "Temperature", top_p: "Top P", top_k: "Top K",
+  repetition_penalty: "Repetition penalty", chunk_index: "Chunk", chunk_total: "Total chunks",
+};
+const fleetJobDetailsState = {
+  controller: null, objectUrls: [], invoker: null,
+  studio: "", jobId: "", refreshedExpiredHandle: false,
+};
 let fleetActivityHasRendered = false;
+
+function fleetOriginLabel(origin) {
+  return FLEET_ORIGIN_LABELS[origin] || FLEET_ORIGIN_LABELS.unknown;
+}
+function fleetOriginMarkup(origin, originDevice) {
+  const device = String(originDevice || "").trim().slice(0, 160);
+  return `<span class="fleet-origin">${esc(fleetOriginLabel(origin))}${device ? ` · ${esc(device)}` : ""}</span>`;
+}
+function fleetJobActionContext(context) {
+  const origin = Object.hasOwn(FLEET_ORIGIN_LABELS, context?.origin) ? context.origin : "unknown";
+  return {
+    studio: String(context?.studio || ""),
+    jobId: String(context?.jobId || ""),
+    machine: String(context?.machine || ""),
+    origin,
+    originDevice: String(context?.originDevice || "").trim().slice(0, 160),
+  };
+}
+function fleetJobDetailsButton(rawContext) {
+  const context = fleetJobActionContext(rawContext);
+  if (!context.studio || !context.jobId) return "";
+  return `<button type="button" class="btn compact fleet-detail-action" onclick="openFleetJobDetails({studio:'${jsq(context.studio)}',jobId:'${jsq(context.jobId)}',machine:'${jsq(context.machine)}',origin:'${jsq(context.origin)}',originDevice:'${jsq(context.originDevice)}'}, this)">View details</button>`;
+}
+function fleetJobDetailsPath() {
+  return `/studio/${encodeURIComponent(fleetJobDetailsState.studio)}/api/fleet/jobs/${encodeURIComponent(fleetJobDetailsState.jobId)}/details`;
+}
+function fleetJobMediaPath(item, download = false) {
+  const base = `/studio/${encodeURIComponent(fleetJobDetailsState.studio)}/api/fleet/jobs/${encodeURIComponent(fleetJobDetailsState.jobId)}/media/${encodeURIComponent(String(item.handle || ""))}`;
+  return download ? `${base}?download=true` : base;
+}
+function fleetDetailNode(tag, className = "", text = "") {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== "") node.textContent = text;
+  return node;
+}
+function fleetDetailDisplay(value) {
+  if (Array.isArray(value)) return value.map(item => String(item)).join(", ");
+  if (value === true) return "Yes";
+  if (value === false) return "No";
+  return value == null || value === "" ? "—" : String(value);
+}
+function fleetDetailTime(value) {
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds > 0 ? new Date(seconds * 1000).toLocaleString() : "—";
+}
+function appendFleetDetailValue(list, label, value) {
+  list.append(fleetDetailNode("dt", "", label), fleetDetailNode("dd", "", fleetDetailDisplay(value)));
+}
+function fleetDetailSection(title) {
+  const section = fleetDetailNode("section", "fleet-job-detail-section");
+  section.append(fleetDetailNode("h3", "", title));
+  return section;
+}
+function fleetDetailErrorCode(response, payload, detailRoute = false) {
+  const code = payload?.detail?.code || payload?.code;
+  if (Object.hasOwn(FLEET_DETAIL_ERRORS, code)) return code;
+  if (detailRoute && response.status === 404) return "unsupported_version";
+  if (response.status === 502) return "machine_offline";
+  if (response.status === 401 || response.status === 403) return "permission_denied";
+  return "temporarily_unavailable";
+}
+function setFleetJobDetailsStatus(message, state = "") {
+  const status = $("#fleet-job-details-status");
+  status.textContent = message;
+  status.dataset.state = state;
+}
+function showFleetJobDetailsError(code) {
+  const body = $("#fleet-job-details-body");
+  body.textContent = "";
+  setFleetJobDetailsStatus(FLEET_DETAIL_ERRORS[code] || FLEET_DETAIL_ERRORS.temporarily_unavailable, "error");
+  const retry = fleetDetailNode("button", "btn", "Retry");
+  retry.type = "button";
+  retry.addEventListener("click", () => refreshFleetJobDetails(fleetJobDetailsState.controller));
+  body.append(retry);
+}
+function appendFleetCopySection(body, title, value) {
+  if (typeof value !== "string" || !value) return;
+  const section = fleetDetailSection(title);
+  const box = fleetDetailNode("div", "fleet-job-detail-copy");
+  box.append(fleetDetailNode("p", "", value));
+  const actions = fleetDetailNode("div", "actions");
+  const copy = fleetDetailNode("button", "btn compact", `Copy ${title.toLowerCase()}`);
+  copy.type = "button";
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      copy.textContent = "Copied";
+    } catch (_) {
+      copy.textContent = "Copy unavailable";
+    }
+  });
+  actions.append(copy); box.append(actions); section.append(box); body.append(section);
+}
+function renderFleetJobMediaSection(body, title, items) {
+  const safeItems = Array.isArray(items) ? items.filter(item => item && typeof item.handle === "string" && /^(image|audio)\//.test(item.media_type || "")) : [];
+  if (!safeItems.length) return;
+  const section = fleetDetailSection(title);
+  const list = fleetDetailNode("div", "fleet-job-media-list");
+  safeItems.forEach(item => {
+    const card = fleetDetailNode("article", "fleet-job-media");
+    const head = fleetDetailNode("div", "fleet-job-media-head");
+    const copy = fleetDetailNode("div");
+    copy.append(fleetDetailNode("span", "fleet-job-media-name", fleetDetailDisplay(item.name)),
+      fleetDetailNode("span", "sub", [item.media_type, item.size_bytes != null ? `${item.size_bytes} bytes` : ""].filter(Boolean).join(" · ")));
+    head.append(copy);
+    const preview = fleetDetailNode("div", "fleet-job-media-preview", "Loading preview…");
+    Object.defineProperty(item, "_previewElement", { value: preview });
+    const actions = fleetDetailNode("div", "actions");
+    for (const [mode, label] of [["open", "Open"], ["download", "Download"]]) {
+      const button = fleetDetailNode("button", "btn compact", label);
+      button.type = "button";
+      button.addEventListener("click", () => loadFleetJobMedia(item, mode));
+      actions.append(button);
+    }
+    card.append(head, preview, actions); list.append(card);
+    void loadFleetJobMedia(item, "preview");
+  });
+  section.append(list); body.append(section);
+}
+function renderFleetJobDetails(details) {
+  if (!details || details.schema !== "kh-studio.job-details.v1" || !details.job || typeof details.job !== "object") {
+    showFleetJobDetailsError("temporarily_unavailable");
+    return;
+  }
+  const dialog = $("#fleet-job-details"), body = $("#fleet-job-details-body"), job = details.job;
+  const studio = details.studio === "voice" ? "Voice Studio" : details.studio === "image" ? "Image Studio" : "Studio";
+  body.textContent = "";
+  setFleetJobDetailsStatus("Job details loaded.", "ready");
+  const summary = fleetDetailSection("Overview"), values = fleetDetailNode("dl", "fleet-job-detail-grid");
+  const origin = dialog.dataset.origin === "hub" ? "hub" : (Object.hasOwn(FLEET_ORIGIN_LABELS, job.origin) ? job.origin : "unknown");
+  const originDevice = dialog.dataset.origin === "hub" ? dialog.dataset.originDevice : job.origin_device;
+  $("#fleet-job-details-title").textContent = `${studio} job details · ${fleetOriginLabel(origin)}`;
+  appendFleetDetailValue(values, "Status", job.state);
+  appendFleetDetailValue(values, "Machine", dialog.dataset.machine);
+  appendFleetDetailValue(values, "Studio", studio);
+  appendFleetDetailValue(values, "Operation", job.operation);
+  appendFleetDetailValue(values, "Model", job.model);
+  appendFleetDetailValue(values, "Job ID", job.id);
+  appendFleetDetailValue(values, "Created", fleetDetailTime(job.created_at));
+  appendFleetDetailValue(values, "Started", fleetDetailTime(job.started_at));
+  appendFleetDetailValue(values, "Finished", fleetDetailTime(job.finished_at));
+  appendFleetDetailValue(values, "Duration", job.runtime_s == null ? "—" : fmtDur(job.runtime_s));
+  if (job.progress != null) appendFleetDetailValue(values, "Progress", `${Math.round(Math.max(0, Math.min(1, Number(job.progress))) * 100)}%`);
+  appendFleetDetailValue(values, "Origin", `${fleetOriginLabel(origin)}${originDevice ? ` · ${String(originDevice).trim().slice(0, 160)}` : ""}`);
+  summary.append(values); body.append(summary);
+  const inputs = details.inputs && typeof details.inputs === "object" ? details.inputs : {};
+  appendFleetCopySection(body, "Prompt", inputs.prompt);
+  appendFleetCopySection(body, "Negative prompt", inputs.negative_prompt);
+  appendFleetCopySection(body, "Speech text", inputs.text);
+  appendFleetCopySection(body, "Reference transcript", inputs.reference_transcript);
+  const parameters = inputs.parameters && typeof inputs.parameters === "object" && !Array.isArray(inputs.parameters) ? inputs.parameters : {};
+  const allowedParameters = Object.entries(parameters).filter(([key]) => Object.hasOwn(FLEET_DETAIL_PARAMETER_LABELS, key));
+  if (allowedParameters.length) {
+    const section = fleetDetailSection("Generation settings"), list = fleetDetailNode("dl", "fleet-job-detail-grid");
+    allowedParameters.forEach(([key, value]) => appendFleetDetailValue(list, FLEET_DETAIL_PARAMETER_LABELS[key], value));
+    section.append(list); body.append(section);
+  }
+  renderFleetJobMediaSection(body, "References", details.references);
+  renderFleetJobMediaSection(body, "Outputs", details.outputs);
+}
+async function refreshFleetJobDetails(controller = fleetJobDetailsState.controller) {
+  if (!controller || controller.signal.aborted) return;
+  setFleetJobDetailsStatus("Loading job details…", "loading");
+  try {
+    const response = await api(fleetJobDetailsPath(), { signal: controller.signal });
+    if (fleetJobDetailsState.controller !== controller) return;
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      showFleetJobDetailsError(fleetDetailErrorCode(response, payload, true));
+      return;
+    }
+    const details = await response.json();
+    if (fleetJobDetailsState.controller === controller) renderFleetJobDetails(details);
+  } catch (error) {
+    if (error?.name !== "AbortError" && fleetJobDetailsState.controller === controller) showFleetJobDetailsError("temporarily_unavailable");
+  }
+}
+async function openFleetJobDetails(rawContext, invoker = document.activeElement) {
+  closeFleetJobDetails({ restoreFocus: false });
+  const context = fleetJobActionContext(rawContext);
+  if (!context.studio || !context.jobId) return;
+  const dialog = $("#fleet-job-details");
+  fleetJobDetailsState.invoker = invoker && typeof invoker.focus === "function" ? invoker : null;
+  fleetJobDetailsState.studio = context.studio;
+  fleetJobDetailsState.jobId = context.jobId;
+  fleetJobDetailsState.refreshedExpiredHandle = false;
+  dialog.dataset.machine = context.machine;
+  dialog.dataset.origin = context.origin;
+  dialog.dataset.originDevice = context.originDevice;
+  const controller = new AbortController();
+  fleetJobDetailsState.controller = controller;
+  dialog.showModal();
+  await refreshFleetJobDetails(controller);
+}
+function closeFleetJobDetails({ restoreFocus = true } = {}) {
+  const dialog = $("#fleet-job-details"), body = $("#fleet-job-details-body"), status = $("#fleet-job-details-status");
+  const invoker = fleetJobDetailsState.invoker;
+  if (fleetJobDetailsState.controller) fleetJobDetailsState.controller.abort();
+  fleetJobDetailsState.controller = null;
+  body.querySelectorAll("audio").forEach(audio => {
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+  });
+  fleetJobDetailsState.objectUrls.forEach(url => URL.revokeObjectURL(url));
+  fleetJobDetailsState.objectUrls = [];
+  body.textContent = "";
+  status.textContent = "";
+  if (dialog.open) dialog.close();
+  dialog.dataset.machine = "";
+  dialog.dataset.origin = "";
+  dialog.dataset.originDevice = "";
+  fleetJobDetailsState.invoker = null;
+  fleetJobDetailsState.studio = "";
+  fleetJobDetailsState.jobId = "";
+  fleetJobDetailsState.refreshedExpiredHandle = false;
+  if (restoreFocus && invoker && typeof invoker.focus === "function") invoker.focus();
+}
+function showFleetJobMediaError(item, code, mode) {
+  const target = item._previewElement;
+  if (!target) return;
+  const message = fleetDetailNode("p", "fleet-job-details-error", FLEET_DETAIL_ERRORS[code] || FLEET_DETAIL_ERRORS.temporarily_unavailable);
+  const retry = fleetDetailNode("button", "btn compact", "Retry");
+  retry.type = "button";
+  retry.addEventListener("click", async () => {
+    if (code === "handle_expired") {
+      fleetJobDetailsState.refreshedExpiredHandle = false;
+      await refreshFleetJobDetails(fleetJobDetailsState.controller);
+    } else {
+      await loadFleetJobMedia(item, mode);
+    }
+  });
+  target.replaceChildren(message, retry);
+}
+async function loadFleetJobMedia(item, mode) {
+  const controller = fleetJobDetailsState.controller;
+  if (!controller || controller.signal.aborted || !item || typeof item.handle !== "string") return;
+  const target = item._previewElement;
+  if (mode === "preview" && target) target.textContent = "Loading preview…";
+  try {
+    const response = await api(fleetJobMediaPath(item, mode === "download"), { signal: controller.signal });
+    if (fleetJobDetailsState.controller !== controller) return;
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      const code = fleetDetailErrorCode(response, payload);
+      if (code === "handle_expired" && !fleetJobDetailsState.refreshedExpiredHandle) {
+        fleetJobDetailsState.refreshedExpiredHandle = true;
+        await refreshFleetJobDetails(controller);
+        return;
+      }
+      showFleetJobMediaError(item, code, mode);
+      return;
+    }
+    const objectUrl = URL.createObjectURL(await response.blob());
+    fleetJobDetailsState.objectUrls.push(objectUrl);
+    if (mode === "open") {
+      window.open(objectUrl, "_blank", "noopener");
+      return;
+    }
+    if (mode === "download") {
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = String(item.name || "download");
+      link.hidden = true;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+      fleetJobDetailsState.objectUrls = fleetJobDetailsState.objectUrls.filter(url => url !== objectUrl);
+      return;
+    }
+    if (!target) return;
+    target.textContent = "";
+    if (String(item.media_type).startsWith("image/")) {
+      const image = document.createElement("img");
+      image.alt = item.kind === "reference" ? "Reference image" : "Generated image";
+      image.src = objectUrl;
+      target.append(image);
+    } else {
+      const audio = document.createElement("audio");
+      audio.controls = true;
+      audio.preload = "metadata";
+      audio.src = objectUrl;
+      target.append(audio);
+    }
+  } catch (error) {
+    if (error?.name !== "AbortError" && fleetJobDetailsState.controller === controller) showFleetJobMediaError(item, "temporarily_unavailable", mode);
+  }
+}
 
 function fleetActivityModelName(model) {
   if (!model) return "No activity reported";
@@ -4017,7 +4346,12 @@ function fleetActivityTimeline(row) {
   return `<div class="fleet-timeline">${entries.map(entry => {
     const state = FLEET_JOB_STATES[entry.state] || "Unknown event";
     const at = entry.finished_at || entry.updated_at || entry.observed_at;
-    return `<div class="fleet-timeline-item"><b>${esc(state)}</b><span>${esc(entry.model ? fleetActivityModelName(entry.model) : "No model")} · ${esc(fmtAgo(at))}</span></div>`;
+    const origin = fleetOriginMarkup(entry.origin, entry.origin_device);
+    const details = fleetJobDetailsButton({
+      studio: entry.studio, jobId: entry.job_id, machine: row.machine,
+      origin: entry.origin, originDevice: entry.origin_device,
+    });
+    return `<div class="fleet-timeline-item"><div class="fleet-timeline-copy"><b>${esc(state)}</b><span>${esc(entry.model ? fleetActivityModelName(entry.model) : "No model")} · ${esc(fmtAgo(at))}</span>${origin}</div>${details ? `<div class="fleet-timeline-actions">${details}</div>` : ""}</div>`;
   }).join("")}</div>`;
 }
 function isFleetActivitySnapshot(activity) {
@@ -4040,6 +4374,7 @@ function setFleetActivityNote(message, state) {
   note.dataset.state = state;
 }
 function fleetActivityHasFocus() {
+  if (document.querySelector?.("#fleet-job-details")?.open) return true;
   const active = document.activeElement;
   return !!(active && active.closest && active.closest(".fleet-activity"));
 }
@@ -4116,11 +4451,16 @@ function renderFleetActivity(activity, { preserve = false } = {}) {
     const timeline = fleetActivityTimeline(row);
     const limitationText = row.limitation || (row.state === "needs_attention" ? fleetActivityAttention(row).limitation : "Activity evidence is complete for this machine in the selected window.");
     const limitation = `<p>${esc(limitationText)}</p>`;
-    const jobIdentity = row.job_id ? `<p>Job ID: <code title="${esc(row.job_id)}">${esc(row.job_id)}</code></p>` : "";
+    const detailAction = fleetJobDetailsButton({
+      studio: row.studio, jobId: row.job_id, machine: row.machine,
+      origin: row.origin, originDevice: row.origin_device,
+    });
+    const jobIdentity = row.job_id ? `<p>Job ID: <code title="${esc(row.job_id)}">${esc(row.job_id)}</code></p>${detailAction}` : "";
+    const origin = fleetOriginMarkup(row.origin, row.origin_device);
     return `<tr>
       <td><span class="fleet-machine-name">${esc(mlabel(row.machine))}</span><span class="fleet-machine-meta">${esc(row.machine || "local")}</span></td>
       <td><span class="fleet-state ${esc(row.state || "unknown")}">${esc(state.label)}</span><span class="fleet-machine-meta">for ${esc(fmtDur(row.state_duration_s || 0))}</span></td>
-      <td><b>${esc(activity)}</b><span class="fleet-machine-meta">${row.last_activity_at ? `Last activity ${esc(fmtAgo(row.last_activity_at))}` : "No observed activity yet"}${esc(source)}</span></td>
+      <td><b>${esc(activity)}</b><span class="fleet-machine-meta">${row.last_activity_at ? `Last activity ${esc(fmtAgo(row.last_activity_at))}` : "No observed activity yet"}${esc(source)}</span>${origin}</td>
       <td><span class="fleet-machine-result${result.attention ? " attention" : ""}">${resultMarkup}</span></td>
       <td class="num"><b>${Number(row.completed || 0)}</b> completed<br><span class="sub">${Number(row.failed || 0)} failed</span></td>
       <td><b>${esc(speed)}</b>${comparison ? `<span class="fleet-machine-meta">${esc(comparison)}</span>` : ""}</td>
@@ -4220,6 +4560,12 @@ async function loadStats({ background = false } = {}) {
     return `<tr><td>${esc(mlabel(m))}</td>${cells}</tr>`;
   }).join("") || `<tr><td class="empty">No data</td></tr>`;
 }
+
+$("#fleet-job-details-close").addEventListener("click", () => closeFleetJobDetails());
+$("#fleet-job-details").addEventListener("cancel", event => {
+  event.preventDefault();
+  closeFleetJobDetails();
+});
 
 // ── remote ────────────────────────────────────────────────────────────────
 const ALERT_ICON = { studio_down: "🔴", studio_recovered: "🟢", batch_failed: "⚠️" };
