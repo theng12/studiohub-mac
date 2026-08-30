@@ -52,4 +52,3 @@ Studio Hub combines local-first generation infrastructure with fleet-wide contro
 - Prefer direct observed evidence over inferred state.
 - Keep every machine independently useful when the Controller is unavailable.
 - Preserve safe, boring compatibility across mixed fleet versions.
-

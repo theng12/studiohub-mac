@@ -1221,6 +1221,12 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.14.0", date: "2026-08-30", items: [
+    "<b>Stats now begins with live fleet activity.</b> See seven clear states — needs attention, working, offline, just finished, long idle, ready, and unknown — before the existing historical performance, plus safe job/model/progress/result evidence and whether work came through the Hub or directly to a Studio.",
+    "Each machine keeps a compact safe job ID and bounded recent history. The default 30-day evidence and like-for-like comparisons remain below; older Studios stay compatible and show partial or unknown activity until they are updated.",
+    "The Hub reads only the existing authenticated, sanitized Studio activity route. Prompts, filesystem paths, assets, credentials, and reference media are never shown.",
+    "This release adds no dependency, model, port, or service. <b>Ordinary Update is enough</b> despite the minor version bump, and it does not deploy to or update any fleet Mac automatically.",
+  ]},
   { v: "2.13.15", date: "2026-08-30", items: [
     "<b>A damaged job ledger no longer keeps Studio Hub offline.</b> Before background work starts, the Hub validates <code>hub.db</code>. If SQLite says it is corrupt, the complete database family is preserved in <code>.database-recovery</code>, a clean ledger is created, and startup continues. You do not need to reinstall the app.",
     "The repair touches only ledger-backed job and asset history. Enrollment, fleet credentials, machine registration, settings, models, shared voices, generated files, and the sibling Studios are separate and remain unchanged. The damaged original is kept for manual recovery.",

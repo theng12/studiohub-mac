@@ -340,3 +340,48 @@ async def test_health_poll_runs_caddy_inspection_off_the_event_loop(
     assert await asyncio.to_thread(entered.wait, 10), "poll never inspected the proxy"
     release.set()
     await asyncio.wait_for(poll, 10)
+
+
+@pytest.mark.asyncio
+async def test_health_poll_runs_activity_observation_off_the_event_loop(
+    reset, monitor, monkeypatch,
+):
+    """A slow activity ledger write must not delay other loop callbacks."""
+    from backend import activity, broker, peers, resources
+
+    entered, release, tick = threading.Event(), threading.Event(), threading.Event()
+    tick_before_release = []
+    snapshots = []
+    loop = asyncio.get_running_loop()
+
+    def blocking_observe(registry, statuses, batches):
+        snapshots.append((registry, statuses, batches))
+        entered.set()
+        assert release.wait(1), "activity observation did not receive release"
+
+    def release_after_tick():
+        assert entered.wait(1), "activity observation never started"
+        loop.call_soon_threadsafe(tick.set)
+        tick_before_release.append(tick.wait(0.25))
+        release.set()
+
+    async def no_poll(_studio):
+        return None
+
+    async def no_refresh(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(activity, "observe_poll", blocking_observe)
+    monkeypatch.setattr(monitor, "_poll_one", no_poll)
+    monkeypatch.setattr(peers, "refresh", no_refresh)
+    monkeypatch.setattr(resources, "check_proxy_health", lambda: {"status": "not_running"})
+    releaser = threading.Thread(target=release_after_tick, daemon=True)
+    releaser.start()
+    await asyncio.wait_for(monitor.poll_all(), 2)
+    releaser.join()
+
+    assert tick_before_release == [True]
+    registry, statuses, batches = snapshots[0]
+    assert registry is not monitor.registry
+    assert statuses is not monitor.status
+    assert batches is not broker.batches

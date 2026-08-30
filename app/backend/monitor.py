@@ -7,6 +7,7 @@ the source studio.
 """
 
 import asyncio
+import copy
 import contextlib
 import json
 import logging
@@ -276,7 +277,10 @@ class StudioMonitor:
         # local and never lets a slow/old reporter affect worker health.
         from . import activity, broker
         try:
-            activity.observe_poll(self.registry, self.status, broker.batches)
+            registry = copy.deepcopy(self.registry)
+            statuses = copy.deepcopy(self.status)
+            batches = copy.deepcopy(broker.batches)
+            await asyncio.to_thread(activity.observe_poll, registry, statuses, batches)
         except Exception:
             log.warning("activity observation failed (continuing)", exc_info=True)
         # metrics sample + watchdog revival pass (late import: no cycle)

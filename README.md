@@ -413,7 +413,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/render-assets/by-sha/{sha256}` | Look up and refresh a retained render input by checksum before uploading it again |
 | `GET /api/hub/jobs/{batch}/items/{index}/artifact` | Stream a completed worker video through Hub authentication |
 | `POST /api/hub/jobs/{batch}/items/{index}/ack` | Confirm the main copy was verified and start worker retention |
-| `GET /api/hub/stats[?hours=N]` | Generation analytics: by machine/modality/model + timeline |
+| `GET /api/hub/stats[?hours=N]` | Generation analytics plus sanitized private fleet activity: seven operational states, Hub/direct attribution, safe job/model/progress/result evidence, bounded recent history, and honest partial/unknown mixed-version rows. Existing history defaults to 30 days and keeps like-for-like comparisons; prompts, paths, assets, credentials, and reference media are never returned. |
 | `POST /api/hub/recipes/run` | Run a recipe chain (`{recipe, brief}`) |
 | `GET /api/hub/recipes/runs[/{id}]` | Recipe run status |
 | `POST /api/hub/director` | `{brief, auto_run?}` — LLM plans a recipe from plain English |

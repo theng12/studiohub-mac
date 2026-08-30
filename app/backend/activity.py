@@ -168,7 +168,7 @@ def _reporter_support(status: dict, now: float) -> str | None:
 
 
 def _observed_jobs(registry: list[dict], statuses: dict, batches: dict,
-                   now: float) -> list[dict]:
+                   now: float, conn=None) -> list[dict]:
     """Merge Studio observations with broker ownership without double-counting."""
     broker_jobs = _broker_jobs(registry, batches)
     result = []
@@ -217,7 +217,7 @@ def _observed_jobs(registry: list[dict], statuses: dict, batches: dict,
                 row["source"] = "job"
                 row["model"] = owned.get("model") or row["model"]
             elif ledger.activity_job_is_hub_owned(
-                    row["machine"], studio_id, row["id"]):
+                    row["machine"], studio_id, row["id"], conn=conn):
                 # The broker may have released a completed batch before the
                 # worker's terminal snapshot arrives. Its earlier recorded
                 # studio_job_id remains the authoritative ownership proof.
@@ -342,29 +342,35 @@ def observe_poll(registry: list[dict], statuses: dict, batches: dict,
                  now: float | None = None) -> None:
     """Persist one poll's meaningful job and machine transitions."""
     now = float(time.time() if now is None else now)
-    live = _observed_jobs(registry, statuses, batches, now)
-    for row in live:
-        ledger.record_activity_event(
-            machine=row["machine"], studio=row["studio"], job_id=row["id"],
-            state=row["state"], model=row.get("model"), source=row["source"],
-            progress=row.get("progress"), started_at=row.get("started_at"),
-            finished_at=row.get("finished_at"), runtime_s=row.get("runtime_s"),
-            error_code=row.get("error_code"), reported_at=row.get("reported_at"),
-            activity_received_at=row.get("activity_received_at", now),
-            hub_owned=row["source"] == "job", observed_at=row.get("observed_at", now),
-        )
-    for machine, studios in _machine_groups(registry).items():
-        status_rows = [statuses.get(studio.get("id")) or {} for studio in studios]
-        reachable = any(_reachable(row.get("status")) for row in status_rows)
-        working = any(row["machine"] == machine and row["state"] in ACTIVE_STATES
-                      for row in live)
-        state, _, _, _ = _state_at(
-            machine, statuses, studios, live,
-            ledger.activity_events(machine=machine, since_s=now - RETENTION_S), now,
-        )
-        ledger.record_machine_state(machine=machine, reachable=reachable,
-                                    working=working, state=state, observed_at=now)
-    ledger.prune_activity(now - RETENTION_S)
+    with ledger.activity_transaction() as conn:
+        live = _observed_jobs(registry, statuses, batches, now, conn=conn)
+        for row in live:
+            ledger.record_activity_event(
+                machine=row["machine"], studio=row["studio"], job_id=row["id"],
+                state=row["state"], model=row.get("model"), source=row["source"],
+                progress=row.get("progress"), started_at=row.get("started_at"),
+                finished_at=row.get("finished_at"), runtime_s=row.get("runtime_s"),
+                error_code=row.get("error_code"), reported_at=row.get("reported_at"),
+                activity_received_at=row.get("activity_received_at", now),
+                hub_owned=row["source"] == "job", observed_at=row.get("observed_at", now),
+                conn=conn,
+            )
+        for machine, studios in _machine_groups(registry).items():
+            status_rows = [statuses.get(studio.get("id")) or {} for studio in studios]
+            reachable = any(_reachable(row.get("status")) for row in status_rows)
+            working = any(row["machine"] == machine and row["state"] in ACTIVE_STATES
+                          for row in live)
+            state, _, _, _ = _state_at(
+                machine, statuses, studios, live,
+                ledger.activity_events(
+                    machine=machine, since_s=now - RETENTION_S, conn=conn,
+                ), now,
+            )
+            ledger.record_machine_state(
+                machine=machine, reachable=reachable, working=working,
+                state=state, observed_at=now, conn=conn,
+            )
+        ledger.prune_activity(now - RETENTION_S, conn=conn)
 
 
 def fleet_snapshot(registry: list[dict], statuses: dict, batches: dict,
