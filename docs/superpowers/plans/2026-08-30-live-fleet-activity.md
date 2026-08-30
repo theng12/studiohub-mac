@@ -110,7 +110,7 @@ def test_activity_snapshot_classifies_hub_and_direct_jobs_without_private_data()
 - [ ] **Step 2: Run the focused test and verify the expected missing-method failure**
 
 ```bash
-../../voicestudio-mac.git/conda_env/bin/python -m pytest -q app/tests/test_fleet_activity.py
+/Users/thengmacmini/pinokio/api/voicestudio-mac.git/conda_env/bin/python -m pytest -q app/tests/test_fleet_activity.py
 ```
 
 - [ ] **Step 3: Implement the contract by mirroring the reviewed Image shape**
