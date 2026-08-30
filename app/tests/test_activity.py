@@ -190,3 +190,152 @@ def test_comparable_medians_require_three_samples_on_two_machines(reset):
     by_machine = {row["machine"]: row for row in snapshot["machines"]}
     assert by_machine["mac-a"]["relative_performance"]["percent_faster"] > 0
     assert by_machine["mac-b"]["relative_performance"]["percent_faster"] < 0
+
+
+def test_retained_active_snapshot_is_not_live_after_reporter_failure_or_offline(reset):
+    from backend import activity
+
+    studio = _studio()
+    statuses = {studio["id"]: _status(_snapshot(active=_job()), support="available")}
+    activity.observe_poll([studio], statuses, {}, now=100.0)
+    statuses[studio["id"]]["activity_support"] = "error"
+    statuses[studio["id"]]["activity_error"] = "reporter request failed"
+    assert activity.fleet_snapshot([studio], statuses, {}, since_s=0.0, now=105.0)["machines"][0]["state"] != "working"
+    statuses[studio["id"]]["status"] = "down"
+    assert activity.fleet_snapshot([studio], statuses, {}, since_s=0.0, now=110.0)["machines"][0]["state"] == "offline"
+
+
+def test_terminal_receipt_is_immutable_and_older_evidence_cannot_regress_it(reset):
+    from backend import activity
+
+    studio = _studio()
+    snapshot = _snapshot(latest=_job("done", state="done", progress=1.0,
+                                     finished_at=100.0, runtime_s=10.0))
+    statuses = {studio["id"]: _status(snapshot)}
+    activity.observe_poll([studio], statuses, {}, now=100.0)
+    for now in (101.0, 100.0 + 31 * 86400):
+        activity.observe_poll([studio], statuses, {}, now=now)
+    assert ledger.activity_events(machine="mac-a") == []
+
+    ledger.record_activity_event(machine="mac-a", studio=studio["id"], job_id="order",
+                                 state="running", model="new/model", source="direct",
+                                 progress=0.9, reported_at=200.0, observed_at=200.0)
+    ledger.record_activity_event(machine="mac-a", studio=studio["id"], job_id="order",
+                                 state="running", model="old/model", source="direct",
+                                 progress=0.1, reported_at=100.0, observed_at=210.0)
+    row = next(row for row in ledger.activity_events(machine="mac-a") if row["job_id"] == "order")
+    assert row["observed_at"] == 200.0
+    assert row["reported_at"] == 200.0
+    assert row["model"] == "new/model" and row["progress"] == 0.9
+
+
+def test_operational_state_onsets_are_durable_for_empty_cancelled_offline_and_attention(reset):
+    from backend import activity
+
+    studio = _studio()
+    statuses = {studio["id"]: _status(_snapshot(), support="available")}
+    activity.observe_poll([studio], statuses, {}, now=100.0)
+    assert activity.fleet_snapshot([studio], statuses, {}, since_s=0.0, now=110.0)["machines"][0]["state"] == "ready"
+
+    statuses[studio["id"]]["activity"] = _snapshot(latest=_job(
+        "cancel", state="cancelled", finished_at=120.0,
+    ))
+    activity.observe_poll([studio], statuses, {}, now=120.0)
+    assert activity.fleet_snapshot([studio], statuses, {}, since_s=0.0, now=121.0)["machines"][0]["state"] == "ready"
+    activity.observe_poll([studio], statuses, {}, now=120.0 + 2 * 3600)
+    assert activity.fleet_snapshot([studio], statuses, {}, since_s=0.0, now=120.0 + 2 * 3600)["machines"][0]["state"] == "long_idle"
+
+    statuses[studio["id"]]["status"] = "down"
+    activity.observe_poll([studio], statuses, {}, now=9000.0)
+    assert activity.fleet_snapshot([studio], statuses, {}, since_s=0.0, now=9010.0)["machines"][0]["state_duration_s"] == 10.0
+    activity.observe_poll([studio], statuses, {}, now=9020.0)
+    assert activity.fleet_snapshot([studio], statuses, {}, since_s=0.0, now=9030.0)["machines"][0]["state_duration_s"] == 30.0
+
+    statuses[studio["id"]]["status"] = "degraded"
+    activity.observe_poll([studio], statuses, {}, now=9040.0)
+    assert activity.fleet_snapshot([studio], statuses, {}, since_s=0.0, now=9050.0)["machines"][0]["state"] == "needs_attention"
+    activity.observe_poll([studio], statuses, {}, now=9060.0)
+    assert activity.fleet_snapshot([studio], statuses, {}, since_s=0.0, now=9070.0)["machines"][0]["state_duration_s"] == 30.0
+
+
+def test_prune_rebases_predecessor_and_counts_degraded_as_reachable(reset):
+    from backend import activity
+
+    studio = _studio()
+    ledger.record_machine_state(machine="mac-a", reachable=True, working=True,
+                                state="working", observed_at=0.0)
+    ledger.prune_activity(100.0)
+    transition = ledger.machine_state_transitions("mac-a")[0]
+    assert transition["observed_at"] == 100.0
+    assert transition["state_since"] == 0.0
+    machine = activity.fleet_snapshot(
+        [studio], {studio["id"]: _status(state="degraded", support="available")},
+        {}, since_s=100.0, now=110.0,
+    )["machines"][0]
+    assert machine["state"] == "needs_attention"
+    assert machine["utilization"] == {"ratio": 1.0, "evidence": "complete"}
+
+
+def test_snapshot_roles_modality_and_timestamp_order_are_enforced(reset):
+    from backend import activity
+
+    assert activity.validate_snapshot(_snapshot(active=_job(state="done", finished_at=100.0))) is None
+    assert activity.validate_snapshot(_snapshot(latest=_job(state="running"))) is None
+    assert activity.validate_snapshot(_snapshot(latest=_job(
+        state="done", started_at=100.0, finished_at=90.0, runtime_s=1.0,
+    ))) is None
+    assert activity.validate_snapshot(_snapshot(studio="image"), expected_studio="voice") is None
+
+
+def test_broker_only_activity_uses_injected_now_and_persisted_ownership_survives_cleanup(reset):
+    from backend import activity
+
+    studio = _studio()
+    batches = {"batch": {"model": "broker/model", "items": [{
+        "studio": studio["id"], "studio_job_id": "broker-job", "state": "running",
+    }]}}
+    activity.observe_poll([studio], {studio["id"]: _status()}, batches, now=123.0)
+    row = next(row for row in ledger.activity_events(machine="mac-a") if row["job_id"] == "broker-job")
+    assert row["observed_at"] == 123.0
+
+    ledger.record_activity_ownership(machine="mac-a", studio=studio["id"],
+                                     job_id="cleaned", model="broker/model", observed_at=130.0)
+    statuses = {studio["id"]: _status(_snapshot(latest=_job(
+        "cleaned", state="done", finished_at=130.0, runtime_s=2.0,
+    )))}
+    activity.observe_poll([studio], statuses, {}, now=131.0)
+    done = next(row for row in ledger.activity_events(machine="mac-a")
+                if row["job_id"] == "cleaned" and row["state"] == "done")
+    assert done["source"] == "job"
+
+
+def test_unknown_or_mixed_reporter_support_is_visible_partial_evidence(reset):
+    from backend import activity
+
+    studios = [_studio("mac-a", "image"), _studio("mac-a", "voice")]
+    statuses = {
+        studios[0]["id"]: _status(_snapshot(studio="image"), support="available"),
+        studios[1]["id"]: _status(_snapshot(studio="voice"), support=None),
+    }
+    mixed = activity.fleet_snapshot(studios, statuses, {}, since_s=0.0, now=100.0)["machines"][0]
+    assert mixed["limitation"] == "Direct activity partially unavailable"
+    assert mixed["utilization"]["evidence"] == "partial"
+    statuses[studios[0]["id"]]["activity_support"] = None
+    unknown = activity.fleet_snapshot(studios, statuses, {}, since_s=0.0, now=100.0)["machines"][0]
+    assert unknown["limitation"] == "Activity evidence pending"
+
+
+def test_state_duration_keeps_a_zero_epoch_transition(reset):
+    from backend import activity
+
+    studio = _studio()
+    ledger.record_machine_state(machine="mac-a", reachable=True, working=True,
+                                state="working", observed_at=0.0)
+    batches = {"batch": {"model": "broker/model", "items": [{
+        "studio": studio["id"], "studio_job_id": "current", "state": "running",
+    }]}}
+    machine = activity.fleet_snapshot(
+        [studio], {studio["id"]: _status()}, batches, since_s=0.0, now=10.0,
+    )["machines"][0]
+    assert machine["state"] == "working"
+    assert machine["state_duration_s"] == 10.0

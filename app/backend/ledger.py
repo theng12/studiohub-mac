@@ -79,7 +79,9 @@ CREATE TABLE IF NOT EXISTS activity_events (
   finished_at REAL,
   runtime_s REAL,
   error_code TEXT,
-  observed_at REAL NOT NULL,
+  observed_at REAL NOT NULL,      -- immutable controller receipt time
+  reported_at REAL,
+  hub_owned INTEGER NOT NULL DEFAULT 0,
   UNIQUE(machine, studio, job_id, state)
 );
 CREATE INDEX IF NOT EXISTS idx_activity_events_machine_time
@@ -91,6 +93,8 @@ CREATE TABLE IF NOT EXISTS machine_state_transitions (
   machine TEXT NOT NULL,
   reachable INTEGER NOT NULL,
   working INTEGER NOT NULL,
+  state TEXT NOT NULL DEFAULT 'unknown',
+  state_since REAL,
   observed_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_machine_state_transitions_machine_time
@@ -105,7 +109,11 @@ def _conn() -> sqlite3.Connection:
         conn.executescript(_SCHEMA)
         # Migrations for DBs created before newer columns existed.
         for ddl in ("ALTER TABLE assets ADD COLUMN duration_s REAL",
-                    "ALTER TABLE assets ADD COLUMN runtime_s REAL"):
+                    "ALTER TABLE assets ADD COLUMN runtime_s REAL",
+                    "ALTER TABLE activity_events ADD COLUMN reported_at REAL",
+                    "ALTER TABLE activity_events ADD COLUMN hub_owned INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE machine_state_transitions ADD COLUMN state TEXT NOT NULL DEFAULT 'unknown'",
+                    "ALTER TABLE machine_state_transitions ADD COLUMN state_since REAL"):
             try:
                 conn.execute(ddl)
                 conn.commit()
@@ -124,6 +132,8 @@ def record_activity_event(*, machine: str, studio: str, job_id: str, state: str,
                           finished_at: float | None = None,
                           runtime_s: float | None = None,
                           error_code: str | None = None,
+                          reported_at: float | None = None,
+                          hub_owned: bool = False,
                           observed_at: float | None = None) -> bool:
     """Insert one meaningful Studio job transition, or refresh its evidence.
 
@@ -133,25 +143,53 @@ def record_activity_event(*, machine: str, studio: str, job_id: str, state: str,
     useful for an operator-facing live board.
     """
     observed_at = float(time.time() if observed_at is None else observed_at)
-    values = (machine, studio, job_id, state, model, source, progress, started_at,
-              finished_at, runtime_s, error_code, observed_at)
+    reported_at = float(observed_at if reported_at is None else reported_at)
+    hub_owned = bool(hub_owned or source == "job")
     with _conn() as conn:
-        before = conn.total_changes
-        conn.execute(
-            """INSERT INTO activity_events (
-                machine, studio, job_id, state, model, source, progress,
-                started_at, finished_at, runtime_s, error_code, observed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(machine, studio, job_id, state) DO UPDATE SET
-                model=excluded.model, source=excluded.source,
-                progress=excluded.progress, started_at=excluded.started_at,
-                finished_at=excluded.finished_at, runtime_s=excluded.runtime_s,
-                error_code=excluded.error_code,
-                observed_at=MAX(activity_events.observed_at, excluded.observed_at)
-            """, values,
-        )
+        existing = conn.execute(
+            "SELECT reported_at, hub_owned FROM activity_events WHERE "
+            "machine = ? AND studio = ? AND job_id = ? AND state = ?",
+            (machine, studio, job_id, state),
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                """INSERT INTO activity_events (
+                    machine, studio, job_id, state, model, source, progress,
+                    started_at, finished_at, runtime_s, error_code, observed_at,
+                    reported_at, hub_owned
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (machine, studio, job_id, state, model,
+                 "job" if hub_owned else source, progress, started_at,
+                 finished_at, runtime_s, error_code, observed_at, reported_at,
+                 int(hub_owned)),
+            )
+            changed = True
+        else:
+            previous_reported = existing["reported_at"]
+            is_newer = previous_reported is None or reported_at >= previous_reported
+            if is_newer:
+                conn.execute(
+                    """UPDATE activity_events SET model = ?, source = ?, progress = ?,
+                       started_at = ?, finished_at = ?, runtime_s = ?, error_code = ?,
+                       reported_at = ?, hub_owned = ?
+                       WHERE machine = ? AND studio = ? AND job_id = ? AND state = ?""",
+                    (model, "job" if hub_owned or existing["hub_owned"] else source,
+                     progress, started_at, finished_at, runtime_s, error_code,
+                     reported_at, int(hub_owned or existing["hub_owned"]),
+                     machine, studio, job_id, state),
+                )
+                changed = True
+            elif hub_owned and not existing["hub_owned"]:
+                conn.execute(
+                    "UPDATE activity_events SET hub_owned = 1, source = 'job' "
+                    "WHERE machine = ? AND studio = ? AND job_id = ? AND state = ?",
+                    (machine, studio, job_id, state),
+                )
+                changed = True
+            else:
+                changed = False
         conn.commit()
-        return conn.total_changes > before
+        return changed
 
 
 def activity_events(*, machine: str | None = None,
@@ -166,7 +204,7 @@ def activity_events(*, machine: str | None = None,
     with _conn() as conn:
         rows = conn.execute(
             "SELECT machine, studio, job_id, state, model, source, progress, "
-            "started_at, finished_at, runtime_s, error_code, observed_at "
+            "started_at, finished_at, runtime_s, error_code, observed_at, reported_at, hub_owned "
             f"FROM activity_events WHERE {' AND '.join(where)} "
             "ORDER BY observed_at DESC, id DESC", args,
         ).fetchall()
@@ -178,29 +216,41 @@ def activity_job_is_hub_owned(machine: str, studio: str, job_id: str) -> bool:
     with _conn() as conn:
         row = conn.execute(
             "SELECT 1 FROM activity_events WHERE machine = ? AND studio = ? "
-            "AND job_id = ? AND source = 'job' LIMIT 1",
+            "AND job_id = ? AND (hub_owned = 1 OR source = 'job') LIMIT 1",
             (machine, studio, job_id),
         ).fetchone()
     return row is not None
 
 
+def record_activity_ownership(*, machine: str, studio: str, job_id: str,
+                              model: str | None, observed_at: float | None = None) -> None:
+    """Durably bind a worker job ID to this Hub before any reporter poll."""
+    receipt = float(time.time() if observed_at is None else observed_at)
+    record_activity_event(
+        machine=machine, studio=studio, job_id=job_id, state="running",
+        model=model, source="job", hub_owned=True, reported_at=receipt,
+        observed_at=receipt,
+    )
+
+
 def record_machine_state(*, machine: str, reachable: bool, working: bool,
-                         observed_at: float | None = None) -> bool:
+                         state: str = "unknown", observed_at: float | None = None) -> bool:
     """Store only actual machine reachability/working transitions."""
     observed_at = float(time.time() if observed_at is None else observed_at)
     with _conn() as conn:
         previous = conn.execute(
-            "SELECT reachable, working FROM machine_state_transitions "
+            "SELECT reachable, working, state FROM machine_state_transitions "
             "WHERE machine = ? ORDER BY observed_at DESC, id DESC LIMIT 1",
             (machine,),
         ).fetchone()
         current = (int(bool(reachable)), int(bool(working)))
-        if previous and (previous["reachable"], previous["working"]) == current:
+        if previous and (previous["reachable"], previous["working"], previous["state"]) == (*current, state):
             return False
         conn.execute(
             "INSERT INTO machine_state_transitions "
-            "(machine, reachable, working, observed_at) VALUES (?, ?, ?, ?)",
-            (machine, *current, observed_at),
+            "(machine, reachable, working, state, state_since, observed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (machine, *current, state, observed_at, observed_at),
         )
         conn.commit()
     return True
@@ -213,7 +263,7 @@ def machine_state_transitions(machine: str, *, before_s: float | None = None) ->
         args.append(float(before_s))
     with _conn() as conn:
         rows = conn.execute(
-            "SELECT reachable, working, observed_at FROM machine_state_transitions "
+            "SELECT reachable, working, state, state_since, observed_at FROM machine_state_transitions "
             f"WHERE {' AND '.join(where)} ORDER BY observed_at ASC, id ASC", args,
         ).fetchall()
     return [dict(row) for row in rows]
@@ -223,6 +273,29 @@ def prune_activity(before_s: float) -> None:
     """Keep the operational ledger deliberately bounded to the approved 30 days."""
     with _conn() as conn:
         conn.execute("DELETE FROM activity_events WHERE observed_at < ?", (before_s,))
+        machines = conn.execute(
+            "SELECT DISTINCT machine FROM machine_state_transitions WHERE observed_at < ?",
+            (before_s,),
+        ).fetchall()
+        for item in machines:
+            machine = item["machine"]
+            boundary = conn.execute(
+                "SELECT 1 FROM machine_state_transitions WHERE machine = ? "
+                "AND observed_at = ? LIMIT 1", (machine, before_s),
+            ).fetchone()
+            predecessor = conn.execute(
+                "SELECT reachable, working, state, state_since FROM machine_state_transitions "
+                "WHERE machine = ? AND observed_at < ? ORDER BY observed_at DESC, id DESC LIMIT 1",
+                (machine, before_s),
+            ).fetchone()
+            if predecessor and boundary is None:
+                conn.execute(
+                    "INSERT INTO machine_state_transitions "
+                    "(machine, reachable, working, state, state_since, observed_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (machine, predecessor["reachable"], predecessor["working"],
+                     predecessor["state"], predecessor["state_since"], before_s),
+                )
         conn.execute("DELETE FROM machine_state_transitions WHERE observed_at < ?", (before_s,))
         conn.commit()
 

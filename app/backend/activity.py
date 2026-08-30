@@ -21,6 +21,7 @@ TERMINAL_STATES = frozenset({"done", "error", "cancelled"})
 RETENTION_S = 30 * 86400
 JUST_FINISHED_S = 15 * 60
 LONG_IDLE_S = 2 * 3600
+ACTIVE_FRESH_S = 30
 _MAX_ID = 160
 _MAX_MODEL = 500
 _MAX_ERROR_CODE = 80
@@ -69,6 +70,21 @@ def _job(value: object) -> dict | None:
         timestamps[key] = parsed
     if state in TERMINAL_STATES and "finished_at" not in timestamps:
         return None
+    created = timestamps.get("created_at")
+    started = timestamps.get("started_at")
+    updated = timestamps.get("updated_at")
+    finished = timestamps.get("finished_at")
+    runtime = timestamps.get("runtime_s")
+    if (created is not None and started is not None and created > started) or (
+        started is not None and updated is not None and started > updated
+    ) or (started is not None and finished is not None and started > finished) or (
+        updated is not None and finished is not None and updated > finished
+    ):
+        return None
+    if runtime is not None and started is not None and finished is not None:
+        # Runtime is worker evidence, but cannot exceed the reported wall span.
+        if runtime > finished - started + 1:
+            return None
     error_code = _text(value.get("error_code"), _MAX_ERROR_CODE)
     # Reporters may publish a safe generic error message; the Hub never
     # persists arbitrary error text from the worker.
@@ -78,7 +94,7 @@ def _job(value: object) -> dict | None:
     }
 
 
-def validate_snapshot(value: object) -> dict | None:
+def validate_snapshot(value: object, *, expected_studio: str | None = None) -> dict | None:
     """Return the allowlisted activity contract or ``None`` for incompatibility.
 
     A malformed optional activity endpoint must never alter Studio health.
@@ -89,13 +105,18 @@ def validate_snapshot(value: object) -> dict | None:
         return None
     studio = value.get("studio")
     observed_at = _finite(value.get("observed_at"), minimum=0)
-    if studio not in {"image", "voice"} or observed_at is None:
+    if studio not in {"image", "voice"} or observed_at is None or (
+        expected_studio is not None and studio != expected_studio
+    ):
         return None
     result = {"schema": SCHEMA, "studio": studio, "observed_at": observed_at}
     for key in ("active", "latest"):
         raw = value.get(key)
         item = _job(raw)
         if raw is not None and item is None:
+            return None
+        if item and ((key == "active" and item["state"] not in ACTIVE_STATES) or
+                     (key == "latest" and item["state"] not in TERMINAL_STATES)):
             return None
         result[key] = item
     return result
@@ -127,7 +148,12 @@ def _broker_jobs(registry: list[dict], batches: dict) -> dict[str, list[dict]]:
     return result
 
 
-def _observed_jobs(registry: list[dict], statuses: dict, batches: dict) -> list[dict]:
+def _reachable(status: str | None) -> bool:
+    return status in {"up", "degraded"}
+
+
+def _observed_jobs(registry: list[dict], statuses: dict, batches: dict,
+                   now: float) -> list[dict]:
     """Merge Studio observations with broker ownership without double-counting."""
     broker_jobs = _broker_jobs(registry, batches)
     result = []
@@ -135,12 +161,24 @@ def _observed_jobs(registry: list[dict], statuses: dict, batches: dict) -> list[
     for studio in registry:
         studio_id = studio.get("id")
         status = statuses.get(studio_id) or {}
-        snapshot = validate_snapshot(status.get("activity"))
+        snapshot = validate_snapshot(status.get("activity"), expected_studio=studio.get("modality"))
         if not snapshot:
             continue
         for key in ("active", "latest"):
             job = snapshot.get(key)
             if not job:
+                continue
+            # A cached reporter snapshot is history, not a current lease.  An
+            # active entry needs current health + a fresh, supported response.
+            if key == "active" and not (
+                _reachable(status.get("status")) and
+                status.get("activity_support") == "available" and
+                0 <= now - snapshot["observed_at"] <= ACTIVE_FRESH_S
+            ):
+                continue
+            # Repeated terminal snapshots must not resurrect a transition once
+            # it aged beyond the fixed controller retention window.
+            if key == "latest" and now - job.get("finished_at", now) > RETENTION_S:
                 continue
             owned = next((row for row in broker_jobs.get(job["id"], [])
                           if row["studio"] == studio_id), None)
@@ -148,7 +186,8 @@ def _observed_jobs(registry: list[dict], statuses: dict, batches: dict) -> list[
                 **job,
                 "machine": studio.get("machine", "local"),
                 "studio": studio_id,
-                "observed_at": snapshot["observed_at"],
+                "observed_at": now,
+                "reported_at": snapshot["observed_at"],
             }
             if owned:
                 row["source"] = "job"
@@ -172,7 +211,7 @@ def _observed_jobs(registry: list[dict], statuses: dict, batches: dict) -> list[
             marker = (row["machine"], row["studio"], row["id"], row["state"])
             if marker in seen:
                 continue
-            result.append({**row, "observed_at": time.time()})
+            result.append({**row, "observed_at": now, "reported_at": now})
             seen.add(marker)
     return result
 
@@ -188,7 +227,7 @@ def _machine_groups(registry: list[dict]) -> dict[str, list[dict]]:
 def _state_at(machine: str, statuses: dict, studios: list[dict], live: list[dict],
               events: list[dict], now: float) -> tuple[str, float, dict | None, dict | None]:
     status_rows = [statuses.get(studio.get("id")) or {} for studio in studios]
-    reachable = any(row.get("status") == "up" for row in status_rows)
+    reachable = any(_reachable(row.get("status")) for row in status_rows)
     all_down = bool(status_rows) and all(row.get("status") == "down" for row in status_rows)
     health_problem = any(row.get("status") == "degraded" for row in status_rows) or (
         reachable and any(row.get("status") == "down" for row in status_rows)
@@ -200,22 +239,23 @@ def _state_at(machine: str, statuses: dict, studios: list[dict], live: list[dict
     latest = terminal[0] if terminal else None
     latest_time = ((latest or {}).get("finished_at") or (latest or {}).get("observed_at"))
     recent_error = latest if latest and latest["state"] == "error" else None
+    if all_down:
+        return "offline", now, None, latest
     if health_problem or recent_error:
-        return "needs_attention", (latest_time or now), active[0] if active else None, latest
+        return "needs_attention", now, active[0] if active else None, latest
     if active:
         current = active[0]
-        return "working", (current.get("started_at") or current.get("observed_at") or now), current, latest
-    if all_down:
-        return "offline", max((row.get("last_checked") or now for row in status_rows), default=now), None, latest
-    if latest and latest["state"] == "done" and latest_time is not None:
+        return "working", now, current, latest
+    if latest and latest["state"] in {"done", "cancelled"} and latest_time is not None:
         age = max(0.0, now - latest_time)
-        if age < JUST_FINISHED_S:
+        if latest["state"] == "done" and age < JUST_FINISHED_S:
             return "just_finished", latest_time, None, latest
         if age >= LONG_IDLE_S:
             return "long_idle", latest_time, None, latest
         return "ready", latest_time, None, latest
-    if reachable:
-        return "unknown", now, None, latest
+    support = {row.get("activity_support") for row in status_rows}
+    if reachable and support == {"available"}:
+        return "ready", now, None, latest
     return "unknown", now, None, latest
 
 
@@ -277,22 +317,27 @@ def observe_poll(registry: list[dict], statuses: dict, batches: dict,
                  now: float | None = None) -> None:
     """Persist one poll's meaningful job and machine transitions."""
     now = float(time.time() if now is None else now)
-    live = _observed_jobs(registry, statuses, batches)
+    live = _observed_jobs(registry, statuses, batches, now)
     for row in live:
         ledger.record_activity_event(
             machine=row["machine"], studio=row["studio"], job_id=row["id"],
             state=row["state"], model=row.get("model"), source=row["source"],
             progress=row.get("progress"), started_at=row.get("started_at"),
             finished_at=row.get("finished_at"), runtime_s=row.get("runtime_s"),
-            error_code=row.get("error_code"), observed_at=row.get("observed_at", now),
+            error_code=row.get("error_code"), reported_at=row.get("reported_at"),
+            hub_owned=row["source"] == "job", observed_at=now,
         )
     for machine, studios in _machine_groups(registry).items():
         status_rows = [statuses.get(studio.get("id")) or {} for studio in studios]
-        reachable = any(row.get("status") == "up" for row in status_rows)
+        reachable = any(_reachable(row.get("status")) for row in status_rows)
         working = any(row["machine"] == machine and row["state"] in ACTIVE_STATES
                       for row in live)
+        state, _, _, _ = _state_at(
+            machine, statuses, studios, live,
+            ledger.activity_events(machine=machine, since_s=now - RETENTION_S), now,
+        )
         ledger.record_machine_state(machine=machine, reachable=reachable,
-                                    working=working, observed_at=now)
+                                    working=working, state=state, observed_at=now)
     ledger.prune_activity(now - RETENTION_S)
 
 
@@ -302,25 +347,33 @@ def fleet_snapshot(registry: list[dict], statuses: dict, batches: dict,
     now = float(time.time() if now is None else now)
     since_s = max(now - RETENTION_S, float(since_s if since_s is not None else now - RETENTION_S))
     grouped = _machine_groups(registry)
-    live = _observed_jobs(registry, statuses, batches)
+    live = _observed_jobs(registry, statuses, batches, now)
     all_events = ledger.activity_events(since_s=now - RETENTION_S)
     rows, pulse = [], {state: 0 for state in (
         "working", "just_finished", "ready", "long_idle", "offline", "needs_attention", "unknown",
     )}
     for machine, studios in grouped.items():
         events = [row for row in all_events if row["machine"] == machine]
-        state, state_since, current, latest = _state_at(
+        state, fallback_since, current, latest = _state_at(
             machine, statuses, studios, live, events, now,
         )
         status_rows = [statuses.get(studio.get("id")) or {} for studio in studios]
         support = {row.get("activity_support") for row in status_rows}
         limitation = None
+        complete = support == {"available"}
         if support == {"unavailable"}:
             limitation = "Direct activity unavailable"
         elif "error" in support:
             limitation = "Activity reporter temporarily unavailable"
-        elif "unavailable" in support:
+        elif not support or support == {None}:
+            limitation = "Activity evidence pending"
+        elif not complete:
             limitation = "Direct activity partially unavailable"
+        transitions = ledger.machine_state_transitions(machine, before_s=now)
+        previous = next((row for row in reversed(transitions) if row["state"] == state), None)
+        state_since = (previous or {}).get("state_since")
+        if state_since is None:
+            state_since = fallback_since
         completed = sum(1 for row in events if row["state"] == "done"
                         and (row.get("finished_at") or row["observed_at"]) >= since_s)
         failed = sum(1 for row in events if row["state"] == "error"
@@ -342,7 +395,7 @@ def fleet_snapshot(registry: list[dict], statuses: dict, batches: dict,
             "median_runtime_s": median_runtime_s, "relative_performance": relative,
             "utilization": _utilization(
                 machine, since_s, now,
-                partial=("available" not in support or limitation is not None),
+                partial=(not complete),
             ),
             "limitation": limitation, "timeline": timeline,
         }

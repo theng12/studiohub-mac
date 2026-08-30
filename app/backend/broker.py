@@ -1982,6 +1982,13 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
         _record_worker_identity(item, studio, job)
         _record_worker_resource_usage(item, job)
         item["studio_job_id"] = job["id"]
+        # Keep the Hub's ownership fact after this finished batch is pruned;
+        # the optional Studio reporter must not have to win a poll race.
+        ledger.record_activity_ownership(
+            machine=str(studio.get("machine") or "local"),
+            studio=str(studio.get("id") or ""), job_id=str(job["id"]),
+            model=str(b.get("model") or "") or None,
+        )
         if _expire_genstudio_batch(b) or b["cancelled"]:
             await _signal_worker_cancel(client, item)
             item["state"] = "cancelled"
