@@ -134,6 +134,28 @@ async def test_activity_failure_preserves_last_good_snapshot(monitor, monkeypatc
     assert monitor.status["image"]["activity_support"] == "error"
 
 
+@pytest.mark.asyncio
+async def test_activity_success_records_controller_receipt(monitor, monkeypatch):
+    studio = next(row for row in monitor.registry if row["id"] == "image")
+
+    class Reporter:
+        status_code = 200
+        def json(self):
+            return {
+                "schema": "kh-studio.activity.v1", "studio": "image",
+                "observed_at": 1.0, "active": None, "latest": None,
+            }
+
+    async def get(*_args, **_kwargs):
+        return Reporter()
+
+    monkeypatch.setattr(monitor._client, "get", get)
+    monkeypatch.setattr("backend.monitor.time.time", lambda: 123.0)
+    monitor.status[studio["id"]] = {"status": "up"}
+    await monitor._poll_activity(studio)
+    assert monitor.status[studio["id"]]["activity_received_at"] == 123.0
+
+
 def test_repeated_worker_restart_alert_is_edge_triggered(reset, monitor):
     from backend import alerts
 

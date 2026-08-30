@@ -388,6 +388,8 @@ class StudioMonitor:
             # refresh so the live board does not falsely forget a job.
             if previous.get("activity") is not None:
                 self.status[sid]["activity"] = previous["activity"]
+            if previous.get("activity_received_at") is not None:
+                self.status[sid]["activity_received_at"] = previous["activity_received_at"]
             if previous.get("activity_support"):
                 self.status[sid]["activity_support"] = previous["activity_support"]
             if health.get("ok"):
@@ -450,6 +452,7 @@ class StudioMonitor:
             if snapshot is None:
                 raise RuntimeError("activity reporter returned an invalid snapshot")
             previous["activity"] = snapshot
+            previous["activity_received_at"] = time.time()
             previous["activity_support"] = "available"
             previous.pop("activity_error", None)
         except Exception:

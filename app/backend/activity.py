@@ -22,6 +22,7 @@ RETENTION_S = 30 * 86400
 JUST_FINISHED_S = 15 * 60
 LONG_IDLE_S = 2 * 3600
 ACTIVE_FRESH_S = 30
+REPORTER_CLOCK_SKEW_S = 5 * 60
 _MAX_ID = 160
 _MAX_MODEL = 500
 _MAX_ERROR_CODE = 80
@@ -75,11 +76,11 @@ def _job(value: object) -> dict | None:
     updated = timestamps.get("updated_at")
     finished = timestamps.get("finished_at")
     runtime = timestamps.get("runtime_s")
-    if (created is not None and started is not None and created > started) or (
-        started is not None and updated is not None and started > updated
-    ) or (started is not None and finished is not None and started > finished) or (
-        updated is not None and finished is not None and updated > finished
-    ):
+    if any(created is not None and later is not None and created > later
+           for later in (started, updated, finished)) or any(
+               started is not None and later is not None and started > later
+               for later in (updated, finished)
+           ):
         return None
     if runtime is not None and started is not None and finished is not None:
         # Runtime is worker evidence, but cannot exceed the reported wall span.
@@ -117,6 +118,9 @@ def validate_snapshot(value: object, *, expected_studio: str | None = None) -> d
             return None
         if item and ((key == "active" and item["state"] not in ACTIVE_STATES) or
                      (key == "latest" and item["state"] not in TERMINAL_STATES)):
+            return None
+        if item and any(item.get(name) is not None and item[name] > observed_at
+                        for name in ("updated_at", "finished_at")):
             return None
         result[key] = item
     return result
@@ -164,6 +168,12 @@ def _observed_jobs(registry: list[dict], statuses: dict, batches: dict,
         snapshot = validate_snapshot(status.get("activity"), expected_studio=studio.get("modality"))
         if not snapshot:
             continue
+        received_at = _finite(status.get("activity_received_at"), minimum=0)
+        # Older cached status dictionaries have no receipt field; their caller
+        # is this controller poll, so use its injected controller time instead.
+        received_at = now if received_at is None else received_at
+        if abs(snapshot["observed_at"] - received_at) > REPORTER_CLOCK_SKEW_S:
+            continue
         for key in ("active", "latest"):
             job = snapshot.get(key)
             if not job:
@@ -173,12 +183,12 @@ def _observed_jobs(registry: list[dict], statuses: dict, batches: dict,
             if key == "active" and not (
                 _reachable(status.get("status")) and
                 status.get("activity_support") == "available" and
-                0 <= now - snapshot["observed_at"] <= ACTIVE_FRESH_S
+                0 <= now - received_at <= ACTIVE_FRESH_S
             ):
                 continue
             # Repeated terminal snapshots must not resurrect a transition once
             # it aged beyond the fixed controller retention window.
-            if key == "latest" and now - job.get("finished_at", now) > RETENTION_S:
+            if key == "latest" and now - job.get("finished_at", now) > RETENTION_S + REPORTER_CLOCK_SKEW_S:
                 continue
             owned = next((row for row in broker_jobs.get(job["id"], [])
                           if row["studio"] == studio_id), None)
@@ -186,7 +196,8 @@ def _observed_jobs(registry: list[dict], statuses: dict, batches: dict,
                 **job,
                 "machine": studio.get("machine", "local"),
                 "studio": studio_id,
-                "observed_at": now,
+                "observed_at": received_at,
+                "activity_received_at": received_at,
                 "reported_at": snapshot["observed_at"],
             }
             if owned:
@@ -211,7 +222,8 @@ def _observed_jobs(registry: list[dict], statuses: dict, batches: dict,
             marker = (row["machine"], row["studio"], row["id"], row["state"])
             if marker in seen:
                 continue
-            result.append({**row, "observed_at": now, "reported_at": now})
+            result.append({**row, "observed_at": now, "activity_received_at": now,
+                           "reported_at": now})
             seen.add(marker)
     return result
 
@@ -239,13 +251,13 @@ def _state_at(machine: str, statuses: dict, studios: list[dict], live: list[dict
     latest = terminal[0] if terminal else None
     latest_time = ((latest or {}).get("finished_at") or (latest or {}).get("observed_at"))
     recent_error = latest if latest and latest["state"] == "error" else None
-    if all_down:
-        return "offline", now, None, latest
     if health_problem or recent_error:
         return "needs_attention", now, active[0] if active else None, latest
     if active:
         current = active[0]
         return "working", now, current, latest
+    if all_down:
+        return "offline", now, None, latest
     if latest and latest["state"] in {"done", "cancelled"} and latest_time is not None:
         age = max(0.0, now - latest_time)
         if latest["state"] == "done" and age < JUST_FINISHED_S:
@@ -325,7 +337,8 @@ def observe_poll(registry: list[dict], statuses: dict, batches: dict,
             progress=row.get("progress"), started_at=row.get("started_at"),
             finished_at=row.get("finished_at"), runtime_s=row.get("runtime_s"),
             error_code=row.get("error_code"), reported_at=row.get("reported_at"),
-            hub_owned=row["source"] == "job", observed_at=now,
+            activity_received_at=row.get("activity_received_at", now),
+            hub_owned=row["source"] == "job", observed_at=row.get("observed_at", now),
         )
     for machine, studios in _machine_groups(registry).items():
         status_rows = [statuses.get(studio.get("id")) or {} for studio in studios]
