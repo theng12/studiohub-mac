@@ -1,19 +1,23 @@
 import httpx
+import pytest
 from starlette.testclient import TestClient
 
 from backend import gateway
 
 
 class FakeResp:
-    def __init__(self, status=200, headers=None, chunks=(b"body",)):
+    def __init__(self, status=200, headers=None, chunks=(b"body",), stream_error=None):
         self.status_code = status
         self.headers = httpx.Headers(headers or {})
         self._chunks = chunks
+        self._stream_error = stream_error
         self.closed = False
 
     async def aiter_raw(self):
         for c in self._chunks:
             yield c
+        if self._stream_error:
+            raise self._stream_error
 
     async def aclose(self):
         self.closed = True
@@ -62,6 +66,40 @@ def test_gateway_strips_hub_token_from_upstream(app, token, monitor, monkeypatch
     assert "x-studio-token" in hdrs
 
 
+def test_gateway_contains_studio_cookies_and_browser_credentials(
+    app, token, monitor, monkeypatch,
+):
+    monitor.registry[0]["studio_token"] = "resolved-studio-secret"
+    fc = FakeClient(resp=FakeResp(headers={
+        "set-cookie": "kh_studio_token=fleet-secret; HttpOnly",
+        "set-cookie2": "kh_studio_token=fleet-secret; Version=1",
+        "cache-control": "no-store, private, max-age=0",
+        "x-content-type-options": "nosniff",
+        "content-type": "audio/wav",
+        "content-range": "bytes 0-3/4",
+    }))
+    monkeypatch.setattr(gateway, "_client", fc)
+
+    response = TestClient(app, client=("127.0.0.1", 50000), headers={
+        "Authorization": "Bearer browser-secret",
+        "X-Hub-Token": token,
+        "X-Studio-Token": "browser-studio-secret",
+        "Cookie": "kh_hub_token=browser-cookie",
+    }).get("/studio/image/api/fleet/jobs/job-1/details")
+
+    assert "set-cookie" not in response.headers
+    assert "set-cookie2" not in response.headers
+    assert response.headers["cache-control"] == "no-store, private, max-age=0"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["content-type"] == "audio/wav"
+    assert response.headers["content-range"] == "bytes 0-3/4"
+    upstream_headers = {k.lower(): v for k, v in fc.captured["headers"].items()}
+    assert "authorization" not in upstream_headers
+    assert "x-hub-token" not in upstream_headers
+    assert "cookie" not in upstream_headers
+    assert upstream_headers["x-studio-token"] == "resolved-studio-secret"
+
+
 def test_gateway_unknown_studio_404(authed):
     assert authed.get("/studio/nope/api/x").status_code == 404
 
@@ -76,4 +114,16 @@ def test_gateway_closes_upstream_response(app, token, monkeypatch):
     fc = FakeClient(resp=FakeResp())
     monkeypatch.setattr(gateway, "_client", fc)
     _authed(app, token).get("/studio/image/api/health")
+    assert fc.resp.closed is True
+
+
+def test_gateway_closes_upstream_response_after_media_stream_error(
+    app, token, monkeypatch,
+):
+    fc = FakeClient(resp=FakeResp(stream_error=RuntimeError("media stream failed")))
+    monkeypatch.setattr(gateway, "_client", fc)
+
+    with pytest.raises(RuntimeError, match="media stream failed"):
+        _authed(app, token).get("/studio/image/api/fleet/jobs/job-1/media/opaque")
+
     assert fc.resp.closed is True

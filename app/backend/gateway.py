@@ -28,6 +28,9 @@ HOP_HEADERS = {
     "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length",
 }
 
+# Studios must never set controller-browser cookies through this gateway.
+DOWNSTREAM_BLOCKED_HEADERS = HOP_HEADERS | {"set-cookie", "set-cookie2"}
+
 # No read timeout: generation and download streams can be quiet for minutes.
 TIMEOUT = httpx.Timeout(connect=5.0, read=None, write=30.0, pool=5.0)
 
@@ -57,6 +60,8 @@ async def proxy(studio_id: str, path: str, request: Request):
     # Replace client-facing Hub credentials with the Studio fleet credential.
     headers.pop("authorization", None)
     headers.pop("x-hub-token", None)
+    headers.pop("cookie", None)
+    headers.pop("x-studio-token", None)
     headers.update(upstream_auth)
     params = [(k, v) for k, v in request.query_params.multi_items() if k != "token"]
 
@@ -74,13 +79,22 @@ async def proxy(studio_id: str, path: str, request: Request):
 
     resp_headers = {
         k: v for k, v in upstream_resp.headers.items()
-        if k.lower() not in HOP_HEADERS
+        if k.lower() not in DOWNSTREAM_BLOCKED_HEADERS
     }
+
+    async def stream_and_close_on_error():
+        try:
+            async for chunk in upstream_resp.aiter_raw():
+                yield chunk
+        except BaseException:
+            await upstream_resp.aclose()
+            raise
+
     # CRITICAL: close the upstream streamed response when this response finishes
     # (or the client disconnects), or the httpx connection leaks — over a long-
     # running service that exhausts the pool and hangs the gateway.
     return StreamingResponse(
-        upstream_resp.aiter_raw(),
+        stream_and_close_on_error(),
         status_code=upstream_resp.status_code,
         headers=resp_headers,
         background=BackgroundTask(upstream_resp.aclose),
