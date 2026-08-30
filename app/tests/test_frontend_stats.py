@@ -187,3 +187,23 @@ console.log(JSON.stringify([focused, outside]));
     result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
     assert json.loads(result.stdout) == [True, False]
     assert "vis(\"stats\") && !fleetActivityHasFocus()" in source
+
+
+def test_background_activity_response_does_not_rebuild_when_focus_enters_while_fetch_is_pending():
+    source = FRONTEND.read_text()
+    helper = _javascript(source, "function fleetActivityHasFocus", "function fleetActivityCaptureView")
+    program = f"""
+let focused = false, renders = 0;
+global.document = {{ get activeElement() {{ return {{ closest: () => focused ? {{}} : null }}; }} }};
+function renderFleetActivity() {{ renders += 1; }}
+{helper}
+let resolve;
+const pending = new Promise(done => resolve = done);
+const request = (async () => renderFleetActivityIfSafe(await pending, {{ background: true, preserve: true }}))();
+focused = true;
+resolve({{ machines: [] }});
+request.then(rendered => console.log(JSON.stringify([rendered, renders])));
+"""
+    result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout) == [False, 0]
+    assert "renderFleetActivityIfSafe(d.fleet_activity" in source

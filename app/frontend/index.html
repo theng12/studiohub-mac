@@ -4037,6 +4037,11 @@ function fleetActivityHasFocus() {
   const active = document.activeElement;
   return !!(active && active.closest && active.closest(".fleet-activity"));
 }
+function renderFleetActivityIfSafe(activity, { background = false, preserve = false } = {}) {
+  if (background && fleetActivityHasFocus()) return false;
+  renderFleetActivity(activity, { preserve });
+  return true;
+}
 function fleetActivityCaptureView() {
   const body = $("#st-fleet-body"), wrap = $(".fleet-machine-wrap");
   return {
@@ -4143,7 +4148,7 @@ async function loadStats({ background = false } = {}) {
     return;
   }
 
-  if (isFleetActivitySnapshot(d.fleet_activity)) renderFleetActivity(d.fleet_activity, { preserve: background && fleetActivityHasRendered });
+  if (isFleetActivitySnapshot(d.fleet_activity)) renderFleetActivityIfSafe(d.fleet_activity, { background, preserve: background && fleetActivityHasRendered });
   else renderFleetActivityError({ preserve: fleetActivityHasRendered });
 
   // Auto-clear a filter that no longer applies (e.g. after switching source/window).
