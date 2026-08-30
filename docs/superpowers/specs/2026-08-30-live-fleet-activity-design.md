@@ -1,5 +1,11 @@
 # Live Fleet Activity and Performance Design
 
+> Follow-up: owner-approved on-demand prompts, transcripts, origin details,
+> reference media, and output previews are specified in
+> `2026-08-31-on-demand-fleet-job-details-design.md`. Ordinary fleet polling
+> remains privacy-safe; sensitive content is retrieved only after the owner
+> opens one exact job.
+
 ## Job and audience
 
 The Controller Studio Hub's Stats page serves the fleet owner during daily operations. Its first job is to answer, without interpretation: which Macs are working, which just finished, which are ready, which have been idle for a long time, and which need attention. Historical generation analytics remain a secondary layer for comparing output and performance.
@@ -94,7 +100,10 @@ The machine board updates through the dashboard's existing summary/refresh mecha
 
 - The activity endpoint is optional, so all existing Hub and Studio versions continue to interoperate; a 404 becomes an explicit compatibility limitation rather than a health failure.
 - No new network port, daemon, dependency, credential, or write endpoint is introduced.
-- The payload excludes prompts, filesystem paths, reference audio, generated assets, and tokens.
+- The polling payload excludes prompts, filesystem paths, reference audio,
+  generated assets, and tokens. The approved follow-up design may retrieve
+  those job details on demand from the originating Studio without adding them
+  to polling, the activity ledger, or central retention.
 - GenStudio APIs, routing, lease behavior, updates, enrollment, and memory controls are unchanged.
 - The operational page never blocks the existing Stats response when one Studio or machine is unavailable.
 
