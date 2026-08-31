@@ -921,6 +921,7 @@ def test_full_remove_of_an_absent_legacy_studio_deletes_nothing(
     launch_agents = tmp_path / "LaunchAgents"
     launch_agents.mkdir()
     monkeypatch.setattr(startup_services, "_launch_agents_dir", lambda: launch_agents)
+    monkeypatch.setattr(startup_services, "_remove_launch_agent", lambda _label: None)
     monkeypatch.setattr(startup_services, "_launchd_loaded", lambda _label: False)
     monkeypatch.setattr(startup_services, "_wait_port_closed", lambda _port: True)
     monkeypatch.setattr(fleet_ops, "studio_has_active_work", lambda _studio_id: False)
