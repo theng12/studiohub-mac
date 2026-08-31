@@ -28,10 +28,52 @@ HOP_HEADERS = {
     "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length",
 }
 
+# Studios must never set controller-browser cookies through this gateway.
+DOWNSTREAM_BLOCKED_HEADERS = HOP_HEADERS | {"set-cookie", "set-cookie2"}
+FLEET_JOB_SAFE_HEADERS = {
+    "Cache-Control": "no-store, private, max-age=0",
+    "Pragma": "no-cache",
+    "X-Content-Type-Options": "nosniff",
+}
+
 # No read timeout: generation and download streams can be quiet for minutes.
 TIMEOUT = httpx.Timeout(connect=5.0, read=None, write=30.0, pool=5.0)
 
 _client = httpx.AsyncClient(timeout=TIMEOUT)
+
+
+def _is_fleet_job_path(path: str) -> bool:
+    parts = path.strip("/").split("/")
+    return (
+        len(parts) == 7
+        and parts[0] == "studio"
+        and parts[2:5] == ["api", "fleet", "jobs"]
+        and parts[6] == "details"
+    ) or (
+        len(parts) == 8
+        and parts[0] == "studio"
+        and parts[2:5] == ["api", "fleet", "jobs"]
+        and parts[6] == "media"
+    )
+
+
+async def fleet_job_safe_headers(request: Request, call_next):
+    response = await call_next(request)
+    if _is_fleet_job_path(request.url.path):
+        response.headers.update(FLEET_JOB_SAFE_HEADERS)
+    return response
+
+
+class _ClosingStreamingResponse(StreamingResponse):
+    def __init__(self, *args, upstream_resp, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._upstream_resp = upstream_resp
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            await self._upstream_resp.aclose()
 
 
 def _monitor():
@@ -57,6 +99,8 @@ async def proxy(studio_id: str, path: str, request: Request):
     # Replace client-facing Hub credentials with the Studio fleet credential.
     headers.pop("authorization", None)
     headers.pop("x-hub-token", None)
+    headers.pop("cookie", None)
+    headers.pop("x-studio-token", None)
     headers.update(upstream_auth)
     params = [(k, v) for k, v in request.query_params.multi_items() if k != "token"]
 
@@ -74,13 +118,15 @@ async def proxy(studio_id: str, path: str, request: Request):
 
     resp_headers = {
         k: v for k, v in upstream_resp.headers.items()
-        if k.lower() not in HOP_HEADERS
+        if k.lower() not in DOWNSTREAM_BLOCKED_HEADERS
     }
+
     # CRITICAL: close the upstream streamed response when this response finishes
     # (or the client disconnects), or the httpx connection leaks — over a long-
     # running service that exhausts the pool and hangs the gateway.
-    return StreamingResponse(
+    return _ClosingStreamingResponse(
         upstream_resp.aiter_raw(),
+        upstream_resp=upstream_resp,
         status_code=upstream_resp.status_code,
         headers=resp_headers,
         background=BackgroundTask(upstream_resp.aclose),

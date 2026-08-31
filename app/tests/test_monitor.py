@@ -4,7 +4,90 @@ from pathlib import Path
 
 import pytest
 
-from backend import monitor as mon
+from backend import activity, monitor as mon
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    (
+        {
+            "schema": "kh-studio.activity.v1",
+            "studio": "image",
+            "observed_at": 100.0,
+            "active": {
+                "id": "image-job", "state": "running", "model": "org/image",
+                "progress": 0.4, "created_at": 80.0, "started_at": 90.0,
+                "updated_at": 100.0, "source": "direct", "origin": "unknown",
+            },
+            "latest": None,
+        },
+        {
+            "schema": "kh-studio.activity.v1",
+            "studio": "voice",
+            "observed_at": 100.0,
+            "active": {
+                "id": "voice-job", "state": "running", "model": "org/voice",
+                "progress": 0.6, "created_at": 80.0, "started_at": 90.0,
+                "updated_at": 100.0, "source": "direct", "origin": "unknown",
+                "chunk_index": 1, "chunk_total": 3,
+            },
+            "latest": None,
+        },
+    ),
+)
+def test_actual_studio_projection_without_optional_device_survives_hub_handoff(
+    snapshot,
+):
+    studio_id = f'{snapshot["studio"]}@fixture'
+    registry = [{
+        "id": studio_id, "modality": snapshot["studio"], "machine": "fixture-mac",
+    }]
+    statuses = {studio_id: {
+        "status": "up", "activity_support": "available",
+        "activity_received_at": 100.0, "activity": snapshot,
+    }}
+
+    _, statuses_view, _ = mon._activity_poll_inputs(registry, statuses, {})
+    handed_off = statuses_view[studio_id]["activity"]
+    validated = activity.validate_snapshot(
+        handed_off, expected_studio=snapshot["studio"],
+    )
+
+    assert validated is not None
+    assert validated["active"]["id"] == snapshot["active"]["id"]
+    assert "origin_device" not in validated["active"]
+
+
+def test_activity_poll_handoff_preserves_origin_but_excludes_sensitive_detail():
+    registry = [{"id": "image@fixture", "modality": "image", "machine": "fixture-mac"}]
+    statuses = {"image@fixture": {
+        "status": "up", "activity_support": "supported",
+        "activity_received_at": 100.0,
+        "activity": {
+            "schema": "kh-studio.activity.v1", "studio": "image", "observed_at": 100.0,
+            "active": {
+                "id": "job-1", "state": "running", "model": "org/model",
+                "source": "direct", "origin": "local_ui", "origin_device": "Fixture Mac",
+                "prompt": "private prompt", "transcript": "private transcript",
+                "path": "/private/path", "output_path": "/private/output.png",
+                "image_path": "/private/image.png", "reference_audio": "/private/ref.wav",
+                "handle": "opaque-handle", "media": {"path": "/private/media.png"},
+                "credentials": "secret",
+                "params": {"prompt": "private prompt"},
+            },
+            "latest": None,
+        },
+    }}
+
+    _, statuses_view, _ = mon._activity_poll_inputs(registry, statuses, {})
+
+    active = statuses_view["image@fixture"]["activity"]["active"]
+    assert active["origin"] == "local_ui"
+    assert active["origin_device"] == "Fixture Mac"
+    assert not {
+        "prompt", "transcript", "path", "output_path", "image_path", "reference_audio",
+        "handle", "media", "credentials", "params",
+    } & active.keys()
 
 
 def test_catalog_observation_runtime_state_is_ignored_by_git() -> None:
@@ -78,6 +161,104 @@ async def test_down_studio_needs_two_good_probes_to_rejoin(monitor, monkeypatch)
     await monitor._poll_one(studio)
     assert monitor.status["image"]["status"] == "up"
     assert monitor.status["image"]["health_recovering"] is False
+
+
+@pytest.mark.asyncio
+async def test_activity_404_is_compatible_and_does_not_degrade_health(monitor, monkeypatch):
+    studio = next(row for row in monitor.registry if row["id"] == "image")
+
+    class Health:
+        status_code = 200
+        def json(self):
+            return {"ok": True, "app_version": "1.2.3"}
+
+    class Missing:
+        status_code = 404
+        def json(self):
+            return {}
+
+    calls = []
+    async def get(url, **kwargs):
+        calls.append((url, kwargs))
+        return Health() if url.endswith("/api/health") else Missing()
+
+    monkeypatch.setattr(monitor._client, "get", get)
+    await monitor._poll_one(studio)
+    assert monitor.status["image"]["status"] == "up"
+    assert monitor.status["image"]["activity_support"] == "unavailable"
+    assert calls[1][0].endswith("/api/fleet/activity")
+    assert "headers" in calls[1][1]
+
+
+@pytest.mark.asyncio
+async def test_activity_failure_preserves_last_good_snapshot(monitor, monkeypatch):
+    studio = next(row for row in monitor.registry if row["id"] == "image")
+    last_good = {
+        "schema": "kh-studio.activity.v1", "studio": "image", "observed_at": 10.0,
+        "active": None, "latest": None,
+    }
+    monitor.status["image"] = {"status": "up", "activity": last_good,
+                                "activity_support": "available"}
+
+    class Health:
+        status_code = 200
+        def json(self):
+            return {"ok": True, "app_version": "1.2.3"}
+
+    async def get(url, **kwargs):
+        if url.endswith("/api/health"):
+            return Health()
+        raise RuntimeError("activity transport lost")
+
+    monkeypatch.setattr(monitor._client, "get", get)
+    await monitor._poll_one(studio)
+    assert monitor.status["image"]["status"] == "up"
+    assert monitor.status["image"]["activity"] == last_good
+    assert monitor.status["image"]["activity_support"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_activity_success_records_controller_receipt(monitor, monkeypatch):
+    studio = next(row for row in monitor.registry if row["id"] == "image")
+
+    class Reporter:
+        status_code = 200
+        def json(self):
+            return {
+                "schema": "kh-studio.activity.v1", "studio": "image",
+                "observed_at": 1.0, "active": None, "latest": None,
+            }
+
+    async def get(*_args, **_kwargs):
+        return Reporter()
+
+    monkeypatch.setattr(monitor._client, "get", get)
+    monkeypatch.setattr("backend.monitor.time.time", lambda: 123.0)
+    monitor.status[studio["id"]] = {"status": "up"}
+    await monitor._poll_activity(studio)
+    assert monitor.status[studio["id"]]["activity_received_at"] == 123.0
+
+
+@pytest.mark.asyncio
+async def test_activity_clock_skew_is_a_visible_reporter_limitation(monitor, monkeypatch):
+    studio = next(row for row in monitor.registry if row["id"] == "image")
+
+    class Reporter:
+        status_code = 200
+        def json(self):
+            return {
+                "schema": "kh-studio.activity.v1", "studio": "image",
+                "observed_at": 1000.0, "active": None, "latest": None,
+            }
+
+    async def get(*_args, **_kwargs):
+        return Reporter()
+
+    monkeypatch.setattr(monitor._client, "get", get)
+    monkeypatch.setattr("backend.monitor.time.time", lambda: 100.0)
+    monitor.status[studio["id"]] = {"status": "up"}
+    await monitor._poll_activity(studio)
+    assert monitor.status[studio["id"]]["activity_support"] == "skew"
 
 
 def test_repeated_worker_restart_alert_is_edge_triggered(reset, monitor):
@@ -242,3 +423,116 @@ async def test_health_poll_runs_caddy_inspection_off_the_event_loop(
     assert await asyncio.to_thread(entered.wait, 10), "poll never inspected the proxy"
     release.set()
     await asyncio.wait_for(poll, 10)
+
+
+@pytest.mark.asyncio
+async def test_health_poll_runs_activity_observation_off_the_event_loop(
+    reset, monitor, monkeypatch,
+):
+    """A slow activity ledger write must not delay other loop callbacks."""
+    from backend import activity, broker, peers, resources
+
+    entered, release, tick = threading.Event(), threading.Event(), threading.Event()
+    tick_before_release = []
+    snapshots = []
+    loop = asyncio.get_running_loop()
+
+    def blocking_observe(registry, statuses, batches):
+        snapshots.append((registry, statuses, batches))
+        entered.set()
+        assert release.wait(1), "activity observation did not receive release"
+
+    def release_after_tick():
+        assert entered.wait(1), "activity observation never started"
+        loop.call_soon_threadsafe(tick.set)
+        tick_before_release.append(tick.wait(0.25))
+        release.set()
+
+    async def no_poll(_studio):
+        return None
+
+    async def no_refresh(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(activity, "observe_poll", blocking_observe)
+    monkeypatch.setattr(monitor, "_poll_one", no_poll)
+    monkeypatch.setattr(peers, "refresh", no_refresh)
+    monkeypatch.setattr(resources, "check_proxy_health", lambda: {"status": "not_running"})
+    releaser = threading.Thread(target=release_after_tick, daemon=True)
+    releaser.start()
+    await asyncio.wait_for(monitor.poll_all(), 2)
+    releaser.join()
+
+    assert tick_before_release == [True]
+    registry, statuses, batches = snapshots[0]
+    assert registry is not monitor.registry
+    assert statuses is not monitor.status
+    assert batches is not broker.batches
+
+
+@pytest.mark.asyncio
+async def test_health_poll_projects_only_activity_scalars_before_offloading(
+    reset, monitor, monkeypatch,
+):
+    """Activity observation must never copy a broker prompt or parameter blob."""
+    from backend import activity, broker, peers, resources
+
+    class NeverCopied:
+        def __deepcopy__(self, _memo):
+            raise AssertionError("private batch payload was copied")
+
+    private = NeverCopied()
+    studio = {"id": "image@mac-a", "modality": "image", "machine": "mac-a",
+              "prompt": private, "host": "private-host"}
+    monitor.registry[:] = [studio]
+    monitor.status.clear()
+    monitor.status[studio["id"]] = {
+        "status": "up", "activity_support": "available",
+        "activity_received_at": 100.0,
+        "activity": {
+            "schema": "kh-studio.activity.v1", "studio": "image", "observed_at": 100.0,
+            "active": {"id": "job-1", "state": "running", "model": "org/model",
+                       "source": "direct", "progress": 0.5, "updated_at": 100.0,
+                       "prompt": private},
+            "latest": None,
+        },
+        "health": {"private": private},
+    }
+    monkeypatch.setattr(broker, "batches", {
+        "batch-private": {
+            "model": "org/model", "shared_params": private,
+            "items": [{"studio_job_id": "job-1", "studio": studio["id"],
+                       "state": "running", "progress": 0.5, "started_at": 90.0,
+                       "finished_at": None, "params": private}],
+        },
+    })
+    snapshots = []
+
+    def observe(registry, statuses, batches):
+        snapshots.append((registry, statuses, batches))
+
+    async def no_poll(_studio):
+        return None
+
+    async def no_refresh(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(activity, "observe_poll", observe)
+    monkeypatch.setattr(monitor, "_poll_one", no_poll)
+    monkeypatch.setattr(peers, "refresh", no_refresh)
+    monkeypatch.setattr(resources, "check_proxy_health", lambda: {"status": "not_running"})
+
+    await monitor.poll_all()
+
+    registry, statuses, batches = snapshots[0]
+    assert registry == [{"id": "image@mac-a", "modality": "image", "machine": "mac-a"}]
+    assert set(statuses[studio["id"]]) == {
+        "status", "activity_support", "activity_received_at", "activity",
+    }
+    assert set(statuses[studio["id"]]["activity"]["active"]) == {
+        "id", "state", "model", "source", "progress", "updated_at",
+    }
+    assert batches == {"batch-private": {"model": "org/model", "items": [{
+        "studio_job_id": "job-1", "studio": "image@mac-a", "state": "running",
+        "progress": 0.5, "started_at": 90.0, "finished_at": None,
+    }]}}

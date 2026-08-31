@@ -11,6 +11,7 @@ plus (when known) the studio's serving URL.
 """
 
 import json
+import contextlib
 import shutil
 import sqlite3
 import threading
@@ -30,6 +31,8 @@ MEDIA_EXT = {
     ".wav": "audio", ".mp3": "audio", ".flac": "audio", ".ogg": "audio",
     ".mp4": "video", ".mov": "video", ".webm": "video",
 }
+_VALID_ORIGINS = frozenset({"hub", "local_ui", "api", "unknown"})
+_MAX_ORIGIN_DEVICE = 160
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS batches (
@@ -66,6 +69,42 @@ CREATE TABLE IF NOT EXISTS assets (
 );
 CREATE INDEX IF NOT EXISTS idx_assets_created ON assets(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_assets_batch ON assets(batch_id);
+CREATE TABLE IF NOT EXISTS activity_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  machine TEXT NOT NULL,
+  studio TEXT NOT NULL,
+  job_id TEXT NOT NULL,
+  state TEXT NOT NULL,
+  model TEXT,
+  source TEXT NOT NULL,
+  origin TEXT,
+  origin_device TEXT,
+  progress REAL,
+  started_at REAL,
+  finished_at REAL,
+  runtime_s REAL,
+  error_code TEXT,
+  observed_at REAL NOT NULL,      -- immutable controller receipt time
+  activity_received_at REAL NOT NULL, -- latest controller receipt/order
+  reported_at REAL,
+  hub_owned INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(machine, studio, job_id, state)
+);
+CREATE INDEX IF NOT EXISTS idx_activity_events_machine_time
+  ON activity_events(machine, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_events_comparable
+  ON activity_events(studio, model, machine, finished_at DESC);
+CREATE TABLE IF NOT EXISTS machine_state_transitions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  machine TEXT NOT NULL,
+  reachable INTEGER NOT NULL,
+  working INTEGER NOT NULL,
+  state TEXT NOT NULL DEFAULT 'unknown',
+  state_since REAL,
+  observed_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_machine_state_transitions_machine_time
+  ON machine_state_transitions(machine, observed_at ASC);
 """
 
 
@@ -76,7 +115,14 @@ def _conn() -> sqlite3.Connection:
         conn.executescript(_SCHEMA)
         # Migrations for DBs created before newer columns existed.
         for ddl in ("ALTER TABLE assets ADD COLUMN duration_s REAL",
-                    "ALTER TABLE assets ADD COLUMN runtime_s REAL"):
+                    "ALTER TABLE assets ADD COLUMN runtime_s REAL",
+                    "ALTER TABLE activity_events ADD COLUMN activity_received_at REAL",
+                    "ALTER TABLE activity_events ADD COLUMN reported_at REAL",
+                    "ALTER TABLE activity_events ADD COLUMN hub_owned INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE activity_events ADD COLUMN origin TEXT",
+                    "ALTER TABLE activity_events ADD COLUMN origin_device TEXT",
+                    "ALTER TABLE machine_state_transitions ADD COLUMN state TEXT NOT NULL DEFAULT 'unknown'",
+                    "ALTER TABLE machine_state_transitions ADD COLUMN state_since REAL"):
             try:
                 conn.execute(ddl)
                 conn.commit()
@@ -87,6 +133,240 @@ def _conn() -> sqlite3.Connection:
     except BaseException:
         conn.close()
         raise
+
+
+@contextlib.contextmanager
+def activity_transaction():
+    """Reuse one prepared SQLite connection for a complete observer cycle."""
+    conn = _conn()
+    try:
+        yield conn
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def record_activity_event(*, machine: str, studio: str, job_id: str, state: str,
+                          model: str | None, source: str, progress: float | None = None,
+                          origin: str | None = None, origin_device: str | None = None,
+                          started_at: float | None = None,
+                          finished_at: float | None = None,
+                          runtime_s: float | None = None,
+                          error_code: str | None = None,
+                          activity_received_at: float | None = None,
+                          reported_at: float | None = None,
+                          hub_owned: bool = False,
+                          observed_at: float | None = None,
+                          conn: sqlite3.Connection | None = None) -> bool:
+    """Insert one meaningful Studio job transition, or refresh its evidence.
+
+    The unique transition identity deliberately excludes observation time and
+    progress: five-second health polling must not inflate counts merely because
+    a worker is still running. The latest bounded scalar evidence remains
+    useful for an operator-facing live board.
+    """
+    observed_at = float(time.time() if observed_at is None else observed_at)
+    activity_received_at = float(
+        observed_at if activity_received_at is None else activity_received_at
+    )
+    reported_at = float(observed_at if reported_at is None else reported_at)
+    hub_owned = bool(hub_owned or source == "job")
+    origin = origin if origin in _VALID_ORIGINS else "unknown"
+    origin_device = origin_device.strip()[:_MAX_ORIGIN_DEVICE] if isinstance(origin_device, str) else None
+    origin_device = origin_device or None
+    owns_connection = conn is None
+    if conn is None:
+        conn = _conn()
+    try:
+        existing = conn.execute(
+            "SELECT activity_received_at, hub_owned, origin_device FROM activity_events WHERE "
+            "machine = ? AND studio = ? AND job_id = ? AND state = ?",
+            (machine, studio, job_id, state),
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                """INSERT INTO activity_events (
+                    machine, studio, job_id, state, model, source, origin, origin_device, progress,
+                    started_at, finished_at, runtime_s, error_code, observed_at,
+                    activity_received_at, reported_at, hub_owned
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (machine, studio, job_id, state, model, "job" if hub_owned else source,
+                 "hub" if hub_owned else origin, origin_device, progress, started_at,
+                 finished_at, runtime_s, error_code, observed_at, activity_received_at, reported_at,
+                 int(hub_owned)),
+            )
+            changed = True
+        else:
+            previous_received = existing["activity_received_at"]
+            is_newer = previous_received is None or activity_received_at >= previous_received
+            if is_newer:
+                conn.execute(
+                    """UPDATE activity_events SET model = ?, source = ?, origin = ?, origin_device = ?, progress = ?,
+                       started_at = ?, finished_at = ?, runtime_s = ?, error_code = ?,
+                       activity_received_at = ?, reported_at = ?, hub_owned = ?
+                       WHERE machine = ? AND studio = ? AND job_id = ? AND state = ?""",
+                    (model, "job" if hub_owned or existing["hub_owned"] else source,
+                     "hub" if hub_owned or existing["hub_owned"] else origin,
+                     origin_device if hub_owned or not existing["hub_owned"] else existing["origin_device"],
+                     progress, started_at, finished_at, runtime_s, error_code,
+                     activity_received_at, reported_at, int(hub_owned or existing["hub_owned"]),
+                     machine, studio, job_id, state),
+                )
+                changed = True
+            elif hub_owned and not existing["hub_owned"]:
+                conn.execute(
+                    "UPDATE activity_events SET hub_owned = 1, source = 'job', origin = 'hub', origin_device = ? "
+                    "WHERE machine = ? AND studio = ? AND job_id = ? AND state = ?",
+                    (origin_device, machine, studio, job_id, state),
+                )
+                changed = True
+            else:
+                changed = False
+        if owns_connection:
+            conn.commit()
+        return changed
+    finally:
+        if owns_connection:
+            conn.close()
+
+
+def activity_events(*, machine: str | None = None,
+                    since_s: float | None = None,
+                    conn: sqlite3.Connection | None = None) -> list[dict]:
+    where, args = ["1=1"], []
+    if machine:
+        where.append("machine = ?")
+        args.append(machine)
+    if since_s is not None:
+        where.append("observed_at >= ?")
+        args.append(float(since_s))
+    owns_connection = conn is None
+    if conn is None:
+        conn = _conn()
+    try:
+        rows = conn.execute(
+            "SELECT machine, studio, job_id, state, model, source, origin, origin_device, progress, "
+            "started_at, finished_at, runtime_s, error_code, observed_at, activity_received_at, reported_at, hub_owned "
+            f"FROM activity_events WHERE {' AND '.join(where)} "
+            "ORDER BY observed_at DESC, id DESC", args,
+        ).fetchall()
+    finally:
+        if owns_connection:
+            conn.close()
+    return [{**dict(row), "origin": row["origin"] if row["origin"] in _VALID_ORIGINS else "unknown"}
+            for row in rows]
+
+
+def activity_job_is_hub_owned(machine: str, studio: str, job_id: str,
+                              *, conn: sqlite3.Connection | None = None) -> bool:
+    """Whether an earlier broker observation established job ownership."""
+    owns_connection = conn is None
+    if conn is None:
+        conn = _conn()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM activity_events WHERE machine = ? AND studio = ? "
+            "AND job_id = ? AND (hub_owned = 1 OR source = 'job') LIMIT 1",
+            (machine, studio, job_id),
+        ).fetchone()
+    finally:
+        if owns_connection:
+            conn.close()
+    return row is not None
+
+
+def record_activity_ownership(*, machine: str, studio: str, job_id: str,
+                              model: str | None, observed_at: float | None = None) -> None:
+    """Durably bind a worker job ID to this Hub before any reporter poll."""
+    receipt = float(time.time() if observed_at is None else observed_at)
+    record_activity_event(
+        machine=machine, studio=studio, job_id=job_id, state="running",
+        model=model, source="job", hub_owned=True, reported_at=receipt,
+        activity_received_at=receipt, observed_at=receipt,
+    )
+
+
+def record_machine_state(*, machine: str, reachable: bool, working: bool,
+                         state: str = "unknown", observed_at: float | None = None,
+                         conn: sqlite3.Connection | None = None) -> bool:
+    """Store only actual machine reachability/working transitions."""
+    observed_at = float(time.time() if observed_at is None else observed_at)
+    owns_connection = conn is None
+    if conn is None:
+        conn = _conn()
+    try:
+        previous = conn.execute(
+            "SELECT reachable, working, state FROM machine_state_transitions "
+            "WHERE machine = ? ORDER BY observed_at DESC, id DESC LIMIT 1",
+            (machine,),
+        ).fetchone()
+        current = (int(bool(reachable)), int(bool(working)))
+        if previous and (previous["reachable"], previous["working"], previous["state"]) == (*current, state):
+            return False
+        conn.execute(
+            "INSERT INTO machine_state_transitions "
+            "(machine, reachable, working, state, state_since, observed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (machine, *current, state, observed_at, observed_at),
+        )
+        if owns_connection:
+            conn.commit()
+    finally:
+        if owns_connection:
+            conn.close()
+    return True
+
+
+def machine_state_transitions(machine: str, *, before_s: float | None = None) -> list[dict]:
+    where, args = ["machine = ?"], [machine]
+    if before_s is not None:
+        where.append("observed_at <= ?")
+        args.append(float(before_s))
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT reachable, working, state, state_since, observed_at FROM machine_state_transitions "
+            f"WHERE {' AND '.join(where)} ORDER BY observed_at ASC, id ASC", args,
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def prune_activity(before_s: float, *, conn: sqlite3.Connection | None = None) -> None:
+    """Keep the operational ledger deliberately bounded to the approved 30 days."""
+    owns_connection = conn is None
+    if conn is None:
+        conn = _conn()
+    try:
+        conn.execute("DELETE FROM activity_events WHERE observed_at < ?", (before_s,))
+        machines = conn.execute(
+            "SELECT DISTINCT machine FROM machine_state_transitions WHERE observed_at < ?",
+            (before_s,),
+        ).fetchall()
+        for item in machines:
+            machine = item["machine"]
+            predecessor = conn.execute(
+                "SELECT id FROM machine_state_transitions "
+                "WHERE machine = ? AND observed_at < ? ORDER BY observed_at DESC, id DESC LIMIT 1",
+                (machine, before_s),
+            ).fetchone()
+            if predecessor:
+                conn.execute(
+                    "DELETE FROM machine_state_transitions WHERE machine = ? "
+                    "AND observed_at < ? AND id != ?",
+                    (machine, before_s, predecessor["id"]),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM machine_state_transitions WHERE machine = ? AND observed_at < ?",
+                    (machine, before_s),
+                )
+        if owns_connection:
+            conn.commit()
+    finally:
+        if owns_connection:
+            conn.close()
 
 
 def _is_corruption_error(exc: sqlite3.DatabaseError) -> bool:

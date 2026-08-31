@@ -33,7 +33,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from . import (alerts, artifact_metadata, auth, broadcast, broker, capabilities, chat_jobs, cloud_guard, control_plane, enrollment, enrollment_repair, execution_assets, execution_identity, fleet_ops, fleet_storage, gateway, hardware_profiles, hf_credentials, job_storage, memory_admission, model_exposure,
+from . import (activity, alerts, artifact_metadata, auth, broadcast, broker, capabilities, chat_jobs, cloud_guard, control_plane, enrollment, enrollment_repair, execution_assets, execution_identity, fleet_ops, fleet_storage, gateway, hardware_profiles, hf_credentials, job_storage, memory_admission, model_exposure,
                ledger, metrics, peers, recipes, registry, shared_voices, startup_services, transcription_jobs,
                voice_qualification)
 from .auto_update import UpdateError
@@ -678,6 +678,7 @@ app.add_middleware(
 # Token auth: loopback is exempt; remote clients need the Hub token.
 HUB_TOKEN = load_token()
 app.middleware("http")(make_middleware(HUB_TOKEN))
+app.middleware("http")(gateway.fleet_job_safe_headers)
 
 # Unified gateway: {HUB}/studio/{id}/{path} -> the right studio.
 app.include_router(gateway.router)
@@ -3265,6 +3266,9 @@ def hub_stats(
     result = ledger.stats(since_s=since, source=source, op=modality, machine=machine)
     result["timeline"] = ledger.timeline(since, bucket, source=source, op=modality,
                                           machine=machine)
+    result["fleet_activity"] = activity.fleet_snapshot(
+        monitor.registry, monitor.status, broker.batches, since_s=since,
+    )
     result["filters"] = {"source": source, "modality": modality,
                          "machine": machine, "hours": hours}
     return result

@@ -119,6 +119,35 @@ def test_duration_migration_on_old_db(reset):
     assert ledger.get_asset(aid)["duration_s"] == 3.0
 
 
+def test_activity_origin_migration_roundtrip_and_bounded_device(reset):
+    # Simulate the production schema before optional origin scalars existed.
+    import sqlite3
+
+    conn = sqlite3.connect(ledger.DB_FILE)
+    conn.execute("""CREATE TABLE activity_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, machine TEXT NOT NULL,
+        studio TEXT NOT NULL, job_id TEXT NOT NULL, state TEXT NOT NULL,
+        model TEXT, source TEXT NOT NULL, progress REAL, started_at REAL,
+        finished_at REAL, runtime_s REAL, error_code TEXT, observed_at REAL NOT NULL,
+        activity_received_at REAL NOT NULL, reported_at REAL,
+        hub_owned INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(machine, studio, job_id, state))""")
+    conn.commit()
+    conn.close()
+
+    ledger.record_activity_event(
+        machine="mac-a", studio="image@mac-a", job_id="job-1", state="done",
+        model="org/model", source="direct", origin="spoof", origin_device="x" * 170,
+        finished_at=100.0, observed_at=100.0,
+    )
+    with ledger._conn() as conn:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(activity_events)")}
+    assert {"origin", "origin_device"} <= columns
+    row = ledger.activity_events(machine="mac-a")[0]
+    assert row["origin"] == "unknown"
+    assert row["origin_device"] == "x" * 160
+
+
 def test_clearing_job_assets_only_unlinks_files_owned_by_this_hub(reset):
     local = DATA_DIR / "owned.png"
     local.write_bytes(b"owned")

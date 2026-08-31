@@ -10,6 +10,41 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.15.0] — 2026-08-31
+
+### Added — on-demand fleet job details in Stats
+
+- **View details** now fetches one selected Image or Voice job through the
+  existing authenticated Studio gateway. Normal fleet polling remains
+  content-free; prompts, transcripts, parameters, paths, media, handles, and
+  credentials stay off the activity feed and Hub history.
+- Sensitive detail stays on its originating worker until the owner requests it.
+  Media uses authenticated, path-free, exact-job handles that expire after five
+  minutes; the Studio's own cleanup and retention policy remains authoritative.
+- Closing the details drawer aborts active requests and clears fetched text and
+  media URLs from browser memory. Studio Hub adds no central content archive.
+- This release changes no dependency, model, installation flow, or launcher.
+
+## [2.14.0] — 2026-08-30
+
+### Added — live fleet activity in Stats
+
+- **Stats** now starts with a live, attention-first fleet view before the
+  established historical performance section. It shows the seven clear states
+  (needs attention, working, offline, just finished, long idle, ready, and
+  unknown), current or latest safe job/model/progress/result evidence, and
+  whether work came through the Hub or directly to a Studio.
+- Machine disclosures keep bounded recent activity and an operator-safe job ID.
+  The existing default 30-day history and like-for-like speed comparisons stay
+  below it; mixed Studio versions remain compatible and report partial or
+  unknown evidence honestly until they are updated.
+- Activity travels only through the existing private authenticated Studio fleet
+  route and is sanitized before the Hub displays it. It never includes prompts,
+  filesystem paths, assets, credentials, or reference media.
+- This release adds no dependency, model, port, or service. Despite the minor
+  version bump, **ordinary Update** is sufficient; it neither deploys nor
+  updates any fleet Mac automatically.
+
 ## [2.13.15] — 2026-08-30
 
 ### Fixed — a damaged job ledger no longer keeps Studio Hub offline

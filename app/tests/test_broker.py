@@ -607,6 +607,30 @@ async def test_generation_uses_connected_peer_hub_route(reset, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_activity_ownership_failure_does_not_fail_accepted_worker_job(reset, monkeypatch):
+    submitted = broker.submit_batch({
+        "modality": "image", "model": "a/b", "items": [{"prompt": "x"}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="running", tries=1, studio="image@mac-b")
+    studio = {"id": "image@mac-b", "modality": "image", "machine": "mac-b",
+              "host": "127.0.0.1", "port": 47868}
+
+    async def no_sleep(_seconds):
+        return None
+
+    def telemetry_failure(**_kwargs):
+        raise RuntimeError("ledger locked")
+
+    monkeypatch.setattr(broker.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(broker.ledger, "record_activity_ownership", telemetry_failure)
+    await broker._run_item(_PeerRouteClient(), batch, item, studio)
+    assert item["studio_job_id"] == "worker-1"
+    assert item["state"] == "done"
+
+
+@pytest.mark.asyncio
 async def test_authentication_failure_is_terminal_without_retry(reset):
     submitted = broker.submit_batch({
         "modality": "image", "model": "a/b", "items": [{"prompt": "x"}],

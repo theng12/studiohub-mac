@@ -30,6 +30,80 @@ CATALOG_STALE_S = 5 * 60.0
 HEALTH_FAILURES_TO_DOWN = 3
 HEALTH_SUCCESSES_TO_RECOVER = 2
 
+_ACTIVITY_JOB_FIELDS = (
+    "id", "state", "model", "source", "progress", "created_at",
+    "started_at", "updated_at", "finished_at", "runtime_s", "error_code",
+    "origin", "origin_device",
+)
+_ACTIVITY_BATCH_ITEM_FIELDS = (
+    "studio_job_id", "studio", "state", "progress", "started_at", "finished_at",
+)
+
+
+def _activity_value(value):
+    """Keep the poll handoff scalar-only; params and prompts stay on the loop."""
+    return value if value is None or isinstance(value, (str, int, float, bool)) else None
+
+
+def _activity_job_view(job):
+    if not isinstance(job, dict):
+        return None
+    return {name: _activity_value(job.get(name)) for name in _ACTIVITY_JOB_FIELDS if name in job}
+
+
+def _activity_snapshot_view(snapshot):
+    if not isinstance(snapshot, dict):
+        return None
+    result = {
+        name: _activity_value(snapshot.get(name))
+        for name in ("schema", "studio", "observed_at") if name in snapshot
+    }
+    for name in ("active", "latest"):
+        if name in snapshot:
+            result[name] = _activity_job_view(snapshot[name])
+    return result
+
+
+def _activity_poll_inputs(registry: list[dict], statuses: dict, batches: dict):
+    """Build the tiny, value-only view consumed by the optional activity ledger."""
+    registry_view = []
+    statuses_view = {}
+    for studio in registry:
+        if not isinstance(studio, dict):
+            continue
+        view = {
+            name: _activity_value(studio.get(name))
+            for name in ("id", "modality", "machine") if name in studio
+        }
+        registry_view.append(view)
+        studio_id = view.get("id")
+        status = statuses.get(studio_id)
+        if not isinstance(status, dict):
+            continue
+        status_view = {
+            name: _activity_value(status.get(name))
+            for name in ("status", "activity_support", "activity_received_at")
+            if name in status
+        }
+        if "activity" in status:
+            status_view["activity"] = _activity_snapshot_view(status["activity"])
+        statuses_view[studio_id] = status_view
+
+    batches_view = {}
+    for batch_id, batch in (batches or {}).items():
+        if not isinstance(batch, dict):
+            continue
+        items = []
+        for item in batch.get("items") or ():
+            if not isinstance(item, dict):
+                continue
+            items.append({
+                name: _activity_value(item.get(name))
+                for name in _ACTIVITY_BATCH_ITEM_FIELDS if name in item
+            })
+        batches_view[batch_id] = {"model": _activity_value(batch.get("model")), "items": items}
+    return registry_view, statuses_view, batches_view
+
 
 def is_cached(model: dict) -> bool:
     """Whether a studio has this model fully downloaded.
@@ -271,6 +345,17 @@ class StudioMonitor:
 
     async def poll_all(self):
         await asyncio.gather(*(self._poll_one(s) for s in self.registry))
+        # Activity is an optional extension of an already successful health
+        # probe. Persisting its compact transitions here keeps Stats entirely
+        # local and never lets a slow/old reporter affect worker health.
+        from . import activity, broker
+        try:
+            registry, statuses, batches = _activity_poll_inputs(
+                self.registry, self.status, broker.batches,
+            )
+            await asyncio.to_thread(activity.observe_poll, registry, statuses, batches)
+        except Exception:
+            log.warning("activity observation failed (continuing)", exc_info=True)
         # metrics sample + watchdog revival pass (late import: no cycle)
         from . import metrics, peers
         metrics.on_poll(self.registry, self.status)
@@ -375,6 +460,17 @@ class StudioMonitor:
                 "health_recovering": recovering,
                 "health_probe_degraded": False,
             }
+            # The optional reporter may have one temporary failed request.
+            # Retain its last valid observation across every ordinary health
+            # refresh so the live board does not falsely forget a job.
+            if previous.get("activity") is not None:
+                self.status[sid]["activity"] = previous["activity"]
+            if previous.get("activity_received_at") is not None:
+                self.status[sid]["activity_received_at"] = previous["activity_received_at"]
+            if previous.get("activity_support"):
+                self.status[sid]["activity_support"] = previous["activity_support"]
+            if health.get("ok"):
+                await self._poll_activity(studio)
             self._note_transition(studio, prev_status, effective_status)
         except Exception as exc:
             prev = self.status.get(sid, {})
@@ -404,6 +500,46 @@ class StudioMonitor:
             if down:
                 self.status[sid]["health"] = None
             self._note_transition(studio, prev_status, effective_status)
+
+    async def _poll_activity(self, studio: dict) -> None:
+        """Fetch the optional private activity contract after health succeeds.
+
+        Activity reporting is intentionally not a health dependency: a 404 is
+        an older compatible Studio, while any other fault keeps the last good
+        evidence for Stats and only marks its evidence limitation.
+        """
+        from . import activity
+
+        sid = studio["id"]
+        previous = self.status.get(sid, {})
+        try:
+            url, headers = studio_request(studio, "/api/fleet/activity")
+            response = await self._client.get(
+                url, headers=headers, timeout=HEALTH_TIMEOUT_S,
+            )
+            status_code = getattr(response, "status_code", 200)
+            if status_code == 404:
+                previous.pop("activity", None)
+                previous["activity_support"] = "unavailable"
+                previous.pop("activity_error", None)
+                return
+            if status_code >= 400:
+                raise RuntimeError("activity reporter request failed")
+            snapshot = activity.validate_snapshot(response.json())
+            if snapshot is None:
+                raise RuntimeError("activity reporter returned an invalid snapshot")
+            received_at = time.time()
+            if abs(snapshot["observed_at"] - received_at) > activity.REPORTER_CLOCK_SKEW_S:
+                previous["activity_support"] = "skew"
+                previous["activity_error"] = "reporter clock is outside policy"
+                return
+            previous["activity"] = snapshot
+            previous["activity_received_at"] = received_at
+            previous["activity_support"] = "available"
+            previous.pop("activity_error", None)
+        except Exception:
+            previous["activity_support"] = "error"
+            previous["activity_error"] = "reporter request failed"
 
     # ── catalog ──────────────────────────────────────────────────────────
     async def get_catalog(self, studio: dict, force: bool = False) -> dict | None:

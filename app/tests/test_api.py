@@ -787,6 +787,7 @@ def test_update_status(authed):
 def test_stats_empty(authed):
     d = authed.get("/api/hub/stats").json()
     assert d["total"] == 0 and d["by_machine"] == {}
+    assert d["fleet_activity"]["machines"]
     assert "by_lane" not in d
     assert "lane" not in d["filters"]
 
