@@ -10,7 +10,7 @@ import httpx
 import pytest
 from fastapi import UploadFile
 
-from backend import broker, transcription_jobs as jobs
+from backend import broker, ledger, transcription_jobs as jobs
 
 
 def _multipart(names=("chapter-1.wav", "chapter-2.wav"), bodies=(b"one", b"two")):
@@ -208,15 +208,23 @@ async def test_capable_workers_share_work_one_transcription_each(reset, monitor,
         return {"available": True, "models": [{"repo": "mlx/whisper", "cached": True}]}
 
     gates = {local["id"]: asyncio.Event(), remote["id"]: asyncio.Event()}
+    activity_ids = []
 
     async def post(url, **kwargs):
         studio_id = remote["id"] if "10.0.0.2" in url else local["id"]
+        activity_ids.append(kwargs["data"]["activity_id"])
         await gates[studio_id].wait()
         return _Response()
 
     monkeypatch.setattr(monitor, "get_transcription", availability)
     monkeypatch.setattr(monitor._client, "post", post)
     assert await jobs.dispatch_once(monitor) == 2
+    ownership = ledger.activity_events()
+    expected_ids = {
+        item["studio_task_id"] for item in batch["items"] if item["state"] == "running"
+    }
+    assert {row["job_id"] for row in ownership} == expected_ids
+    assert {row["operation"] for row in ownership} == {"transcription"}
     await asyncio.sleep(0)
     assert len(jobs.busy_studios) == 2
     assert await jobs.dispatch_once(monitor) == 0
@@ -229,6 +237,9 @@ async def test_capable_workers_share_work_one_transcription_each(reset, monitor,
     assert await jobs.dispatch_once(monitor) == 1
     await asyncio.gather(*list(jobs._item_tasks.values()))
     assert jobs.summary(batch)["done"] == 3
+    assert set(activity_ids) == {
+        f"stt-{batch['id']}-{item['index']}" for item in batch["items"]
+    }
 
 
 @pytest.mark.asyncio

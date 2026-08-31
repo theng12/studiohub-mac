@@ -265,3 +265,21 @@ Review cross-repository contract equality, privacy, state precedence, interval m
 - [ ] **Step 5: Push each `codex/live-fleet-stats` branch and create one pull request per repository**
 
 Do not merge, tag, publish, deploy, or update any fleet machine.
+
+### 2026-09-01 follow-up: subtitle transcription activity
+
+- Extend Voice Studio's existing private reporter rather than introducing a
+  second endpoint or service. Track direct and Hub-dispatched `/api/transcribe`
+  work with a bounded in-memory job record and run inference off the API loop.
+- Add the optional `operation` scalar to the established reporter contract.
+  Preserve legacy defaults (`image` for Image Studio, `speech` for Voice
+  Studio) and validate `transcription` only for Voice Studio.
+- Correlate Hub transcription batch items with Voice activity using one stable
+  `studio_task_id`/`activity_id`; retain operation in the existing activity
+  ledger and performance key.
+- Name Subtitle transcription explicitly in live rows, timelines, and the
+  authenticated on-demand detail drawer. Keep ordinary polling content-free;
+  do not retain uploaded audio or build a second history/archive.
+- Prove privacy, live-to-terminal behavior, ownership, legacy compatibility,
+  UI naming, ledger migration, and unchanged generation behavior in focused
+  tests, then run both repositories' complete release suites.

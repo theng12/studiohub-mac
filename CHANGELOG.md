@@ -10,6 +10,28 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.16.0] — 2026-09-01
+
+### Added — subtitle transcription activity in Stats
+
+- **Stats** now distinguishes Image generation, Voice generation, and Subtitle
+  transcription instead of collapsing every Voice Studio task into one label.
+  Live rows and recent timelines show the operation beside its model.
+- Hub-dispatched transcription chapters receive one stable worker activity ID,
+  so their Voice Studio evidence is attributed to the Hub and originating
+  device without duplicate history, including after a Controller restart.
+  Direct subtitle requests remain labelled as direct local UI or API work.
+- Historical performance comparisons now include the operation in their
+  grouping, preventing subtitle runtimes from being compared with speech
+  synthesis on the same Voice model/machine record.
+- Ordinary polling remains content-free. Transcript text and input filenames
+  are fetched only after the owner selects **View details**; Studio Hub still
+  stores no central copy of that content or uploaded audio.
+- Existing Voice Studio versions remain compatible and continue to report
+  speech activity. Subtitle activity appears after Voice Studio is updated to
+  2.7.0 or later. This release changes no dependency, model, installation flow,
+  or launcher; **ordinary Update is enough**.
+
 ## [2.15.0] — 2026-08-31
 
 ### Added — on-demand fleet job details in Stats

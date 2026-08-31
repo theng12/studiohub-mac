@@ -247,6 +247,58 @@ def test_fleet_activity_renders_stable_origins_and_allowlisted_detail_actions():
         assert forbidden not in rows
 
 
+def test_fleet_activity_names_subtitle_transcription_in_rows_and_timeline():
+    rendered = _render({
+        "schema": "studiohub.fleet_activity.v1",
+        "window": {"since_s": 0, "now": 1000},
+        "pulse": {"working": 1},
+        "machines": [{
+            "machine": "subtitle-mac", "state": "working",
+            "studio": "voice@subtitle-mac", "job_id": "stt-1",
+            "operation": "transcription", "model": "org/whisper",
+            "completed": 3, "failed": 0,
+            "utilization": {"ratio": 0.5, "evidence": "complete"},
+            "timeline": [{
+                "studio": "voice@subtitle-mac", "job_id": "stt-1",
+                "state": "done", "operation": "transcription",
+                "model": "org/whisper", "finished_at": 999,
+            }],
+        }],
+    })
+
+    assert rendered["rows"].count("Subtitle transcription") == 2
+    assert "voice · org/whisper" not in rendered["rows"]
+
+
+def test_transcription_details_present_text_as_a_transcript():
+    source = FRONTEND.read_text()
+    helper = _details_javascript(source)
+    program = f"""
+function element(tag) {{ return {{ tag, textContent: "", className: "", children: [], append(...items) {{ this.children.push(...items); }}, addEventListener() {{}} }}; }}
+const dialog = {{ dataset: {{ machine: "Mac", origin: "local_ui", originDevice: "" }} }};
+const body = element("div"), status = {{ textContent: "", dataset: {{}} }}, title = {{ textContent: "" }};
+function $(id) {{ return id === "#fleet-job-details" ? dialog : id === "#fleet-job-details-body" ? body : id === "#fleet-job-details-status" ? status : title; }}
+function esc(value) {{ return String(value ?? ""); }}
+function jsq(value) {{ return String(value ?? ""); }}
+function fmtDur(value) {{ return String(value) + "s"; }}
+global.document = {{ createElement: element }};
+{helper}
+renderFleetJobDetails({{
+  schema: "kh-studio.job-details.v1", studio: "voice",
+  job: {{ id: "stt-1", operation: "transcription", origin: "local_ui" }},
+  inputs: {{ text: "Subtitle words", parameters: {{ input_filename: "episode.wav" }} }},
+  references: [], outputs: [],
+}});
+function texts(node) {{ return [node.textContent, ...(node.children || []).flatMap(texts)].filter(Boolean); }}
+console.log(JSON.stringify(texts(body)));
+"""
+    result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
+    texts = json.loads(result.stdout)
+    assert "Transcript" in texts
+    assert "Speech text" not in texts
+    assert "Input file" in texts
+
+
 def test_stats_render_and_load_never_prefetch_job_details():
     source = FRONTEND.read_text()
     helper = _javascript(source, "const FLEET_ACTIVITY_STATES =", "async function loadStats")

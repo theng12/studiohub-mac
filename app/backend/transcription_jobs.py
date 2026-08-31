@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import shutil
 import sqlite3
@@ -442,8 +443,23 @@ async def dispatch_once(monitor) -> int:
                 owner = f"transcription:{batch['id']}:{item['index']}"
                 if not broker.acquire_external_machine(machine, owner):
                     continue
-                item.update(state="running", studio=studio["id"], error=None,
-                            started_at=time.time(), tries=item["tries"] + 1)
+                item.update(
+                    state="running", studio=studio["id"], error=None,
+                    studio_task_id=f"stt-{batch['id']}-{item['index']}",
+                    started_at=time.time(), tries=item["tries"] + 1,
+                )
+                try:
+                    ledger.record_activity_ownership(
+                        machine=str(machine), studio=str(studio["id"]),
+                        job_id=item["studio_task_id"], model=batch.get("model"),
+                        operation="transcription",
+                    )
+                except Exception:
+                    # Activity evidence is optional and must never block work
+                    # after the fleet scheduler has acquired this Mac.
+                    logging.getLogger("studiohub.transcription").exception(
+                        "Could not record optional transcription activity ownership"
+                    )
                 batch["last_dispatched_at"] = time.time()
                 busy_studios.add(studio["id"])
                 _save(batch)
@@ -468,6 +484,7 @@ async def _run_item(monitor, batch: dict, item: dict, studio: dict, owner: str) 
         data = {
             "model": batch["model"],
             "word_timestamps": str(bool(batch.get("word_timestamps"))).lower(),
+            "activity_id": item["studio_task_id"],
         }
         if batch.get("language"):
             data["language"] = batch["language"]

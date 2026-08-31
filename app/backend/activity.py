@@ -27,6 +27,7 @@ _MAX_ID = 160
 _MAX_MODEL = 500
 _MAX_ERROR_CODE = 80
 VALID_ORIGINS = frozenset({"hub", "local_ui", "api", "unknown"})
+VALID_OPERATIONS = frozenset({"image", "speech", "transcription"})
 _MAX_ORIGIN_DEVICE = 160
 
 
@@ -46,7 +47,7 @@ def _text(value, limit: int) -> str | None:
     return value if value and len(value) <= limit else None
 
 
-def _job(value: object) -> dict | None:
+def _job(value: object, *, studio: str) -> dict | None:
     if value is None:
         return None
     if not isinstance(value, dict):
@@ -97,10 +98,16 @@ def _job(value: object) -> dict | None:
         if runtime > finished - started + 1:
             return None
     error_code = _text(value.get("error_code"), _MAX_ERROR_CODE)
+    operation = value.get("operation", "image" if studio == "image" else "speech")
+    if operation not in VALID_OPERATIONS or (
+        studio == "image" and operation != "image"
+    ) or (studio == "voice" and operation == "image"):
+        return None
     # Reporters may publish a safe generic error message; the Hub never
     # persists arbitrary error text from the worker.
     return {
-        "id": job_id, "state": state, "model": model, "source": source, "origin": origin,
+        "id": job_id, "state": state, "model": model, "operation": operation,
+        "source": source, "origin": origin,
         "progress": progress, "error_code": error_code, **timestamps,
         **({"origin_device": origin_device} if origin_device else {}),
     }
@@ -124,7 +131,7 @@ def validate_snapshot(value: object, *, expected_studio: str | None = None) -> d
     result = {"schema": SCHEMA, "studio": studio, "observed_at": observed_at}
     for key in ("active", "latest"):
         raw = value.get(key)
-        item = _job(raw)
+        item = _job(raw, studio=studio)
         if raw is not None and item is None:
             return None
         if item and ((key == "active" and item["state"] not in ACTIVE_STATES) or
@@ -156,16 +163,23 @@ def _broker_jobs(registry: list[dict], batches: dict,
         for item in batch.get("items") or []:
             if not isinstance(item, dict):
                 continue
-            job_id = _text(item.get("studio_job_id"), _MAX_ID)
+            job_id = _text(
+                item.get("studio_job_id") or item.get("studio_task_id"), _MAX_ID,
+            )
             studio_id = item.get("studio")
             studio = by_id.get(studio_id)
             state = item.get("state")
             if not job_id or studio is None or state not in VALID_STATES:
                 continue
+            default_operation = "image" if studio.get("modality") == "image" else "speech"
+            operation = batch.get("operation", default_operation)
+            if operation not in VALID_OPERATIONS:
+                continue
             result[job_id].append({
                 "id": job_id, "state": state, "studio": studio_id,
                 "machine": studio.get("machine", "local"),
-                "model": model, "source": "job", "progress": _finite(item.get("progress"), minimum=0),
+                "model": model, "operation": operation, "source": "job",
+                "progress": _finite(item.get("progress"), minimum=0),
                 "origin": "hub", "origin_device": hub_origin_device,
                 "started_at": _finite(item.get("started_at"), minimum=0),
                 "finished_at": _finite(item.get("finished_at"), minimum=0),
@@ -336,13 +350,18 @@ def _performance(machine: str, events: list[dict], live: dict | None,
     usable = [row for row in events if row["state"] == "done"
               and row.get("runtime_s") is not None and row["runtime_s"] > 0
               and row.get("finished_at", row.get("observed_at", 0)) >= since_s]
-    groups: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    groups: dict[tuple[str, str | None, str], dict[str, list[float]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
     for row in usable:
         family = row["studio"].split("@", 1)[0]
-        groups[(family, row["model"])][row["machine"]].append(row["runtime_s"])
-    preferred_model = (live or latest or {}).get("model")
+        groups[(family, row.get("operation"), row["model"])][row["machine"]].append(row["runtime_s"])
+    preferred = live or latest or {}
+    preferred_model = preferred.get("model")
+    preferred_operation = preferred.get("operation")
     candidates = [(key, values) for key, values in groups.items()
-                  if preferred_model is None or key[1] == preferred_model]
+                  if (preferred_model is None or key[2] == preferred_model)
+                  and (preferred_operation is None or key[1] == preferred_operation)]
     if not candidates:
         return None, None
     key, values = max(candidates, key=lambda item: len(item[1].get(machine, ())) )
@@ -360,7 +379,7 @@ def _performance(machine: str, events: list[dict], live: dict | None,
     return own_median, {
         "fleet_median_s": round(fleet_median, 2),
         "percent_faster": round((fleet_median - own_median) / fleet_median * 100, 1),
-        "studio": key[0], "model": key[1],
+        "studio": key[0], "operation": key[1], "model": key[2],
     }
 
 
@@ -374,6 +393,7 @@ def observe_poll(registry: list[dict], statuses: dict, batches: dict,
             ledger.record_activity_event(
                 machine=row["machine"], studio=row["studio"], job_id=row["id"],
                 state=row["state"], model=row.get("model"), source=row["source"],
+                operation=row.get("operation"),
                 origin=row.get("origin"), origin_device=row.get("origin_device"),
                 progress=row.get("progress"), started_at=row.get("started_at"),
                 finished_at=row.get("finished_at"), runtime_s=row.get("runtime_s"),
@@ -446,6 +466,7 @@ def fleet_snapshot(registry: list[dict], statuses: dict, batches: dict,
             "state_duration_s": round(max(0.0, now - state_since), 1),
             "studio": (current or latest or {}).get("studio"),
             "model": (current or latest or {}).get("model"),
+            "operation": (current or latest or {}).get("operation"),
             "job_id": (current or latest or {}).get("job_id") or (current or latest or {}).get("id"),
             "source": (current or latest or {}).get("source"),
             "origin": (current or latest or {}).get("origin", "unknown"),

@@ -33,7 +33,8 @@ def _snapshot(*, active=None, latest=None, studio="image"):
 
 
 def _job(job_id="job-1", *, state="running", model="org/model", source="direct",
-         progress=0.5, started_at=90.0, finished_at=None, runtime_s=None):
+         progress=0.5, started_at=90.0, finished_at=None, runtime_s=None,
+         operation=None):
     value = {
         "id": job_id, "state": state, "model": model, "source": source,
         "progress": progress, "created_at": 80.0, "started_at": started_at,
@@ -43,6 +44,8 @@ def _job(job_id="job-1", *, state="running", model="org/model", source="direct",
         value["finished_at"] = finished_at
     if runtime_s is not None:
         value["runtime_s"] = runtime_s
+    if operation is not None:
+        value["operation"] = operation
     return value
 
 
@@ -83,6 +86,78 @@ def test_activity_contract_allowlists_bounded_origin_scalars(reset):
         **_job(), "prompt": "private", "path": "/private", "handle": "opaque",
     }))["active"]
     assert not {"prompt", "path", "handle"} & projected.keys()
+
+
+def test_activity_contract_distinguishes_subtitle_transcription_from_speech(reset):
+    from backend import activity
+
+    legacy_voice = activity.validate_snapshot(_snapshot(
+        studio="voice", active=_job(model="org/voice"),
+    ))["active"]
+    subtitle = activity.validate_snapshot(_snapshot(
+        studio="voice", active=_job(model="org/whisper", operation="transcription"),
+    ))["active"]
+
+    assert legacy_voice["operation"] == "speech"
+    assert subtitle["operation"] == "transcription"
+    assert activity.validate_snapshot(_snapshot(
+        studio="voice", active=_job(operation="invented"),
+    )) is None
+
+
+def test_transcription_batch_owns_live_worker_activity_by_studio_task_id(reset, monkeypatch):
+    from backend import activity, control_plane
+
+    monkeypatch.setattr(control_plane, "load_settings", lambda: {"site_name": "PPS"})
+    studio = _studio(modality="voice")
+    statuses = {studio["id"]: _status(_snapshot(
+        studio="voice",
+        active=_job(
+            "stt-batch-1-0", model="org/whisper", operation="transcription",
+        ),
+    ))}
+    batches = {"transcription:batch-1": {
+        "model": "org/whisper", "operation": "transcription", "items": [{
+            "studio": studio["id"], "studio_task_id": "stt-batch-1-0",
+            "state": "running",
+        }],
+    }}
+
+    activity.observe_poll([studio], statuses, batches, now=100.0)
+    event = ledger.activity_events(machine="mac-a")[0]
+
+    assert event["source"] == "job"
+    assert event["origin"] == "hub"
+    assert event["operation"] == "transcription"
+    machine = activity.fleet_snapshot(
+        [studio], statuses, batches, since_s=0.0, now=100.0,
+    )["machines"][0]
+    assert machine["operation"] == "transcription"
+
+
+def test_transcription_ownership_survives_restart_before_the_next_worker_poll(reset):
+    from backend import activity
+
+    studio = _studio(modality="voice")
+    ledger.record_activity_ownership(
+        machine="mac-a", studio=studio["id"], job_id="stt-restart-0",
+        model="org/shared", operation="transcription", observed_at=90.0,
+    )
+    statuses = {studio["id"]: _status(_snapshot(
+        studio="voice", latest=_job(
+            "stt-restart-0", state="done", model="org/shared",
+            operation="transcription", started_at=90.0,
+            finished_at=100.0, runtime_s=10.0,
+        ),
+    ))}
+
+    activity.observe_poll([studio], statuses, {}, now=101.0)
+
+    done = next(row for row in ledger.activity_events(machine="mac-a")
+                if row["job_id"] == "stt-restart-0" and row["state"] == "done")
+    assert done["source"] == "job"
+    assert done["origin"] == "hub"
+    assert done["operation"] == "transcription"
 
 
 def test_legacy_activity_row_uses_unknown_origin_in_events_and_timeline(reset):
@@ -311,6 +386,41 @@ def test_comparable_medians_require_three_samples_on_two_machines(reset):
     by_machine = {row["machine"]: row for row in snapshot["machines"]}
     assert by_machine["mac-a"]["relative_performance"]["percent_faster"] > 0
     assert by_machine["mac-b"]["relative_performance"]["percent_faster"] < 0
+
+
+def test_performance_never_mixes_speech_and_transcription_using_the_same_model(reset):
+    from backend import activity
+
+    studios = [_studio("mac-a", "voice"), _studio("mac-b", "voice")]
+    for machine in ("mac-a", "mac-b"):
+        for operation, runtimes in {
+            "speech": [100, 101, 102, 103],
+            "transcription": [10, 11, 12],
+        }.items():
+            for index, runtime in enumerate(runtimes):
+                ledger.record_activity_event(
+                    machine=machine, studio=f"voice@{machine}",
+                    job_id=f"{machine}-{operation}-{index}", state="done",
+                    model="org/shared", operation=operation, source="direct",
+                    started_at=10.0, finished_at=10.0 + runtime,
+                    runtime_s=runtime, observed_at=200.0 + index,
+                )
+    statuses = {
+        studios[0]["id"]: _status(_snapshot(
+            studio="voice", active=_job(
+                "current-stt", model="org/shared", operation="transcription",
+            ),
+        )),
+        studios[1]["id"]: _status(_snapshot(studio="voice")),
+    }
+
+    snapshot = activity.fleet_snapshot(
+        studios, statuses, {}, since_s=0.0, now=210.0,
+    )
+    mac_a = next(row for row in snapshot["machines"] if row["machine"] == "mac-a")
+
+    assert mac_a["median_runtime_s"] == 11.0
+    assert mac_a["relative_performance"]["operation"] == "transcription"
 
 
 def test_retained_active_snapshot_is_not_live_after_reporter_failure_or_offline(reset):

@@ -739,7 +739,7 @@
   <section id="tab-stats" class="hide">
     <section class="fleet-activity" aria-labelledby="fleet-activity-heading">
       <div class="group-head"><h2 id="fleet-activity-heading">Fleet activity</h2><span class="meta" id="st-fleet-meta">Current operations</span></div>
-      <p class="fleet-activity-copy">See what every Image and Voice Mac is doing now before comparing historical output. Activity comes from each Studio’s private fleet report; older Studios remain visible with an honest limitation.</p>
+      <p class="fleet-activity-copy">See Image generation, Voice generation, and Subtitle transcription across every Mac before comparing historical output. Activity comes from each Studio’s private fleet report; older Studios remain visible with an honest limitation.</p>
       <div id="st-fleet-pulse" class="fleet-pulse" aria-live="off" aria-label="Fleet activity summary">
         <div class="fleet-pulse-item"><b>—</b><span>Loading</span></div>
       </div>
@@ -1234,6 +1234,12 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.16.0", date: "2026-09-01", items: [
+    "<b>Stats now tracks subtitle generation too.</b> Image generation, Voice generation, and Subtitle transcription are distinct operations in live machine rows and recent timelines.",
+    "Hub-dispatched subtitle chapters use one stable worker activity ID, preserving Hub and originating-device attribution without duplicate history, including after a Controller restart. Direct subtitle work remains labelled as local UI or API activity.",
+    "Ordinary polling remains content-free. Transcript text and the input filename appear only after <b>View details</b>; Studio Hub keeps no central copy of that content or uploaded audio.",
+    "Voice Studio 2.7.0 adds subtitle reporting. Older Voice Studios remain compatible and keep reporting speech activity until updated. No dependency, model, installation, or launcher change is included; <b>ordinary Update is enough</b>.",
+  ]},
   { v: "2.15.0", date: "2026-08-31", items: [
     "<b>Stats can now show one job's details on demand.</b> Select <b>View details</b> for an Image or Voice job to fetch its approved content only after you ask; ordinary fleet polling remains content-free.",
     "Sensitive text, reference media, outputs, and settings stay on the originating worker until requested. Authenticated, path-free media handles are tied to the exact job and expire after five minutes.",
@@ -4008,6 +4014,7 @@ const FLEET_DETAIL_PARAMETER_LABELS = {
   speed: "Speed", instruct: "Delivery", voice_design_prompt: "Voice design", emotion: "Emotion",
   temperature: "Temperature", top_p: "Top P", top_k: "Top K",
   repetition_penalty: "Repetition penalty", chunk_index: "Chunk", chunk_total: "Total chunks",
+  word_timestamps: "Word timestamps", input_filename: "Input file",
 };
 const fleetJobDetailsState = {
   controller: null, objectUrls: [], invoker: null,
@@ -4036,6 +4043,15 @@ function fleetJobDetailsButton(rawContext) {
   const context = fleetJobActionContext(rawContext);
   if (!context.studio || !context.jobId) return "";
   return `<button type="button" class="btn compact fleet-detail-action" onclick="openFleetJobDetails({studio:'${jsq(context.studio)}',jobId:'${jsq(context.jobId)}',machine:'${jsq(context.machine)}',origin:'${jsq(context.origin)}',originDevice:'${jsq(context.originDevice)}'}, this)">View details</button>`;
+}
+function fleetActivityOperationLabel(operation, studio) {
+  if (operation === "transcription") return "Subtitle transcription";
+  if (operation === "speech") return "Voice generation";
+  if (operation === "image") return "Image generation";
+  const family = String(studio || "").split("@", 1)[0];
+  if (family === "voice") return "Voice generation";
+  if (family === "image") return "Image generation";
+  return "Studio";
 }
 function fleetJobDetailsPath() {
   return `/studio/${encodeURIComponent(fleetJobDetailsState.studio)}/api/fleet/jobs/${encodeURIComponent(fleetJobDetailsState.jobId)}/details`;
@@ -4163,7 +4179,7 @@ function renderFleetJobDetails(details) {
   appendFleetDetailValue(values, "Status", job.state);
   appendFleetDetailValue(values, "Machine", dialog.dataset.machine);
   appendFleetDetailValue(values, "Studio", studio);
-  appendFleetDetailValue(values, "Operation", job.operation);
+  appendFleetDetailValue(values, "Operation", fleetActivityOperationLabel(job.operation, details.studio));
   appendFleetDetailValue(values, "Model", job.model);
   appendFleetDetailValue(values, "Job ID", job.id);
   appendFleetDetailValue(values, "Created", fleetDetailTime(job.created_at));
@@ -4176,7 +4192,7 @@ function renderFleetJobDetails(details) {
   const inputs = details.inputs && typeof details.inputs === "object" ? details.inputs : {};
   appendFleetCopySection(body, "Prompt", inputs.prompt);
   appendFleetCopySection(body, "Negative prompt", inputs.negative_prompt);
-  appendFleetCopySection(body, "Speech text", inputs.text);
+  appendFleetCopySection(body, job.operation === "transcription" ? "Transcript" : "Speech text", inputs.text);
   appendFleetCopySection(body, "Reference transcript", inputs.reference_transcript);
   const parameters = inputs.parameters && typeof inputs.parameters === "object" && !Array.isArray(inputs.parameters) ? inputs.parameters : {};
   const allowedParameters = Object.entries(parameters).filter(([key]) => Object.hasOwn(FLEET_DETAIL_PARAMETER_LABELS, key));
@@ -4409,7 +4425,8 @@ function fleetActivityTimeline(row) {
       studio: entry.studio, jobId: entry.job_id, machine: row.machine,
       origin: entry.origin, originDevice: entry.origin_device,
     });
-    return `<div class="fleet-timeline-item"><div class="fleet-timeline-copy"><b>${esc(state)}</b><span>${esc(entry.model ? fleetActivityModelName(entry.model) : "No model")} · ${esc(fmtAgo(at))}</span>${origin}</div>${details ? `<div class="fleet-timeline-actions">${details}</div>` : ""}</div>`;
+    const operation = fleetActivityOperationLabel(entry.operation, entry.studio);
+    return `<div class="fleet-timeline-item"><div class="fleet-timeline-copy"><b>${esc(state)}</b><span>${esc(operation)} · ${esc(entry.model ? fleetActivityModelName(entry.model) : "No model")} · ${esc(fmtAgo(at))}</span>${origin}</div>${details ? `<div class="fleet-timeline-actions">${details}</div>` : ""}</div>`;
   }).join("")}</div>`;
 }
 function isFleetActivitySnapshot(activity) {
@@ -4490,7 +4507,7 @@ function renderFleetActivity(activity, { preserve = false } = {}) {
   const limitations = [...new Set(view.machines.map(row => row.limitation).filter(Boolean))];
   const note = limitations.length
     ? limitations.join(" · ")
-    : "Live activity is current for every compatible Image and Voice Studio.";
+    : "Live image, voice, and subtitle activity is current for every compatible Studio.";
   setFleetActivityNote(note, limitations.length ? "partial" : "ready");
   $("#st-fleet-body").innerHTML = view.machines.map(row => {
     const state = FLEET_ACTIVITY_STATES[row.state] || FLEET_ACTIVITY_STATES.unknown;
@@ -4501,9 +4518,10 @@ function renderFleetActivity(activity, { preserve = false } = {}) {
     const comparison = relative && Number.isFinite(relative.percent_faster)
       ? `${relative.percent_faster >= 0 ? Math.abs(relative.percent_faster) + "% faster" : Math.abs(relative.percent_faster) + "% slower"} than fleet median`
       : "";
-    const activity = row.state === "working"
-      ? `${row.studio ? String(row.studio).split("@", 1)[0] : "Studio"} · ${fleetActivityModelName(row.model)}`
-      : `${row.studio ? String(row.studio).split("@", 1)[0] + " · " : ""}${fleetActivityModelName(row.model)}`;
+    const operation = fleetActivityOperationLabel(row.operation, row.studio);
+    const activity = row.studio
+      ? `${operation} · ${fleetActivityModelName(row.model)}`
+      : fleetActivityModelName(row.model);
     const source = row.source ? ` · ${row.source === "job" ? "Hub job" : "Direct"}` : "";
     const resultMarkup = result.progress == null ? esc(result.text) : `${esc(result.text)}<div class="fleet-machine-progress"><div class="prog" aria-label="${esc(result.text)}"><i style="width:${Math.round(Math.max(0, Math.min(1, result.progress)) * 100)}%"></i></div></div>`;
     const timeline = fleetActivityTimeline(row);

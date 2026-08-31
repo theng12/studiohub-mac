@@ -112,3 +112,26 @@ The machine board updates through the dashboard's existing summary/refresh mecha
 - No performance comparison across different models or workloads.
 - No attempt to reconstruct exact past utilization before activity reporting existed.
 - No change to fleet scheduling or customer-visible GenStudio behavior.
+
+## 2026-09-01 approved subtitle follow-up
+
+Voice Studio's reporter covers two distinct operations: `speech` and
+`transcription`; Image Studio reports `image`. `operation` is an optional
+additive field so older reporters remain valid, with legacy Image and Voice
+rows defaulting to `image` and `speech` respectively. Studio Hub validates the
+field, retains it on activity transitions, displays a plain-language operation
+label, and includes it in comparable-performance grouping.
+
+Each Hub-dispatched transcription item supplies one stable `activity_id` to the
+worker and uses the same ID as `studio_task_id` in the Hub batch. This is the
+only correlation needed for Hub ownership; no callback, token, service, or new
+queue is introduced. Ownership is written to the existing activity ledger at
+dispatch so a Controller restart before the next worker poll cannot relabel the
+job as direct. Direct Voice subtitle requests generate their own safe ID.
+
+The ordinary activity payload remains content-free. Transcripts and the input
+filename stay in Voice Studio's bounded in-memory job detail and are fetched
+only through the existing authenticated on-demand details endpoint. Uploaded
+audio remains temporary and is not retained for this feature. Transcription
+inference runs in a worker thread so the API loop can continue serving health
+and activity polls during long subtitle jobs.
