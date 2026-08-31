@@ -3266,8 +3266,16 @@ def hub_stats(
     result = ledger.stats(since_s=since, source=source, op=modality, machine=machine)
     result["timeline"] = ledger.timeline(since, bucket, source=source, op=modality,
                                           machine=machine)
+    activity_batches = dict(broker.batches)
+    activity_batches.update({
+        f"transcription:{batch_id}": {
+            "model": batch.get("model"), "operation": "transcription",
+            "items": batch.get("items") or [],
+        }
+        for batch_id, batch in transcription_jobs.batches.items()
+    })
     result["fleet_activity"] = activity.fleet_snapshot(
-        monitor.registry, monitor.status, broker.batches, since_s=since,
+        monitor.registry, monitor.status, activity_batches, since_s=since,
     )
     result["filters"] = {"source": source, "modality": modality,
                          "machine": machine, "hours": hours}

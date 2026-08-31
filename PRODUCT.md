@@ -31,7 +31,8 @@ Studio Hub combines local-first generation infrastructure with fleet-wide contro
 ## Capabilities and Constraints
 
 - The current production fleet tracks Studio Hub, Image Studio, and Voice Studio.
-- Live status must distinguish application health from actual generation activity.
+- Live status must distinguish application health from actual Image generation,
+  Voice generation, and subtitle transcription activity.
 - Direct Studio activity and Hub-dispatched activity both belong in operational statistics.
 - Historical performance comparisons must compare like-for-like work and must not imply confidence when evidence is sparse.
 - Existing throughput, model, and machine analytics remain useful and must be preserved beneath the live operational view.
@@ -46,7 +47,9 @@ Studio Hub combines local-first generation infrastructure with fleet-wide contro
 
 - Studio Hub already polls every registered Studio's `/api/health` response and retains the complete health payload in memory.
 - Hub-dispatched generation records already include machine, Studio, model, runtime, progress, and terminal state evidence.
-- Image Studio and Voice Studio already maintain local generation job state; the missing piece is a small standardized health payload for direct activity.
+- Image Studio maintains local generation state. Voice Studio maintains both
+  speech-generation and subtitle-transcription state; all three operations use
+  the same small standardized private activity payload.
 - Studio Hub's asset ledger already powers the existing Stats page, including throughput and runtime summaries.
 
 ## Product Principles

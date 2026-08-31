@@ -33,10 +33,11 @@ HEALTH_SUCCESSES_TO_RECOVER = 2
 _ACTIVITY_JOB_FIELDS = (
     "id", "state", "model", "source", "progress", "created_at",
     "started_at", "updated_at", "finished_at", "runtime_s", "error_code",
-    "origin", "origin_device",
+    "origin", "origin_device", "operation",
 )
 _ACTIVITY_BATCH_ITEM_FIELDS = (
-    "studio_job_id", "studio", "state", "progress", "started_at", "finished_at",
+    "studio_job_id", "studio_task_id", "studio", "state", "progress",
+    "started_at", "finished_at",
 )
 
 
@@ -101,7 +102,13 @@ def _activity_poll_inputs(registry: list[dict], statuses: dict, batches: dict):
                 name: _activity_value(item.get(name))
                 for name in _ACTIVITY_BATCH_ITEM_FIELDS if name in item
             })
-        batches_view[batch_id] = {"model": _activity_value(batch.get("model")), "items": items}
+        batch_view = {
+            "model": _activity_value(batch.get("model")),
+            "items": items,
+        }
+        if batch.get("operation") is not None:
+            batch_view["operation"] = _activity_value(batch.get("operation"))
+        batches_view[batch_id] = batch_view
     return registry_view, statuses_view, batches_view
 
 
@@ -348,10 +355,18 @@ class StudioMonitor:
         # Activity is an optional extension of an already successful health
         # probe. Persisting its compact transitions here keeps Stats entirely
         # local and never lets a slow/old reporter affect worker health.
-        from . import activity, broker
+        from . import activity, broker, transcription_jobs
         try:
+            activity_batches = dict(broker.batches)
+            activity_batches.update({
+                f"transcription:{batch_id}": {
+                    "model": batch.get("model"), "operation": "transcription",
+                    "items": batch.get("items") or [],
+                }
+                for batch_id, batch in transcription_jobs.batches.items()
+            })
             registry, statuses, batches = _activity_poll_inputs(
-                self.registry, self.status, broker.batches,
+                self.registry, self.status, activity_batches,
             )
             await asyncio.to_thread(activity.observe_poll, registry, statuses, batches)
         except Exception:

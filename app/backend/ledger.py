@@ -32,6 +32,7 @@ MEDIA_EXT = {
     ".mp4": "video", ".mov": "video", ".webm": "video",
 }
 _VALID_ORIGINS = frozenset({"hub", "local_ui", "api", "unknown"})
+_VALID_OPERATIONS = frozenset({"image", "speech", "transcription"})
 _MAX_ORIGIN_DEVICE = 160
 
 _SCHEMA = """
@@ -76,6 +77,7 @@ CREATE TABLE IF NOT EXISTS activity_events (
   job_id TEXT NOT NULL,
   state TEXT NOT NULL,
   model TEXT,
+  operation TEXT,
   source TEXT NOT NULL,
   origin TEXT,
   origin_device TEXT,
@@ -121,6 +123,7 @@ def _conn() -> sqlite3.Connection:
                     "ALTER TABLE activity_events ADD COLUMN hub_owned INTEGER NOT NULL DEFAULT 0",
                     "ALTER TABLE activity_events ADD COLUMN origin TEXT",
                     "ALTER TABLE activity_events ADD COLUMN origin_device TEXT",
+                    "ALTER TABLE activity_events ADD COLUMN operation TEXT",
                     "ALTER TABLE machine_state_transitions ADD COLUMN state TEXT NOT NULL DEFAULT 'unknown'",
                     "ALTER TABLE machine_state_transitions ADD COLUMN state_since REAL"):
             try:
@@ -151,6 +154,7 @@ def activity_transaction():
 
 def record_activity_event(*, machine: str, studio: str, job_id: str, state: str,
                           model: str | None, source: str, progress: float | None = None,
+                          operation: str | None = None,
                           origin: str | None = None, origin_device: str | None = None,
                           started_at: float | None = None,
                           finished_at: float | None = None,
@@ -177,6 +181,8 @@ def record_activity_event(*, machine: str, studio: str, job_id: str, state: str,
     origin = origin if origin in _VALID_ORIGINS else "unknown"
     origin_device = origin_device.strip()[:_MAX_ORIGIN_DEVICE] if isinstance(origin_device, str) else None
     origin_device = origin_device or None
+    default_operation = "image" if studio.split("@", 1)[0] == "image" else "speech"
+    operation = operation if operation in _VALID_OPERATIONS else default_operation
     owns_connection = conn is None
     if conn is None:
         conn = _conn()
@@ -189,11 +195,11 @@ def record_activity_event(*, machine: str, studio: str, job_id: str, state: str,
         if existing is None:
             conn.execute(
                 """INSERT INTO activity_events (
-                    machine, studio, job_id, state, model, source, origin, origin_device, progress,
+                    machine, studio, job_id, state, model, operation, source, origin, origin_device, progress,
                     started_at, finished_at, runtime_s, error_code, observed_at,
                     activity_received_at, reported_at, hub_owned
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (machine, studio, job_id, state, model, "job" if hub_owned else source,
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (machine, studio, job_id, state, model, operation, "job" if hub_owned else source,
                  "hub" if hub_owned else origin, origin_device, progress, started_at,
                  finished_at, runtime_s, error_code, observed_at, activity_received_at, reported_at,
                  int(hub_owned)),
@@ -204,11 +210,11 @@ def record_activity_event(*, machine: str, studio: str, job_id: str, state: str,
             is_newer = previous_received is None or activity_received_at >= previous_received
             if is_newer:
                 conn.execute(
-                    """UPDATE activity_events SET model = ?, source = ?, origin = ?, origin_device = ?, progress = ?,
+                    """UPDATE activity_events SET model = ?, operation = ?, source = ?, origin = ?, origin_device = ?, progress = ?,
                        started_at = ?, finished_at = ?, runtime_s = ?, error_code = ?,
                        activity_received_at = ?, reported_at = ?, hub_owned = ?
                        WHERE machine = ? AND studio = ? AND job_id = ? AND state = ?""",
-                    (model, "job" if hub_owned or existing["hub_owned"] else source,
+                    (model, operation, "job" if hub_owned or existing["hub_owned"] else source,
                      "hub" if hub_owned or existing["hub_owned"] else origin,
                      origin_device if hub_owned or not existing["hub_owned"] else existing["origin_device"],
                      progress, started_at, finished_at, runtime_s, error_code,
@@ -248,7 +254,7 @@ def activity_events(*, machine: str | None = None,
         conn = _conn()
     try:
         rows = conn.execute(
-            "SELECT machine, studio, job_id, state, model, source, origin, origin_device, progress, "
+            "SELECT machine, studio, job_id, state, model, operation, source, origin, origin_device, progress, "
             "started_at, finished_at, runtime_s, error_code, observed_at, activity_received_at, reported_at, hub_owned "
             f"FROM activity_events WHERE {' AND '.join(where)} "
             "ORDER BY observed_at DESC, id DESC", args,
@@ -256,8 +262,14 @@ def activity_events(*, machine: str | None = None,
     finally:
         if owns_connection:
             conn.close()
-    return [{**dict(row), "origin": row["origin"] if row["origin"] in _VALID_ORIGINS else "unknown"}
-            for row in rows]
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["origin"] = row["origin"] if row["origin"] in _VALID_ORIGINS else "unknown"
+        default_operation = "image" if row["studio"].split("@", 1)[0] == "image" else "speech"
+        item["operation"] = row["operation"] if row["operation"] in _VALID_OPERATIONS else default_operation
+        result.append(item)
+    return result
 
 
 def activity_job_is_hub_owned(machine: str, studio: str, job_id: str,
@@ -279,12 +291,13 @@ def activity_job_is_hub_owned(machine: str, studio: str, job_id: str,
 
 
 def record_activity_ownership(*, machine: str, studio: str, job_id: str,
-                              model: str | None, observed_at: float | None = None) -> None:
+                              model: str | None, operation: str | None = None,
+                              observed_at: float | None = None) -> None:
     """Durably bind a worker job ID to this Hub before any reporter poll."""
     receipt = float(time.time() if observed_at is None else observed_at)
     record_activity_event(
         machine=machine, studio=studio, job_id=job_id, state="running",
-        model=model, source="job", hub_owned=True, reported_at=receipt,
+        model=model, operation=operation, source="job", hub_owned=True, reported_at=receipt,
         activity_received_at=receipt, observed_at=receipt,
     )
 
