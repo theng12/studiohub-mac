@@ -10,6 +10,29 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.16.1] — 2026-09-01
+
+### Fixed — completed Studio updates no longer hide newer releases
+
+- A completed fleet update was kept as a temporary UI overlay so each Studio
+  could show its verified version while the rest of the serial batch ran. The
+  overlay incorrectly survived after the batch finished, so a prior successful
+  Voice 2.6.1 rollout could replace a fresh 2.7.0 scan and label every 2.6.1
+  worker **up to date**. Completed history now stops overriding the
+  authoritative post-update scan when the batch reaches a terminal state.
+- While a batch is still running, its verified per-Studio result is shown only
+  when it matches the scan's current published target. A newly published release
+  therefore becomes visible and actionable immediately instead of being hidden
+  behind the preceding rollout.
+- Every manual Studio update admission now force-refreshes the exact published
+  release identity before scheduling work. The Controller and each Agent Hub
+  refuse to schedule that Studio if its release cannot be freshly verified, so
+  they can no longer reuse an older in-memory target when the owner clicks
+  Update immediately after a release.
+- This patch changes no Studio dependencies, models, enrollment, or launcher.
+  Update Studio Hub only; then the existing remote Voice update button can move
+  the affected workers from 2.6.1 to 2.7.0.
+
 ## [2.16.0] — 2026-09-01
 
 ### Added — subtitle transcription activity in Stats
