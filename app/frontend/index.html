@@ -1234,6 +1234,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.16.1", date: "2026-09-01", items: [
+    "<b>Older successful Studio updates no longer hide newer releases.</b> A finished Voice 2.6.1 batch could remain overlaid on a fresh 2.7.0 version scan and incorrectly label those workers up to date. Terminal update history now leaves the authoritative scan visible.",
+    "During an active serial rollout, a completed row is overlaid only when its verified version still matches the current published target.",
+    "Every manual Studio update now refreshes the exact published release before scheduling work on the Controller and Agent Hub, and refuses to start if that release cannot be freshly verified. Update this Hub, then use the existing remote Voice update button to move 2.6.1 workers to 2.7.0. No Studio dependency, model, enrollment, or launcher changes are included.",
+  ]},
   { v: "2.16.0", date: "2026-09-01", items: [
     "<b>Stats now tracks subtitle generation too.</b> Image generation, Voice generation, and Subtitle transcription are distinct operations in live machine rows and recent timelines.",
     "Hub-dispatched subtitle chapters use one stable worker activity ID, preserving Hub and originating-device attribution without duplicate history, including after a Controller restart. Direct subtitle work remains labelled as local UI or API activity.",
@@ -5979,8 +5984,9 @@ function _sortStudioUpdates(rows) {
   return rows.slice().sort((a, b) => (b.reachable ? 1 : 0) - (a.reachable ? 1 : 0)
     || mlabel(a.machine).localeCompare(mlabel(b.machine)) || app(a).localeCompare(app(b)));
 }
-function effectiveStudioUpdateRow(row, item) {
-  if (!item || !["complete", "current"].includes(item.status) || !item.to_version) return row;
+function effectiveStudioUpdateRow(row, item, jobBusy) {
+  if (!jobBusy || !item || !["complete", "current"].includes(item.status) || !item.to_version
+      || String(row.latest_version || "") !== String(item.to_version)) return row;
   const version = String(item.to_version);
   return { ...row, version, latest_version: version, version_status: "current", update_available: false };
 }
@@ -5990,7 +5996,9 @@ function renderStudioUpdates(data) {
   lastStudioVersionData = data;
   const jobItems = new Map(((studioUpdateJob && studioUpdateJob.items) || []).map(i => [i.studio, i]));
   const allRows = _sortStudioUpdates(
-    (data && data.studios || []).map(row => effectiveStudioUpdateRow(row, jobItems.get(row.id)))
+    (data && data.studios || []).map(row => effectiveStudioUpdateRow(
+      row, jobItems.get(row.id), maintenanceBusy,
+    ))
   );
   studioVersionRows = allRows;
   renderStudioAppTabs(allRows);

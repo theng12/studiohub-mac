@@ -882,6 +882,50 @@ def test_update_route_schedules_on_event_loop(authed, monkeypatch):
     assert response.json()["id"] in fleet_ops._updates
 
 
+def test_update_route_refreshes_published_releases_before_scheduling(authed, monkeypatch):
+    from backend import fleet_ops
+
+    refreshed = []
+
+    async def refresh(*, force=False):
+        refreshed.append(force)
+        return {"versions": {"voice": "2.7.0"}}
+
+    async def finish(mon, job):
+        job["status"] = "complete"
+        job["finished_at"] = 1
+
+    monkeypatch.setattr(fleet_ops, "refresh_published_versions", refresh)
+    monkeypatch.setattr(fleet_ops, "_run_updates", finish)
+
+    response = authed.post(
+        "/api/hub/maintenance/updates", json={"studio_ids": ["voice"]},
+    )
+
+    assert response.status_code == 200
+    assert refreshed == [True]
+
+
+def test_update_route_refuses_a_stale_target_when_forced_refresh_fails(authed, monkeypatch):
+    from backend import fleet_ops
+
+    async def refresh(*, force=False):
+        return {
+            "versions": {"voice": "2.6.1"},
+            "errors": {"voice": "GitHub timed out"},
+        }
+
+    monkeypatch.setattr(fleet_ops, "refresh_published_versions", refresh)
+
+    response = authed.post(
+        "/api/hub/maintenance/updates", json={"studio_ids": ["voice"]},
+    )
+
+    assert response.status_code == 409
+    assert "freshly verify" in response.json()["detail"]
+    assert not fleet_ops._updates
+
+
 def test_asset_upload_limits_and_types(authed, monkeypatch):
     from backend import main
     ok = authed.post("/api/hub/assets/upload", files={"file": ("ref.png", b"png", "image/png")})

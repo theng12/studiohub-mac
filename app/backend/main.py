@@ -3885,6 +3885,23 @@ def list_fleet_updates():
 @app.post("/api/hub/maintenance/updates")
 async def start_fleet_updates(body: UpdateRequest):
     try:
+        published = await fleet_ops.refresh_published_versions(force=True)
+        selected = {
+            studio.get("modality")
+            for studio in monitor.registry
+            if studio.get("id") in body.studio_ids
+        }
+        unverified = sorted(
+            modality for modality in selected
+            if not (published.get("versions") or {}).get(modality)
+            or (published.get("errors") or {}).get(modality)
+        )
+        if unverified:
+            raise ValueError(
+                "could not freshly verify the published release for "
+                + ", ".join(unverified)
+                + "; retry when GitHub is reachable"
+            )
         return fleet_ops.start_updates(monitor, body.studio_ids)
     except ValueError as e:
         raise HTTPException(409, str(e))
