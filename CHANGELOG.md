@@ -10,6 +10,29 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.17.0] — 2026-09-02
+
+### Added — complete Image, Voice TTS, and Subtitle history in Stats
+
+- Historical performance now includes completed Subtitle transcription in its
+  totals, throughput timeline, per-machine contribution, app matrix, and
+  per-model runtime table. The data was already collected privately by Voice
+  Studio activity reporting; Stats now aggregates its terminal completions.
+- Image and Voice TTS remain counted only from their generated output assets.
+  Their activity transitions are deliberately excluded, so existing jobs are
+  not double-counted. Queued, running, failed, and cancelled Subtitle states
+  likewise do not inflate completed-work totals.
+- Image, Voice TTS, and Subtitle controls, breakdown pills, and matrix columns
+  stay visible with explicit zeroes when a selected window contains no work of
+  that type. Plain labels replace internal operation names throughout the
+  historical view.
+- Source, machine, operation, and time-window filters apply consistently to all
+  three operations. Subtitle history stores only bounded job evidence; no
+  transcript text or uploaded audio is copied into Studio Hub.
+- Qwen3-TTS 0.6B Base remains shelved. This release changes no model approval,
+  model cache, dependency, launcher, enrollment, routing, or GenStudio product,
+  and it does not update any fleet Mac automatically.
+
 ## [2.16.1] — 2026-09-01
 
 ### Fixed — completed Studio updates no longer hide newer releases

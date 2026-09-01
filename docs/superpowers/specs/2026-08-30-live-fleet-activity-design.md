@@ -135,3 +135,20 @@ only through the existing authenticated on-demand details endpoint. Uploaded
 audio remains temporary and is not retained for this feature. Transcription
 inference runs in a worker thread so the API loop can continue serving health
 and activity polls during long subtitle jobs.
+
+## 2026-09-02 approved historical performance follow-up
+
+Historical performance includes completed subtitle transcription alongside
+generated Image and Voice TTS output. Image and Voice continue to come only
+from the asset ledger; their activity events are deliberately excluded so a
+job cannot be counted twice. Subtitle jobs produce no output asset entry, so
+only their terminal `done` activity transition supplements the historical
+query. Queued, running, failed, and cancelled subtitle transitions are not
+generation counts.
+
+The Image, Voice TTS, and Subtitle controls, per-machine breakdown, and matrix
+columns remain visible even when a selected window contains zero work for one
+of them. This makes absence explicit instead of making a capability appear
+untracked. Subtitle model and runtime evidence participates in the existing
+model, machine, source, window, timeline, and operation filters. The historical
+record remains content-free and stores no transcript text or uploaded audio.
