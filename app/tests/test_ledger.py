@@ -76,7 +76,63 @@ def test_stats_op_splits_voice_and_music(reset):
     assert s["by_modality"]["voice"]["count"] == 1
     assert s["by_modality"]["music"]["count"] == 1
     assert "audio" not in s["by_modality"]                  # coarse type replaced by op
-    assert set(s["available_modalities"]) == {"voice", "music"}
+    assert set(s["available_modalities"]) == {
+        "image", "voice", "transcription", "music",
+    }
+
+
+def test_stats_adds_completed_transcriptions_without_double_counting_live_states(reset):
+    import time
+
+    now = time.time()
+    ledger.record_asset(
+        source="job", modality="voice", studio="voice@mac-a",
+        machine="mac-a", model="org/qwen", runtime_s=4.0, created_at=now - 5,
+    )
+    ledger.record_activity_event(
+        machine="mac-a", studio="voice@mac-a", job_id="subtitle-done",
+        state="done", operation="transcription", model="org/whisper",
+        source="direct", origin="api", started_at=now - 16,
+        finished_at=now - 4, runtime_s=12.0, observed_at=now - 4,
+    )
+    for state in ("running", "error"):
+        ledger.record_activity_event(
+            machine="mac-a", studio="voice@mac-a", job_id=f"subtitle-{state}",
+            state=state, operation="transcription", model="org/whisper",
+            source="direct", origin="api", observed_at=now - 3,
+        )
+
+    result = ledger.stats()
+
+    assert result["total"] == 2
+    assert result["by_modality"]["voice"]["count"] == 1
+    assert result["by_modality"]["transcription"]["count"] == 1
+    assert result["by_machine"]["mac-a"]["modalities"] == {
+        "image": 0, "voice": 1, "transcription": 1,
+    }
+    assert result["by_model"]["org/whisper"] == {
+        "count": 1, "avg_s": 12.0, "modality": "transcription",
+    }
+    assert any(
+        cell["machine"] == "mac-a"
+        and cell["modality"] == "transcription"
+        and cell["count"] == 1
+        for cell in result["matrix"]
+    )
+    assert ledger.stats(source="direct")["total"] == 1
+    assert ledger.stats(source="job")["total"] == 1
+    assert ledger.stats(op="transcription")["total"] == 1
+    assert ledger.stats(since_s=now - 4.5)["total"] == 1
+
+    timeline = ledger.timeline(since_s=now - 60, bucket_s=60)
+    assert sum(timeline["series"]["voice"]) == 1
+    assert sum(timeline["series"]["transcription"]) == 1
+
+
+def test_stats_keeps_core_operation_filters_available_without_history(reset):
+    result = ledger.stats()
+
+    assert result["available_modalities"] == ["image", "voice", "transcription"]
 
 
 def test_timeline_buckets(reset):

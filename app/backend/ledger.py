@@ -692,6 +692,20 @@ _OP_SQL = (
     "ELSE COALESCE(modality,'unknown') END"
 )
 
+_CORE_STATS_OPERATIONS = ("image", "voice", "transcription")
+_HISTORICAL_CTE = f"""
+WITH historical AS (
+  SELECT machine, ({_OP_SQL}) operation, model, source, created_at,
+         COALESCE(runtime_s, duration_s) runtime_s
+  FROM assets
+  UNION ALL
+  SELECT machine, 'transcription' operation, model, source,
+         COALESCE(finished_at, observed_at) created_at, runtime_s
+  FROM activity_events
+  WHERE state = 'done' AND operation = 'transcription'
+)
+"""
+
 
 def _stats_where(source: str | None, op: str | None, machine: str | None,
                  since_s: float | None) -> tuple[str, list]:
@@ -710,7 +724,7 @@ def _stats_where(source: str | None, op: str | None, machine: str | None,
     if since_s:
         where.append("created_at >= ?"); args.append(since_s)
     if op:
-        where.append(f"({_OP_SQL}) = ?"); args.append(op)
+        where.append("operation = ?"); args.append(op)
     if machine:
         where.append("machine = ?"); args.append(machine)
     return " AND ".join(where), args
@@ -720,40 +734,43 @@ def stats(since_s: float | None = None, source: str = "all",
           op: str | None = None, machine: str | None = None) -> dict:
     """Generation analytics from the ledger. Counts span every source by
     default (Hub jobs + direct-in-studio scans + uploads); pass source='job'
-    or 'direct' to split them. Groups by operation type (see _OP_SQL) so voice
-    and music are distinct even for scanned audio. Timing/model stats only
-    reflect assets that carry a duration/model (Hub jobs) — SQL AVG ignores
-    the nulls. Also returns the full option lists (`available_*`) for the
-    filter UI, computed independent of the op/machine filters."""
+    or 'direct' to split them. Generated Image and Voice output comes from the
+    asset ledger; completed subtitle transcription comes from the activity
+    ledger because it produces no asset row. Non-terminal activity is excluded,
+    and Image/Voice activity is not re-counted. Also returns full option lists
+    (`available_*`) for the filter UI, computed independent of op/machine."""
     where, args = _stats_where(source, op, machine, since_s)
     with _conn() as conn:
         cells = conn.execute(
-            f"SELECT machine, ({_OP_SQL}) op, COUNT(*) c, "
-            f"AVG(COALESCE(runtime_s,duration_s)) avg_s, "
-            f"MIN(COALESCE(runtime_s,duration_s)) min_s, "
-            f"MAX(COALESCE(runtime_s,duration_s)) max_s, "
-            f"SUM(COALESCE(runtime_s,duration_s,0)) sum_s, "
+            f"{_HISTORICAL_CTE} SELECT machine, operation op, COUNT(*) c, "
+            f"AVG(runtime_s) avg_s, MIN(runtime_s) min_s, MAX(runtime_s) max_s, "
+            f"SUM(COALESCE(runtime_s,0)) sum_s, "
             # timed_c: how many rows in this group actually carry a duration.
             # A group can now mix timed jobs + untimed scans, so the aggregate
             # avg must divide sum_s by this, NOT by the full count.
-            f"SUM(CASE WHEN COALESCE(runtime_s,duration_s) IS NOT NULL THEN 1 ELSE 0 END) timed_c "
-            f"FROM assets WHERE {where} GROUP BY machine, op", args).fetchall()
+            f"SUM(CASE WHEN runtime_s IS NOT NULL THEN 1 ELSE 0 END) timed_c "
+            f"FROM historical WHERE {where} GROUP BY machine, operation", args).fetchall()
         total = conn.execute(
-            f"SELECT COUNT(*) FROM assets WHERE {where}", args).fetchone()[0]
+            f"{_HISTORICAL_CTE} SELECT COUNT(*) FROM historical WHERE {where}",
+            args,
+        ).fetchone()[0]
         model_rows = conn.execute(
-            f"SELECT model, ({_OP_SQL}) op, COUNT(*) c, "
-            f"AVG(COALESCE(runtime_s,duration_s)) avg_s "
-            f"FROM assets WHERE {where} GROUP BY model", args).fetchall()
+            f"{_HISTORICAL_CTE} SELECT model, operation op, COUNT(*) c, "
+            f"AVG(runtime_s) avg_s FROM historical WHERE {where} "
+            f"GROUP BY model, operation", args).fetchall()
         src_rows = conn.execute(
-            f"SELECT source, COUNT(*) c FROM assets WHERE {where} GROUP BY source",
+            f"{_HISTORICAL_CTE} SELECT source, COUNT(*) c "
+            f"FROM historical WHERE {where} GROUP BY source",
             args).fetchall()
         # Option lists for the filter chips — narrowed by source+window only, so
         # picking an op/machine filter doesn't make the other options vanish.
         aw, aargs = _stats_where(source, None, None, since_s)
         avail_ops = conn.execute(
-            f"SELECT DISTINCT ({_OP_SQL}) op FROM assets WHERE {aw}", aargs).fetchall()
+            f"{_HISTORICAL_CTE} SELECT DISTINCT operation op "
+            f"FROM historical WHERE {aw}", aargs).fetchall()
         avail_mach = conn.execute(
-            f"SELECT DISTINCT machine FROM assets WHERE {aw}", aargs).fetchall()
+            f"{_HISTORICAL_CTE} SELECT DISTINCT machine "
+            f"FROM historical WHERE {aw}", aargs).fetchall()
 
     def _round(x):
         return round(x, 2) if x is not None else None
@@ -783,13 +800,24 @@ def stats(since_s: float | None = None, source: str = "all",
         d["avg_s"] = _round(d["sum_s"] / d["timed"]) if d["timed"] else None
         d.pop("sum_s", None)
         d.pop("timed", None)
+    for item in by_machine.values():
+        item["modalities"] = {
+            operation: item["modalities"].get(operation, 0)
+            for operation in _CORE_STATS_OPERATIONS
+        } | {
+            operation: count for operation, count in item["modalities"].items()
+            if operation not in _CORE_STATS_OPERATIONS
+        }
     by_model = {r["model"]: {"count": r["c"], "avg_s": _round(r["avg_s"]),
                              "modality": r["op"]}
                 for r in model_rows if r["model"]}
     by_source = {r["source"] or "unknown": r["c"] for r in src_rows}
+    actual_operations = {r["op"] for r in avail_ops if r["op"]}
+    available_operations = list(_CORE_STATS_OPERATIONS)
+    available_operations.extend(sorted(actual_operations - set(_CORE_STATS_OPERATIONS)))
     return {"total": total, "by_machine": by_machine, "by_modality": by_modality,
             "by_model": by_model, "matrix": matrix, "by_source": by_source,
-            "available_modalities": sorted(r["op"] for r in avail_ops if r["op"]),
+            "available_modalities": available_operations,
             "available_machines": sorted(r["machine"] for r in avail_mach if r["machine"])}
 
 
@@ -801,8 +829,9 @@ def timeline(since_s: float | None, bucket_s: int, source: str = "all",
     bucket_s = int(bucket_s)
     with _conn() as conn:
         rows = conn.execute(
-            f"SELECT CAST(created_at / {bucket_s} AS INTEGER) b, ({_OP_SQL}) op, COUNT(*) c "
-            f"FROM assets WHERE {where} GROUP BY b, op ORDER BY b", args).fetchall()
+            f"{_HISTORICAL_CTE} SELECT CAST(created_at / {bucket_s} AS INTEGER) b, "
+            f"operation op, COUNT(*) c FROM historical WHERE {where} "
+            f"GROUP BY b, operation ORDER BY b", args).fetchall()
     if not rows:
         return {"bucket_s": bucket_s, "buckets": [], "series": {}}
     bmin = rows[0]["b"]

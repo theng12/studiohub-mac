@@ -283,3 +283,18 @@ Do not merge, tag, publish, deploy, or update any fleet machine.
 - Prove privacy, live-to-terminal behavior, ownership, legacy compatibility,
   UI naming, ledger migration, and unchanged generation behavior in focused
   tests, then run both repositories' complete release suites.
+
+### 2026-09-02 follow-up: historical Voice and Subtitle visibility
+
+- Build one historical SQL source from existing generated assets plus only
+  terminal `done` transcription activity. Do not add Image or Voice activity
+  events, because their generated assets already supply the count.
+- Apply the existing source, operation, machine, and window filters to the
+  unified source, and include completed Subtitle work in totals, timeline,
+  machine, matrix, and model aggregates.
+- Keep Image, Voice TTS, and Subtitle UI controls and per-machine breakdowns
+  visible with explicit zero counts. Use plain labels rather than internal
+  operation names.
+- Add focused ledger and frontend behavior tests, run the complete Hub suite,
+  inspect the UI detector output, then follow the normal version/changelog and
+  independent-review workflow.

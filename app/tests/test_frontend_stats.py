@@ -328,6 +328,59 @@ loadStats().then(() => console.log(JSON.stringify(paths)));
     assert json.loads(result.stdout) == ["/api/hub/stats"]
 
 
+def test_historical_stats_keep_image_voice_and_subtitle_visible_at_zero():
+    source = FRONTEND.read_text()
+    helpers = _javascript(source, "const MOD_EMOJI", "function renderThroughput")
+    loader = _javascript(source, "async function loadStats", "// ── remote")
+    payload = {
+        "total": 3,
+        "available_modalities": ["image", "voice", "transcription"],
+        "available_machines": ["mac-a"],
+        "by_modality": {"image": {"count": 3, "avg_s": 2}},
+        "by_machine": {"mac-a": {"count": 3, "avg_s": 2, "modalities": {"image": 3}}},
+        "by_model": {"org/image": {"count": 3, "avg_s": 2, "modality": "image"}},
+        "matrix": [{"machine": "mac-a", "modality": "image", "count": 3, "avg_s": 2}],
+        "timeline": {"buckets": [], "series": {}},
+        "fleet_activity": {"schema": "studiohub.fleet_activity.v1", "window": {}, "pulse": {}, "machines": []},
+    }
+    program = f"""
+const nodes = new Proxy({{}}, {{ get(target, key) {{
+  if (!target[key]) target[key] = {{ innerHTML: "", textContent: "", dataset: {{}}, style: {{}}, value: "", addEventListener() {{}} }};
+  return target[key];
+}} }});
+function $(id) {{ return nodes[id]; }}
+function esc(value) {{ return String(value ?? ""); }}
+function jsq(value) {{ return String(value ?? ""); }}
+function mlabel(value) {{ return String(value || "local"); }}
+function renderThroughput() {{}}
+function isFleetActivitySnapshot() {{ return true; }}
+function renderFleetActivityIfSafe() {{}}
+function renderFleetActivityError() {{}}
+function renderFleetActivityLoading() {{}}
+function closeFleetJobDetails() {{}}
+{helpers}
+const WIN_LABEL = {{}};
+let fleetActivityHasRendered = true;
+let stWin = "0", stSrc = "all", stOp = "", stMach = "";
+async function api() {{ return {{ ok: true, json: async () => ({json.dumps(payload)}) }}; }}
+{loader}
+loadStats().then(() => console.log(JSON.stringify({{
+  tiles: nodes["#st-tiles"].innerHTML,
+  machines: nodes["#st-machines"].innerHTML,
+  matrix: nodes["#st-matrix-head"].innerHTML,
+}})));
+"""
+    result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
+    rendered = json.loads(result.stdout)
+
+    for label in ("Image", "Voice TTS", "Subtitle"):
+        assert label in rendered["tiles"]
+        assert label in rendered["machines"]
+        assert label in rendered["matrix"]
+    assert "Voice TTS 0" in rendered["machines"]
+    assert "Subtitle 0" in rendered["machines"]
+
+
 def test_opening_details_uses_one_encoded_url_and_aborts_the_previous_open():
     source = FRONTEND.read_text()
     helper = _details_javascript(source)

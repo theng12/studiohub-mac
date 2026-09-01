@@ -50,7 +50,9 @@ Studio Hub combines local-first generation infrastructure with fleet-wide contro
 - Image Studio maintains local generation state. Voice Studio maintains both
   speech-generation and subtitle-transcription state; all three operations use
   the same small standardized private activity payload.
-- Studio Hub's asset ledger already powers the existing Stats page, including throughput and runtime summaries.
+- Studio Hub's asset ledger powers Image and Voice TTS history. Completed
+  subtitle activity supplements the same Stats aggregates because transcription
+  produces no generated asset row; ordinary history remains content-free.
 
 ## Product Principles
 
