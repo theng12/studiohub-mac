@@ -2024,3 +2024,30 @@ def test_cleanup_cannot_release_fence_until_target_process_stop_is_verified(repa
     coordinator.release_fence_after_verified_stop(request_id)
     assert recovery_calls == [request_id]
     assert repair_store.mutation_blocker(machine="mac-a") is None
+
+
+@pytest.mark.asyncio
+async def test_wake_scheduler_is_safe_from_a_worker_thread(repair_store):
+    """POST /api/hub/enrollment-repairs is a sync route, so FastAPI runs it in a
+    worker thread. create_batch() stores the request durably and then wakes the
+    scheduler from that thread; asyncio.create_task() there raised "no running
+    event loop", the owner saw a generic failure, and the request sat queued
+    until the next controller restart."""
+    from backend.enrollment_repair import EnrollmentRepairCoordinator
+
+    coordinator = EnrollmentRepairCoordinator(
+        repair_store, registry_loader=lambda: [],
+        settings_reader=lambda: {"role": "controller"},
+    )
+    await coordinator.start()
+    try:
+        await asyncio.sleep(0.05)  # empty queue: the startup scheduler loop exits
+        assert coordinator._scheduler_task is not None and coordinator._scheduler_task.done()
+
+        await asyncio.to_thread(coordinator._wake_scheduler)  # what the sync route does
+        await asyncio.sleep(0.05)
+
+        assert coordinator._scheduler_task is not None
+        assert coordinator._scheduler_task.done()  # it ran (queue still empty) rather than never starting
+    finally:
+        await coordinator.stop()

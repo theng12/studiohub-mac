@@ -140,6 +140,7 @@ class EnrollmentRepairCoordinator:
         self._scheduler_task: asyncio.Task[None] | None = None
         self._status_task: asyncio.Task[None] | None = None
         self._started = False
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     @staticmethod
     def _wake_existing_release_peer(machine: str) -> None:
@@ -873,6 +874,7 @@ class EnrollmentRepairCoordinator:
     async def start(self) -> None:
         """Resume durable work without recreating any issued ticket plaintext."""
         self._started = True
+        self._loop = asyncio.get_running_loop()
         self.store.recover_scheduling_slot()
         self._wake_scheduler()
         if self._status_task is None or self._status_task.done():
@@ -893,9 +895,25 @@ class EnrollmentRepairCoordinator:
         self._status_task = None
 
     def _wake_scheduler(self) -> None:
-        """Ensure one local scheduler exists after durable queue creation."""
-        if (self._started
-                and (self._scheduler_task is None or self._scheduler_task.done())):
+        """Ensure one local scheduler exists after durable queue creation.
+
+        Safe to call from any thread. The owner's create route is a sync
+        FastAPI handler and therefore runs in a worker thread with no running
+        loop; creating the task there raised after the request was already
+        stored, so the owner saw a failure and the request stayed queued until
+        the next controller restart.
+        """
+        if not self._started:
+            return
+        loop = self._loop
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if loop is not None and running is not loop:
+            loop.call_soon_threadsafe(self._wake_scheduler)
+            return
+        if self._scheduler_task is None or self._scheduler_task.done():
             self._scheduler_task = asyncio.create_task(self._scheduler_loop())
 
     async def _scheduler_loop(self) -> None:

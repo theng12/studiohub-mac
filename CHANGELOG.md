@@ -10,6 +10,23 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.18.3] — 2026-09-02
+
+### Fixed — enrollment repair requests no longer stall as "queued"
+
+- Starting an enrollment repair from the dashboard reported "Repair could not
+  be started" while the request had in fact been stored. The owner's create
+  route runs in a worker thread, and waking the repair scheduler from there
+  raised after the request was durably queued; the scheduler only ever woke
+  again on a Controller restart, so the request sat in `queued` indefinitely.
+  The wake is now safe from any thread and always reaches the Controller's
+  event loop.
+- Requests already sitting in `queued` from earlier attempts are picked up
+  automatically when the Controller restarts on this release; no re-request
+  is needed.
+- Update Studio Hub normally. No endpoint, database schema, model, dependency,
+  launcher, enrollment, routing, or fleet Mac changes automatically.
+
 ## [2.18.2] — 2026-09-02
 
 ### Fixed — dashboard page is now compressed for slow sites

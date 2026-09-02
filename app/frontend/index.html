@@ -1234,6 +1234,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.18.3", date: "2026-09-02", items: [
+    "<b>Enrollment repairs now start when you press the button.</b> Pressing <b>Repair enrollment</b> or <b>Repair eligible Macs</b> showed \"Repair could not be started\" even though the request had been saved, and it then sat as <i>Queued</i> until the Controller was restarted. The scheduler is now woken correctly from the owner's request.",
+    "Requests that are already queued from earlier attempts are picked up automatically when this Controller restarts on this release.",
+    "Update Studio Hub normally. No endpoint, database schema, model, dependency, launcher, enrollment, routing, or fleet Mac changes automatically.",
+  ] },
   { v: "2.18.2", date: "2026-09-02", items: [
     "<b>The dashboard now loads compressed.</b> This page is about 540 KB and was sent in full, uncompressed, on every load. It is now gzipped where the browser accepts it — roughly 137 KB, about 3.9x smaller. On a site measured at ~70 KB/s that is about 7.6 seconds of transfer down to about 1.9 seconds.",
     "Only this page is compressed. The live summary event stream, studio byte streams, and media downloads are deliberately left alone, so nothing buffers and the 8 GB machines do not waste CPU recompressing files that are already compressed.",
