@@ -11,6 +11,7 @@ studios, so the Hub itself is monitorable by the same convention.
 """
 
 import asyncio
+import gzip
 import hashlib
 import json
 import re
@@ -4284,10 +4285,34 @@ async def discover_machine(body: dict):
 
 
 # ── dashboard ──────────────────────────────────────────────────────────────
+_index_gzip_cache: tuple[float, bytes] | None = None
+
+
+def _index_gzipped(path: Path) -> bytes:
+    """Gzip index.html once per build.
+
+    The dashboard is a single ~540 KB page, 86% of it inline JS/CSS, and it is
+    deliberately no-store — so every load pays the full size. Sites on a slow
+    uplink measured ~70 KB/s, making that ~8s of pure transfer. Compressing
+    cuts it ~4x. Cached by mtime because re-gzipping 540 KB on every load is
+    real CPU on the 8 GB M1 boxes.
+    """
+    global _index_gzip_cache
+    mtime = path.stat().st_mtime
+    if _index_gzip_cache is None or _index_gzip_cache[0] != mtime:
+        _index_gzip_cache = (mtime, gzip.compress(path.read_bytes(), 6))
+    return _index_gzip_cache[1]
+
+
 @app.get("/")
-def index():
+def index(request: Request):
     # no-store so Pinokio's embedded webview never serves a stale build after
     # an update — the #1 cause of "I don't see my changes".
-    return FileResponse(
-        FRONTEND_DIR / "index.html",
-        headers={"Cache-Control": "no-store, max-age=0"})
+    path = FRONTEND_DIR / "index.html"
+    headers = {"Cache-Control": "no-store, max-age=0",
+               "Vary": "Accept-Encoding"}
+    if "gzip" in request.headers.get("accept-encoding", "").lower():
+        return Response(
+            _index_gzipped(path), media_type="text/html",
+            headers={**headers, "Content-Encoding": "gzip"})
+    return FileResponse(path, headers=headers)
