@@ -10,6 +10,27 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.18.2] — 2026-09-02
+
+### Fixed — dashboard page is now compressed for slow sites
+
+- The dashboard is a single ~540 KB page (86% of it inline JS/CSS) served
+  `no-store`, so every load re-sent the whole thing uncompressed. It is now
+  gzipped for clients that accept it: 541 KB becomes 137 KB (3.9x). At the
+  ~70 KB/s measured at an affected site that is ~7.6s of transfer down to
+  ~1.9s. Sites on fast links are unaffected in practice.
+- Compression is applied to that page only, not through global middleware,
+  because the Hub also serves `text/event-stream` for the live summary and
+  proxies studio byte streams and media downloads. Blanket compression would
+  buffer the event stream and waste CPU recompressing already-compressed media
+  on the 8 GB machines.
+- The gzipped copy is cached per build (~18 ms once), not rebuilt per request.
+  `no-store` is preserved, so the Pinokio webview still never serves a stale
+  build. This does not fix a slow network link; it reduces what a slow link
+  has to carry.
+- Update Studio Hub normally. No endpoint, database schema, model, dependency,
+  launcher, enrollment, routing, or fleet Mac changes automatically.
+
 ## [2.18.1] — 2026-09-02
 
 ### Fixed — durable worker execution-start proof

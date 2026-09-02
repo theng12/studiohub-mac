@@ -1234,6 +1234,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.18.2", date: "2026-09-02", items: [
+    "<b>The dashboard now loads compressed.</b> This page is about 540 KB and was sent in full, uncompressed, on every load. It is now gzipped where the browser accepts it — roughly 137 KB, about 3.9x smaller. On a site measured at ~70 KB/s that is about 7.6 seconds of transfer down to about 1.9 seconds.",
+    "Only this page is compressed. The live summary event stream, studio byte streams, and media downloads are deliberately left alone, so nothing buffers and the 8 GB machines do not waste CPU recompressing files that are already compressed.",
+    "This reduces what a slow link has to carry; it does not repair a slow link. Update Studio Hub normally. No endpoint, database schema, model, dependency, launcher, enrollment, routing, or fleet Mac changes automatically.",
+  ] },
   { v: "2.18.1", date: "2026-09-02", items: [
     "The first authenticated worker <code>execution_started_at</code> is now written through immediately during submission or polling, so a Hub restart while work is active keeps that proof. Live <code>run_started</code> remains separate and is never execution evidence.",
     "Malformed worker state and non-finite or overflow-sized timestamps are ignored safely. Existing per-item webhooks now carry the same nullable <code>execution_started_at</code> field as public job items.",
