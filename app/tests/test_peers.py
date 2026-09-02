@@ -466,3 +466,45 @@ async def test_remote_update_repair_old_or_unreachable_hub_is_retryable(reset):
     assert old["ok"] is False and old["retryable"] is True
     assert "update the Agent Hub" in old["error"]
     assert offline["ok"] is False and offline["retryable"] is True
+
+
+class RouteGet:
+    """401 for fleet calls, a chosen /api/health body for the identity probe."""
+    def __init__(self, health):
+        self.health = health
+        self.urls = []
+
+    async def get(self, url, headers=None, timeout=None):
+        self.urls.append(url)
+        if url.endswith("/api/health"):
+            return FakeResp(data=self.health)
+        return FakeResp(status=401, data={"detail": "Hub token required"})
+
+
+@pytest.mark.asyncio
+async def test_refresh_flags_a_mac_enrolled_at_another_site(reset, monkeypatch):
+    """A moved Mac rejects our fleet token AND reports another site_id: that is
+    a stale registration here, not a broken machine. Enrollment never tells the
+    previous controller, so the probe is where it must be noticed."""
+    from backend import control_plane
+    monkeypatch.setattr(control_plane, "load_settings", lambda: {"site_id": "terranash-0300"})
+    monkeypatch.setattr(peers, "fleet_token", lambda: "site-token")
+    client = RouteGet({"ok": True, "control_plane": {"site_id": "terranash-kts",
+                                                     "controller_id": "macmini-x-hub"}})
+    await peers.refresh(REMOTE, client)
+    c = peers.cached("mac-b")
+    assert c["status"] == "foreign_site"
+    assert c["site_id"] == "terranash-kts" and c["controller_id"] == "macmini-x-hub"
+    assert c["reachable"] is True and c["auth"] is False
+    assert any(u.endswith("/api/health") for u in client.urls)
+
+
+@pytest.mark.asyncio
+async def test_refresh_same_site_token_rejection_stays_token_rejected(reset, monkeypatch):
+    """Same site, wrong token = a rotated/mismatched fleet token, not a move."""
+    from backend import control_plane
+    monkeypatch.setattr(control_plane, "load_settings", lambda: {"site_id": "terranash-0300"})
+    monkeypatch.setattr(peers, "fleet_token", lambda: "site-token")
+    client = RouteGet({"ok": True, "control_plane": {"site_id": "terranash-0300"}})
+    await peers.refresh(REMOTE, client)
+    assert peers.cached("mac-b")["status"] == "token_rejected"

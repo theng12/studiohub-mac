@@ -1234,6 +1234,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.18.4", date: "2026-09-02", items: [
+    "<b>A Controller now tells you when a registered Mac belongs to another site.</b> If an Agent rejects this site's fleet token and its health endpoint reports a different site, its row says <i>now enrolled at site X — Remove this stale entry</i> instead of a generic token or reachability error. Moving a Mac never notifies its old Controller, so this is where it gets noticed. Nothing is removed automatically.",
+    "A same-site token rejection still reads <i>token mismatch</i>. The extra health probe runs only after a token rejection, so healthy peers cost nothing.",
+    "<b>Fixed:</b> transient SQLite side files (<code>hub.db-journal</code> and friends) could make the verified updater refuse with \"Working tree has local changes\". They are ignored now. Update Studio Hub normally. No endpoint, database schema, model, dependency, launcher, enrollment, routing, or fleet Mac changes automatically.",
+  ] },
   { v: "2.18.3", date: "2026-09-02", items: [
     "<b>Enrollment repairs now start when you press the button.</b> Pressing <b>Repair enrollment</b> or <b>Repair eligible Macs</b> showed \"Repair could not be started\" even though the request had been saved, and it then sat as <i>Queued</i> until the Controller was restarted. The scheduler is now woken correctly from the owner's request.",
     "Requests that are already queued from earlier attempts are picked up automatically when this Controller restarts on this release.",
@@ -6554,10 +6559,16 @@ function peerBadge(m) {
     no_hub: ["warn", "no Hub on :47873"],
     unreachable: ["no", "unreachable (firewall/asleep)"],
     token_rejected: ["err", "token mismatch"],
+    foreign_site: ["err", "enrolled at another site"],
     no_token: ["err", "set fleet token"],
     pending: ["no", "checking…"],
   };
-  const [cls, txt] = map[st] || map.pending;
+  let [cls, txt] = map[st] || map.pending;
+  if (st === "foreign_site" && info && info.site_id) {
+    // The Mac was moved to another site and never removed here. Nothing on it
+    // is wrong — this entry is stale. Remove is in this row's controls.
+    txt = `now enrolled at site ${esc(info.site_id)} — Remove this stale entry`;
+  }
   let ram = "";
   if (st === "connected" && info && info.host) {
     const h = info.host;

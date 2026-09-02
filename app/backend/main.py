@@ -1745,8 +1745,10 @@ def hub_resources(local_only: bool = Query(False)):
                 "reachable": bool(peer and peer.get("reachable")),
                 "has_hub": bool(peer and peer.get("host") is not None),
                 # why the peer is (dis)connected, for the Remote tab:
-                # connected | no_hub | unreachable | token_rejected | no_token | pending
+                # connected | no_hub | unreachable | token_rejected | foreign_site | no_token | pending
                 "status": (peer.get("status") if peer else "pending"),
+                # foreign_site only: the site this Mac now reports belonging to
+                "site_id": (peer.get("site_id") if peer else None),
                 # operator toggle — a disabled machine takes no jobs
                 "enabled": machine_enabled(machine),
                 "hardware_profile": hardware_profiles.machine_hardware_profile(machine),

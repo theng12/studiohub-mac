@@ -200,6 +200,10 @@ async def _refresh_stale(machines, stale, client, now):
                             "reachable": True, "auth": False,
                             "status": ("no_token" if not token
                                        else "token_rejected")}
+                if token:
+                    foreign = await _foreign_site(client, url)
+                    if foreign:
+                        snapshot.update(status="foreign_site", **foreign)
                 _cache[machine] = (now, snapshot)
                 note_reachability(machine, snapshot)
                 return
@@ -235,6 +239,25 @@ async def _refresh_stale(machines, stale, client, now):
             note_reachability(machine, snapshot)
 
     await asyncio.gather(*(one(m, machines[m]) for m in stale))
+
+
+async def _foreign_site(client, url: str) -> dict | None:
+    """A Hub that rejects our fleet token but reports a different site_id was
+    enrolled at another site — the Mac was moved and never removed here.
+    Enrollment never tells the previous controller, so this is the only place
+    it can be noticed. /api/health is unauthenticated; the extra GET happens
+    only after a token rejection."""
+    from . import control_plane
+    try:
+        r = await client.get(f"{url}/api/health", timeout=PEER_TIMEOUT_S)
+        plane = (r.json() or {}).get("control_plane") or {}
+    except Exception:
+        return None
+    theirs = str(plane.get("site_id") or "").strip()
+    ours = str(control_plane.load_settings().get("site_id") or "").strip()
+    if not theirs or theirs == ours:
+        return None
+    return {"site_id": theirs, "controller_id": str(plane.get("controller_id") or "")}
 
 
 def cached(machine: str) -> dict | None:

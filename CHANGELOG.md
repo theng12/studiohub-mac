@@ -10,6 +10,30 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.18.4] — 2026-09-02
+
+### Added — a Controller now says when a registered Mac belongs to another site
+
+- When a registered Agent Hub rejects this site's fleet token *and* reports a
+  different `site_id` on its public health endpoint, the machine row now says
+  **"now enrolled at site X — Remove this stale entry"** instead of the
+  generic "token mismatch" / "unreachable". Enrollment never notifies the
+  previous Controller when a Mac is moved, so this is the only place it can
+  be noticed. The extra unauthenticated health probe runs only after a token
+  rejection; healthy peers cost nothing extra. Nothing is removed
+  automatically — Remove stays the owner's click.
+- A same-site token rejection still reports "token mismatch" (a rotated or
+  mismatched fleet token, not a move).
+
+### Fixed — SQLite side files no longer block the verified updater
+
+- `hub.db-journal` / `-wal` / `-shm` (and the same for `execution_identity.db`)
+  were not ignored, so a write in flight made `git status` dirty and the
+  updater refused with "Working tree has local changes". They are ignored now,
+  matching the existing `setup_enrollment.db-*` rule.
+- Update Studio Hub normally. No endpoint, database schema, model, dependency,
+  launcher, enrollment, routing, or fleet Mac changes automatically.
+
 ## [2.18.3] — 2026-09-02
 
 ### Fixed — enrollment repair requests no longer stall as "queued"
