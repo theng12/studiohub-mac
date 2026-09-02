@@ -10,6 +10,21 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.18.1] — 2026-09-02
+
+### Fixed — durable worker execution-start proof
+
+- Studio Hub now writes the first authenticated worker execution-start timestamp
+  through to its existing job ledger as soon as it observes it during submission
+  or polling. A restart while that worker is still active therefore preserves
+  the proof; `run_started` remains separate live Hub timing and is never used
+  as execution evidence.
+- Malformed worker state and non-finite or overflow-sized timestamps are ignored
+  safely. Existing per-item webhooks now include the same nullable
+  `execution_started_at` field already returned by public job items.
+- Update Studio Hub normally. This patch adds no endpoint, database schema,
+  model, dependency, launcher, enrollment, routing, or fleet action.
+
 ## [2.18.0] — 2026-09-02
 
 ### Added — authoritative worker execution-start evidence for Hub jobs

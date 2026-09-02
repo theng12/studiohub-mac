@@ -1234,6 +1234,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.18.1", date: "2026-09-02", items: [
+    "The first authenticated worker <code>execution_started_at</code> is now written through immediately during submission or polling, so a Hub restart while work is active keeps that proof. Live <code>run_started</code> remains separate and is never execution evidence.",
+    "Malformed worker state and non-finite or overflow-sized timestamps are ignored safely. Existing per-item webhooks now carry the same nullable <code>execution_started_at</code> field as public job items.",
+    "Update Studio Hub normally. No endpoint, database schema, model, dependency, launcher, enrollment, routing, or fleet Mac changes automatically.",
+  ] },
   { v: "2.18.0", date: "2026-09-02", items: [
     "Hub job items now include <code>execution_started_at</code>: the first authenticated worker timestamp reported while work is running or terminal. Queued reports and Hub dispatch time are never treated as execution proof.",
     "The evidence survives retry, recovery, and Hub restart. Older completed jobs stay compatible and report no timestamp.",

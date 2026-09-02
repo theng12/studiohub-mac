@@ -424,6 +424,49 @@ async def test_connection_drop_recovers_completed_worker_without_duplicate(reset
     assert client.calls == 2
 
 
+@pytest.mark.asyncio
+async def test_worker_post_durably_records_execution_start_before_next_poll(reset, monkeypatch):
+    submitted = broker.submit_batch({
+        "modality": "image", "model": "a/b", "items": [{"prompt": "x"}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="running", tries=1, studio="image@mac-b")
+    ledger.save_batch(batch)
+    entered_sleep = asyncio.Event()
+    release_sleep = asyncio.Event()
+
+    async def pause_before_poll(_seconds):
+        entered_sleep.set()
+        await release_sleep.wait()
+
+    class PostClient:
+        async def post(self, *_args, **_kwargs):
+            return _PeerRouteResponse({"job": {
+                "id": "worker-1", "state": "running", "started_at": 12.5,
+            }})
+
+    monkeypatch.setattr(broker.asyncio, "sleep", pause_before_poll)
+    task = asyncio.create_task(broker._run_item(
+        PostClient(), batch, item,
+        {"id": "image@mac-b", "modality": "image", "machine": "mac-b",
+         "host": "127.0.0.1", "port": 47868},
+    ))
+    try:
+        await asyncio.wait_for(entered_sleep.wait(), timeout=0.5)
+        persisted = ledger.load_unfinished_batches()[0]
+        assert persisted["items"][0]["execution_started_at"] == 12.5
+
+        broker.batches.clear()
+        broker.restore_batches()
+        assert broker.batches[batch["id"]]["items"][0]["execution_started_at"] == 12.5
+    finally:
+        release_sleep.set()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
 def test_execution_started_at_uses_first_authenticated_running_worker_timestamp(reset):
     item = {"run_started": 1.0}
 
@@ -451,13 +494,29 @@ def test_execution_started_at_accepts_authenticated_terminal_worker_timestamp(re
     assert item["execution_started_at"] == 7.5
 
 
-@pytest.mark.parametrize("reported", [True, False, 0, -1, float("nan"), float("inf"), "7.5"])
+@pytest.mark.parametrize("reported", [
+    True, False, 0, -1, float("nan"), float("inf"), "7.5",
+    pytest.param(10 ** 10000, id="huge-integer"),
+])
 def test_execution_started_at_rejects_invalid_worker_timestamp(reset, reported):
     item = {}
 
     broker._record_worker_execution_started_at(
         item, {"state": "running", "started_at": reported},
     )
+
+    assert item.get("execution_started_at") is None
+
+
+@pytest.mark.parametrize("job", [
+    [],
+    {"state": [], "started_at": 7.5},
+    {"state": {}, "started_at": 7.5},
+])
+def test_execution_started_at_rejects_malformed_worker_state_without_raising(reset, job):
+    item = {}
+
+    broker._record_worker_execution_started_at(item, job)
 
     assert item.get("execution_started_at") is None
 
@@ -809,6 +868,20 @@ async def test_item_webhook_fires_once_on_terminal(reset):
     assert url == "http://cb"
     assert payload["index"] == 0 and payload["machine"] == "mac-b"
     assert payload["state"] == "done" and payload["total"] == 1 and payload["done"] == 1
+
+
+@pytest.mark.asyncio
+async def test_item_webhook_includes_authoritative_execution_start(reset):
+    r = broker.submit_batch({"modality": "image", "model": "a/b",
+                             "itemWebhook": "http://cb", "items": [{"prompt": "x"}]})
+    b = broker.batches[r["batch_id"]]
+    item = b["items"][0]
+    item.update(state="done", studio="image@mac-b", execution_started_at=12.5)
+    client = _CapClient()
+
+    await broker._post_item_webhook(client, b, item)
+
+    assert client.posts[0][1]["execution_started_at"] == 12.5
 
 
 @pytest.mark.asyncio
