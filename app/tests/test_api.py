@@ -1171,6 +1171,41 @@ def test_finished_jobs_remain_in_list_after_broker_memory_is_cleared(authed):
     assert exact["items"][0]["state"] == "done"
 
 
+def test_legacy_terminal_job_item_exposes_null_execution_started_at(authed):
+    from backend import broker, ledger
+
+    batch = {
+        "id": "legacy-terminal", "created_at": 123.0, "modality": "image",
+        "model": "org/model", "cancelled": False,
+        "items": [{"index": 0, "state": "done", "tries": 1}],
+    }
+    ledger.save_batch(batch)
+    broker.batches.pop(batch["id"], None)
+
+    item = authed.get(f"/api/hub/jobs/{batch['id']}").json()["items"][0]
+
+    assert item["execution_started_at"] is None
+
+
+def test_ledger_reloaded_job_item_exposes_execution_started_at(authed):
+    from backend import broker, ledger
+
+    batch = {
+        "id": "execution-started", "created_at": 123.0, "modality": "image",
+        "model": "org/model", "cancelled": False,
+        "items": [{
+            "index": 0, "state": "done", "tries": 1,
+            "execution_started_at": 55.25,
+        }],
+    }
+    ledger.save_batch(batch)
+    broker.batches.pop(batch["id"], None)
+
+    item = authed.get(f"/api/hub/jobs/{batch['id']}").json()["items"][0]
+
+    assert item["execution_started_at"] == 55.25
+
+
 def test_genstudio_execution_lease_renews_through_authenticated_api(client, authed):
     from datetime import UTC, datetime, timedelta
 

@@ -1105,6 +1105,7 @@ async def _post_item_webhook(client: httpx.AsyncClient, b: dict, item: dict):
             "asset_id": item.get("asset_id"),
             "runtime_s": item.get("runtime_s", item.get("duration_s")),
             "duration_s": item.get("runtime_s", item.get("duration_s")),  # legacy alias
+            "execution_started_at": safe_item.get("execution_started_at"),
             "terminal_result": terminal_result(b, item),
             "error_code": safe_item.get("error_code"),
             "error": safe_item.get("error"),
@@ -1173,6 +1174,7 @@ def public_item(b: dict, item: dict) -> dict:
     """Return a public job item without worker-local paths or worker URLs."""
     result = {k: v for k, v in item.items()
               if k not in {"artifact_path", "worker_artifact_url"}}
+    result["execution_started_at"] = item.get("execution_started_at")
     if item.get("state") == "done":
         result["artifact_url"] = hub_artifact_url(b, item)
         result["terminal_result"] = terminal_result(b, item)
@@ -1261,6 +1263,7 @@ async def _record_worker_success(client: httpx.AsyncClient, b: dict, item: dict,
     if _expire_genstudio_batch(b):
         await _signal_worker_cancel(client, item)
         return
+    _persist_worker_execution_started_at(b, item, job)
     if item.get("state") == "done" and item.get("asset_id"):
         return  # terminal polling/recovery is idempotent
     _record_worker_resource_usage(item, job)
@@ -1349,6 +1352,7 @@ async def _recover_worker_job(client, b: dict, item: dict, studio: dict,
             if jr.status_code >= 400:
                 return False  # 404/4xx means the worker no longer has the job
             job = jr.json().get("job") or {}
+            _persist_worker_execution_started_at(b, item, job)
             _record_worker_resource_usage(item, job)
             state = job.get("state")
             if state in ("queued", "running"):
@@ -1712,6 +1716,31 @@ def _record_worker_progress(item: dict, progress) -> None:
         item["last_progress_at"] = time.time()
 
 
+def _record_worker_execution_started_at(item: dict, job: object) -> bool:
+    """Record the first trustworthy worker-side execution-start proof."""
+    if item.get("execution_started_at") is not None:
+        return False
+    if not isinstance(job, dict) or job.get("state") not in (
+            "running", "done", "error", "cancelled"):
+        return False
+    started_at = job.get("started_at")
+    if type(started_at) not in (int, float):
+        return False
+    try:
+        if not math.isfinite(float(started_at)) or started_at <= 0:
+            return False
+    except OverflowError:
+        return False
+    item["execution_started_at"] = started_at
+    return True
+
+
+def _persist_worker_execution_started_at(b: dict, item: dict, job: object) -> None:
+    """Write through newly observed worker execution proof before more polling."""
+    if _record_worker_execution_started_at(item, job):
+        ledger.save_batch(b)
+
+
 _RESOURCE_USAGE_FIELDS = {
     "sampling": {
         "interval_seconds", "samples", "started_at", "finished_at",
@@ -1785,6 +1814,7 @@ def _record_worker_identity(item: dict, studio: dict, job: dict) -> None:
 
 def _record_worker_failure(item: dict, studio: dict, job: dict, t_start: float) -> None:
     """Retain the authenticated worker evidence needed to diagnose a failure."""
+    _record_worker_execution_started_at(item, job)
     _record_worker_identity(item, studio, job)
     _record_worker_resource_usage(item, job)
     code = job.get("error_code")
@@ -1979,6 +2009,7 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
         if r.status_code >= 400:
             raise _worker_http_error(r)
         job = r.json()["job"]
+        _persist_worker_execution_started_at(b, item, job)
         _record_worker_identity(item, studio, job)
         _record_worker_resource_usage(item, job)
         item["studio_job_id"] = job["id"]
@@ -2023,6 +2054,7 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             if jr.status_code >= 400:
                 raise _worker_http_error(jr)
             j = jr.json()["job"]
+            _persist_worker_execution_started_at(b, item, j)
             _record_worker_identity(item, studio, j)
             _record_worker_resource_usage(item, j)
             state = j.get("state")
