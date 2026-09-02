@@ -1234,6 +1234,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.18.0", date: "2026-09-02", items: [
+    "Hub job items now include <code>execution_started_at</code>: the first authenticated worker timestamp reported while work is running or terminal. Queued reports and Hub dispatch time are never treated as execution proof.",
+    "The evidence survives retry, recovery, and Hub restart. Older completed jobs stay compatible and report no timestamp.",
+    "Update Studio Hub normally. No endpoint, database schema, model, dependency, launcher, enrollment, routing, or fleet Mac changes automatically.",
+  ] },
   { v: "2.17.0", date: "2026-09-02", items: [
     "<b>Historical Stats now includes completed Subtitle work.</b> Subtitle totals, throughput, machine contribution, the app matrix, and Whisper model runtime now sit beside existing Image and Voice TTS history.",
     "Image and Voice TTS remain counted from generated output only, so their activity records cannot double-count a job. Only completed Subtitle activity is added; queued, running, failed, and cancelled states do not inflate output totals.",

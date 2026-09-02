@@ -415,12 +415,94 @@ async def test_connection_drop_recovers_completed_worker_without_duplicate(reset
         httpx.RemoteProtocolError("connection dropped"),
         {"id": "worker-1", "state": "done", "output_path": "/tmp/x.png",
          "output_url": "/api/generate/jobs/worker-1/image",
-         "duration_seconds": 81.0, "resolved_seed": 7},
+         "duration_seconds": 81.0, "resolved_seed": 7, "started_at": 42.5},
     ])
     ok = await broker._recover_worker_job(client, b, item, studio, {}, 0.0)
     assert ok is True
     assert item["state"] == "done" and item["asset_id"]
+    assert item["execution_started_at"] == 42.5
     assert client.calls == 2
+
+
+def test_execution_started_at_uses_first_authenticated_running_worker_timestamp(reset):
+    item = {"run_started": 1.0}
+
+    broker._record_worker_execution_started_at(
+        item, {"state": "queued", "started_at": 2.0},
+    )
+    broker._record_worker_execution_started_at(
+        item, {"state": "running", "started_at": 3.25},
+    )
+    broker._record_worker_execution_started_at(
+        item, {"state": "done", "started_at": 4.5},
+    )
+
+    assert item["execution_started_at"] == 3.25
+
+
+@pytest.mark.parametrize("state", ("done", "error", "cancelled"))
+def test_execution_started_at_accepts_authenticated_terminal_worker_timestamp(reset, state):
+    item = {}
+
+    broker._record_worker_execution_started_at(
+        item, {"state": state, "started_at": 7.5},
+    )
+
+    assert item["execution_started_at"] == 7.5
+
+
+@pytest.mark.parametrize("reported", [True, False, 0, -1, float("nan"), float("inf"), "7.5"])
+def test_execution_started_at_rejects_invalid_worker_timestamp(reset, reported):
+    item = {}
+
+    broker._record_worker_execution_started_at(
+        item, {"state": "running", "started_at": reported},
+    )
+
+    assert item.get("execution_started_at") is None
+
+
+@pytest.mark.asyncio
+async def test_recovery_records_terminal_worker_execution_start_on_failure(reset):
+    submitted = broker.submit_batch({
+        "modality": "image", "model": "a/b", "items": [{"prompt": "x"}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="running", studio="image@mac-b", studio_job_id="worker-1")
+    studio = {
+        "id": "image@mac-b", "modality": "image", "machine": "mac-b",
+        "host": "127.0.0.1", "port": 47868,
+    }
+
+    recovered = await broker._recover_worker_job(
+        _RecoveryClient([{"id": "worker-1", "state": "error", "started_at": 9.5}]),
+        batch, item, studio, {}, 0.0,
+    )
+
+    assert recovered is False
+    assert item["execution_started_at"] == 9.5
+
+
+def test_execution_started_at_survives_retry_and_ledger_reload(reset):
+    submitted = broker.submit_batch({
+        "modality": "image", "model": "a/b", "items": [{"prompt": "x"}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item["state"] = "running"
+    broker._record_worker_execution_started_at(
+        item, {"state": "running", "started_at": 12.5},
+    )
+
+    broker._clear_worker_attempt_evidence(item)
+    ledger.save_batch(batch)
+    broker.batches.clear()
+    broker.restore_batches()
+
+    restored = broker.batches[batch["id"]]["items"][0]
+    assert restored["state"] == "queued"
+    assert restored["execution_started_at"] == 12.5
 
 
 @pytest.mark.asyncio

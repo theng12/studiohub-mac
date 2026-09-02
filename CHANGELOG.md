@@ -10,6 +10,19 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.18.0] — 2026-09-02
+
+### Added — authoritative worker execution-start evidence for Hub jobs
+
+- Every public Hub job item now includes nullable `execution_started_at`. The
+  Hub records the first finite positive timestamp reported by its authenticated
+  worker only once that worker is running or terminal; queued reports and the
+  Hub's own dispatch time are never presented as execution proof.
+- The evidence is durable across dispatch retries, worker-job recovery, and
+  Hub restarts. Older completed jobs remain compatible and return `null`.
+- Update Studio Hub normally. This release adds no endpoint, database schema,
+  model, dependency, launcher, enrollment, routing, or fleet action.
+
 ## [2.17.0] — 2026-09-02
 
 ### Added — complete Image, Voice TTS, and Subtitle history in Stats
