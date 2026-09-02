@@ -69,3 +69,4 @@ release_reconciliation.json*
 controller_settings.json.repair.lock
 fleet_downloads.json
 auto_update/
+.venv/
