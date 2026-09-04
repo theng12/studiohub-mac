@@ -1234,6 +1234,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.18.6", date: "2026-09-05", items: [
+    "<b>Fixed:</b> a re-enrolled Mac now starts with clean live activity, even when an Agent replays an old completed job. Its new registration gets a fresh state transition without claiming uptime before the Controller has observed it.",
+    "Retired Macs no longer influence active Fleet Stats performance. Remove now shows an error when the Controller rejects it and confirms the machine, Controller/site, closed epoch, and absent active registry row before refreshing.",
+  ] },
   { v: "2.18.5", date: "2026-09-05", items: [
     "<b>Fixed:</b> a removed Mac no longer remains on active Fleet Stats because of old retained activity. Remove now confirms the exact machine, controller/site, closed registration epoch, and that its active registry row is gone.",
     "If the same stable Mac is enrolled again, its active board starts fresh using this Controller’s receipt time, so a stale worker clock cannot make it look busy or long idle. Historical Stats and retired-machine filters keep their retained work as before.",
@@ -6904,7 +6908,18 @@ async function loadMachines() {
 }
 async function removeMachine(m) {
   if (!confirm(`Remove all of ${m}'s studios from the Hub? (The machine itself is untouched.)`)) return;
-  await api(`/api/hub/registry/machines/${encodeURIComponent(m)}`, { method: "DELETE" });
+  const response = await api(`/api/hub/registry/machines/${encodeURIComponent(m)}`, { method: "DELETE" });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    alert(`Could not remove ${m}: ${result.detail || `HTTP ${response.status}`}`);
+    return;
+  }
+  if (result.machine !== m || !result.controller_id || !result.site_id ||
+      !Number.isFinite(result.epoch_closed_at) || result.registry_absent !== true) {
+    alert(`Could not verify removal of ${m}; refresh and check the Controller registry.`);
+    return;
+  }
+  alert(`Removed ${result.machine} from controller ${result.controller_id} at site ${result.site_id} (epoch closed ${result.epoch_closed_at}; no active registry row).`);
   await refresh();
   renderMachines();
 }

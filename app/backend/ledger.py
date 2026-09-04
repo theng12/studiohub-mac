@@ -321,6 +321,7 @@ def record_activity_ownership(*, machine: str, studio: str, job_id: str,
 
 def record_machine_state(*, machine: str, reachable: bool, working: bool,
                          state: str = "unknown", observed_at: float | None = None,
+                         since_s: float | None = None,
                          conn: sqlite3.Connection | None = None) -> bool:
     """Store only actual machine reachability/working transitions."""
     observed_at = float(time.time() if observed_at is None else observed_at)
@@ -328,10 +329,14 @@ def record_machine_state(*, machine: str, reachable: bool, working: bool,
     if conn is None:
         conn = _conn()
     try:
+        where, args = ["machine = ?"], [machine]
+        if since_s is not None:
+            where.append("observed_at >= ?")
+            args.append(float(since_s))
         previous = conn.execute(
             "SELECT reachable, working, state FROM machine_state_transitions "
-            "WHERE machine = ? ORDER BY observed_at DESC, id DESC LIMIT 1",
-            (machine,),
+            f"WHERE {' AND '.join(where)} ORDER BY observed_at DESC, id DESC LIMIT 1",
+            args,
         ).fetchone()
         current = (int(bool(reachable)), int(bool(working)))
         if previous and (previous["reachable"], previous["working"], previous["state"]) == (*current, state):
@@ -457,13 +462,19 @@ def reconcile_machine_registrations(machines: set[str], *,
     return {row["machine"]: dict(row) for row in rows}
 
 
-def machine_registration_epoch(machine: str) -> dict | None:
-    with _conn() as conn:
+def machine_registration_epoch(machine: str, *, conn: sqlite3.Connection | None = None) -> dict | None:
+    owns_connection = conn is None
+    if conn is None:
+        conn = _conn()
+    try:
         row = conn.execute(
             "SELECT machine, active_since, closed_at, controller_id, site_id "
             "FROM machine_registration_epochs WHERE machine = ? "
             "ORDER BY id DESC LIMIT 1", (machine,),
         ).fetchone()
+    finally:
+        if owns_connection:
+            conn.close()
     return _registration_epoch(row)
 
 

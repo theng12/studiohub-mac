@@ -334,9 +334,14 @@ def _utilization(machine: str, since_s: float, now: float, *, partial: bool,
     before = [row for row in rows if row["observed_at"] <= since_s]
     after = [row for row in rows if row["observed_at"] > since_s]
     if not before:
-        return {"ratio": None, "evidence": "partial"}
-    current = before[-1]
-    cursor = since_s
+        if not after:
+            return {"ratio": None, "evidence": "partial"}
+        current, after = after[0], after[1:]
+        cursor = current["observed_at"]
+        partial = True
+    else:
+        current = before[-1]
+        cursor = since_s
     reachable_s = working_s = 0.0
     for row in [*after, {**current, "observed_at": now}]:
         end = min(now, row["observed_at"])
@@ -407,20 +412,26 @@ def observe_poll(registry: list[dict], statuses: dict, batches: dict,
                 hub_owned=row["source"] == "job", observed_at=row.get("observed_at", now),
                 conn=conn,
             )
-        for machine, studios in _machine_groups(registry).items():
+        grouped = _machine_groups(registry)
+        for machine, studios in grouped.items():
+            epoch = ledger.machine_registration_epoch(machine, conn=conn)
+            active_since = epoch["active_since"] if epoch else None
             status_rows = [statuses.get(studio.get("id")) or {} for studio in studios]
             reachable = any(_reachable(row.get("status")) for row in status_rows)
             working = any(row["machine"] == machine and row["state"] in ACTIVE_STATES
                           for row in live)
-            state, _, _, _ = _state_at(
-                machine, statuses, studios, live,
-                ledger.activity_events(
+            events = [
+                row for row in ledger.activity_events(
                     machine=machine, since_s=now - RETENTION_S, conn=conn,
-                ), now,
+                )
+                if active_since is None or row["observed_at"] >= active_since
+            ]
+            state, _, _, _ = _state_at(
+                machine, statuses, studios, live, events, now,
             )
             ledger.record_machine_state(
                 machine=machine, reachable=reachable, working=working,
-                state=state, observed_at=now, conn=conn,
+                state=state, observed_at=now, since_s=active_since, conn=conn,
             )
         ledger.prune_activity(now - RETENTION_S, conn=conn)
 

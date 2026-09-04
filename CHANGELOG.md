@@ -10,6 +10,21 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.18.6] — 2026-09-05
+
+### Fixed — a re-enrolled Mac now starts with clean live-state coverage
+
+- Replayed terminal worker activity can no longer cross a removal/re-enrollment
+  boundary: active state uses the immutable first Controller receipt, while
+  polls record a new state transition for the new registration epoch even when
+  the visible state is unchanged.
+- Fleet utilization now begins at the first observed state in a new epoch and
+  is labelled partial rather than inventing uptime before that observation.
+  Retired machines no longer affect active-board performance comparisons.
+- Remove now reports a failed request without refreshing the list, and only
+  refreshes after displaying the returned machine, controller/site, epoch, and
+  active-registry confirmation. Failed removal cannot create an empty epoch.
+
 ## [2.18.5] — 2026-09-05
 
 ### Fixed — retired Macs no longer linger in active Fleet Stats

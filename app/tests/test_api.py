@@ -1300,6 +1300,15 @@ def test_reenrollment_replay_keeps_the_old_terminal_event_out_of_active_stats(au
     assert row["completed"] == 0
 
 
+def test_failed_machine_delete_does_not_create_a_registration_epoch(authed):
+    from backend import ledger
+
+    response = authed.delete("/api/hub/registry/machines/not-on-controller-0300")
+
+    assert response.status_code == 404
+    assert ledger.machine_registration_epoch("not-on-controller-0300") is None
+
+
 def test_cannot_remove_local(authed):
     assert authed.request("DELETE", "/api/hub/registry/machines/local").status_code == 400
 

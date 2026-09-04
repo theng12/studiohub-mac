@@ -4123,6 +4123,8 @@ def remove_machine_route(machine: str):
             coordinator._require_registry_rows_current(current)
             studio_ids = {studio["id"] for studio in monitor.registry
                           if studio.get("machine") == machine}
+            if not studio_ids:
+                raise HTTPException(404, f"no registered studios for machine {machine!r}")
             ledger.begin_machine_removal(
                 machine,
                 controller_id=settings.get("controller_id"),
