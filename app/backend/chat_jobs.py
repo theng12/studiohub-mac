@@ -242,6 +242,7 @@ def create_batch(payload: dict) -> tuple[dict, bool]:
     batch = {
         "id": uuid.uuid4().hex[:12], "idempotency_key": key,
         "created_at": now, "updated_at": now, "finished_at": None,
+        "last_dispatched_at": 0,
         "cancelled": False, "model": model, "kind": kind, "label": label,
         "project": project, "episode": episode, "packs": packs,
         "genstudio_execution": prepared.evidence,
@@ -434,7 +435,7 @@ async def _eligible_studios(
                 or not studio_enabled(machine, studio["id"])
                 or machine in broker.busy_machines()):
             continue
-        catalog = await monitor.get_catalog(studio)
+        catalog = await monitor.scheduling_catalog(studio)
         entry = next((item for item in (catalog or {}).get("models", [])
                       if item.get("repo") == model or model in (item.get("aliases") or [])), None)
         if not entry or not broker.is_cached(entry):
@@ -459,26 +460,40 @@ async def _eligible_studios(
             ):
                 continue
         eligible.append(studio)
+    eligible.sort(key=lambda studio: (
+        broker._studio_total_memory_gb(studio), studio["id"],
+    ))
     return eligible
 
 
-async def dispatch_once(monitor) -> int:
-    active = sorted(
-        (batch for batch in batches.values() if not batch.get("cancelled")),
-        key=lambda batch: batch["created_at"],
+def has_queued_work() -> bool:
+    """Whether Chat has work ready to compete for a shared physical Mac."""
+    now = time.time()
+    return any(
+        not batch.get("cancelled")
+        and not execution_identity.lease_expired(batch.get("genstudio_execution"))
+        and any(
+            pack.get("state") == "queued"
+            and (not pack.get("retry_at") or pack["retry_at"] <= now)
+            for pack in batch.get("packs") or []
+        )
+        for batch in batches.values()
     )
-    for position, batch in enumerate(active):
-        if _expire_genstudio_batch(batch):
-            _save(batch)
+
+
+async def has_dispatchable_work(monitor, machine: str) -> bool:
+    """Whether this lane can actually use ``machine`` on its next turn."""
+    now = time.time()
+    for batch in batches.values():
+        if (batch.get("cancelled")
+                or execution_identity.lease_expired(batch.get("genstudio_execution"))):
             continue
-        now = time.time()
-        queued_all = [pack for pack in batch["packs"] if pack["state"] == "queued"]
-        queued = [pack for pack in queued_all if not pack.get("retry_at")
-                  or pack["retry_at"] <= now]
+        queued = [
+            pack for pack in batch.get("packs") or []
+            if pack.get("state") == "queued"
+            and (not pack.get("retry_at") or pack["retry_at"] <= now)
+        ]
         if not queued:
-            retry_times = [pack["retry_at"] for pack in queued_all if pack.get("retry_at")]
-            batch["queue_note"] = (f"Automatic retry in {max(1, round(min(retry_times) - now))}s"
-                                   if retry_times else None)
             continue
         output_limits = [
             value
@@ -489,47 +504,125 @@ async def dispatch_once(monitor) -> int:
             )
             if isinstance(value, int) and not isinstance(value, bool) and value > 0
         ]
-        required_output_tokens = max(output_limits, default=0)
         eligible = await _eligible_studios(
             monitor,
             batch["model"],
             batch.get("genstudio_execution"),
-            required_output_tokens,
+            max(output_limits, default=0),
         )
-        if not eligible:
-            batch["queue_note"] = "Waiting for a free online Chat Studio with this model cached"
-            continue
-
-        assigned = 0
-        batch["queue_note"] = None
-        for studio, pack in zip(eligible, queued):
-            machine = studio.get("machine", "local")
-            catalog = await monitor.get_catalog(studio)
+        for studio in eligible:
+            if studio.get("machine", "local") != machine:
+                continue
+            catalog = await monitor.scheduling_catalog(studio)
             entry = next((item for item in (catalog or {}).get("models", [])
                           if item.get("repo") == batch["model"]
-                          or batch["model"] in (item.get("aliases") or [])), {})
-            decision, note = await broker.prepare_machine_memory(
-                monitor._client, studio, batch["model"], entry)
-            if decision != "run":
-                batch["queue_note"] = f"{studio['id']}: {note}"
+                          or batch["model"] in (item.get("aliases") or [])), None)
+            if entry and broker.memory_admission_dispatchable(
+                    studio, batch["model"], entry):
+                return True
+    return False
+
+
+async def dispatch_once(monitor) -> int:
+    assigned = 0
+    while True:
+        made_progress = False
+        active = sorted(
+            (batch for batch in batches.values() if not batch.get("cancelled")),
+            key=lambda batch: (
+                batch.get("last_dispatched_at") or 0,
+                batch["created_at"],
+            ),
+        )
+        for position, batch in enumerate(active):
+            if _expire_genstudio_batch(batch):
+                _save(batch)
                 continue
-            owner = f"chat:{batch['id']}:{pack['index']}"
-            if not broker.acquire_external_machine(machine, owner):
+            now = time.time()
+            queued_all = [pack for pack in batch["packs"]
+                          if pack["state"] == "queued"]
+            queued = [pack for pack in queued_all if not pack.get("retry_at")
+                      or pack["retry_at"] <= now]
+            if not queued:
+                retry_times = [pack["retry_at"] for pack in queued_all
+                               if pack.get("retry_at")]
+                batch["queue_note"] = (
+                    f"Automatic retry in {max(1, round(min(retry_times) - now))}s"
+                    if retry_times else None
+                )
                 continue
-            pack.update(state="running", studio=studio["id"], error=None, retry_at=None,
-                        started_at=time.time(), tries=pack["tries"] + 1)
-            busy_studios.add(studio["id"])
-            task = asyncio.create_task(_run_pack(monitor, batch, pack, studio, owner))
-            _pack_tasks[(batch["id"], pack["index"])] = task
-            assigned += 1
-        if assigned:
-            _save(batch)
-            older = batch.get("episode") or batch.get("project") or batch["id"]
-            for waiting in active[position + 1:]:
-                if any(pack["state"] == "queued" for pack in waiting["packs"]):
-                    waiting["queue_note"] = f"Waiting behind older batch {older}"
-            return assigned
-    return 0
+            output_limits = [
+                value
+                for pack in queued
+                for value in (
+                    pack.get("params", {}).get("max_tokens")
+                    or pack.get("params", {}).get("max_completion_tokens"),
+                )
+                if isinstance(value, int) and not isinstance(value, bool)
+                and value > 0
+            ]
+            required_output_tokens = max(output_limits, default=0)
+            eligible = await _eligible_studios(
+                monitor,
+                batch["model"],
+                batch.get("genstudio_execution"),
+                required_output_tokens,
+            )
+            if not eligible:
+                batch["queue_note"] = (
+                    "Waiting for a free online Chat Studio with this model cached"
+                )
+                continue
+
+            batch["queue_note"] = None
+            pack = queued[0]
+            dispatched_this_batch = False
+            for studio in eligible:
+                machine = studio.get("machine", "local")
+                from . import transcription_jobs
+                if not broker.external_dispatch_allowed(
+                        machine, "chat",
+                        other_lane_has_work=await transcription_jobs.has_dispatchable_work(
+                            monitor, machine)):
+                    continue
+                catalog = await monitor.scheduling_catalog(studio)
+                entry = next((item for item in (catalog or {}).get("models", [])
+                              if item.get("repo") == batch["model"]
+                              or batch["model"] in (item.get("aliases") or [])), {})
+                decision, note = await broker.prepare_machine_memory(
+                    monitor._client, studio, batch["model"], entry)
+                if decision != "run":
+                    broker.note_external_memory_block(machine, "chat")
+                    batch["queue_note"] = f"{studio['id']}: {note}"
+                    continue
+                owner = f"chat:{batch['id']}:{pack['index']}"
+                if not broker.acquire_external_machine(machine, owner):
+                    continue
+                broker.note_external_dispatch(machine, "chat")
+                pack.update(
+                    state="running", studio=studio["id"], error=None,
+                    retry_at=None, started_at=time.time(),
+                    tries=pack["tries"] + 1,
+                )
+                batch["last_dispatched_at"] = time.time()
+                busy_studios.add(studio["id"])
+                task = asyncio.create_task(
+                    _run_pack(monitor, batch, pack, studio, owner)
+                )
+                _pack_tasks[(batch["id"], pack["index"])] = task
+                _save(batch)
+                assigned += 1
+                made_progress = True
+                dispatched_this_batch = True
+                break
+            if dispatched_this_batch and position + 1 < len(active):
+                older = batch.get("episode") or batch.get("project") or batch["id"]
+                for waiting in active[position + 1:]:
+                    if any(pack["state"] == "queued" for pack in waiting["packs"]):
+                        waiting["queue_note"] = f"Waiting behind older batch {older}"
+        if not made_progress:
+            break
+    return assigned
 
 
 async def _run_pack(monitor, batch: dict, pack: dict, studio: dict, owner: str) -> None:
@@ -771,3 +864,4 @@ def reset_for_tests() -> None:
     _dispatcher_task = None
     _shutting_down = False
     broker._external_machine_leases.clear()
+    broker._external_lane_turn.clear()

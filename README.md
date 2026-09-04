@@ -379,7 +379,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/memory` | Read model-memory policy, loaded-model state, friendly process title, and reachability for every model-hosting Studio |
 | `PUT /api/hub/memory-policy` | Apply `{mode, studio_ids?}` using `performance`, `balanced`, `memory_saver`, or `immediate` |
 | `POST /api/hub/memory/release` | Release idle model/accelerator memory on selected Studios; returns one result per worker |
-| `GET /api/hub/memory-admission` | Read catalog, Hub-default, and effective total/free RAM floors for locally brokered Image, Voice, Music, and Video models |
+| `GET /api/hub/memory-admission` | Read catalog, Hub-default, and effective total/free RAM floors for locally brokered Image, Voice, Transcription, Music, and Video models |
 | `PUT /api/hub/memory-admission` · `DELETE /api/hub/memory-admission?model=...` | Save `{model, min_total_memory_gb, min_free_memory_gb}` or reset one model to its visible Hub default |
 | `GET /api/releases` | Current Hub version and complete release details read from the shipped changelog |
 | `GET /api/hub/summary` | One-shot dashboard payload (studios + resources + queues) |
@@ -417,6 +417,12 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/recipes/run` | Run a recipe chain (`{recipe, brief}`) |
 | `GET /api/hub/recipes/runs[/{id}]` | Recipe run status |
 | `POST /api/hub/director` | `{brief, auto_run?}` — LLM plans a recipe from plain English |
+
+The audited candidate rows returned by `GET /api/hub/model-exposures` include
+the same additive physical-capacity evidence used by GenStudio: each exact
+candidate `supply` has `eligible_physical_slots_total`, and each machine row
+has `capacity_eligible`. Existing `available_physical_slots` remains the
+current free-slot observation.
 
 ### Shared voice API examples
 
@@ -936,9 +942,10 @@ token may be used. Unlike the normal operator API, this machine-to-machine
 contract requires a header token even from loopback; browser sessions and
 cookies are not accepted.
 
-Schema `studiohub.site-capabilities`, version `2`, includes controller/site
+Schema `studiohub.site-capabilities`, version `3`, includes controller/site
 identity, machine hardware profiles, worker readiness and shared physical-Mac
-capacity, supported operations, and sanitized model controls. A model's
+capacity, separate total eligible and current available capacity, supported
+operations, and sanitized model controls. A model's
 `runtime_revision` is populated only when the Studio catalog reports a full
 immutable hash. Otherwise it remains `null` with
 `availability.revision_pinning_ready=false`; Studio Hub never invents a model

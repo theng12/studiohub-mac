@@ -176,6 +176,72 @@ def _controls(model: dict, modality: str) -> dict:
     return controls
 
 
+def _candidate_available_slots(candidate: dict | None) -> int | None:
+    if not isinstance(candidate, dict):
+        return None
+    capacity = candidate.get("capacity")
+    if not isinstance(capacity, dict):
+        return None
+    value = capacity.get("available_slots")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return max(0, value)
+
+
+def _capacity_eligible(model: dict, *, online: bool, ready: bool,
+                       drained: bool, maintenance: bool,
+                       machine_quarantined: bool,
+                       memory_capacity_eligible: bool | None) -> bool:
+    """Check static model/worker gates, intentionally excluding occupancy."""
+    return bool(
+        online and ready and not drained and not maintenance
+        and not machine_quarantined
+        and model.get("runtime_compatible") is not False
+        and model.get("hub_ready") is not False
+        and not bool(model.get("hub_catalog_stale"))
+        and not bool(model.get("hub_catalog_error"))
+        and bool(model.get("hub_cached"))
+        and memory_capacity_eligible is not False
+        and model.get("qualified_revision_match") is not False
+        and model.get("execution_ready") is not False
+    )
+
+
+def _catalog_reports_busy(model: dict, candidate: dict | None,
+                          studio: dict, status: dict,
+                          protections: dict[str, dict]) -> bool:
+    """Return true only for a usable worker whose catalog reports it busy."""
+    if _candidate_available_slots(candidate) != 0:
+        return False
+    machine = studio.get("machine", "local")
+    if status.get("status") != "up" or status.get("health_recovering"):
+        return False
+    if (not machine_enabled(machine)
+            or not studio_enabled(machine, studio.get("id"))
+            or broker.in_maintenance(studio.get("id"))
+            or bool((protections.get(machine) or {}).get("quarantined"))):
+        return False
+    if (not model.get("hub_cached")
+            or model.get("hub_catalog_stale")
+            or model.get("hub_catalog_error")
+            or model.get("runtime_compatible") is False
+            or model.get("hub_ready") is False
+            or model.get("qualified_revision_match") is False
+            or model.get("execution_ready") is False):
+        return False
+    if memory_admission.applies_to(model.get("hub_modality")):
+        admission = memory_admission.describe(
+            str(model.get("repo") or model.get("model_id") or "unknown"),
+            model,
+        )
+        host_known, host = _machine_host(machine)
+        if host_known and host:
+            total_floor = admission.get("effective_min_total_memory_gb") or 0
+            if float(host.get("total_gb") or 0) < total_floor:
+                return False
+    return True
+
+
 def _model_capability(model: dict, studio: dict, worker: dict,
                       managed_release_reason: str | None = None) -> dict:
     modality = str(model.get("hub_modality") or studio.get("modality") or "unknown")
@@ -195,34 +261,73 @@ def _model_capability(model: dict, studio: dict, worker: dict,
         execution_ready = None
     admission = None
     memory_ready = None
+    memory_capacity_eligible = None
     if memory_admission.applies_to(modality):
         admission = memory_admission.describe(repo, model)
         host_known, host = _machine_host(studio.get("machine", "local"))
         if host_known and host:
             total_floor = admission.get("effective_min_total_memory_gb") or 0
             free_floor = admission.get("effective_min_free_memory_gb") or 0
-            memory_ready = bool(
-                float(host.get("total_gb") or 0) >= total_floor
-                and float(host.get("available_gb") or 0) >= free_floor
-            )
+            total_memory = host.get("total_gb")
+            available_memory = host.get("available_gb")
+            if (isinstance(total_memory, (int, float))
+                    and not isinstance(total_memory, bool)):
+                memory_capacity_eligible = bool(
+                    float(total_memory) >= total_floor
+                )
+                memory_ready = bool(
+                    memory_capacity_eligible
+                    and isinstance(available_memory, (int, float))
+                    and not isinstance(available_memory, bool)
+                    and float(available_memory) >= free_floor
+                )
+            else:
+                # A remote worker can be reachable while its host telemetry is
+                # absent. It may still report a free worker slot, but it cannot
+                # enter the durable physical-capacity denominator without
+                # evidence for the model's RAM floor.
+                memory_capacity_eligible = not bool(total_floor)
+                memory_ready = None
             admission = {
                 **admission,
-                "observed_total_memory_gb": host.get("total_gb"),
-                "observed_available_memory_gb": host.get("available_gb"),
+                "observed_total_memory_gb": total_memory,
+                "observed_available_memory_gb": available_memory,
                 "eligible_now": memory_ready,
             }
         else:
+            total_floor = admission.get("effective_min_total_memory_gb") or 0
+            memory_capacity_eligible = not bool(total_floor)
             admission = {**admission, "observed_total_memory_gb": None,
                          "observed_available_memory_gb": None,
                          "eligible_now": None}
+    reported_available_slots = _candidate_available_slots(candidate)
+    catalog_error = bool(str(model.get("hub_catalog_error") or "").strip())
     catalog_stale = bool(model.get("hub_catalog_stale"))
     model_ready = (
-        runtime_compatible and subsystem_ready and not catalog_stale and installed
+        runtime_compatible and subsystem_ready and not catalog_error
+        and not catalog_stale and installed
         and memory_ready is not False
         and qualified_revision_match is not False
         and execution_ready is not False
     )
-    available_now = bool(worker["available_capacity"]["slots"] and model_ready)
+    capacity_eligible = _capacity_eligible(
+        model,
+        online=worker["online"],
+        ready=worker["ready"],
+        drained=worker["drained"],
+        maintenance=worker["maintenance"],
+        machine_quarantined=worker["machine_quarantined"],
+        memory_capacity_eligible=memory_capacity_eligible,
+    )
+    available_now = bool(
+        worker["available_capacity"]["slots"] and model_ready
+        and (reported_available_slots is None or reported_available_slots > 0)
+    )
+    catalog_busy = (
+        reported_available_slots is not None
+        and reported_available_slots <= 0
+        and model_ready
+    )
     if not worker["online"]:
         reason = "worker_offline"
     elif worker["maintenance"]:
@@ -235,6 +340,8 @@ def _model_capability(model: dict, studio: dict, worker: dict,
         reason = "physical_machine_busy"
     elif not worker["ready"]:
         reason = "worker_not_ready"
+    elif catalog_error:
+        reason = "catalog_error"
     elif catalog_stale:
         reason = "catalog_stale"
     elif qualified_revision_match is False:
@@ -253,10 +360,13 @@ def _model_capability(model: dict, studio: dict, worker: dict,
         reason = "waiting_for_memory"
     elif not installed:
         reason = "model_not_installed"
+    elif catalog_busy:
+        reason = "worker_busy"
     else:
         reason = None
     if managed_release_reason is not None:
         available_now = False
+        capacity_eligible = False
         reason = managed_release_reason
 
     if candidate:
@@ -318,6 +428,7 @@ def _model_capability(model: dict, studio: dict, worker: dict,
             "qualified_revision_match": qualified_revision_match,
             "execution_ready": execution_ready,
             "available_now": available_now,
+            "capacity_eligible": capacity_eligible,
             "reason": reason,
         },
     }
@@ -342,7 +453,10 @@ def _model_supply(workers: list[dict]) -> list[dict]:
                 "machines": [],
             })
             availability = model["availability"]
-            busy = bool(worker["busy"] or worker["physical_machine_busy"])
+            busy = bool(
+                worker["busy"] or worker["physical_machine_busy"]
+                or availability.get("reason") == "worker_busy"
+            )
             row["machines"].append({
                 "physical_machine_id": worker["physical_machine_id"],
                 "service_id": worker["service_id"],
@@ -353,7 +467,10 @@ def _model_supply(workers: list[dict]) -> list[dict]:
                 "quarantined": worker["machine_quarantined"],
                 "installed": availability.get("installed"),
                 "availability_reason": availability.get("reason"),
-                "available_slots": worker["available_capacity"]["slots"],
+                "available_slots": int(bool(availability.get("available_now"))),
+                "capacity_eligible": bool(
+                    availability.get("capacity_eligible")
+                ),
                 "catalog_observation": model.get("catalog_observation"),
                 "memory_admission": model.get("memory_admission"),
             })
@@ -393,6 +510,10 @@ def _model_supply(workers: list[dict]) -> list[dict]:
             machine["physical_machine_id"] for machine in machines
             if machine["ready"] and machine["available_slots"] > 0
         })
+        row["eligible_physical_slots_total"] = len({
+            machine["physical_machine_id"] for machine in machines
+            if machine["capacity_eligible"]
+        })
         row["machine_ids"] = sorted(unique)
         observed = [
             machine["catalog_observation"].get("observed_at")
@@ -410,6 +531,53 @@ def _model_supply(workers: list[dict]) -> list[dict]:
         row["operation"], row["internal_model_id"],
         row.get("runtime_revision") or "", row.get("contract_hash") or "",
     ))
+
+
+def _capacity_evidence(model_supply: list[dict]) -> dict:
+    """Reduce exact model observations into deduplicated capacity evidence."""
+    eligible_machines: set[str] = set()
+    eligible_services: set[tuple[str, str]] = set()
+    available_machines: set[str] = set()
+    by_operation: dict[str, dict[str, set]] = {}
+    for supply in model_supply:
+        operation = supply["operation"]
+        evidence = by_operation.setdefault(operation, {
+            "eligible_machines": set(),
+            "eligible_services": set(),
+            "available_machines": set(),
+        })
+        for machine in supply["machines"]:
+            physical_id = machine["physical_machine_id"]
+            service_key = (physical_id, machine["service_id"])
+            if machine["capacity_eligible"]:
+                eligible_machines.add(physical_id)
+                eligible_services.add(service_key)
+                evidence["eligible_machines"].add(physical_id)
+                evidence["eligible_services"].add(service_key)
+            if machine["ready"] and machine["available_slots"] > 0:
+                available_machines.add(physical_id)
+                evidence["available_machines"].add(physical_id)
+
+    operation_totals = {
+        operation: {
+            "eligible_physical_machine_slots_total": len(
+                values["eligible_machines"]
+            ),
+            "eligible_worker_service_slots_total": len(
+                values["eligible_services"]
+            ),
+            "available_physical_machine_slots": len(
+                values["available_machines"]
+            ),
+        }
+        for operation, values in by_operation.items()
+    }
+    return {
+        "eligible_physical_machine_slots_total": len(eligible_machines),
+        "eligible_worker_service_slots_total": len(eligible_services),
+        "available_physical_machine_slots": len(available_machines),
+        "by_operation": operation_totals,
+    }
 
 
 def _machine_host(machine: str) -> tuple[bool, dict | None]:
@@ -507,10 +675,38 @@ async def build_snapshot(monitor, *, app_version: str, settings: dict,
                 "hub_exposure": exposure,
             })
 
+    studios_by_id = {studio["id"]: studio for studio in monitor.registry}
+    protections = broker.machine_protection_snapshot()
+    catalog_busy_studios = set()
+    catalog_busy_machines = set()
+    for studio_id, models in models_by_studio.items():
+        studio = studios_by_id.get(studio_id)
+        if not studio:
+            continue
+        status = monitor.status.get(studio_id, {})
+        if any(_catalog_reports_busy(model, model.get("hub_candidate"),
+                                     studio, status, protections)
+               for model in models):
+            catalog_busy_studios.add(studio_id)
+            catalog_busy_machines.add(studio.get("machine", "local"))
+
     busy = set(broker.busy_studios()) | set(chat_jobs.busy_studios) \
         | set(transcription_jobs.busy_studios)
     busy_machines = broker.busy_machines()
-    protections = broker.machine_protection_snapshot()
+    for studio in monitor.registry:
+        status = monitor.status.get(studio["id"], {})
+        health = status.get("health")
+        health_busy = bool(status.get("health_busy"))
+        if isinstance(health, dict):
+            health_busy = health_busy or bool(health.get("busy"))
+            generation = health.get("generation")
+            if isinstance(generation, dict):
+                health_busy = health_busy or bool(generation.get("busy"))
+        if health_busy:
+            busy.add(studio["id"])
+            busy_machines.add(studio.get("machine", "local"))
+    busy.update(catalog_busy_studios)
+    busy_machines.update(catalog_busy_machines)
     workers = []
     for studio in monitor.registry:
         studio_id = studio["id"]
@@ -621,9 +817,10 @@ async def build_snapshot(monitor, *, app_version: str, settings: dict,
         or not workers
         or all(worker["drained"] for worker in workers)
     )
-    available_machine_slots = sum(
-        machine["available_capacity"]["worker_slots"] for machine in machines
-    )
+    model_supply = _model_supply(workers)
+    capacity_evidence = _capacity_evidence(model_supply)
+    for operation, totals in capacity_evidence["by_operation"].items():
+        by_operation.setdefault(operation, {}).update(totals)
     controller_release = None
     if isinstance(managed_release, dict) and managed_release.get("desired"):
         controller_release = managed_release.get("controller") or _missing_release_component(
@@ -652,14 +849,22 @@ async def build_snapshot(monitor, *, app_version: str, settings: dict,
         },
         "capacity": {
             "queue_depth": base_capacity.get("queue_depth", 0),
-            "available_physical_machine_slots": available_machine_slots,
+            "available_physical_machine_slots": capacity_evidence[
+                "available_physical_machine_slots"
+            ],
+            "eligible_physical_machine_slots_total": capacity_evidence[
+                "eligible_physical_machine_slots_total"
+            ],
+            "eligible_worker_service_slots_total": capacity_evidence[
+                "eligible_worker_service_slots_total"
+            ],
             "eligible_worker_services": sum(
                 worker["available_capacity"]["slots"] for worker in workers
             ),
             "shared_physical_machine_slots": True,
             "by_operation": by_operation,
         },
-        "model_supply": _model_supply(workers),
+        "model_supply": model_supply,
         "machines": machines,
         "workers": workers,
     }

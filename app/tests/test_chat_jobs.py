@@ -84,7 +84,7 @@ async def test_memory_guard_handoff_requeues_without_consuming_chat_attempt(
     async def post(*_args, **_kwargs):
         return _CapacityResponse()
 
-    monkeypatch.setattr(monitor, "get_catalog", catalog)
+    monkeypatch.setattr(monitor, "scheduling_catalog", catalog)
     monkeypatch.setattr(monitor._client, "post", post)
     monkeypatch.setattr(broker, "release_idle_siblings", handoff)
 
@@ -199,7 +199,7 @@ async def test_genstudio_chat_preserves_verified_usage_and_revision(
             model_revision=revision,
         )
 
-    monkeypatch.setattr(monitor, "get_catalog", catalog)
+    monkeypatch.setattr(monitor, "scheduling_catalog", catalog)
     monkeypatch.setattr(monitor._client, "post", post)
     assert await jobs.dispatch_once(monitor) == 1
     await asyncio.gather(*list(jobs._pack_tasks.values()))
@@ -296,7 +296,7 @@ async def test_ten_servers_process_one_hundred_scenes_in_one_wave(reset, monitor
         scene_ids = json.loads(kwargs["json"]["messages"][1]["content"])["scene_ids"]
         return _Response(_results(scene_ids))
 
-    monkeypatch.setattr(monitor, "get_catalog", catalog)
+    monkeypatch.setattr(monitor, "scheduling_catalog", catalog)
     monkeypatch.setattr(monitor._client, "post", post)
     assert await jobs.dispatch_once(monitor) == 10
     assert len(jobs.busy_studios) == 10
@@ -321,7 +321,7 @@ async def test_two_hundred_scenes_flow_through_five_servers_in_four_waves(reset,
         scene_ids = json.loads(kwargs["json"]["messages"][1]["content"])["scene_ids"]
         return _Response(_results(scene_ids))
 
-    monkeypatch.setattr(monitor, "get_catalog", catalog)
+    monkeypatch.setattr(monitor, "scheduling_catalog", catalog)
     monkeypatch.setattr(monitor._client, "post", post)
     wave_sizes = []
     for _ in range(4):
@@ -352,13 +352,72 @@ async def test_oldest_episode_fills_chat_wave_before_newer_work(reset, monitor, 
         await gate.wait()
         return _Response("{}")
 
-    monkeypatch.setattr(monitor, "get_catalog", catalog)
+    monkeypatch.setattr(monitor, "scheduling_catalog", catalog)
     monkeypatch.setattr(monitor._client, "post", post)
     assert await jobs.dispatch_once(monitor) == 2
-    assert sum(p["state"] == "running" for p in first["packs"]) == 2
-    assert sum(p["state"] == "running" for p in second["packs"]) == 0
-    assert second["queue_note"].endswith("DK0001")
+    assert sum(p["state"] == "running" for p in first["packs"]) == 1
+    assert sum(p["state"] == "running" for p in second["packs"]) == 1
     gate.set()
+    await asyncio.gather(*list(jobs._pack_tasks.values()))
+
+
+@pytest.mark.asyncio
+async def test_chat_eligible_studios_use_smallest_sufficient_ram_first(
+        reset, monitor, monkeypatch):
+    workers = _add_chat_workers(monitor, 3)
+    memory = {
+        workers[0]["machine"]: {"total_gb": 24, "available_gb": 20},
+        workers[1]["machine"]: {"total_gb": 8, "available_gb": 6},
+        workers[2]["machine"]: {"total_gb": 16, "available_gb": 12},
+    }
+
+    async def catalog(_studio):
+        return {"models": [{"repo": MODEL, "cache": {"state": "cached"}}]}
+
+    monkeypatch.setattr(monitor, "scheduling_catalog", catalog)
+    monkeypatch.setattr(
+        broker, "_host_for_studio",
+        lambda studio: memory[studio["machine"]],
+    )
+
+    eligible = await jobs._eligible_studios(monitor, MODEL)
+
+    assert [studio["machine"] for studio in eligible] == [
+        workers[1]["machine"], workers[2]["machine"], workers[0]["machine"],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chat_dispatch_rotates_batches_by_last_dispatched_turn(
+        reset, monitor, monkeypatch):
+    first, _ = jobs.create_batch(_payload(2))
+    second_payload = _payload(2)
+    second_payload["episode"] = "EP0002"
+    for pack_index, pack in enumerate(second_payload["packs"]):
+        pack["pack_id"] = f"ep2-{pack_index}"
+        pack["scene_ids"] = [f"ep2-{scene_id}" for scene_id in pack["scene_ids"]]
+    second, _ = jobs.create_batch(second_payload)
+    _add_chat_workers(monitor, 1)
+
+    async def catalog(_studio):
+        return {"models": [{"repo": MODEL, "cache": {"state": "cached"}}]}
+
+    async def post(_url, **kwargs):
+        scene_ids = json.loads(kwargs["json"]["messages"][1]["content"])["scene_ids"]
+        return _Response(_results(scene_ids))
+
+    monkeypatch.setattr(monitor, "scheduling_catalog", catalog)
+    monkeypatch.setattr(monitor._client, "post", post)
+
+    assert await jobs.dispatch_once(monitor) == 1
+    await asyncio.gather(*list(jobs._pack_tasks.values()))
+    assert first["last_dispatched_at"] > 0
+
+    assert await jobs.dispatch_once(monitor) == 1
+    running = [
+        pack for pack in second["packs"] if pack["state"] == "running"
+    ]
+    assert len(running) == 1
     await asyncio.gather(*list(jobs._pack_tasks.values()))
 
 
@@ -391,7 +450,7 @@ async def test_partial_pack_saves_valid_results_and_retries_only_missing_ids(res
             assert all(scene_id in kwargs["json"]["messages"][-1]["content"] for scene_id in scene_ids[7:])
         return _Response(_results(returned))
 
-    monkeypatch.setattr(monitor, "get_catalog", catalog)
+    monkeypatch.setattr(monitor, "scheduling_catalog", catalog)
     monkeypatch.setattr(monitor._client, "post", post)
     assert await jobs.dispatch_once(monitor) == 1
     await asyncio.gather(*list(jobs._pack_tasks.values()))
@@ -411,7 +470,7 @@ async def test_model_capability_and_physical_machine_lease_filter_workers(reset,
         repo = MODEL if studio["id"] == workers[1]["id"] else "other/model"
         return {"models": [{"repo": repo, "cache": {"state": "cached"}}]}
 
-    monkeypatch.setattr(monitor, "get_catalog", catalog)
+    monkeypatch.setattr(monitor, "scheduling_catalog", catalog)
     assert [studio["id"] for studio in await jobs._eligible_studios(monitor, MODEL)] == [workers[1]["id"]]
     broker._external_machine_leases[workers[1]["machine"]] = "render:test"
     assert await jobs._eligible_studios(monitor, MODEL) == []
@@ -437,7 +496,7 @@ async def test_genstudio_chat_uses_only_exact_verified_executor(
             "cache": {"state": "cached"},
         }]}
 
-    monkeypatch.setattr(monitor, "get_catalog", catalog)
+    monkeypatch.setattr(monitor, "scheduling_catalog", catalog)
     eligible = await jobs._eligible_studios(
         monitor,
         MODEL,
@@ -465,7 +524,7 @@ async def test_remote_chat_pack_uses_connected_peer_hub(reset, monitor, monkeypa
         calls.append((url, kwargs.get("headers")))
         return _Response(_results(batch["packs"][0]["scene_ids"]))
 
-    monkeypatch.setattr(monitor, "get_catalog", catalog)
+    monkeypatch.setattr(monitor, "scheduling_catalog", catalog)
     monkeypatch.setattr(monitor._client, "post", post)
     assert await jobs.dispatch_once(monitor) == 1
     await asyncio.gather(*list(jobs._pack_tasks.values()))
@@ -487,7 +546,7 @@ async def test_transient_worker_failure_waits_before_retry(reset, monitor, monke
     async def post(*args, **kwargs):
         raise OSError("model server is warming up")
 
-    monkeypatch.setattr(monitor, "get_catalog", catalog)
+    monkeypatch.setattr(monitor, "scheduling_catalog", catalog)
     monkeypatch.setattr(monitor._client, "post", post)
     before = jobs.time.time()
     assert await jobs.dispatch_once(monitor) == 1
@@ -525,7 +584,7 @@ async def test_cancel_preserves_completed_pack_and_aborts_running_pack(reset, mo
         await gate.wait()
         return _Response("never")
 
-    monkeypatch.setattr(monitor, "get_catalog", catalog)
+    monkeypatch.setattr(monitor, "scheduling_catalog", catalog)
     monkeypatch.setattr(monitor._client, "post", post)
     assert await jobs.dispatch_once(monitor) == 1
     await asyncio.sleep(0)

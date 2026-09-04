@@ -10,6 +10,87 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.19.4] — 2026-09-05
+
+### Fixed — deterministic capacity evidence verification
+
+- Capacity eligibility coverage now supplies explicit host-memory evidence in
+  its cross-platform test fixture, so Linux and macOS verify the same positive
+  RAM-floor result while unknown memory remains excluded from eligible totals.
+
+## [2.19.3] — 2026-09-05
+
+### Fixed — memory-aware arbitration and strict transcription identity
+
+- Shared Chat/Transcription turn checks now include current model memory
+  admission. A queued model that cannot fit the physical Mac does not reserve
+  that Mac's turn, and a real memory wait/skip advances the turn token so an
+  eligible opposite lane cannot be stranded.
+- GenStudio transcription dispatch now requires a passed, explicitly approved
+  `genstudio_candidate` for `audio.transcription`, an immutable runtime
+  revision, matching contract hash, explicit `cached: true`, matching cache
+  snapshot, and affirmative runtime-match evidence. Invalid assignments fail
+  closed before worker dispatch.
+- No worker, model, enrollment, fleet-machine, deployment, restart, or live-job
+  behavior changes automatically. Update Studio Hub normally.
+
+## [2.19.2] — 2026-09-05
+
+### Fixed — capacity arbitration and execution evidence fail closed
+
+- Chat and Transcription's shared-machine turn policy now asks whether the
+  opposite queue can actually use that physical Mac and model, so ineligible
+  work elsewhere cannot starve an eligible lane. Singleton-lane work remains
+  work-conserving and existing leases are unchanged.
+- GenStudio transcription assignments now require the exact
+  `audio.transcription` operation and dispatch only when the worker's audited
+  model revision and contract hash match the supplied execution evidence.
+- Capability publication treats catalog refresh errors as unavailable for both
+  current routing and eligible-capacity totals. RAM-gated remote machines with
+  unknown host memory remain visible but are excluded from total capacity.
+- No worker, model, enrollment, fleet-machine, deployment, restart, or live-job
+  behavior changes automatically. Update Studio Hub normally.
+
+## [2.19.1] — 2026-09-05
+
+### Fixed — schedulers now use only fresh, successful worker evidence
+
+- Local Chat, Transcription, and broker catalog lookups now use a cache-only
+  scheduling view. A stale last-good catalog or an observation whose refresh
+  failed remains available for diagnostics, but cannot silently route new
+  work. Catalog and Whisper refresh attempts persist separate freshness and
+  error metadata, while older durable observation files remain readable.
+- Transcription model admission now applies the same total/free unified-memory
+  floors as the other local generation lanes, so low-memory Macs stay out of
+  both current routing and total eligible capacity for that model.
+- Chat and Transcription share a per-physical-Mac turn token. When both queues
+  are waiting, the next newly-free shared Mac goes to the opposite lane; when
+  only one queue has work it remains work-conserving. Existing durable leases,
+  exact revision checks, memory gates, and per-batch turns are unchanged.
+- No worker, model, enrollment, fleet-machine, deployment, restart, or live
+  job behavior changes automatically. Update Studio Hub normally.
+
+## [2.19.0] — 2026-09-05
+
+### Added — capacity evidence now separates compatible supply from free slots
+
+- The private Studio Hub capability snapshot now reports additive total
+  eligible physical-machine and worker-service capacity globally and per
+  operation, without changing the meaning of existing current-availability
+  fields.
+- Exact `model_supply` entries now include total eligible physical slots and a
+  per-machine `capacity_eligible` boolean. Totals deduplicate shared Macs and
+  keep a compatible machine in the denominator while it is busy.
+- Current availability now consumes Image/Voice catalog slot observations and
+  worker health busy evidence. Stale, offline, drained, quarantined,
+  uninstalled, incompatible, and total-memory-ineligible supply is excluded
+  from eligible totals. No worker dispatch, lease, model, enrollment, or
+  fleet-machine behavior changes automatically.
+- Local Chat and Transcription queues now try the smallest sufficient RAM tier
+  first, and Chat batches rotate by their last dispatch turn so one queued
+  batch cannot consume every free worker wave. Existing leases, exact model
+  revision checks, memory admission, and running work remain authoritative.
+
 ## [2.18.4] — 2026-09-02
 
 ### Added — a Controller now says when a registered Mac belongs to another site

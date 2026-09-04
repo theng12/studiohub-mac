@@ -216,10 +216,34 @@ class StudioMonitor:
                 self._transcribe_cache[sid] = (
                     float(transcription_at), transcription,
                 )
+            legacy_attempt = row.get("last_attempt_at")
+            legacy_success = row.get("last_success_at")
+            legacy_error = row.get("last_error")
             self._catalog_meta[sid] = {
-                "last_attempt_at": row.get("last_attempt_at"),
-                "last_success_at": row.get("last_success_at"),
-                "last_error": row.get("last_error"),
+                # Keep the original fields for older readers, while recording
+                # independent source outcomes so a failed Whisper refresh
+                # cannot make a good TTS catalog look failed (or vice versa).
+                "last_attempt_at": legacy_attempt,
+                "last_success_at": legacy_success,
+                "last_error": legacy_error,
+                "catalog_last_attempt_at": row.get(
+                    "catalog_last_attempt_at", legacy_attempt,
+                ),
+                "catalog_last_success_at": row.get(
+                    "catalog_last_success_at", legacy_success,
+                ),
+                "catalog_last_error": row.get(
+                    "catalog_last_error", legacy_error,
+                ),
+                "transcription_last_attempt_at": row.get(
+                    "transcription_last_attempt_at", legacy_attempt,
+                ),
+                "transcription_last_success_at": row.get(
+                    "transcription_last_success_at", legacy_success,
+                ),
+                "transcription_last_error": row.get(
+                    "transcription_last_error", legacy_error,
+                ),
             }
 
     def _save_catalog_state(self) -> None:
@@ -230,6 +254,24 @@ class StudioMonitor:
             catalog = self._catalog_cache.get(sid)
             transcription = self._transcribe_cache.get(sid)
             meta = self._catalog_meta.get(sid, {})
+            catalog_last_attempt = meta.get(
+                "catalog_last_attempt_at", meta.get("last_attempt_at"),
+            )
+            catalog_last_success = meta.get(
+                "catalog_last_success_at", meta.get("last_success_at"),
+            )
+            catalog_last_error = meta.get(
+                "catalog_last_error", meta.get("last_error"),
+            )
+            transcription_last_attempt = meta.get(
+                "transcription_last_attempt_at", meta.get("last_attempt_at"),
+            )
+            transcription_last_success = meta.get(
+                "transcription_last_success_at", meta.get("last_success_at"),
+            )
+            transcription_last_error = meta.get(
+                "transcription_last_error", meta.get("last_error"),
+            )
             studios[sid] = {
                 "catalog_observed_at": catalog[0] if catalog else None,
                 "catalog": catalog[1] if catalog else None,
@@ -240,6 +282,12 @@ class StudioMonitor:
                 "last_attempt_at": meta.get("last_attempt_at"),
                 "last_success_at": meta.get("last_success_at"),
                 "last_error": meta.get("last_error"),
+                "catalog_last_attempt_at": catalog_last_attempt,
+                "catalog_last_success_at": catalog_last_success,
+                "catalog_last_error": catalog_last_error,
+                "transcription_last_attempt_at": transcription_last_attempt,
+                "transcription_last_success_at": transcription_last_success,
+                "transcription_last_error": transcription_last_error,
             }
         payload = {"schema_version": 1, "studios": studios}
         self.catalog_state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -272,13 +320,20 @@ class StudioMonitor:
         observed_at = cache[0] if cache else None
         age = max(0.0, time.time() - observed_at) if observed_at else None
         meta = self._catalog_meta.get(studio_id, {})
+        prefix = "transcription" if transcription else "catalog"
         return {
             "observed_at": observed_at,
             "age_seconds": round(age, 3) if age is not None else None,
             "stale": age is None or age > CATALOG_STALE_S,
-            "last_attempt_at": meta.get("last_attempt_at"),
-            "last_success_at": meta.get("last_success_at"),
-            "last_error": meta.get("last_error"),
+            "last_attempt_at": meta.get(
+                f"{prefix}_last_attempt_at", meta.get("last_attempt_at"),
+            ),
+            "last_success_at": meta.get(
+                f"{prefix}_last_success_at", meta.get("last_success_at"),
+            ),
+            "last_error": meta.get(
+                f"{prefix}_last_error", meta.get("last_error"),
+            ),
             "source": "persisted_last_good" if cache else "none",
         }
 
@@ -321,25 +376,39 @@ class StudioMonitor:
         meta["last_attempt_at"] = now
         if self.status.get(sid, {}).get("status") != "up":
             meta["last_error"] = "worker_unreachable"
+            meta["catalog_last_error"] = "worker_unreachable"
             return {"studio_id": sid, "refreshed": False,
                     "reason": "worker_unreachable"}
+        source = "catalog"
         try:
             catalog = await self.get_catalog(studio, force=force)
             if catalog is None:
                 raise RuntimeError("catalog_unavailable")
+            if meta.get("catalog_last_error"):
+                return {"studio_id": sid, "refreshed": False,
+                        "reason": meta["catalog_last_error"]}
             if studio.get("modality") == "voice":
+                source = "transcription"
                 transcription = await self.get_transcription(studio, force=force)
                 if transcription is None:
                     raise RuntimeError("transcription_catalog_unavailable")
-            if meta.get("last_error"):
+                if meta.get("transcription_last_error"):
+                    return {"studio_id": sid, "refreshed": False,
+                            "reason": meta["transcription_last_error"]}
+            errors = [meta.get("catalog_last_error")]
+            if studio.get("modality") == "voice":
+                errors.append(meta.get("transcription_last_error"))
+            if any(errors):
                 return {"studio_id": sid, "refreshed": False,
-                        "reason": meta["last_error"]}
+                        "reason": next(error for error in errors if error)}
             meta.update(last_success_at=time.time(), last_error=None)
             return {"studio_id": sid, "refreshed": True}
         except Exception as exc:
-            meta["last_error"] = self._safe_error(exc)
+            error = self._safe_error(exc)
+            meta["last_error"] = error
+            meta[f"{source}_last_error"] = error
             return {"studio_id": sid, "refreshed": False,
-                    "reason": meta["last_error"]}
+                    "reason": error}
 
     # ── health ───────────────────────────────────────────────────────────
     async def _poll_loop(self):
@@ -562,6 +631,10 @@ class StudioMonitor:
         cached = self._catalog_cache.get(sid)
         if cached and not force and (time.time() - cached[0]) < CATALOG_TTL_S:
             return cached[1]
+        meta = self._catalog_meta.setdefault(sid, {})
+        attempt_at = time.time()
+        meta["last_attempt_at"] = attempt_at
+        meta["catalog_last_attempt_at"] = attempt_at
         try:
             url, headers = studio_request(studio, "/api/catalog")
             r = await self._client.get(
@@ -570,14 +643,19 @@ class StudioMonitor:
             )
             r.raise_for_status()
             data = r.json()
-            self._catalog_cache[sid] = (time.time(), data)
-            self._catalog_meta.setdefault(sid, {}).update(
-                last_success_at=time.time(), last_error=None,
+            observed_at = time.time()
+            meta.update(
+                last_success_at=observed_at,
+                last_error=None,
+                catalog_last_success_at=observed_at,
+                catalog_last_error=None,
             )
+            self._catalog_cache[sid] = (observed_at, data)
             return data
         except Exception as exc:
-            self._catalog_meta.setdefault(sid, {})["last_error"] = \
-                self._safe_error(exc)
+            error = self._safe_error(exc)
+            meta["last_error"] = error
+            meta["catalog_last_error"] = error
             # Serve stale on failure rather than nothing.
             return cached[1] if cached else None
 
@@ -600,6 +678,10 @@ class StudioMonitor:
             return cached[1]
         if self.status.get(sid, {}).get("status") != "up":
             return cached[1] if cached else None
+        meta = self._catalog_meta.setdefault(sid, {})
+        attempt_at = time.time()
+        meta["last_attempt_at"] = attempt_at
+        meta["transcription_last_attempt_at"] = attempt_at
         try:
             url, headers = studio_request(studio, "/api/transcribe/availability")
             r = await self._client.get(
@@ -607,15 +689,56 @@ class StudioMonitor:
             )
             r.raise_for_status()
             data = r.json()
-            self._transcribe_cache[sid] = (time.time(), data)
-            self._catalog_meta.setdefault(sid, {}).update(
-                last_success_at=time.time(), last_error=None,
+            observed_at = time.time()
+            meta.update(
+                last_success_at=observed_at,
+                last_error=None,
+                transcription_last_success_at=observed_at,
+                transcription_last_error=None,
             )
+            self._transcribe_cache[sid] = (observed_at, data)
             return data
         except Exception as exc:
-            self._catalog_meta.setdefault(sid, {})["last_error"] = \
-                self._safe_error(exc)
+            error = self._safe_error(exc)
+            meta["last_error"] = error
+            meta["transcription_last_error"] = error
             return cached[1] if cached else None
+
+    def _scheduling_cache(
+            self, studio: dict, *, transcription: bool) -> dict | None:
+        """Return only fresh, error-free observations for a scheduler.
+
+        The catalog refresher owns worker I/O. Dispatch paths deliberately use
+        this cache-only view so a refresh failure cannot silently turn an old
+        last-good snapshot into a routing decision.
+        """
+        sid = studio["id"]
+        if self.status.get(sid, {}).get("status") != "up":
+            return None
+        cache = (
+            self._transcribe_cache if transcription else self._catalog_cache
+        ).get(sid)
+        if not cache:
+            return None
+        observation = self.catalog_observation(sid, transcription=transcription)
+        if observation["stale"] or observation["last_error"]:
+            return None
+        attempt = observation["last_attempt_at"]
+        success = observation["last_success_at"]
+        if isinstance(attempt, (int, float)) and (
+                not isinstance(success, (int, float)) or attempt > success):
+            # Fail closed if a legacy/corrupt observation records a refresh
+            # attempt without a matching successful result or error marker.
+            return None
+        return cache[1]
+
+    async def scheduling_catalog(self, studio: dict) -> dict | None:
+        """Cache-only catalog view used by local schedulers."""
+        return self._scheduling_cache(studio, transcription=False)
+
+    async def scheduling_transcription(self, studio: dict) -> dict | None:
+        """Cache-only Whisper availability view used by transcription jobs."""
+        return self._scheduling_cache(studio, transcription=True)
 
     def _assemble_aggregate_catalog(
             self, results: list[dict | None],
@@ -728,11 +851,10 @@ class StudioMonitor:
     ) -> list[dict]:
         """Return last-good worker entries for one exact model without I/O.
 
-        The broker uses this cache-only view to compare queued workloads before
-        it selects a worker.  A scheduling decision must never turn into a live
-        catalogue fan-out; the dedicated refresher remains the only owner of
-        fresh fleet inventory.  The actual pre-dispatch catalogue and memory
-        gates still run afterwards and remain authoritative.
+        This raw view is retained for conservative display and cloud-guard
+        checks. The broker's queue ranking uses ``scheduling_catalog_entries``
+        instead, which refuses stale or failed observations. The dedicated
+        refresher remains the only owner of fresh fleet inventory.
         """
         matches: list[dict] = []
         for studio in self.registry:
@@ -740,6 +862,28 @@ class StudioMonitor:
                 continue
             cached = self._catalog_cache.get(studio["id"])
             catalog = cached[1] if cached else None
+            for entry in (catalog or {}).get("models", []):
+                if not isinstance(entry, dict):
+                    continue
+                if (entry.get("repo") == model
+                        or model in (entry.get("aliases") or [])):
+                    matches.append({"studio": studio, "entry": entry})
+        return matches
+
+    def scheduling_catalog_entries(
+        self, model: str, *, modality: str | None = None,
+    ) -> list[dict]:
+        """Return only fresh, error-free catalog entries for queue ranking.
+
+        ``cached_catalog_entries`` remains the raw last-good view used by
+        conservative display/cloud checks.  Queue ordering must not use that
+        display evidence after it has gone stale or a refresh has failed.
+        """
+        matches: list[dict] = []
+        for studio in self.registry:
+            if modality is not None and studio.get("modality") != modality:
+                continue
+            catalog = self._scheduling_cache(studio, transcription=False)
             for entry in (catalog or {}).get("models", []):
                 if not isinstance(entry, dict):
                     continue
@@ -769,8 +913,9 @@ class StudioMonitor:
         This is the operator review surface. It intentionally includes
         unexposed candidates; GenStudio's capability contract does not.
         """
-        from . import (broker, chat_jobs, hardware_profiles, memory_admission,
-                       model_exposure, transcription_jobs)
+        from . import (broker, chat_jobs, capabilities as capability_contract,
+                       hardware_profiles, memory_admission, model_exposure,
+                       transcription_jobs)
         from .registry import machine_enabled, studio_enabled
 
         aggregate = self.cached_aggregate_catalog()
@@ -779,6 +924,29 @@ class StudioMonitor:
         busy_studios = set(broker.busy_studios()) | set(chat_jobs.busy_studios) \
             | set(transcription_jobs.busy_studios)
         busy_machines = broker.busy_machines()
+        for studio in self.registry:
+            status = self.status.get(studio["id"], {})
+            health = status.get("health")
+            health_busy = bool(status.get("health_busy"))
+            if isinstance(health, dict):
+                health_busy = health_busy or bool(health.get("busy"))
+                generation = health.get("generation")
+                if isinstance(generation, dict):
+                    health_busy = health_busy or bool(generation.get("busy"))
+            if health_busy:
+                busy_studios.add(studio["id"])
+                busy_machines.add(studio.get("machine", "local"))
+        for model in aggregate.get("models") or []:
+            candidate = model_exposure.candidate_summary(model)
+            studio_id = str(model.get("hub_studio") or "")
+            studio = studios.get(studio_id)
+            if (candidate and studio
+                    and capability_contract._catalog_reports_busy(
+                        model, candidate, studio,
+                        self.status.get(studio_id, {}), protections,
+                    )):
+                busy_studios.add(studio_id)
+                busy_machines.add(studio.get("machine", "local"))
         grouped: dict[str, dict] = {}
 
         for model in aggregate.get("models") or []:
@@ -797,6 +965,7 @@ class StudioMonitor:
                 or not studio_enabled(machine, studio_id)
                 or broker.in_maintenance(studio_id)
             )
+            catalog_error = bool(str(model.get("hub_catalog_error") or "").strip())
             catalog_stale = bool(model.get("hub_catalog_stale"))
             installed = bool(model.get("hub_cached"))
             runtime_compatible = model.get("runtime_compatible") is not False
@@ -804,22 +973,49 @@ class StudioMonitor:
             hardware_profile = hardware_profiles.machine_hardware_profile(machine)
             admission = None
             hardware_eligible = True
+            memory_capacity_eligible = True
             if memory_admission.applies_to(model.get("hub_modality")):
                 admission = memory_admission.describe(
                     candidate["internal_model_id"], model,
                 )
                 health_memory = ((status.get("health") or {}).get("memory") or {})
                 observed_total = health_memory.get("total_gb")
-                if not isinstance(observed_total, (int, float)):
+                if (not isinstance(observed_total, (int, float))
+                        or isinstance(observed_total, bool)):
                     observed_total = (hardware_profile or {}).get("memory_gb")
                 floor = admission.get("effective_min_total_memory_gb")
-                if isinstance(observed_total, (int, float)) and isinstance(floor, (int, float)):
+                if (isinstance(observed_total, (int, float))
+                        and not isinstance(observed_total, bool)
+                        and isinstance(floor, (int, float))
+                        and not isinstance(floor, bool)):
                     hardware_eligible = float(observed_total) >= float(floor)
+                elif (isinstance(floor, (int, float))
+                      and not isinstance(floor, bool)
+                      and float(floor) > 0):
+                    # A candidate with a RAM floor needs positive host evidence
+                    # before it contributes to physical capacity. Keep the
+                    # readiness reason separate so unknown telemetry is not
+                    # misreported as insufficient RAM.
+                    memory_capacity_eligible = False
                 admission = {
                     **admission,
                     "observed_total_memory_gb": observed_total,
-                    "eligible": hardware_eligible,
+                    "eligible": (
+                        hardware_eligible
+                        if memory_capacity_eligible else None
+                    ),
                 }
+
+            capacity_eligible = capability_contract._capacity_eligible(
+                model,
+                online=online,
+                ready=online and not status.get("health_recovering"),
+                drained=drained,
+                maintenance=broker.in_maintenance(studio_id),
+                machine_quarantined=quarantined,
+                memory_capacity_eligible=memory_capacity_eligible
+                and hardware_eligible,
+            )
 
             if not online:
                 reason = "worker_offline"
@@ -827,6 +1023,8 @@ class StudioMonitor:
                 reason = "machine_quarantined"
             elif drained:
                 reason = "worker_drained"
+            elif catalog_error:
+                reason = "catalog_error"
             elif catalog_stale:
                 reason = "catalog_stale"
             elif not installed:
@@ -884,6 +1082,7 @@ class StudioMonitor:
                     "reported_available_slots": candidate.get(
                         "capacity", {},
                     ).get("available_slots", 1),
+                    "capacity_eligible": capacity_eligible,
                 })
 
         rows = list(grouped.values())
@@ -914,6 +1113,10 @@ class StudioMonitor:
                 "offline_or_quarantined_machine_count": len({
                     m["machine_id"] for m in machines
                     if not m["online"] or m["quarantined"]
+                }),
+                "eligible_physical_slots_total": len({
+                    m["machine_id"] for m in machines
+                    if m["capacity_eligible"]
                 }),
                 # Hub schedules one heavy job per physical Mac even when a
                 # sibling reports greater service-level concurrency.

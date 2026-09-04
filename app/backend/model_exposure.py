@@ -126,7 +126,8 @@ def candidate_summary(model: dict) -> dict[str, Any] | None:
         return None
     if value.get("schema") != CANDIDATE_SCHEMA:
         return None
-    if value.get("schema_version") != CANDIDATE_SCHEMA_VERSION:
+    if (type(value.get("schema_version")) is not int
+            or value.get("schema_version") != CANDIDATE_SCHEMA_VERSION):
         return None
     model_id = _clean_text(model.get("repo") or model.get("model_id"))
     revision = _clean_text(value.get("runtime_revision"), 80).lower()
@@ -170,6 +171,50 @@ def candidate_summary(model: dict) -> dict[str, Any] | None:
         "capacity": capacity,
         "hardware": _safe_contract(value.get("hardware")) or {},
     }
+
+
+def normalized_immutable_revision(value: object) -> str | None:
+    """Return a canonical hash-shaped runtime revision, or ``None``."""
+    revision = _clean_text(value, 80)
+    if not _IMMUTABLE_REVISION.fullmatch(revision):
+        return None
+    return revision.removeprefix("sha256:").lower()
+
+
+def is_immutable_revision(value: object) -> bool:
+    """Return whether ``value`` is a content-addressed runtime revision."""
+    return normalized_immutable_revision(value) is not None
+
+
+def is_contract_hash(value: object) -> bool:
+    """Return whether ``value`` is the exact SHA-256 contract fingerprint."""
+    return bool(_CONTRACT_HASH.fullmatch(_clean_text(value, 80).lower()))
+
+
+def validated_execution_binding(operation: object, model_revision: object,
+                                contract_hash: object) -> tuple[str, str] | None:
+    """Validate the exact immutable binding used by GenStudio assignments."""
+    normalized_operation = _clean_text(operation, 120).lower()
+    revision = normalized_immutable_revision(model_revision)
+    contract = _clean_text(contract_hash, 80).lower()
+    if (normalized_operation != "audio.transcription" or revision is None
+            or not is_contract_hash(contract)):
+        return None
+    return revision, contract
+
+
+def execution_candidate(model: dict, operation: str) -> dict[str, Any] | None:
+    """Return a passed, explicitly approved sibling candidate for execution."""
+    if model.get("cached") is not True:
+        return None
+    candidate = candidate_summary(model)
+    if candidate is None:
+        return None
+    if (candidate.get("audit_status") != "passed"
+            or candidate.get("candidate_for_genstudio") is not True
+            or operation not in candidate.get("approved_operations", [])):
+        return None
+    return candidate
 
 
 def exposure_key(model_id: str, operation: str, revision: str,

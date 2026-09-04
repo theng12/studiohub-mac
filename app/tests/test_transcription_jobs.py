@@ -8,9 +8,9 @@ from pathlib import Path
 
 import httpx
 import pytest
-from fastapi import UploadFile
+from fastapi import HTTPException, UploadFile
 
-from backend import broker, ledger, transcription_jobs as jobs
+from backend import broker, control_plane, ledger, transcription_jobs as jobs
 
 
 def _multipart(names=("chapter-1.wav", "chapter-2.wav"), bodies=(b"one", b"two")):
@@ -128,13 +128,49 @@ def test_upload_size_limit_is_enforced(authed, monkeypatch):
     assert not list(jobs.ROOT.glob("*"))
 
 
-async def _create_direct(count=3):
+async def _create_direct(count=3, *, model="mlx/whisper",
+                         genstudio_execution_json=None):
     uploads = [UploadFile(file=io.BytesIO(f"audio-{i}".encode()), filename=f"c{i}.wav")
                for i in range(count)]
     batch, _ = await jobs.create_batch(
-        uploads, [f"chapter-{i}" for i in range(count)], "mlx/whisper",
-        "en", False, "test", "project", "episode")
+        uploads, [f"chapter-{i}" for i in range(count)], model,
+        "en", False, "test", "project", "episode",
+        genstudio_execution_json=genstudio_execution_json)
     return batch
+
+
+def _genstudio_transcription_execution(*, operation="audio.transcription",
+                                       model_revision="a" * 40,
+                                       contract_hash="sha256:" + "b" * 64):
+    return {
+        "genstudio_job_id": "job-transcription",
+        "genstudio_attempt_id": "attempt-transcription",
+        "idempotency_key": "transcription-attempt-key",
+        "fencing_token": 1,
+        "site_id": "site-transcription",
+        "operation": operation,
+        "model_revision": model_revision,
+        "contract_hash": contract_hash,
+    }
+
+
+def _audited_transcription_candidate(*, revision="a" * 40,
+                                     contract_hash="sha256:" + "b" * 64,
+                                     operation="audio.transcription",
+                                     audit_status="passed",
+                                     candidate_for_genstudio=True,
+                                     schema_version=1):
+    return {
+        "schema": "studio.model-audit",
+        "schema_version": schema_version,
+        "audit_id": "audit-transcription",
+        "audit_status": audit_status,
+        "candidate_for_genstudio": candidate_for_genstudio,
+        "runtime_revision": revision,
+        "contract_hash": contract_hash,
+        "approved_operations": [operation],
+        "audited_at": "2026-09-05T00:00:00Z",
+    }
 
 
 class _Response:
@@ -148,6 +184,17 @@ class _Response:
         return {"srt": self._srt, "text": "Hello", "language": "en",
                 "duration": 1.0, "elapsed_seconds": self._elapsed,
                 "segments": [], "vtt": "WEBVTT"}
+
+
+class _ChatResponse:
+    status_code = 200
+    text = ""
+
+    def json(self):
+        return {
+            "choices": [{"message": {"content": "answer"}}],
+            "elapsed_seconds": 0.1,
+        }
 
 
 class _CapacityResponse:
@@ -178,7 +225,7 @@ async def test_memory_guard_handoff_requeues_without_consuming_transcription_att
     async def post(*_args, **_kwargs):
         return _CapacityResponse()
 
-    monkeypatch.setattr(monitor, "get_transcription", availability)
+    monkeypatch.setattr(monitor, "scheduling_transcription", availability)
     monkeypatch.setattr(monitor._client, "post", post)
     monkeypatch.setattr(broker, "release_idle_siblings", handoff)
 
@@ -216,7 +263,7 @@ async def test_capable_workers_share_work_one_transcription_each(reset, monitor,
         await gates[studio_id].wait()
         return _Response()
 
-    monkeypatch.setattr(monitor, "get_transcription", availability)
+    monkeypatch.setattr(monitor, "scheduling_transcription", availability)
     monkeypatch.setattr(monitor._client, "post", post)
     assert await jobs.dispatch_once(monitor) == 2
     ownership = ledger.activity_events()
@@ -243,6 +290,394 @@ async def test_capable_workers_share_work_one_transcription_each(reset, monitor,
 
 
 @pytest.mark.asyncio
+async def test_chat_and_transcription_take_shared_machine_turns(
+        reset, monitor, monkeypatch):
+    from backend import chat_jobs
+
+    transcription_batch = await _create_direct(1)
+    chat_batch, _ = chat_jobs.create_batch({
+        "model": "mlx/chat-model",
+        "kind": "completion",
+        "label": "shared machine fairness",
+        "packs": [
+            {
+                "pack_id": "chat-1", "scene_ids": ["response-1"],
+                "messages": [{"role": "user", "content": "one"}],
+                "params": {},
+            },
+            {
+                "pack_id": "chat-2", "scene_ids": ["response-2"],
+                "messages": [{"role": "user", "content": "two"}],
+                "params": {},
+            },
+        ],
+    })
+    chat_studio = {
+        "id": "chat@shared", "modality": "chat", "machine": "shared",
+        "host": "127.0.0.1", "port": 47871,
+    }
+    voice_studio = {
+        "id": "voice@shared", "modality": "voice", "machine": "shared",
+        "host": "127.0.0.1", "port": 47870,
+    }
+    monitor.registry = [chat_studio, voice_studio]
+    monitor.status = {
+        studio["id"]: {"status": "up"}
+        for studio in monitor.registry
+    }
+
+    async def catalog(_studio):
+        return {"models": [{"repo": "mlx/chat-model", "cache": {"state": "cached"}}]}
+
+    async def availability(_studio):
+        return {"available": True,
+                "models": [{"repo": "mlx/whisper", "cached": True}]}
+
+    async def post(url, **_kwargs):
+        return _ChatResponse() if "/v1/chat/completions" in url else _Response()
+
+    monkeypatch.setattr(monitor, "scheduling_catalog", catalog)
+    monkeypatch.setattr(monitor, "scheduling_transcription", availability)
+    monkeypatch.setattr(monitor._client, "post", post)
+
+    assert await chat_jobs.dispatch_once(monitor) == 1
+    await asyncio.gather(*list(chat_jobs._pack_tasks.values()))
+    # The token now points to transcription, so Chat cannot win the next
+    # wake-up while one transcription item is still waiting.
+    assert await chat_jobs.dispatch_once(monitor) == 0
+
+    assert await jobs.dispatch_once(monitor) == 1
+    await asyncio.gather(*list(jobs._item_tasks.values()))
+
+    assert await chat_jobs.dispatch_once(monitor) == 1
+    await asyncio.gather(*list(chat_jobs._pack_tasks.values()))
+    assert chat_jobs.summary(chat_batch)["done"] == 2
+    assert jobs.summary(transcription_batch)["done"] == 1
+
+
+@pytest.mark.asyncio
+async def test_ineligible_opposite_lane_does_not_block_shared_machine(
+        reset, monitor, monkeypatch):
+    from backend import chat_jobs
+
+    # There is queued transcription work, but it names a model that the
+    # shared Voice worker does not expose. A global queue-depth boolean must
+    # not make that ineligible work reserve the machine's next turn.
+    transcription_batch = await _create_direct(1, model="mlx/not-installed")
+    chat_batch, _ = chat_jobs.create_batch({
+        "model": "mlx/chat-model",
+        "kind": "completion",
+        "label": "machine-aware fairness",
+        "packs": [{
+            "pack_id": "chat-1", "scene_ids": ["response-1"],
+            "messages": [{"role": "user", "content": "one"}],
+            "params": {},
+        }],
+    })
+    chat_studio = {
+        "id": "chat@shared", "modality": "chat", "machine": "shared",
+        "host": "127.0.0.1", "port": 47871,
+    }
+    voice_studio = {
+        "id": "voice@shared", "modality": "voice", "machine": "shared",
+        "host": "127.0.0.1", "port": 47870,
+    }
+    monitor.registry = [chat_studio, voice_studio]
+    monitor.status = {
+        studio["id"]: {"status": "up"}
+        for studio in monitor.registry
+    }
+
+    async def catalog(_studio):
+        return {"models": [{"repo": "mlx/chat-model",
+                             "cache": {"state": "cached"}}]}
+
+    async def availability(_studio):
+        return {"available": True,
+                "models": [{"repo": "mlx/whisper", "cached": True}]}
+
+    async def post(*_args, **_kwargs):
+        return _ChatResponse()
+
+    monkeypatch.setattr(monitor, "scheduling_catalog", catalog)
+    monkeypatch.setattr(monitor, "scheduling_transcription", availability)
+    monkeypatch.setattr(monitor._client, "post", post)
+
+    # The previous turn was Chat, so the turn token points to Transcription;
+    # a naive global boolean would block Chat even though the opposite lane
+    # cannot run on this machine.
+    broker.note_external_dispatch("shared", "chat")
+    assert await chat_jobs.dispatch_once(monitor) == 1
+    await asyncio.gather(*list(chat_jobs._pack_tasks.values()))
+    assert chat_jobs.summary(chat_batch)["done"] == 1
+    assert transcription_batch["items"][0]["state"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_memory_ineligible_opposite_lane_does_not_block_shared_machine(
+        reset, monitor, monkeypatch):
+    from backend import chat_jobs
+
+    transcription_batch = await _create_direct(1, model="mlx/whisper")
+    chat_batch, _ = chat_jobs.create_batch({
+        "model": "mlx/chat-model",
+        "kind": "completion",
+        "label": "memory-aware fairness",
+        "packs": [{
+            "pack_id": "chat-1", "scene_ids": ["response-1"],
+            "messages": [{"role": "user", "content": "one"}],
+            "params": {},
+        }],
+    })
+    chat_studio = {
+        "id": "chat@shared", "modality": "chat", "machine": "shared",
+        "host": "127.0.0.1", "port": 47871,
+    }
+    voice_studio = {
+        "id": "voice@shared", "modality": "voice", "machine": "shared",
+        "host": "127.0.0.1", "port": 47870,
+    }
+    monitor.registry = [chat_studio, voice_studio]
+    monitor.status = {
+        studio["id"]: {"status": "up"}
+        for studio in monitor.registry
+    }
+
+    async def catalog(_studio):
+        return {"models": [{"repo": "mlx/chat-model",
+                             "cache": {"state": "cached"}}]}
+
+    async def availability(_studio):
+        return {"available": True, "models": [{
+            "repo": "mlx/whisper", "cached": True,
+            "min_unified_memory_gb": 16,
+        }]}
+
+    async def post(*_args, **_kwargs):
+        return _ChatResponse()
+
+    monkeypatch.setattr(monitor, "scheduling_catalog", catalog)
+    monkeypatch.setattr(monitor, "scheduling_transcription", availability)
+    monkeypatch.setattr(monitor._client, "post", post)
+    monkeypatch.setattr(
+        broker, "_host_for_studio",
+        lambda _studio: {"total_gb": 8, "available_gb": 6},
+    )
+
+    broker.note_external_dispatch("shared", "chat")
+    assert await jobs.has_dispatchable_work(monitor, "shared") is False
+    assert await chat_jobs.dispatch_once(monitor) == 1
+    await asyncio.gather(*list(chat_jobs._pack_tasks.values()))
+    assert chat_jobs.summary(chat_batch)["done"] == 1
+    assert transcription_batch["items"][0]["state"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_memory_admission_failure_advances_shared_machine_turn(
+        reset, monitor, monkeypatch):
+    from backend import chat_jobs
+
+    transcription_batch = await _create_direct(1)
+    chat_batch, _ = chat_jobs.create_batch({
+        "model": "mlx/chat-model",
+        "kind": "completion",
+        "label": "memory-failure fairness",
+        "packs": [{
+            "pack_id": "chat-1", "scene_ids": ["response-1"],
+            "messages": [{"role": "user", "content": "one"}],
+            "params": {},
+        }],
+    })
+    chat_studio = {
+        "id": "chat@shared", "modality": "chat", "machine": "shared",
+        "host": "127.0.0.1", "port": 47871,
+    }
+    voice_studio = {
+        "id": "voice@shared", "modality": "voice", "machine": "shared",
+        "host": "127.0.0.1", "port": 47870,
+    }
+    monitor.registry = [chat_studio, voice_studio]
+    monitor.status = {
+        studio["id"]: {"status": "up"}
+        for studio in monitor.registry
+    }
+
+    async def catalog(_studio):
+        return {"models": [{"repo": "mlx/chat-model",
+                             "cache": {"state": "cached"}}]}
+
+    async def availability(_studio):
+        return {"available": True,
+                "models": [{"repo": "mlx/whisper", "cached": True}]}
+
+    async def prepare(_client, _studio, model, _entry):
+        if model == "mlx/whisper":
+            return "wait", "waiting for memory"
+        return "run", None
+
+    async def post(*_args, **_kwargs):
+        return _ChatResponse()
+
+    monkeypatch.setattr(monitor, "scheduling_catalog", catalog)
+    monkeypatch.setattr(monitor, "scheduling_transcription", availability)
+    monkeypatch.setattr(monitor._client, "post", post)
+    monkeypatch.setattr(broker, "prepare_machine_memory", prepare)
+
+    broker.note_external_dispatch("shared", "chat")
+    assert await jobs.dispatch_once(monitor) == 0
+    assert transcription_batch["items"][0]["state"] == "queued"
+    assert await chat_jobs.dispatch_once(monitor) == 1
+    await asyncio.gather(*list(chat_jobs._pack_tasks.values()))
+    assert chat_jobs.summary(chat_batch)["done"] == 1
+
+
+def test_genstudio_transcription_rejects_wrong_operation_before_upload(reset):
+    control_plane.save_settings({
+        "role": "controller", "site_id": "site-transcription",
+        "site_name": "Transcription", "controller_id": "controller-transcription",
+        "database_mode": "off",
+    })
+    execution = _genstudio_transcription_execution(operation="voice.tts")
+    uploads = [UploadFile(file=io.BytesIO(b"audio"), filename="clip.wav")]
+
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(jobs.create_batch(
+            uploads, ["clip"], "mlx/whisper", "en", False, None, None, None,
+            genstudio_execution_json=json.dumps(execution),
+        ))
+
+    assert getattr(raised.value, "status_code", None) == 400
+    assert "audio.transcription" in str(raised.value)
+
+
+@pytest.mark.asyncio
+async def test_genstudio_transcription_requires_exact_revision_and_contract(
+        reset, monitor, monkeypatch):
+    control_plane.save_settings({
+        "role": "controller", "site_id": "site-transcription",
+        "site_name": "Transcription", "controller_id": "controller-transcription",
+        "database_mode": "off",
+    })
+    execution = _genstudio_transcription_execution()
+    batch = await _create_direct(
+        1, genstudio_execution_json=json.dumps(execution),
+    )
+    assert batch["genstudio_execution"]["contract_hash"] == execution["contract_hash"]
+    voice = next(studio for studio in monitor.registry if studio["id"] == "voice")
+    monitor.status[voice["id"]] = {"status": "up"}
+    wrong_revision = "d" * 40
+    wrong_contract = "sha256:" + "c" * 64
+
+    async def availability(revision, contract_hash):
+        return {
+            "available": True,
+            "models": [{
+                "repo": "mlx/whisper", "cached": True,
+                "cache": {"state": "cached", "snapshot_revision": revision},
+                "genstudio_candidate": _audited_transcription_candidate(
+                    revision=revision, contract_hash=contract_hash,
+                ),
+                "genstudio_candidate_runtime_match": True,
+            }],
+        }
+
+    async def post(*_args, **_kwargs):
+        return _Response()
+
+    current = {"revision": wrong_revision, "contract": execution["contract_hash"]}
+
+    async def current_availability(_studio):
+        return await availability(current["revision"], current["contract"])
+
+    monkeypatch.setattr(monitor, "scheduling_transcription", current_availability)
+    monkeypatch.setattr(monitor._client, "post", post)
+
+    assert await jobs.dispatch_once(monitor) == 0
+    assert batch["items"][0]["state"] == "queued"
+
+    current["revision"] = execution["model_revision"]
+    current["contract"] = wrong_contract
+    assert await jobs.dispatch_once(monitor) == 0
+    assert batch["items"][0]["state"] == "queued"
+
+    current["contract"] = execution["contract_hash"]
+    assert await jobs.dispatch_once(monitor) == 1
+    await asyncio.gather(*list(jobs._item_tasks.values()))
+    assert jobs.summary(batch)["status"] == "done"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("candidate_changes", [
+    {"genstudio_candidate": None},
+    {"genstudio_candidate": _audited_transcription_candidate(
+        audit_status="failed")},
+    {"genstudio_candidate": _audited_transcription_candidate(
+        candidate_for_genstudio=False)},
+    {"genstudio_candidate": _audited_transcription_candidate(
+        operation="voice.tts")},
+    {"genstudio_candidate": _audited_transcription_candidate(
+        revision="mutable")},
+    {"genstudio_candidate": _audited_transcription_candidate(
+        contract_hash="not-a-contract-hash")},
+    {"genstudio_candidate": _audited_transcription_candidate(
+        schema_version=True)},
+    {"genstudio_candidate_runtime_match": False},
+    {"cached": None},
+])
+async def test_genstudio_transcription_requires_audited_cached_candidate(
+        reset, monitor, candidate_changes):
+    execution = _genstudio_transcription_execution()
+    entry = {
+        "repo": "mlx/whisper",
+        "cached": True,
+        "cache": {"snapshot_revision": execution["model_revision"]},
+        "genstudio_candidate": _audited_transcription_candidate(),
+        "genstudio_candidate_runtime_match": True,
+    }
+    entry.update(candidate_changes)
+    if "cached" not in candidate_changes:
+        entry["cached"] = True
+    assert jobs._execution_matches_model(entry, execution) is False
+
+
+def test_genstudio_transcription_does_not_assume_missing_cached_flag_is_true():
+    execution = _genstudio_transcription_execution()
+    entry = {
+        "repo": "mlx/whisper",
+        "cache": {"snapshot_revision": execution["model_revision"]},
+        "genstudio_candidate": _audited_transcription_candidate(),
+        "genstudio_candidate_runtime_match": True,
+    }
+
+    assert jobs._execution_matches_model(entry, execution) is False
+
+
+@pytest.mark.parametrize("field,value,needle", [
+    ("model_revision", "latest", "immutable"),
+    ("contract_hash", "not-a-contract-hash", "contract hash"),
+])
+def test_genstudio_transcription_rejects_invalid_identity_before_upload(
+        reset, field, value, needle):
+    control_plane.save_settings({
+        "role": "controller", "site_id": "site-transcription",
+        "site_name": "Transcription", "controller_id": "controller-transcription",
+        "database_mode": "off",
+    })
+    execution = _genstudio_transcription_execution()
+    execution[field] = value
+    uploads = [UploadFile(file=io.BytesIO(b"audio"), filename="clip.wav")]
+
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(jobs.create_batch(
+            uploads, ["clip"], "mlx/whisper", "en", False, None, None, None,
+            genstudio_execution_json=json.dumps(execution),
+        ))
+
+    assert getattr(raised.value, "status_code", None) == 409
+    assert needle in str(raised.value)
+
+
+@pytest.mark.asyncio
 async def test_model_capability_and_existing_heavy_lease_filter_workers(reset, monitor, monkeypatch):
     local, remote = _add_remote_voice(monitor)
     monitor.status[local["id"]] = monitor.status[remote["id"]] = {"status": "up"}
@@ -251,13 +686,49 @@ async def test_model_capability_and_existing_heavy_lease_filter_workers(reset, m
         repo = "other/model" if studio["id"] == local["id"] else "mlx/whisper"
         return {"available": True, "models": [{"repo": repo, "cached": True}]}
 
-    monkeypatch.setattr(monitor, "get_transcription", availability)
+    monkeypatch.setattr(monitor, "scheduling_transcription", availability)
     assert [s["id"] for s in await jobs._eligible_studios(monitor, "mlx/whisper")] == [remote["id"]]
     broker._busy.add("image")
     try:
         assert [s["id"] for s in await jobs._eligible_studios(monitor, "mlx/whisper")] == [remote["id"]]
     finally:
         broker._busy.clear()
+
+
+@pytest.mark.asyncio
+async def test_transcription_eligible_studios_use_smallest_sufficient_ram_first(
+        reset, monitor, monkeypatch):
+    local, remote = _add_remote_voice(monitor, "mac-8")
+    remote_large = {
+        **local,
+        "id": "voice@mac-24",
+        "machine": "mac-24",
+        "host": "10.0.0.24",
+    }
+    monitor.registry.append(remote_large)
+    for studio in (local, remote, remote_large):
+        monitor.status[studio["id"]] = {"status": "up"}
+    memory = {
+        "local": {"total_gb": 16, "available_gb": 12},
+        "mac-8": {"total_gb": 8, "available_gb": 6},
+        "mac-24": {"total_gb": 24, "available_gb": 20},
+    }
+
+    async def availability(_studio):
+        return {"available": True,
+                "models": [{"repo": "mlx/whisper", "cached": True}]}
+
+    monkeypatch.setattr(monitor, "scheduling_transcription", availability)
+    monkeypatch.setattr(
+        broker, "_host_for_studio",
+        lambda studio: memory[studio["machine"]],
+    )
+
+    eligible = await jobs._eligible_studios(monitor, "mlx/whisper")
+
+    assert [studio["machine"] for studio in eligible] == [
+        "mac-8", "local", "mac-24",
+    ]
 
 
 @pytest.mark.asyncio
@@ -285,7 +756,7 @@ async def test_offline_failure_requeues_with_bounded_try(reset, monitor, monkeyp
     async def post(*args, **kwargs):
         raise httpx.ConnectError("worker went offline")
 
-    monkeypatch.setattr(monitor, "get_transcription", availability)
+    monkeypatch.setattr(monitor, "scheduling_transcription", availability)
     monkeypatch.setattr(monitor._client, "post", post)
     assert await jobs.dispatch_once(monitor) == 1
     await asyncio.gather(*list(jobs._item_tasks.values()))
@@ -311,7 +782,7 @@ async def test_transport_failure_avoids_worker_and_uses_another_voice_studio(res
             raise httpx.ConnectError("local worker went offline")
         return _Response()
 
-    monkeypatch.setattr(monitor, "get_transcription", availability)
+    monkeypatch.setattr(monitor, "scheduling_transcription", availability)
     monkeypatch.setattr(monitor._client, "post", post)
     assert await jobs.dispatch_once(monitor) == 1
     await asyncio.gather(*list(jobs._item_tasks.values()))
@@ -337,7 +808,7 @@ async def test_partial_failure_keeps_success_and_retry_selects_only_error(reset,
         filename = kwargs["files"]["file"][0]
         return _Response(srt="" if filename == "c1.wav" else _Response()._srt)
 
-    monkeypatch.setattr(monitor, "get_transcription", availability)
+    monkeypatch.setattr(monitor, "scheduling_transcription", availability)
     monkeypatch.setattr(monitor._client, "post", post)
     assert await jobs.dispatch_once(monitor) == 2
     await asyncio.gather(*list(jobs._item_tasks.values()))
@@ -368,7 +839,7 @@ async def test_cancellation_aborts_running_request_without_deleting_success(rese
         await gate.wait()
         return _Response()
 
-    monkeypatch.setattr(monitor, "get_transcription", availability)
+    monkeypatch.setattr(monitor, "scheduling_transcription", availability)
     monkeypatch.setattr(monitor._client, "post", post)
     assert await jobs.dispatch_once(monitor) == 1
     await asyncio.sleep(0)
@@ -393,7 +864,7 @@ async def test_graceful_hub_shutdown_requeues_running_item(reset, monitor, monke
         await gate.wait()
         return _Response()
 
-    monkeypatch.setattr(monitor, "get_transcription", availability)
+    monkeypatch.setattr(monitor, "scheduling_transcription", availability)
     monkeypatch.setattr(monitor._client, "post", post)
     assert await jobs.dispatch_once(monitor) == 1
     await asyncio.sleep(0)
