@@ -97,10 +97,19 @@ def test_new_candidate_appears_from_cache_without_restart(monitor):
     assert rows[0]["exposure"]["state"] == "candidate"
 
 
-def test_owner_can_approve_then_revoke_after_candidate_disappears(client, monitor):
+def test_owner_can_approve_then_revoke_after_candidate_disappears(
+        client, monitor, monkeypatch):
     studio = next(row for row in monitor.registry if row["id"] == "image")
     monitor.registry = [studio]
-    monitor.status = {"image": {"status": "up"}}
+    monitor.status = {
+        "image": {
+            "status": "up",
+            "health": {"memory": {"total_gb": 24, "available_gb": 20}},
+        },
+    }
+    monkeypatch.setattr(
+        hardware_profiles, "machine_hardware_profile", lambda _machine: None,
+    )
     monitor._catalog_cache["image"] = (time.time(), {"models": [_model()]})
     control_plane.save_settings({
         "role": "controller", "site_id": "site-a", "controller_id": "hub-a",

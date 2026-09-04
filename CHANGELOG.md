@@ -10,6 +10,14 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.19.4] — 2026-09-05
+
+### Fixed — deterministic capacity evidence verification
+
+- Capacity eligibility coverage now supplies explicit host-memory evidence in
+  its cross-platform test fixture, so Linux and macOS verify the same positive
+  RAM-floor result while unknown memory remains excluded from eligible totals.
+
 ## [2.19.3] — 2026-09-05
 
 ### Fixed — memory-aware arbitration and strict transcription identity

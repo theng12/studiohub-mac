@@ -1234,6 +1234,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.19.4", date: "2026-09-05", items: [
+    "Capacity eligibility verification now supplies explicit host-memory evidence across platforms, while unknown memory remains excluded when a model has a positive RAM floor.",
+    "Update Studio Hub normally; no worker, fleet machine, or running job changes automatically.",
+  ] },
   { v: "2.19.3", date: "2026-09-05", items: [
     "Shared Chat/Transcription arbitration now includes model memory admission. A queued model that cannot fit the physical Mac cannot reserve its turn, and a real memory wait advances the token so an eligible opposite lane keeps working.",
     "GenStudio transcription now fails closed unless a passed audited <code>genstudio_candidate</code> explicitly approves <code>audio.transcription</code>, uses an immutable runtime revision and matching contract hash, and reports <code>cached: true</code> with matching runtime evidence.",
