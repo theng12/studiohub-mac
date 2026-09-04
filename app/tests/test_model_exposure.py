@@ -108,6 +108,12 @@ def test_owner_can_approve_then_revoke_after_candidate_disappears(client, monito
     client.cookies.set(auth.SESSION_COOKIE_NAME, auth.create_browser_session())
 
     inventory = client.get("/api/hub/model-exposures").json()
+    assert inventory["candidates"][0]["supply"][
+        "eligible_physical_slots_total"
+    ] == 1
+    assert inventory["candidates"][0]["machines"][0][
+        "capacity_eligible"
+    ] is True
     candidate_key = inventory["candidates"][0]["candidate_key"]
     approved = client.post(
         "/api/hub/model-exposures/approve",
@@ -255,13 +261,19 @@ def test_supply_keeps_machine_states_hardware_and_reasons_distinct(
         "quarantined_machine_count": 1,
         "offline_or_quarantined_machine_count": 2,
         "available_physical_slots": 1,
+        "eligible_physical_slots_total": 2,
     }
     evidence = {item["machine_id"]: item for item in row["machines"]}
     assert evidence["busy"]["availability_reason"] == "machine_busy"
+    assert evidence["busy"]["capacity_eligible"] is True
     assert evidence["offline"]["availability_reason"] == "worker_offline"
+    assert evidence["offline"]["capacity_eligible"] is False
     assert evidence["quarantine"]["availability_reason"] == "machine_quarantined"
+    assert evidence["quarantine"]["capacity_eligible"] is False
     assert evidence["lowmem"]["availability_reason"] == "insufficient_total_memory"
+    assert evidence["lowmem"]["capacity_eligible"] is False
     assert evidence["ready"]["hardware_profile"]["memory_gb"] == 24
+    assert evidence["ready"]["capacity_eligible"] is True
     assert evidence["lowmem"]["hardware_profile"]["memory_gb"] == 8
 
 

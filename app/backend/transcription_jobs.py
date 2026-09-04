@@ -368,6 +368,9 @@ async def _eligible_studios(monitor, model: str, item: dict | None = None) -> li
         if (availability or {}).get("available") and any(
                 m.get("repo") == model and m.get("cached", True) for m in models):
             eligible.append(studio)
+    eligible.sort(key=lambda studio: (
+        broker._studio_total_memory_gb(studio), studio["id"],
+    ))
     return eligible
 
 

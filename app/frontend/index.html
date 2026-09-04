@@ -1234,6 +1234,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.19.0", date: "2026-09-05", items: [
+    "<b>Capacity routing now has an honest denominator.</b> The private Hub capability snapshot reports total compatible physical-Mac and worker-service capacity separately from current free slots, globally and per operation, so a busy Mac is not mistaken for a machine that does not exist.",
+    "Exact model supply now includes total eligible physical slots plus a per-machine <code>capacity_eligible</code> flag. Shared Image, Voice, TTS, Subtitle, and other operation aliases are deduplicated by physical Mac, while stale, offline, drained, quarantined, uninstalled, incompatible, and total-memory-ineligible observations stay out of the denominator.",
+    "Current availability also consumes worker health and catalog busy evidence. Local Chat/Transcription dispatch uses smallest-sufficient-RAM ordering, and Chat batches take fair turns by last dispatch. Update Studio Hub normally; running leases remain untouched.",
+  ] },
   { v: "2.18.4", date: "2026-09-02", items: [
     "<b>A Controller now tells you when a registered Mac belongs to another site.</b> If an Agent rejects this site's fleet token and its health endpoint reports a different site, its row says <i>now enrolled at site X — Remove this stale entry</i> instead of a generic token or reachability error. Moving a Mac never notifies its old Controller, so this is where it gets noticed. Nothing is removed automatically.",
     "A same-site token rejection still reads <i>token mismatch</i>. The extra health probe runs only after a token rejection, so healthy peers cost nothing.",

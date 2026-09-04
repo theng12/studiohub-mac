@@ -79,9 +79,21 @@ not change the site-capabilities schema version.
   "capacity": {
     "queue_depth": 0,
     "available_physical_machine_slots": 1,
+    "eligible_physical_machine_slots_total": 1,
+    "eligible_worker_service_slots_total": 3,
     "eligible_worker_services": 3,
     "shared_physical_machine_slots": true,
-    "by_operation": {}
+    "by_operation": {
+      "image.text_to_image": {
+        "workers_total": 1,
+        "workers_online": 1,
+        "workers_ready": 1,
+        "available_worker_slots": 1,
+        "eligible_physical_machine_slots_total": 1,
+        "eligible_worker_service_slots_total": 1,
+        "available_physical_machine_slots": 1
+      }
+    }
   },
   "machines": [],
   "workers": [],
@@ -104,6 +116,18 @@ Each worker reports:
 - Online, ready, busy, drained, maintenance, and machine-quarantine state.
 - Current available slot count.
 - Supported operations and per-worker model capabilities.
+
+The additive capacity totals separate compatible capacity from current free
+capacity. `capacity.eligible_physical_machine_slots_total` is the number of
+unique physical machine IDs with at least one exact, approved model
+observation whose `availability.capacity_eligible` is true. It includes a
+machine while that worker or another service on the machine is busy.
+`capacity.eligible_worker_service_slots_total` counts the corresponding unique
+worker services. The same two totals appear under each operation in
+`capacity.by_operation`; `available_physical_machine_slots` and
+`available_worker_slots` remain current observations. The legacy
+`eligible_worker_services` field also remains a current available-service
+count for older consumers.
 
 Operations use stable names such as:
 
@@ -135,6 +159,14 @@ policy source, current observed memory, and whether the machine is eligible
 now. Operator overrides are site-local scheduling policy; they do not modify
 the worker catalog or transfer global authority from GenStudio.
 `availability.available_now` reflects the effective policy.
+`availability.capacity_eligible` is the separate static capacity fact: it
+requires an online, ready, enabled, non-maintenance, non-quarantined worker
+with a fresh catalog, an installed model, compatible runtime/subsystem,
+matching execution gates, and a passing total-memory floor when applicable.
+It deliberately does not require a free slot, and therefore remains true for a
+compatible busy worker. A low current free-memory reading can make
+`available_now` false without removing the machine from total compatible
+capacity.
 
 ## Audited candidate and exposure gate
 
@@ -163,10 +195,14 @@ exact exposure evidence, and `availability.approved_for_genstudio` is true.
 
 `model_supply` groups the detailed worker evidence by exact model ID,
 operation, immutable revision, and contract hash. It reports installed,
-online, ready, busy, offline, and quarantined machine counts; available
-physical slots; machine IDs; hardware and memory evidence; per-machine
-availability reasons; last catalogue refresh; and stale state. The aggregate
-is derived from `workers[].models[]` and is never a second authority.
+online, ready, busy, offline, and quarantined machine counts; current
+available physical slots; total eligible physical slots in
+`eligible_physical_slots_total`; machine IDs; hardware and memory evidence;
+per-machine availability reasons; last catalogue refresh; and stale state.
+Each machine observation includes additive boolean `capacity_eligible`, so a
+consumer can deduplicate a physical machine across operation aliases without
+parsing diagnostic reason strings. The aggregate is derived from
+`workers[].models[]` and is never a second authority.
 
 ## Catalogue freshness
 
@@ -221,6 +257,20 @@ GenStudio decides whether its routing policy requires an immutable revision.
 - The audited catalogue observation is not stale.
 - The exact model contract remains present in the last-good GenStudio fleet
   catalog accepted by this controller.
+- When the worker catalog reports candidate `capacity.available_slots`, it
+  must report at least one current slot. Worker health busy evidence is also
+  treated as unavailable now, including the nested generation busy signal
+  used by Image Studio.
+
+`availability.capacity_eligible=true` is the total-capacity counterpart. It
+requires the worker and model compatibility, freshness, installation,
+execution, and total-memory gates above, but intentionally ignores worker
+busy, shared-machine busy, and current free-slot/free-memory observations.
+Consequently a busy-but-compatible machine contributes to
+`eligible_physical_slots_total` while contributing zero to
+`available_physical_slots`. Offline, drained, maintenance, quarantined,
+stale, uninstalled, incompatible, revision-mismatched, execution-unready,
+and total-memory-ineligible observations are not capacity eligible.
 
 An unavailable model includes a stable reason such as `worker_offline`,
 `physical_machine_busy`, `worker_maintenance`, or `model_not_installed`.

@@ -293,6 +293,23 @@ def test_private_capability_snapshot_contract_is_versioned_and_truthful(
     }
     assert payload["capacity"]["available_physical_machine_slots"] == 1
     assert payload["capacity"]["eligible_worker_services"] == 2
+    assert payload["capacity"]["eligible_physical_machine_slots_total"] == 1
+    assert payload["capacity"]["eligible_worker_service_slots_total"] == 2
+    assert payload["capacity"]["by_operation"]["image.text_to_image"] == {
+        "workers_total": 1,
+        "workers_online": 1,
+        "workers_ready": 1,
+        "available_worker_slots": 1,
+        "eligible_physical_machine_slots_total": 1,
+        "eligible_worker_service_slots_total": 1,
+        "available_physical_machine_slots": 1,
+    }
+    assert payload["capacity"]["by_operation"]["voice.tts"][
+        "eligible_physical_machine_slots_total"
+    ] == 1
+    assert payload["capacity"]["by_operation"]["audio.transcription"][
+        "eligible_physical_machine_slots_total"
+    ] == 1
 
     machine = payload["machines"][0]
     assert machine["physical_machine_id"] == "local"
@@ -316,6 +333,7 @@ def test_private_capability_snapshot_contract_is_versioned_and_truthful(
     }
     assert model["controls"]["defaults"] == {"steps": 4}
     assert model["availability"]["available_now"] is True
+    assert model["availability"]["capacity_eligible"] is True
     assert model["availability"]["revision_pinning_ready"] is True
 
     voice = _worker(payload, "voice")
@@ -328,6 +346,160 @@ def test_private_capability_snapshot_contract_is_versioned_and_truthful(
     assert tts["controls"]["languages"] == ["en", "km"]
     assert tts["output_limits"] == {"sample_rate_hz": 24_000}
     assert transcription["availability"]["available_now"] is True
+
+    supply = next(row for row in payload["model_supply"]
+                  if row["internal_model_id"] == "org/image-model")
+    assert supply["eligible_physical_slots_total"] == 1
+    assert supply["available_physical_slots"] == 1
+    assert supply["machines"][0]["capacity_eligible"] is True
+
+
+def test_capacity_totals_count_busy_compatible_machines_once(authed, monitor):
+    _seed_capability_site(monitor)
+    broker._busy.add("image")
+
+    payload = authed.get("/api/hub/capabilities").json()
+
+    assert payload["capacity"]["eligible_physical_machine_slots_total"] == 1
+    assert payload["capacity"]["eligible_worker_service_slots_total"] == 2
+    assert payload["capacity"]["available_physical_machine_slots"] == 0
+    assert payload["capacity"]["by_operation"]["image.text_to_image"] == {
+        "workers_total": 1,
+        "workers_online": 1,
+        "workers_ready": 1,
+        "available_worker_slots": 0,
+        "eligible_physical_machine_slots_total": 1,
+        "eligible_worker_service_slots_total": 1,
+        "available_physical_machine_slots": 0,
+    }
+    assert payload["capacity"]["by_operation"]["voice.tts"][
+        "eligible_physical_machine_slots_total"
+    ] == 1
+
+    image_supply = next(row for row in payload["model_supply"]
+                        if row["internal_model_id"] == "org/image-model")
+    assert image_supply["eligible_physical_slots_total"] == 1
+    assert image_supply["available_physical_slots"] == 0
+    assert image_supply["machines"][0]["capacity_eligible"] is True
+    assert image_supply["machines"][0]["available_slots"] == 0
+
+
+def test_catalog_busy_blocks_current_availability_but_not_eligibility(
+        authed, monitor):
+    _seed_capability_site(monitor)
+    source = monitor._catalog_cache["image"][1]["models"][0]
+    source["genstudio_candidate"]["capacity"] = {
+        "max_concurrency": 1,
+        "available_slots": 0,
+    }
+
+    payload = authed.get("/api/hub/capabilities").json()
+    image = _worker(payload, "image")
+    model = _model(image, "image.text_to_image")
+    voice = _worker(payload, "voice")
+    voice_model = _model(voice, "voice.tts")
+    supply = next(row for row in payload["model_supply"]
+                  if row["internal_model_id"] == "org/image-model")
+
+    assert image["busy"] is True
+    assert image["available_capacity"]["slots"] == 0
+    assert model["availability"]["available_now"] is False
+    assert model["availability"]["capacity_eligible"] is True
+    assert model["availability"]["reason"] == "worker_busy"
+    assert voice["physical_machine_busy"] is True
+    assert voice_model["availability"]["available_now"] is False
+    assert voice_model["availability"]["reason"] == "physical_machine_busy"
+    assert supply["eligible_physical_slots_total"] == 1
+    assert supply["available_physical_slots"] == 0
+    assert supply["machines"][0]["busy"] is True
+    assert supply["machines"][0]["capacity_eligible"] is True
+
+
+def test_health_busy_blocks_current_availability_but_not_eligibility(
+        authed, monitor):
+    _seed_capability_site(monitor)
+    monitor.status["image"]["health"] = {
+        "ok": True,
+        "generation": {"busy": True},
+    }
+
+    payload = authed.get("/api/hub/capabilities").json()
+    image = _worker(payload, "image")
+    model = _model(image, "image.text_to_image")
+
+    assert image["busy"] is True
+    assert image["available_capacity"]["slots"] == 0
+    assert model["availability"]["available_now"] is False
+    assert model["availability"]["capacity_eligible"] is True
+    assert model["availability"]["reason"] == "worker_busy"
+    assert payload["capacity"]["eligible_physical_machine_slots_total"] == 1
+
+
+@pytest.mark.parametrize("state", ["down", "unknown"])
+def test_ineligible_worker_is_excluded_from_total_capacity(
+        authed, monitor, state):
+    _seed_capability_site(monitor)
+    monitor.status["image"]["status"] = state
+
+    payload = authed.get("/api/hub/capabilities").json()
+    image_supply = next(row for row in payload["model_supply"]
+                        if row["internal_model_id"] == "org/image-model")
+
+    assert image_supply["eligible_physical_slots_total"] == 0
+    assert image_supply["machines"][0]["capacity_eligible"] is False
+    assert payload["capacity"]["by_operation"]["image.text_to_image"][
+        "eligible_physical_machine_slots_total"
+    ] == 0
+
+
+@pytest.mark.parametrize("gate", [
+    "stale", "uninstalled", "runtime", "subsystem", "revision",
+    "execution", "drained", "quarantined", "total_memory",
+])
+def test_capacity_eligibility_excludes_failed_compatibility_gates(
+        authed, monitor, monkeypatch, gate):
+    _seed_capability_site(monitor)
+    monitor._catalog_cache["voice"] = (time.time(), {"models": []})
+    monitor._transcribe_cache["voice"] = (
+        time.time(), {"available": False, "models": []},
+    )
+    source = monitor._catalog_cache["image"][1]["models"][0]
+    if gate == "stale":
+        monitor._catalog_cache["image"] = (
+            time.time() - 3600, monitor._catalog_cache["image"][1],
+        )
+    elif gate == "uninstalled":
+        source["cache"] = {"state": "absent"}
+    elif gate == "runtime":
+        source["runtime_compatible"] = False
+    elif gate == "subsystem":
+        source["hub_ready"] = False
+    elif gate == "revision":
+        source["qualified_revision_match"] = False
+    elif gate == "execution":
+        source["execution_ready"] = False
+    elif gate == "drained":
+        registry.set_studio_enabled("local", "image", False)
+    elif gate == "quarantined":
+        broker._machine_protection["local"] = {
+            "cooldown_until": time.time() + 60,
+        }
+    elif gate == "total_memory":
+        source["min_unified_memory_gb"] = 8
+        monkeypatch.setattr(capabilities, "host_stats", lambda: {
+            "total_gb": 1, "available_gb": 1,
+        })
+
+    payload = authed.get("/api/hub/capabilities").json()
+    image_supply = next(row for row in payload["model_supply"]
+                        if row["internal_model_id"] == "org/image-model")
+
+    assert image_supply["eligible_physical_slots_total"] == 0
+    assert image_supply["machines"][0]["capacity_eligible"] is False
+    assert payload["capacity"]["eligible_physical_machine_slots_total"] == 0
+    assert payload["capacity"]["by_operation"]["image.text_to_image"][
+        "eligible_physical_machine_slots_total"
+    ] == 0
 
 
 @pytest.mark.parametrize("image_state", [

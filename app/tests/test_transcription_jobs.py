@@ -261,6 +261,42 @@ async def test_model_capability_and_existing_heavy_lease_filter_workers(reset, m
 
 
 @pytest.mark.asyncio
+async def test_transcription_eligible_studios_use_smallest_sufficient_ram_first(
+        reset, monitor, monkeypatch):
+    local, remote = _add_remote_voice(monitor, "mac-8")
+    remote_large = {
+        **local,
+        "id": "voice@mac-24",
+        "machine": "mac-24",
+        "host": "10.0.0.24",
+    }
+    monitor.registry.append(remote_large)
+    for studio in (local, remote, remote_large):
+        monitor.status[studio["id"]] = {"status": "up"}
+    memory = {
+        "local": {"total_gb": 16, "available_gb": 12},
+        "mac-8": {"total_gb": 8, "available_gb": 6},
+        "mac-24": {"total_gb": 24, "available_gb": 20},
+    }
+
+    async def availability(_studio):
+        return {"available": True,
+                "models": [{"repo": "mlx/whisper", "cached": True}]}
+
+    monkeypatch.setattr(monitor, "get_transcription", availability)
+    monkeypatch.setattr(
+        broker, "_host_for_studio",
+        lambda studio: memory[studio["machine"]],
+    )
+
+    eligible = await jobs._eligible_studios(monitor, "mlx/whisper")
+
+    assert [studio["machine"] for studio in eligible] == [
+        "mac-8", "local", "mac-24",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_restart_recovery_requeues_interrupted_work(reset):
     batch = await _create_direct(1)
     batch["items"][0].update(state="running", studio="voice", studio_task_id="task-1")

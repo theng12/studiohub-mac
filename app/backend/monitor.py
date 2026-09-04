@@ -769,8 +769,9 @@ class StudioMonitor:
         This is the operator review surface. It intentionally includes
         unexposed candidates; GenStudio's capability contract does not.
         """
-        from . import (broker, chat_jobs, hardware_profiles, memory_admission,
-                       model_exposure, transcription_jobs)
+        from . import (broker, chat_jobs, capabilities as capability_contract,
+                       hardware_profiles, memory_admission, model_exposure,
+                       transcription_jobs)
         from .registry import machine_enabled, studio_enabled
 
         aggregate = self.cached_aggregate_catalog()
@@ -779,6 +780,29 @@ class StudioMonitor:
         busy_studios = set(broker.busy_studios()) | set(chat_jobs.busy_studios) \
             | set(transcription_jobs.busy_studios)
         busy_machines = broker.busy_machines()
+        for studio in self.registry:
+            status = self.status.get(studio["id"], {})
+            health = status.get("health")
+            health_busy = bool(status.get("health_busy"))
+            if isinstance(health, dict):
+                health_busy = health_busy or bool(health.get("busy"))
+                generation = health.get("generation")
+                if isinstance(generation, dict):
+                    health_busy = health_busy or bool(generation.get("busy"))
+            if health_busy:
+                busy_studios.add(studio["id"])
+                busy_machines.add(studio.get("machine", "local"))
+        for model in aggregate.get("models") or []:
+            candidate = model_exposure.candidate_summary(model)
+            studio_id = str(model.get("hub_studio") or "")
+            studio = studios.get(studio_id)
+            if (candidate and studio
+                    and capability_contract._catalog_reports_busy(
+                        model, candidate, studio,
+                        self.status.get(studio_id, {}), protections,
+                    )):
+                busy_studios.add(studio_id)
+                busy_machines.add(studio.get("machine", "local"))
         grouped: dict[str, dict] = {}
 
         for model in aggregate.get("models") or []:
@@ -820,6 +844,16 @@ class StudioMonitor:
                     "observed_total_memory_gb": observed_total,
                     "eligible": hardware_eligible,
                 }
+
+            capacity_eligible = capability_contract._capacity_eligible(
+                model,
+                online=online,
+                ready=online and not status.get("health_recovering"),
+                drained=drained,
+                maintenance=broker.in_maintenance(studio_id),
+                machine_quarantined=quarantined,
+                memory_capacity_eligible=hardware_eligible,
+            )
 
             if not online:
                 reason = "worker_offline"
@@ -884,6 +918,7 @@ class StudioMonitor:
                     "reported_available_slots": candidate.get(
                         "capacity", {},
                     ).get("available_slots", 1),
+                    "capacity_eligible": capacity_eligible,
                 })
 
         rows = list(grouped.values())
@@ -914,6 +949,10 @@ class StudioMonitor:
                 "offline_or_quarantined_machine_count": len({
                     m["machine_id"] for m in machines
                     if not m["online"] or m["quarantined"]
+                }),
+                "eligible_physical_slots_total": len({
+                    m["machine_id"] for m in machines
+                    if m["capacity_eligible"]
                 }),
                 # Hub schedules one heavy job per physical Mac even when a
                 # sibling reports greater service-level concurrency.

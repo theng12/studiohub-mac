@@ -10,6 +10,27 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.19.0] — 2026-09-05
+
+### Added — capacity evidence now separates compatible supply from free slots
+
+- The private Studio Hub capability snapshot now reports additive total
+  eligible physical-machine and worker-service capacity globally and per
+  operation, without changing the meaning of existing current-availability
+  fields.
+- Exact `model_supply` entries now include total eligible physical slots and a
+  per-machine `capacity_eligible` boolean. Totals deduplicate shared Macs and
+  keep a compatible machine in the denominator while it is busy.
+- Current availability now consumes Image/Voice catalog slot observations and
+  worker health busy evidence. Stale, offline, drained, quarantined,
+  uninstalled, incompatible, and total-memory-ineligible supply is excluded
+  from eligible totals. No worker dispatch, lease, model, enrollment, or
+  fleet-machine behavior changes automatically.
+- Local Chat and Transcription queues now try the smallest sufficient RAM tier
+  first, and Chat batches rotate by their last dispatch turn so one queued
+  batch cannot consume every free worker wave. Existing leases, exact model
+  revision checks, memory admission, and running work remain authoritative.
+
 ## [2.18.4] — 2026-09-02
 
 ### Added — a Controller now says when a registered Mac belongs to another site

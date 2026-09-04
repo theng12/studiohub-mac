@@ -242,16 +242,30 @@ selected audit reports `adapter_managed_long_form`. Native one-pass capacity is
 not a sellability requirement. GenStudio must never split or stitch the text;
 those model-specific operations belong to Voice Studio.
 
-Capacity is shared by physical Mac. `eligible_worker_services` counts routing
-choices, not independent concurrent slots. Use
-`capacity.available_physical_machine_slots` and each machine's
-`available_capacity.worker_slots` when estimating site concurrency. Do not add
-the Image, Voice, Chat, and other service slots from the same physical machine
-as if they could all perform heavy work simultaneously.
+Capacity is shared by physical Mac. `eligible_worker_services` counts current
+routing choices, not independent concurrent slots. For capacity-proportional
+site routing, use the additive
+`capacity.eligible_physical_machine_slots_total` denominator and the
+operation-specific equivalent under `capacity.by_operation`; these totals
+deduplicate physical machine IDs and include compatible machines that are
+busy. Use `capacity.available_physical_machine_slots` for current free
+capacity. Exact `model_supply` rows expose
+`eligible_physical_slots_total` and a per-machine `capacity_eligible` boolean,
+so GenStudio can deduplicate a Mac across operation aliases without parsing
+availability reason strings. Do not add the Image, Voice, Chat, and other
+service slots from the same physical machine as if they could all perform
+heavy work simultaneously.
 
 `availability.available_now` is an observation, not a reservation. GenStudio
 must still handle a safe assignment rejection because capacity can change
 between observation and dispatch.
+
+`availability.capacity_eligible` is the static compatible-capacity fact. It
+remains true while a worker or its shared physical machine is busy, but is
+false for stale, offline, drained, maintenance, quarantined, uninstalled,
+incompatible, revision-mismatched, execution-unready, or total-memory-
+ineligible observations. `available_now` additionally consumes worker health
+busy and catalog `capacity.available_slots` evidence.
 
 For local models, `memory_admission` explains the catalog requirement, Hub
 default, effective total/free-memory floors, policy source, and observed machine
