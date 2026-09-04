@@ -965,6 +965,7 @@ class StudioMonitor:
                 or not studio_enabled(machine, studio_id)
                 or broker.in_maintenance(studio_id)
             )
+            catalog_error = bool(str(model.get("hub_catalog_error") or "").strip())
             catalog_stale = bool(model.get("hub_catalog_stale"))
             installed = bool(model.get("hub_cached"))
             runtime_compatible = model.get("runtime_compatible") is not False
@@ -972,21 +973,37 @@ class StudioMonitor:
             hardware_profile = hardware_profiles.machine_hardware_profile(machine)
             admission = None
             hardware_eligible = True
+            memory_capacity_eligible = True
             if memory_admission.applies_to(model.get("hub_modality")):
                 admission = memory_admission.describe(
                     candidate["internal_model_id"], model,
                 )
                 health_memory = ((status.get("health") or {}).get("memory") or {})
                 observed_total = health_memory.get("total_gb")
-                if not isinstance(observed_total, (int, float)):
+                if (not isinstance(observed_total, (int, float))
+                        or isinstance(observed_total, bool)):
                     observed_total = (hardware_profile or {}).get("memory_gb")
                 floor = admission.get("effective_min_total_memory_gb")
-                if isinstance(observed_total, (int, float)) and isinstance(floor, (int, float)):
+                if (isinstance(observed_total, (int, float))
+                        and not isinstance(observed_total, bool)
+                        and isinstance(floor, (int, float))
+                        and not isinstance(floor, bool)):
                     hardware_eligible = float(observed_total) >= float(floor)
+                elif (isinstance(floor, (int, float))
+                      and not isinstance(floor, bool)
+                      and float(floor) > 0):
+                    # A candidate with a RAM floor needs positive host evidence
+                    # before it contributes to physical capacity. Keep the
+                    # readiness reason separate so unknown telemetry is not
+                    # misreported as insufficient RAM.
+                    memory_capacity_eligible = False
                 admission = {
                     **admission,
                     "observed_total_memory_gb": observed_total,
-                    "eligible": hardware_eligible,
+                    "eligible": (
+                        hardware_eligible
+                        if memory_capacity_eligible else None
+                    ),
                 }
 
             capacity_eligible = capability_contract._capacity_eligible(
@@ -996,7 +1013,8 @@ class StudioMonitor:
                 drained=drained,
                 maintenance=broker.in_maintenance(studio_id),
                 machine_quarantined=quarantined,
-                memory_capacity_eligible=hardware_eligible,
+                memory_capacity_eligible=memory_capacity_eligible
+                and hardware_eligible,
             )
 
             if not online:
@@ -1005,6 +1023,8 @@ class StudioMonitor:
                 reason = "machine_quarantined"
             elif drained:
                 reason = "worker_drained"
+            elif catalog_error:
+                reason = "catalog_error"
             elif catalog_stale:
                 reason = "catalog_stale"
             elif not installed:

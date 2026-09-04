@@ -1234,6 +1234,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.19.2", date: "2026-09-05", items: [
+    "<b>Shared-machine fairness now follows real eligibility.</b> Chat and Transcription no longer block an eligible lane just because the opposite queue has work that cannot run on that Mac or model; a lone eligible queue remains work-conserving.",
+    "GenStudio transcription assignments now fail closed unless the exact <code>audio.transcription</code> operation, audited model revision, and contract hash match the supplied execution evidence.",
+    "Catalog refresh errors now remove a model from current and total capacity evidence. Remote RAM-gated workers with unknown host memory stay visible but do not inflate the eligible physical-capacity denominator. Update Studio Hub normally; no worker or fleet machine changes automatically.",
+  ] },
   { v: "2.19.1", date: "2026-09-05", items: [
     "<b>Local schedulers now route only from fresh, successful worker evidence.</b> A stale last-good catalog or a failed catalog/Whisper refresh remains visible for diagnostics but cannot silently select a worker. The durable cache now records catalog and transcription freshness/errors independently.",
     "Transcription uses the same total/free unified-memory admission as the other local generation lanes, so a low-memory Mac is excluded from both current routing and total eligible capacity for that model.",

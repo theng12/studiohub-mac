@@ -10,6 +10,23 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.19.2] — 2026-09-05
+
+### Fixed — capacity arbitration and execution evidence fail closed
+
+- Chat and Transcription's shared-machine turn policy now asks whether the
+  opposite queue can actually use that physical Mac and model, so ineligible
+  work elsewhere cannot starve an eligible lane. Singleton-lane work remains
+  work-conserving and existing leases are unchanged.
+- GenStudio transcription assignments now require the exact
+  `audio.transcription` operation and dispatch only when the worker's audited
+  model revision and contract hash match the supplied execution evidence.
+- Capability publication treats catalog refresh errors as unavailable for both
+  current routing and eligible-capacity totals. RAM-gated remote machines with
+  unknown host memory remain visible but are excluded from total capacity.
+- No worker, model, enrollment, fleet-machine, deployment, restart, or live-job
+  behavior changes automatically. Update Studio Hub normally.
+
 ## [2.19.1] — 2026-09-05
 
 ### Fixed — schedulers now use only fresh, successful worker evidence

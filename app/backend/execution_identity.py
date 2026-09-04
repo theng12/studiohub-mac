@@ -31,7 +31,7 @@ _OPERATION = re.compile(r"^[a-z][a-z0-9._:-]{0,79}$")
 _FIELDS = {
     "genstudio_job_id", "genstudio_attempt_id", "idempotency_key",
     "fencing_token", "site_id", "operation", "model_revision",
-    "voice_revision", "lease_expires_at",
+    "voice_revision", "contract_hash", "lease_expires_at",
 }
 
 _SCHEMA = """
@@ -137,6 +137,7 @@ def _canonical_payload(envelope: dict, identity: dict) -> str:
     payload["operation"] = identity["operation"]
     payload["model_revision"] = identity.get("model_revision")
     payload["voice_revision"] = identity.get("voice_revision")
+    payload["contract_hash"] = identity.get("contract_hash")
     try:
         return json.dumps(payload, sort_keys=True, separators=(",", ":"),
                           ensure_ascii=False)
@@ -193,6 +194,9 @@ def _extract(envelope: dict) -> dict | None:
         "voice_revision": (
             str(supplied.get("voice_revision")).strip()
             if supplied.get("voice_revision") is not None else None),
+        "contract_hash": (
+            str(supplied.get("contract_hash")).strip().lower()
+            if supplied.get("contract_hash") is not None else None),
         "lease_expires_at": lease_text,
     }
 

@@ -481,6 +481,40 @@ def has_queued_work() -> bool:
     )
 
 
+async def has_dispatchable_work(monitor, machine: str) -> bool:
+    """Whether this lane can actually use ``machine`` on its next turn."""
+    now = time.time()
+    for batch in batches.values():
+        if (batch.get("cancelled")
+                or execution_identity.lease_expired(batch.get("genstudio_execution"))):
+            continue
+        queued = [
+            pack for pack in batch.get("packs") or []
+            if pack.get("state") == "queued"
+            and (not pack.get("retry_at") or pack["retry_at"] <= now)
+        ]
+        if not queued:
+            continue
+        output_limits = [
+            value
+            for pack in queued
+            for value in (
+                pack.get("params", {}).get("max_tokens")
+                or pack.get("params", {}).get("max_completion_tokens"),
+            )
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0
+        ]
+        eligible = await _eligible_studios(
+            monitor,
+            batch["model"],
+            batch.get("genstudio_execution"),
+            max(output_limits, default=0),
+        )
+        if any(studio.get("machine", "local") == machine for studio in eligible):
+            return True
+    return False
+
+
 async def dispatch_once(monitor) -> int:
     assigned = 0
     while True:
@@ -540,7 +574,8 @@ async def dispatch_once(monitor) -> int:
                 from . import transcription_jobs
                 if not broker.external_dispatch_allowed(
                         machine, "chat",
-                        other_lane_has_work=transcription_jobs.has_queued_work()):
+                        other_lane_has_work=await transcription_jobs.has_dispatchable_work(
+                            monitor, machine)):
                     continue
                 catalog = await monitor.scheduling_catalog(studio)
                 entry = next((item for item in (catalog or {}).get("models", [])

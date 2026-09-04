@@ -415,6 +415,65 @@ def test_catalog_busy_blocks_current_availability_but_not_eligibility(
     assert supply["machines"][0]["capacity_eligible"] is True
 
 
+def test_catalog_error_blocks_current_and_total_capacity(authed, monitor):
+    _seed_capability_site(monitor)
+    monitor._catalog_meta["image"] = {
+        "catalog_last_error": "catalog refresh failed",
+    }
+
+    payload = authed.get("/api/hub/capabilities").json()
+    image = _worker(payload, "image")
+    model = _model(image, "image.text_to_image")
+    supply = next(row for row in payload["model_supply"]
+                  if row["internal_model_id"] == "org/image-model")
+
+    assert model["availability"]["available_now"] is False
+    assert model["availability"]["capacity_eligible"] is False
+    assert model["availability"]["reason"] == "catalog_error"
+    assert supply["eligible_physical_slots_total"] == 0
+    assert supply["machines"][0]["capacity_eligible"] is False
+
+
+def test_ram_gated_remote_with_unknown_memory_is_not_eligible(
+        authed, monitor, monkeypatch):
+    _seed_capability_site(monitor)
+    voice = next(row for row in monitor.registry if row["id"] == "voice")
+    remote = {
+        **voice,
+        "id": "voice@unknown-memory",
+        "machine": "unknown-memory",
+        "host": "10.0.0.88",
+    }
+    monitor.registry = [remote]
+    monitor.status = {
+        remote["id"]: {"status": "up", "last_seen": time.time(),
+                        "health": {"ok": True}},
+    }
+    monitor._catalog_cache[remote["id"]] = monitor._catalog_cache.pop("voice")
+    monitor._transcribe_cache[remote["id"]] = monitor._transcribe_cache.pop("voice")
+    monitor._transcribe_cache[remote["id"]][1]["models"][0][
+        "min_unified_memory_gb"
+    ] = 8
+    monkeypatch.setattr(capabilities.peers, "cached", lambda _machine: {
+        "reachable": True,
+    })
+
+    payload = authed.get("/api/hub/capabilities").json()
+    worker = _worker(payload, remote["id"])
+    model = _model(worker, "audio.transcription")
+    supply = next(row for row in payload["model_supply"]
+                  if row["internal_model_id"] == "org/whisper")
+
+    assert model["memory_admission"]["effective_min_total_memory_gb"] == 8
+    assert model["memory_admission"]["observed_total_memory_gb"] is None
+    assert model["availability"]["capacity_eligible"] is False
+    # Current free-slot reporting remains the worker's own evidence; unknown
+    # host telemetry only removes the machine from the total-capacity basis.
+    assert model["availability"]["reason"] is None
+    assert supply["eligible_physical_slots_total"] == 0
+    assert supply["machines"][0]["capacity_eligible"] is False
+
+
 def test_health_busy_blocks_current_availability_but_not_eligibility(
         authed, monitor):
     _seed_capability_site(monitor)

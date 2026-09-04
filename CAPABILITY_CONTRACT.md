@@ -161,8 +161,11 @@ the worker catalog or transfer global authority from GenStudio.
 `availability.available_now` reflects the effective policy.
 `availability.capacity_eligible` is the separate static capacity fact: it
 requires an online, ready, enabled, non-maintenance, non-quarantined worker
-with a fresh catalog, an installed model, compatible runtime/subsystem,
-matching execution gates, and a passing total-memory floor when applicable.
+with a fresh, error-free catalog, an installed model, compatible
+runtime/subsystem, matching execution gates, and a passing total-memory floor
+when applicable. A reachable remote machine without host-memory evidence is
+not counted when its model has a RAM floor; its current worker-reported slot
+and existing availability reason remain separate observations.
 It deliberately does not require a free slot, and therefore remains true for a
 compatible busy worker. A low current free-memory reading can make
 `available_now` false without removing the machine from total compatible
@@ -216,7 +219,8 @@ erasing its last-known inventory.
 `GET /api/hub/capabilities` is strictly cache-only: it never performs a worker
 request. Each model includes `catalog_observation` with observation time, age,
 and stale state. A stale catalogue forces `availability.available_now=false`
-with reason `catalog_stale`.
+with reason `catalog_stale`; a recorded refresh error fails closed with reason
+`catalog_error`. Last-good rows remain available for diagnostics only.
 
 ## Runtime revisions
 
@@ -254,7 +258,8 @@ GenStudio decides whether its routing policy requires an immutable revision.
   `availability` for diagnostics. A revision mismatch reports
   `runtime_revision_mismatch`; other explicit worker execution unavailability
   reports `worker_execution_unready`.
-- The audited catalogue observation is not stale.
+- The audited catalogue observation is not stale and has no recorded refresh
+  error.
 - The exact model contract remains present in the last-good GenStudio fleet
   catalog accepted by this controller.
 - When the worker catalog reports candidate `capacity.available_slots`, it

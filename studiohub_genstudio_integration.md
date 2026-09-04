@@ -197,6 +197,11 @@ A site is eligible for a new assignment only when all of these are true:
    `availability.revision_pinning_ready == true` and `runtime_revision` matches
    the selected immutable revision.
 
+For `audio.transcription`, the submitted `genstudio_execution` must name that
+exact operation and include the selected model revision and contract hash. The
+Hub dispatches only to a Voice Studio whose audited candidate and cached
+runtime match all three values; missing or mismatched evidence stays queued.
+
 Use `internal_model_id` when addressing the selected Studio runtime. Stable
 operation names currently include:
 

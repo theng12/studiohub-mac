@@ -179,6 +179,14 @@ async def create_batch(files: list[UploadFile], item_ids: list[str], model: str,
             ) from exc
         if not isinstance(execution, dict):
             raise HTTPException(400, "genstudio_execution must be a JSON object")
+        supplied_operation = execution.get("operation")
+        if (supplied_operation is not None
+                and str(supplied_operation).strip().lower()
+                != "audio.transcription"):
+            raise HTTPException(
+                400,
+                "GenStudio execution operation must be audio.transcription",
+            )
     envelope = {
         "modality": "transcription",
         "model": model,
@@ -347,7 +355,46 @@ def active_assignments() -> dict[str, dict]:
     return active
 
 
-async def _eligible_studios(monitor, model: str, item: dict | None = None) -> list[dict]:
+def _execution_matches_model(entry: dict, execution: dict | None) -> bool:
+    """Require the exact GenStudio transcription model contract when assigned."""
+    if not execution:
+        return True
+    if str(execution.get("operation") or "").strip().lower() != "audio.transcription":
+        return False
+    expected_revision = str(execution.get("model_revision") or "").strip().lower()
+    expected_contract = str(execution.get("contract_hash") or "").strip().lower()
+    if not expected_revision or not expected_contract:
+        return False
+    candidate = entry.get("genstudio_candidate")
+    candidate = candidate if isinstance(candidate, dict) else {}
+    cache = entry.get("cache")
+    cache = cache if isinstance(cache, dict) else {}
+    reported_revision = str(
+        candidate.get("runtime_revision")
+        or entry.get("runtime_revision")
+        or entry.get("model_revision")
+        or entry.get("snapshot_revision")
+        or cache.get("snapshot_revision")
+        or ""
+    ).strip().lower()
+    reported_contract = str(
+        candidate.get("contract_hash")
+        or entry.get("contract_hash")
+        or ""
+    ).strip().lower()
+    if reported_revision != expected_revision or reported_contract != expected_contract:
+        return False
+    runtime_match = entry.get("genstudio_candidate_runtime_match")
+    if runtime_match is False:
+        return False
+    snapshot_revision = cache.get("snapshot_revision")
+    if snapshot_revision is not None and str(snapshot_revision).strip().lower() != expected_revision:
+        return False
+    return True
+
+
+async def _eligible_studios(monitor, model: str, item: dict | None = None,
+                            execution: dict | None = None) -> list[dict]:
     eligible = []
     now = time.time()
     avoided = (item or {}).get("avoid_machines") or {}
@@ -365,8 +412,10 @@ async def _eligible_studios(monitor, model: str, item: dict | None = None) -> li
             continue
         availability = await monitor.scheduling_transcription(studio)
         models = (availability or {}).get("models", [])
-        if (availability or {}).get("available") and any(
-                m.get("repo") == model and m.get("cached", True) for m in models):
+        if ((availability or {}).get("available") and any(
+                m.get("repo") == model and m.get("cached", True)
+                and _execution_matches_model(m, execution)
+                for m in models)):
             eligible.append(studio)
     eligible.sort(key=lambda studio: (
         broker._studio_total_memory_gb(studio), studio["id"],
@@ -387,6 +436,25 @@ def has_queued_work() -> bool:
         )
         for batch in batches.values()
     )
+
+
+async def has_dispatchable_work(monitor, machine: str) -> bool:
+    """Whether this lane can actually use ``machine`` on its next turn."""
+    now = time.time()
+    for batch in batches.values():
+        if (batch.get("cancelled")
+                or execution_identity.lease_expired(batch.get("genstudio_execution"))):
+            continue
+        for item in batch.get("items") or []:
+            if (item.get("state") != "queued"
+                    or (item.get("retry_at") and item["retry_at"] > now)):
+                continue
+            eligible = await _eligible_studios(
+                monitor, batch["model"], item, batch.get("genstudio_execution"),
+            )
+            if any(studio.get("machine", "local") == machine for studio in eligible):
+                return True
+    return False
 
 
 def _expire_genstudio_batch(batch: dict) -> bool:
@@ -448,12 +516,15 @@ async def dispatch_once(monitor) -> int:
             item = next((i for i in batch["items"] if i["state"] == "queued"), None)
             if not item:
                 continue
-            for studio in await _eligible_studios(monitor, batch["model"], item):
+            for studio in await _eligible_studios(
+                    monitor, batch["model"], item,
+                    batch.get("genstudio_execution")):
                 machine = studio.get("machine", "local")
                 from . import chat_jobs
                 if not broker.external_dispatch_allowed(
                         machine, "transcription",
-                        other_lane_has_work=chat_jobs.has_queued_work()):
+                        other_lane_has_work=await chat_jobs.has_dispatchable_work(
+                            monitor, machine)):
                     continue
                 availability = await monitor.scheduling_transcription(studio)
                 entry = next((row for row in (availability or {}).get("models", [])

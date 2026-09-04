@@ -199,6 +199,7 @@ def _capacity_eligible(model: dict, *, online: bool, ready: bool,
         and model.get("runtime_compatible") is not False
         and model.get("hub_ready") is not False
         and not bool(model.get("hub_catalog_stale"))
+        and not bool(model.get("hub_catalog_error"))
         and bool(model.get("hub_cached"))
         and memory_capacity_eligible is not False
         and model.get("qualified_revision_match") is not False
@@ -222,6 +223,7 @@ def _catalog_reports_busy(model: dict, candidate: dict | None,
         return False
     if (not model.get("hub_cached")
             or model.get("hub_catalog_stale")
+            or model.get("hub_catalog_error")
             or model.get("runtime_compatible") is False
             or model.get("hub_ready") is False
             or model.get("qualified_revision_match") is False
@@ -266,27 +268,44 @@ def _model_capability(model: dict, studio: dict, worker: dict,
         if host_known and host:
             total_floor = admission.get("effective_min_total_memory_gb") or 0
             free_floor = admission.get("effective_min_free_memory_gb") or 0
-            memory_capacity_eligible = bool(
-                float(host.get("total_gb") or 0) >= total_floor
-            )
-            memory_ready = bool(
-                memory_capacity_eligible
-                and float(host.get("available_gb") or 0) >= free_floor
-            )
+            total_memory = host.get("total_gb")
+            available_memory = host.get("available_gb")
+            if (isinstance(total_memory, (int, float))
+                    and not isinstance(total_memory, bool)):
+                memory_capacity_eligible = bool(
+                    float(total_memory) >= total_floor
+                )
+                memory_ready = bool(
+                    memory_capacity_eligible
+                    and isinstance(available_memory, (int, float))
+                    and not isinstance(available_memory, bool)
+                    and float(available_memory) >= free_floor
+                )
+            else:
+                # A remote worker can be reachable while its host telemetry is
+                # absent. It may still report a free worker slot, but it cannot
+                # enter the durable physical-capacity denominator without
+                # evidence for the model's RAM floor.
+                memory_capacity_eligible = not bool(total_floor)
+                memory_ready = None
             admission = {
                 **admission,
-                "observed_total_memory_gb": host.get("total_gb"),
-                "observed_available_memory_gb": host.get("available_gb"),
+                "observed_total_memory_gb": total_memory,
+                "observed_available_memory_gb": available_memory,
                 "eligible_now": memory_ready,
             }
         else:
+            total_floor = admission.get("effective_min_total_memory_gb") or 0
+            memory_capacity_eligible = not bool(total_floor)
             admission = {**admission, "observed_total_memory_gb": None,
                          "observed_available_memory_gb": None,
                          "eligible_now": None}
     reported_available_slots = _candidate_available_slots(candidate)
+    catalog_error = bool(str(model.get("hub_catalog_error") or "").strip())
     catalog_stale = bool(model.get("hub_catalog_stale"))
     model_ready = (
-        runtime_compatible and subsystem_ready and not catalog_stale and installed
+        runtime_compatible and subsystem_ready and not catalog_error
+        and not catalog_stale and installed
         and memory_ready is not False
         and qualified_revision_match is not False
         and execution_ready is not False
@@ -321,6 +340,8 @@ def _model_capability(model: dict, studio: dict, worker: dict,
         reason = "physical_machine_busy"
     elif not worker["ready"]:
         reason = "worker_not_ready"
+    elif catalog_error:
+        reason = "catalog_error"
     elif catalog_stale:
         reason = "catalog_stale"
     elif qualified_revision_match is False:
