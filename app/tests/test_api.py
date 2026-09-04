@@ -1253,6 +1253,53 @@ def test_reenrollment_epoch_uses_controller_receipt_not_worker_clock(authed):
     assert row["timeline"] == []
 
 
+def test_reenrollment_replay_keeps_the_old_terminal_event_out_of_active_stats(authed):
+    """A replay refreshes evidence, never the terminal event's receipt identity."""
+    import time
+    from backend import activity
+    from backend.main import monitor
+
+    machine = "controller-0300-terminal-replay"
+    studio_id = f"voice@{machine}"
+    authed.post("/api/hub/registry/add", json={
+        "host": "100.9.9.8", "machine": machine, "modalities": ["voice"],
+    }).raise_for_status()
+    initial_receipt = time.time()
+    terminal = {
+        "id": "replayed-terminal", "state": "done", "model": "org/whisper",
+        "operation": "transcription", "source": "direct", "progress": 1.0,
+        "created_at": initial_receipt - 10, "started_at": initial_receipt - 5,
+        "updated_at": initial_receipt, "finished_at": initial_receipt,
+        "runtime_s": 5.0,
+    }
+    statuses = {studio_id: {
+        "status": "up", "activity_support": "available",
+        "activity_received_at": initial_receipt,
+        "activity": {"schema": activity.SCHEMA, "studio": "voice",
+                     "observed_at": initial_receipt, "active": None,
+                     "latest": terminal},
+    }}
+    activity.observe_poll(monitor.registry, statuses, {}, now=initial_receipt)
+
+    authed.delete(f"/api/hub/registry/machines/{machine}").raise_for_status()
+    authed.post("/api/hub/registry/add", json={
+        "host": "100.9.9.9", "machine": machine, "modalities": ["voice"],
+    }).raise_for_status()
+    replay_receipt = time.time()
+    statuses[studio_id]["activity_received_at"] = replay_receipt
+    activity.observe_poll(monitor.registry, statuses, {}, now=replay_receipt)
+
+    snapshot = activity.fleet_snapshot(
+        monitor.registry, statuses, {}, since_s=0.0,
+        now=replay_receipt + activity.LONG_IDLE_S + 1,
+    )
+    row = next(item for item in snapshot["machines"] if item["machine"] == machine)
+
+    assert row["state"] == "ready"
+    assert row["latest"] is None
+    assert row["completed"] == 0
+
+
 def test_cannot_remove_local(authed):
     assert authed.request("DELETE", "/api/hub/registry/machines/local").status_code == 400
 

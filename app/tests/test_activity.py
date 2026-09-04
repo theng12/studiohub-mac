@@ -682,3 +682,24 @@ def test_out_of_policy_clock_skew_is_partial_unknown_evidence(reset):
         assert machine["state"] == "unknown"
         assert machine["limitation"] == "Activity reporter clock skew exceeds policy"
         assert machine["utilization"]["evidence"] == "partial"
+
+
+def test_active_fleet_performance_excludes_retired_machine_events(reset):
+    from backend import activity
+
+    current = _studio("mac-current")
+    for machine, runtimes in {"mac-current": [20, 21, 22], "mac-retired": [10, 11, 12]}.items():
+        for index, runtime in enumerate(runtimes):
+            ledger.record_activity_event(
+                machine=machine, studio=f"image@{machine}", job_id=f"{machine}-{index}",
+                state="done", model="org/model", source="direct",
+                started_at=10.0, finished_at=10.0 + runtime, runtime_s=runtime,
+                observed_at=100.0 + index,
+            )
+
+    row = activity.fleet_snapshot(
+        [current], {current["id"]: _status()}, {}, since_s=0.0, now=200.0,
+    )["machines"][0]
+
+    assert row["median_runtime_s"] == 21.0
+    assert row["relative_performance"] is None

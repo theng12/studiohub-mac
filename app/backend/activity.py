@@ -439,9 +439,9 @@ def fleet_snapshot(registry: list[dict], statuses: dict, batches: dict,
     }
     active_events = [
         row for row in all_events
-        if (not (epoch := epochs.get(row["machine"]))
-            or row.get("activity_received_at") is not None
-            and row["activity_received_at"] >= epoch["active_since"])
+        if row["machine"] in grouped
+        and (not (epoch := epochs.get(row["machine"]))
+             or row["observed_at"] >= epoch["active_since"])
     ]
     rows, pulse = [], {state: 0 for state in (
         "working", "just_finished", "ready", "long_idle", "offline", "needs_attention", "unknown",
