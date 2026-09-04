@@ -10,6 +10,22 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.19.3] — 2026-09-05
+
+### Fixed — memory-aware arbitration and strict transcription identity
+
+- Shared Chat/Transcription turn checks now include current model memory
+  admission. A queued model that cannot fit the physical Mac does not reserve
+  that Mac's turn, and a real memory wait/skip advances the turn token so an
+  eligible opposite lane cannot be stranded.
+- GenStudio transcription dispatch now requires a passed, explicitly approved
+  `genstudio_candidate` for `audio.transcription`, an immutable runtime
+  revision, matching contract hash, explicit `cached: true`, matching cache
+  snapshot, and affirmative runtime-match evidence. Invalid assignments fail
+  closed before worker dispatch.
+- No worker, model, enrollment, fleet-machine, deployment, restart, or live-job
+  behavior changes automatically. Update Studio Hub normally.
+
 ## [2.19.2] — 2026-09-05
 
 ### Fixed — capacity arbitration and execution evidence fail closed

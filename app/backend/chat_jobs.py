@@ -510,8 +510,16 @@ async def has_dispatchable_work(monitor, machine: str) -> bool:
             batch.get("genstudio_execution"),
             max(output_limits, default=0),
         )
-        if any(studio.get("machine", "local") == machine for studio in eligible):
-            return True
+        for studio in eligible:
+            if studio.get("machine", "local") != machine:
+                continue
+            catalog = await monitor.scheduling_catalog(studio)
+            entry = next((item for item in (catalog or {}).get("models", [])
+                          if item.get("repo") == batch["model"]
+                          or batch["model"] in (item.get("aliases") or [])), None)
+            if entry and broker.memory_admission_dispatchable(
+                    studio, batch["model"], entry):
+                return True
     return False
 
 
@@ -584,6 +592,7 @@ async def dispatch_once(monitor) -> int:
                 decision, note = await broker.prepare_machine_memory(
                     monitor._client, studio, batch["model"], entry)
                 if decision != "run":
+                    broker.note_external_memory_block(machine, "chat")
                     batch["queue_note"] = f"{studio['id']}: {note}"
                     continue
                 owner = f"chat:{batch['id']}:{pack['index']}"

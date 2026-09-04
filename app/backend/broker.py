@@ -356,6 +356,35 @@ async def prepare_machine_memory(client: httpx.AsyncClient, studio: dict,
     return decision, note
 
 
+def memory_admission_dispatchable(studio: dict, model: str, entry: dict) -> bool:
+    """Return whether current telemetry can admit this model without a wait.
+
+    This is a cache/telemetry-only probe for the shared Chat/transcription
+    turn arbiter. It deliberately does not release siblings or contact peers;
+    the owning scheduler still performs ``prepare_machine_memory`` before its
+    durable lease. Unknown telemetry remains dispatchable so the worker's own
+    MemoryGuard remains authoritative, with the memory-failure turn fallback
+    preventing the opposite lane from being stranded.
+    """
+    mem = _admission_requirements(model, entry)
+    if mem is None:
+        return True
+    host = _host_for_studio(studio)
+    if not isinstance(host, dict):
+        return True
+    try:
+        total = float(host.get("total_gb"))
+        available = float(host.get("available_gb"))
+    except (TypeError, ValueError):
+        return True
+    if total <= 0 or available < 0:
+        return True
+    normalized_host = {"total_gb": total, "available_gb": available}
+    reserved = _reserved["gb"] if studio.get("machine", "local") == "local" else 0.0
+    decision, _note = _memory_gate(mem, normalized_host, reserved)
+    return decision == "run"
+
+
 def _studio_total_memory_gb(studio: dict) -> float:
     """Sortable physical-memory capacity; unknown evidence stays eligible."""
     host = _host_for_studio(studio)
@@ -863,6 +892,15 @@ def note_external_dispatch(machine: str, lane: str) -> None:
         raise ValueError(f"unsupported external dispatch lane: {lane}")
     other = next(iter(_EXTERNAL_LANES - {lane}))
     _external_lane_turn[machine] = other
+
+
+def note_external_memory_block(machine: str, lane: str) -> None:
+    """Pass a blocked lane's shared-machine turn to its eligible opposite."""
+    if lane not in _EXTERNAL_LANES:
+        raise ValueError(f"unsupported external dispatch lane: {lane}")
+    other = next(iter(_EXTERNAL_LANES - {lane}))
+    _external_lane_turn[machine] = other
+    _wakeup.set()
 
 
 def _pending_render_for_machine(machine: str) -> bool:

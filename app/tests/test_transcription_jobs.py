@@ -154,6 +154,25 @@ def _genstudio_transcription_execution(*, operation="audio.transcription",
     }
 
 
+def _audited_transcription_candidate(*, revision="a" * 40,
+                                     contract_hash="sha256:" + "b" * 64,
+                                     operation="audio.transcription",
+                                     audit_status="passed",
+                                     candidate_for_genstudio=True,
+                                     schema_version=1):
+    return {
+        "schema": "studio.model-audit",
+        "schema_version": schema_version,
+        "audit_id": "audit-transcription",
+        "audit_status": audit_status,
+        "candidate_for_genstudio": candidate_for_genstudio,
+        "runtime_revision": revision,
+        "contract_hash": contract_hash,
+        "approved_operations": [operation],
+        "audited_at": "2026-09-05T00:00:00Z",
+    }
+
+
 class _Response:
     status_code = 200
 
@@ -394,6 +413,124 @@ async def test_ineligible_opposite_lane_does_not_block_shared_machine(
     assert transcription_batch["items"][0]["state"] == "queued"
 
 
+@pytest.mark.asyncio
+async def test_memory_ineligible_opposite_lane_does_not_block_shared_machine(
+        reset, monitor, monkeypatch):
+    from backend import chat_jobs
+
+    transcription_batch = await _create_direct(1, model="mlx/whisper")
+    chat_batch, _ = chat_jobs.create_batch({
+        "model": "mlx/chat-model",
+        "kind": "completion",
+        "label": "memory-aware fairness",
+        "packs": [{
+            "pack_id": "chat-1", "scene_ids": ["response-1"],
+            "messages": [{"role": "user", "content": "one"}],
+            "params": {},
+        }],
+    })
+    chat_studio = {
+        "id": "chat@shared", "modality": "chat", "machine": "shared",
+        "host": "127.0.0.1", "port": 47871,
+    }
+    voice_studio = {
+        "id": "voice@shared", "modality": "voice", "machine": "shared",
+        "host": "127.0.0.1", "port": 47870,
+    }
+    monitor.registry = [chat_studio, voice_studio]
+    monitor.status = {
+        studio["id"]: {"status": "up"}
+        for studio in monitor.registry
+    }
+
+    async def catalog(_studio):
+        return {"models": [{"repo": "mlx/chat-model",
+                             "cache": {"state": "cached"}}]}
+
+    async def availability(_studio):
+        return {"available": True, "models": [{
+            "repo": "mlx/whisper", "cached": True,
+            "min_unified_memory_gb": 16,
+        }]}
+
+    async def post(*_args, **_kwargs):
+        return _ChatResponse()
+
+    monkeypatch.setattr(monitor, "scheduling_catalog", catalog)
+    monkeypatch.setattr(monitor, "scheduling_transcription", availability)
+    monkeypatch.setattr(monitor._client, "post", post)
+    monkeypatch.setattr(
+        broker, "_host_for_studio",
+        lambda _studio: {"total_gb": 8, "available_gb": 6},
+    )
+
+    broker.note_external_dispatch("shared", "chat")
+    assert await jobs.has_dispatchable_work(monitor, "shared") is False
+    assert await chat_jobs.dispatch_once(monitor) == 1
+    await asyncio.gather(*list(chat_jobs._pack_tasks.values()))
+    assert chat_jobs.summary(chat_batch)["done"] == 1
+    assert transcription_batch["items"][0]["state"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_memory_admission_failure_advances_shared_machine_turn(
+        reset, monitor, monkeypatch):
+    from backend import chat_jobs
+
+    transcription_batch = await _create_direct(1)
+    chat_batch, _ = chat_jobs.create_batch({
+        "model": "mlx/chat-model",
+        "kind": "completion",
+        "label": "memory-failure fairness",
+        "packs": [{
+            "pack_id": "chat-1", "scene_ids": ["response-1"],
+            "messages": [{"role": "user", "content": "one"}],
+            "params": {},
+        }],
+    })
+    chat_studio = {
+        "id": "chat@shared", "modality": "chat", "machine": "shared",
+        "host": "127.0.0.1", "port": 47871,
+    }
+    voice_studio = {
+        "id": "voice@shared", "modality": "voice", "machine": "shared",
+        "host": "127.0.0.1", "port": 47870,
+    }
+    monitor.registry = [chat_studio, voice_studio]
+    monitor.status = {
+        studio["id"]: {"status": "up"}
+        for studio in monitor.registry
+    }
+
+    async def catalog(_studio):
+        return {"models": [{"repo": "mlx/chat-model",
+                             "cache": {"state": "cached"}}]}
+
+    async def availability(_studio):
+        return {"available": True,
+                "models": [{"repo": "mlx/whisper", "cached": True}]}
+
+    async def prepare(_client, _studio, model, _entry):
+        if model == "mlx/whisper":
+            return "wait", "waiting for memory"
+        return "run", None
+
+    async def post(*_args, **_kwargs):
+        return _ChatResponse()
+
+    monkeypatch.setattr(monitor, "scheduling_catalog", catalog)
+    monkeypatch.setattr(monitor, "scheduling_transcription", availability)
+    monkeypatch.setattr(monitor._client, "post", post)
+    monkeypatch.setattr(broker, "prepare_machine_memory", prepare)
+
+    broker.note_external_dispatch("shared", "chat")
+    assert await jobs.dispatch_once(monitor) == 0
+    assert transcription_batch["items"][0]["state"] == "queued"
+    assert await chat_jobs.dispatch_once(monitor) == 1
+    await asyncio.gather(*list(chat_jobs._pack_tasks.values()))
+    assert chat_jobs.summary(chat_batch)["done"] == 1
+
+
 def test_genstudio_transcription_rejects_wrong_operation_before_upload(reset):
     control_plane.save_settings({
         "role": "controller", "site_id": "site-transcription",
@@ -436,10 +573,11 @@ async def test_genstudio_transcription_requires_exact_revision_and_contract(
             "available": True,
             "models": [{
                 "repo": "mlx/whisper", "cached": True,
-                "genstudio_candidate": {
-                    "runtime_revision": revision,
-                    "contract_hash": contract_hash,
-                },
+                "cache": {"state": "cached", "snapshot_revision": revision},
+                "genstudio_candidate": _audited_transcription_candidate(
+                    revision=revision, contract_hash=contract_hash,
+                ),
+                "genstudio_candidate_runtime_match": True,
             }],
         }
 
@@ -466,6 +604,77 @@ async def test_genstudio_transcription_requires_exact_revision_and_contract(
     assert await jobs.dispatch_once(monitor) == 1
     await asyncio.gather(*list(jobs._item_tasks.values()))
     assert jobs.summary(batch)["status"] == "done"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("candidate_changes", [
+    {"genstudio_candidate": None},
+    {"genstudio_candidate": _audited_transcription_candidate(
+        audit_status="failed")},
+    {"genstudio_candidate": _audited_transcription_candidate(
+        candidate_for_genstudio=False)},
+    {"genstudio_candidate": _audited_transcription_candidate(
+        operation="voice.tts")},
+    {"genstudio_candidate": _audited_transcription_candidate(
+        revision="mutable")},
+    {"genstudio_candidate": _audited_transcription_candidate(
+        contract_hash="not-a-contract-hash")},
+    {"genstudio_candidate": _audited_transcription_candidate(
+        schema_version=True)},
+    {"genstudio_candidate_runtime_match": False},
+    {"cached": None},
+])
+async def test_genstudio_transcription_requires_audited_cached_candidate(
+        reset, monitor, candidate_changes):
+    execution = _genstudio_transcription_execution()
+    entry = {
+        "repo": "mlx/whisper",
+        "cached": True,
+        "cache": {"snapshot_revision": execution["model_revision"]},
+        "genstudio_candidate": _audited_transcription_candidate(),
+        "genstudio_candidate_runtime_match": True,
+    }
+    entry.update(candidate_changes)
+    if "cached" not in candidate_changes:
+        entry["cached"] = True
+    assert jobs._execution_matches_model(entry, execution) is False
+
+
+def test_genstudio_transcription_does_not_assume_missing_cached_flag_is_true():
+    execution = _genstudio_transcription_execution()
+    entry = {
+        "repo": "mlx/whisper",
+        "cache": {"snapshot_revision": execution["model_revision"]},
+        "genstudio_candidate": _audited_transcription_candidate(),
+        "genstudio_candidate_runtime_match": True,
+    }
+
+    assert jobs._execution_matches_model(entry, execution) is False
+
+
+@pytest.mark.parametrize("field,value,needle", [
+    ("model_revision", "latest", "immutable"),
+    ("contract_hash", "not-a-contract-hash", "contract hash"),
+])
+def test_genstudio_transcription_rejects_invalid_identity_before_upload(
+        reset, field, value, needle):
+    control_plane.save_settings({
+        "role": "controller", "site_id": "site-transcription",
+        "site_name": "Transcription", "controller_id": "controller-transcription",
+        "database_mode": "off",
+    })
+    execution = _genstudio_transcription_execution()
+    execution[field] = value
+    uploads = [UploadFile(file=io.BytesIO(b"audio"), filename="clip.wav")]
+
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(jobs.create_batch(
+            uploads, ["clip"], "mlx/whisper", "en", False, None, None, None,
+            genstudio_execution_json=json.dumps(execution),
+        ))
+
+    assert getattr(raised.value, "status_code", None) == 409
+    assert needle in str(raised.value)
 
 
 @pytest.mark.asyncio

@@ -198,9 +198,12 @@ A site is eligible for a new assignment only when all of these are true:
    the selected immutable revision.
 
 For `audio.transcription`, the submitted `genstudio_execution` must name that
-exact operation and include the selected model revision and contract hash. The
-Hub dispatches only to a Voice Studio whose audited candidate and cached
-runtime match all three values; missing or mismatched evidence stays queued.
+exact operation and include an immutable selected model revision plus a
+`sha256:` contract hash. The Hub dispatches only to a Voice Studio whose model
+entry has a passed, `candidate_for_genstudio` audited `genstudio_candidate`
+that approves exactly `audio.transcription`, explicit `cached: true`, matching
+candidate/cache revisions, and affirmative runtime-match evidence. Missing,
+mutable, mismatched, or unaudited evidence stays queued.
 
 Use `internal_model_id` when addressing the selected Studio runtime. Stable
 operation names currently include:

@@ -14,7 +14,7 @@ from pathlib import Path
 import httpx
 from fastapi import HTTPException, UploadFile
 
-from . import broker, execution_identity, ledger
+from . import broker, execution_identity, ledger, model_exposure
 from .peers import studio_request
 from .registry import DATA_DIR, machine_enabled, studio_enabled
 
@@ -357,38 +357,33 @@ def active_assignments() -> dict[str, dict]:
 
 def _execution_matches_model(entry: dict, execution: dict | None) -> bool:
     """Require the exact GenStudio transcription model contract when assigned."""
-    if not execution:
+    if execution is None:
         return True
-    if str(execution.get("operation") or "").strip().lower() != "audio.transcription":
+    try:
+        expected_revision, expected_contract = (
+            execution_identity.validate_transcription_identity(execution)
+        )
+    except execution_identity.ExecutionIdentityError:
         return False
-    expected_revision = str(execution.get("model_revision") or "").strip().lower()
-    expected_contract = str(execution.get("contract_hash") or "").strip().lower()
-    if not expected_revision or not expected_contract:
+    candidate = model_exposure.execution_candidate(entry, "audio.transcription")
+    if candidate is None:
         return False
-    candidate = entry.get("genstudio_candidate")
-    candidate = candidate if isinstance(candidate, dict) else {}
+    if entry.get("genstudio_candidate_runtime_match") is not True:
+        return False
     cache = entry.get("cache")
-    cache = cache if isinstance(cache, dict) else {}
-    reported_revision = str(
-        candidate.get("runtime_revision")
-        or entry.get("runtime_revision")
-        or entry.get("model_revision")
-        or entry.get("snapshot_revision")
-        or cache.get("snapshot_revision")
-        or ""
-    ).strip().lower()
-    reported_contract = str(
-        candidate.get("contract_hash")
-        or entry.get("contract_hash")
-        or ""
-    ).strip().lower()
-    if reported_revision != expected_revision or reported_contract != expected_contract:
+    if not isinstance(cache, dict):
         return False
-    runtime_match = entry.get("genstudio_candidate_runtime_match")
-    if runtime_match is False:
+    reported_revision = model_exposure.normalized_immutable_revision(
+        candidate["runtime_revision"]
+    )
+    reported_contract = candidate["contract_hash"]
+    if (reported_revision is None
+            or reported_revision != expected_revision
+            or reported_contract != expected_contract):
         return False
     snapshot_revision = cache.get("snapshot_revision")
-    if snapshot_revision is not None and str(snapshot_revision).strip().lower() != expected_revision:
+    if (model_exposure.normalized_immutable_revision(snapshot_revision)
+            != expected_revision):
         return False
     return True
 
@@ -413,8 +408,9 @@ async def _eligible_studios(monitor, model: str, item: dict | None = None,
         availability = await monitor.scheduling_transcription(studio)
         models = (availability or {}).get("models", [])
         if ((availability or {}).get("available") and any(
-                m.get("repo") == model and m.get("cached", True)
-                and _execution_matches_model(m, execution)
+                m.get("repo") == model
+                and (_execution_matches_model(m, execution)
+                     if execution is not None else m.get("cached", True))
                 for m in models)):
             eligible.append(studio)
     eligible.sort(key=lambda studio: (
@@ -452,8 +448,15 @@ async def has_dispatchable_work(monitor, machine: str) -> bool:
             eligible = await _eligible_studios(
                 monitor, batch["model"], item, batch.get("genstudio_execution"),
             )
-            if any(studio.get("machine", "local") == machine for studio in eligible):
-                return True
+            for studio in eligible:
+                if studio.get("machine", "local") != machine:
+                    continue
+                availability = await monitor.scheduling_transcription(studio)
+                entry = next((row for row in (availability or {}).get("models", [])
+                              if row.get("repo") == batch["model"]), None)
+                if entry and broker.memory_admission_dispatchable(
+                        studio, batch["model"], entry):
+                    return True
     return False
 
 
@@ -533,6 +536,7 @@ async def dispatch_once(monitor) -> int:
                 decision, _note = await broker.prepare_machine_memory(
                     monitor._client, studio, batch["model"], entry)
                 if decision != "run":
+                    broker.note_external_memory_block(machine, "transcription")
                     continue
                 owner = f"transcription:{batch['id']}:{item['index']}"
                 if not broker.acquire_external_machine(machine, owner):
