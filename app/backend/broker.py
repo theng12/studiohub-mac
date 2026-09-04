@@ -183,6 +183,13 @@ batches: dict[str, dict] = {}
 _busy: set[str] = set()  # studio ids currently running an item for us
 _maintenance: set[str] = set()  # drained by fleet maintenance/update operations
 _external_machine_leases: dict[str, str] = {}
+# The two auxiliary local queues share the same physical-machine lease. Keep a
+# small per-machine turn token so a chat or transcription wake loop cannot win
+# every newly-free lease while the other lane is waiting. This is advisory
+# process-local fairness only; the durable non-preemptive lease remains the
+# admission authority and a lone lane always stays work-conserving.
+_EXTERNAL_LANES = frozenset({"chat", "transcription"})
+_external_lane_turn: dict[str, str] = {}
 # machine -> recent transport failures and an optional circuit-breaker cooldown.
 # This is intentionally process-local: after a Hub restart every worker must
 # answer health again before it becomes eligible, which is a clean circuit reset.
@@ -349,6 +356,35 @@ async def prepare_machine_memory(client: httpx.AsyncClient, studio: dict,
     return decision, note
 
 
+def memory_admission_dispatchable(studio: dict, model: str, entry: dict) -> bool:
+    """Return whether current telemetry can admit this model without a wait.
+
+    This is a cache/telemetry-only probe for the shared Chat/transcription
+    turn arbiter. It deliberately does not release siblings or contact peers;
+    the owning scheduler still performs ``prepare_machine_memory`` before its
+    durable lease. Unknown telemetry remains dispatchable so the worker's own
+    MemoryGuard remains authoritative, with the memory-failure turn fallback
+    preventing the opposite lane from being stranded.
+    """
+    mem = _admission_requirements(model, entry)
+    if mem is None:
+        return True
+    host = _host_for_studio(studio)
+    if not isinstance(host, dict):
+        return True
+    try:
+        total = float(host.get("total_gb"))
+        available = float(host.get("available_gb"))
+    except (TypeError, ValueError):
+        return True
+    if total <= 0 or available < 0:
+        return True
+    normalized_host = {"total_gb": total, "available_gb": available}
+    reserved = _reserved["gb"] if studio.get("machine", "local") == "local" else 0.0
+    decision, _note = _memory_gate(mem, normalized_host, reserved)
+    return decision == "run"
+
+
 def _studio_total_memory_gb(studio: dict) -> float:
     """Sortable physical-memory capacity; unknown evidence stays eligible."""
     host = _host_for_studio(studio)
@@ -407,7 +443,7 @@ def _batch_memory_constraint_gb(batch: dict) -> float:
     if not model:
         return 0.0
     floors: list[float] = []
-    for match in _monitor().cached_catalog_entries(model, modality=modality):
+    for match in _monitor().scheduling_catalog_entries(model, modality=modality):
         entry = match["entry"]
         if entry.get("is_cloud") or not memory_admission.applies_to(modality):
             continue
@@ -534,7 +570,7 @@ async def _catalog_entry(studio: dict, model: str) -> dict | None:
     Carries cache state for model-aware dispatch and capability facts for the
     governor: min_unified_memory_gb = 'needs ≥N GB TOTAL machine'. size_gb
     is download/disk metadata and is never treated as runtime RAM."""
-    catalog = await _monitor().get_catalog(studio)
+    catalog = await _monitor().scheduling_catalog(studio)
     for m in (catalog or {}).get("models", []):
         if m.get("repo") == model or model in (m.get("aliases") or []):
             return m
@@ -832,6 +868,39 @@ def acquire_external_machine(machine: str, owner: str) -> bool:
     _external_machine_leases[machine] = owner
     _wakeup.set()
     return True
+
+
+def external_dispatch_allowed(
+        machine: str, lane: str, *, other_lane_has_work: bool) -> bool:
+    """Apply the shared chat/transcription turn token for one physical Mac.
+
+    The token is consulted only while both lanes have queued work. If the
+    other lane is empty, the caller may use a free machine immediately even if
+    the previous token points elsewhere. ``acquire_external_machine`` still
+    provides the atomic lease and is the final authority before dispatch.
+    """
+    if lane not in _EXTERNAL_LANES:
+        raise ValueError(f"unsupported external dispatch lane: {lane}")
+    if not other_lane_has_work:
+        return True
+    return _external_lane_turn.get(machine) in {None, lane}
+
+
+def note_external_dispatch(machine: str, lane: str) -> None:
+    """Pass the next shared-machine turn to the opposite auxiliary lane."""
+    if lane not in _EXTERNAL_LANES:
+        raise ValueError(f"unsupported external dispatch lane: {lane}")
+    other = next(iter(_EXTERNAL_LANES - {lane}))
+    _external_lane_turn[machine] = other
+
+
+def note_external_memory_block(machine: str, lane: str) -> None:
+    """Pass a blocked lane's shared-machine turn to its eligible opposite."""
+    if lane not in _EXTERNAL_LANES:
+        raise ValueError(f"unsupported external dispatch lane: {lane}")
+    other = next(iter(_EXTERNAL_LANES - {lane}))
+    _external_lane_turn[machine] = other
+    _wakeup.set()
 
 
 def _pending_render_for_machine(machine: str) -> bool:

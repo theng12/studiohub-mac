@@ -397,8 +397,8 @@ async def test_maintenance_drains_chat_and_transcription(reset, monitor, monkeyp
     async def transcription_catalog(studio):
         return {"available": True, "models": [{"repo": "voice/model", "cached": True}]}
 
-    monkeypatch.setattr(monitor, "get_catalog", chat_catalog)
-    monkeypatch.setattr(monitor, "get_transcription", transcription_catalog)
+    monkeypatch.setattr(monitor, "scheduling_catalog", chat_catalog)
+    monkeypatch.setattr(monitor, "scheduling_transcription", transcription_catalog)
     assert chat in await chat_jobs._eligible_studios(monitor, "chat/model")
     assert voice in await transcription_jobs._eligible_studios(monitor, "voice/model")
     broker.set_maintenance("chat", True)
@@ -427,8 +427,8 @@ async def test_app_pause_drains_chat_and_transcription_independently(
     async def transcription_catalog(studio):
         return {"available": True, "models": [{"repo": "voice/model", "cached": True}]}
 
-    monkeypatch.setattr(monitor, "get_catalog", chat_catalog)
-    monkeypatch.setattr(monitor, "get_transcription", transcription_catalog)
+    monkeypatch.setattr(monitor, "scheduling_catalog", chat_catalog)
+    monkeypatch.setattr(monitor, "scheduling_transcription", transcription_catalog)
     registry.set_studio_enabled("local", "chat", False)
 
     assert await chat_jobs._eligible_studios(monitor, "chat/model") == []

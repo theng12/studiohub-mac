@@ -127,9 +127,19 @@ fields inside `genstudio_execution`):
   "site_id": "phnom-penh-1",
   "operation": "tts",
   "model_revision": "optional-expected-revision",
-  "voice_revision": "optional-expected-revision"
+  "voice_revision": "optional-expected-revision",
+  "contract_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 }
 ```
+
+For a transcription assignment, `operation` must be exactly
+`audio.transcription`, and the identity must include an immutable model
+revision plus a `sha256:` contract hash. The Hub dispatches only to a Voice
+Studio whose model entry has a passed, `candidate_for_genstudio` audited
+`genstudio_candidate` approving exactly `audio.transcription`, explicit
+`cached: true`, matching candidate/cache revisions, and affirmative runtime
+match evidence. Missing, mutable, mismatched, or unaudited evidence is not
+routed.
 
 The IDs and token are issued by GenStudio. Studio Hub never invents or advances
 a global token. The controller stores only a SHA-256 hash of the idempotency

@@ -31,7 +31,7 @@ _OPERATION = re.compile(r"^[a-z][a-z0-9._:-]{0,79}$")
 _FIELDS = {
     "genstudio_job_id", "genstudio_attempt_id", "idempotency_key",
     "fencing_token", "site_id", "operation", "model_revision",
-    "voice_revision", "lease_expires_at",
+    "voice_revision", "contract_hash", "lease_expires_at",
 }
 
 _SCHEMA = """
@@ -122,6 +122,38 @@ def _lease_timestamp(value: object) -> tuple[str, float]:
     return normalized.isoformat(), normalized.timestamp()
 
 
+def validate_transcription_identity(execution: dict) -> tuple[str, str]:
+    """Return the canonical immutable model binding for transcription work."""
+    if not isinstance(execution, dict):
+        raise ExecutionIdentityError(
+            "GenStudio transcription execution identity must be an object"
+        )
+    operation = str(execution.get("operation") or "").strip().lower()
+    if operation != "audio.transcription":
+        raise ExecutionIdentityError(
+            "GenStudio execution operation must be audio.transcription"
+        )
+    revision = str(execution.get("model_revision") or "").strip()
+    contract_hash = str(execution.get("contract_hash") or "").strip()
+    from . import model_exposure
+    binding = model_exposure.validated_execution_binding(
+        operation, revision, contract_hash,
+    )
+    if not revision:
+        raise ExecutionIdentityError(
+            "audio.transcription requires an immutable model_revision"
+        )
+    if not model_exposure.is_immutable_revision(revision):
+        raise ExecutionIdentityError(
+            "audio.transcription model_revision must be an immutable hash"
+        )
+    if not model_exposure.is_contract_hash(contract_hash):
+        raise ExecutionIdentityError(
+            "audio.transcription requires a sha256 contract hash"
+        )
+    return binding  # validated_execution_binding is non-None after these checks
+
+
 def _canonical_payload(envelope: dict, identity: dict) -> str:
     # Transport ownership may advance while the exact execution payload stays
     # the same. Exclude only transport identity; every dispatch-affecting field
@@ -137,6 +169,7 @@ def _canonical_payload(envelope: dict, identity: dict) -> str:
     payload["operation"] = identity["operation"]
     payload["model_revision"] = identity.get("model_revision")
     payload["voice_revision"] = identity.get("voice_revision")
+    payload["contract_hash"] = identity.get("contract_hash")
     try:
         return json.dumps(payload, sort_keys=True, separators=(",", ":"),
                           ensure_ascii=False)
@@ -176,6 +209,18 @@ def _extract(envelope: dict) -> dict | None:
     if not _OPERATION.fullmatch(operation):
         raise ExecutionIdentityError(
             "operation must start with a lowercase letter and use safe characters")
+    model_revision = (
+        str(supplied.get("model_revision")).strip()
+        if supplied.get("model_revision") is not None else None)
+    contract_hash = (
+        str(supplied.get("contract_hash")).strip().lower()
+        if supplied.get("contract_hash") is not None else None)
+    if operation == "audio.transcription":
+        model_revision, contract_hash = validate_transcription_identity({
+            "operation": operation,
+            "model_revision": model_revision,
+            "contract_hash": contract_hash,
+        })
     lease_text = None
     if supplied.get("lease_expires_at") is not None:
         lease_text, _lease_epoch = _lease_timestamp(supplied["lease_expires_at"])
@@ -187,12 +232,11 @@ def _extract(envelope: dict) -> dict | None:
         "fencing_token": token,
         "site_id": site_id,
         "operation": operation,
-        "model_revision": (
-            str(supplied.get("model_revision")).strip()
-            if supplied.get("model_revision") is not None else None),
+        "model_revision": model_revision,
         "voice_revision": (
             str(supplied.get("voice_revision")).strip()
             if supplied.get("voice_revision") is not None else None),
+        "contract_hash": contract_hash,
         "lease_expires_at": lease_text,
     }
 
