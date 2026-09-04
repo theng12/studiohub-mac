@@ -135,6 +135,7 @@ class StudioMonitor:
         self.registry: list[dict] = load_registry()
         prune_machine_metadata({studio.get("machine", "local")
                                 for studio in self.registry})
+        self._reconcile_registration_epochs()
         self.status: dict[str, dict] = {
             s["id"]: {"status": "unknown", "last_seen": None, "last_checked": None}
             for s in self.registry
@@ -151,6 +152,12 @@ class StudioMonitor:
         self._catalog_task: asyncio.Task | None = None
         self._catalog_refresh_lock: asyncio.Lock | None = None
         self._load_catalog_state()
+
+    def _reconcile_registration_epochs(self) -> None:
+        from . import ledger
+        ledger.reconcile_machine_registrations({
+            studio.get("machine", "local") for studio in self.registry
+        })
 
     # ── lifecycle ────────────────────────────────────────────────────────
     def start(self):

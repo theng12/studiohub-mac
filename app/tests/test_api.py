@@ -1131,6 +1131,128 @@ def test_remove_machine_purges_live_inventory_and_update_state(authed):
     assert "mac-clean" not in fleet_ops._hub_versions
 
 
+def test_remove_machine_removes_the_active_stats_row_but_keeps_historical_stats(authed):
+    """Deleting a controller registration must not erase retained evidence."""
+    import time
+    from backend import control_plane, ledger
+    from backend.main import monitor
+
+    authed.post("/api/hub/registry/add", json={
+        "host": "100.9.9.8", "machine": "controller-0300-m4",
+        "modalities": ["voice"],
+    }).raise_for_status()
+    receipt = time.time()
+    ledger.record_activity_event(
+        machine="controller-0300-m4", studio="voice@controller-0300-m4",
+        job_id="retained-subtitle", state="done", model="org/whisper",
+        operation="transcription", source="direct", started_at=receipt - 5,
+        finished_at=receipt, runtime_s=5, observed_at=receipt,
+    )
+
+    before = authed.get("/api/hub/stats").json()
+    assert "controller-0300-m4" in {
+        row["machine"] for row in before["fleet_activity"]["machines"]
+    }
+    assert before["total"] == 1
+    assert before["by_machine"]["controller-0300-m4"]["count"] == 1
+    assert before["available_machines"] == ["controller-0300-m4"]
+
+    response = authed.delete("/api/hub/registry/machines/controller-0300-m4")
+
+    assert response.status_code == 200
+    removed = response.json()
+    settings = control_plane.load_settings()
+    assert removed.get("machine") == "controller-0300-m4"
+    assert removed.get("controller_id") == settings["controller_id"]
+    assert removed.get("site_id") == settings["site_id"]
+    assert isinstance(removed.get("epoch_closed_at"), float)
+    assert removed.get("registry_absent") is True
+    assert "controller-0300-m4" not in {
+        row["machine"] for row in monitor.registry
+    }
+    after = authed.get("/api/hub/stats").json()
+    assert "controller-0300-m4" not in {
+        row["machine"] for row in after["fleet_activity"]["machines"]
+    }
+    assert after["total"] == 1
+    assert after["by_machine"]["controller-0300-m4"]["count"] == 1
+    assert after["available_machines"] == ["controller-0300-m4"]
+
+
+def test_readding_a_removed_machine_starts_an_active_stats_epoch(authed):
+    """A new registration cannot display the stable ID's old live evidence."""
+    import time
+    from backend import ledger
+    from backend.main import monitor
+
+    machine = "controller-0300-reenrolled"
+    authed.post("/api/hub/registry/add", json={
+        "host": "100.9.9.8", "machine": machine, "modalities": ["voice"],
+    }).raise_for_status()
+    receipt = time.time()
+    ledger.record_activity_event(
+        machine=machine, studio=f"voice@{machine}", job_id="retained-subtitle",
+        state="done", model="org/whisper", operation="transcription",
+        source="direct", started_at=receipt - 5, finished_at=receipt,
+        runtime_s=5, observed_at=receipt,
+    )
+
+    authed.delete(f"/api/hub/registry/machines/{machine}").raise_for_status()
+    authed.post("/api/hub/registry/add", json={
+        "host": "100.9.9.9", "machine": machine, "modalities": ["voice"],
+    }).raise_for_status()
+    monitor.status[f"voice@{machine}"].update(
+        status="up", activity_support="available",
+    )
+
+    active = authed.get("/api/hub/stats").json()["fleet_activity"]["machines"]
+    row = next(item for item in active if item["machine"] == machine)
+
+    assert row["state"] == "ready"
+    assert row["completed"] == 0
+    assert row["latest"] is None
+    assert row["timeline"] == []
+    historical = authed.get("/api/hub/stats").json()
+    assert historical["total"] == 1
+    assert historical["by_machine"][machine]["count"] == 1
+
+
+def test_reenrollment_epoch_uses_controller_receipt_not_worker_clock(authed):
+    """A skewed worker timestamp cannot carry an old event into a new epoch."""
+    import time
+    from backend import ledger
+    from backend.main import monitor
+
+    machine = "controller-0300-clock-skew"
+    authed.post("/api/hub/registry/add", json={
+        "host": "100.9.9.8", "machine": machine, "modalities": ["voice"],
+    }).raise_for_status()
+    old_receipt = time.time()
+    ledger.record_activity_event(
+        machine=machine, studio=f"voice@{machine}", job_id="skewed-subtitle",
+        state="done", model="org/whisper", operation="transcription",
+        source="direct", started_at=old_receipt - 5, finished_at=old_receipt,
+        runtime_s=5, observed_at=old_receipt, activity_received_at=old_receipt,
+        reported_at=old_receipt + 86400,
+    )
+
+    authed.delete(f"/api/hub/registry/machines/{machine}").raise_for_status()
+    authed.post("/api/hub/registry/add", json={
+        "host": "100.9.9.9", "machine": machine, "modalities": ["voice"],
+    }).raise_for_status()
+    monitor.status[f"voice@{machine}"].update(
+        status="up", activity_support="available",
+    )
+
+    rows = authed.get("/api/hub/stats").json()["fleet_activity"]["machines"]
+    row = next(item for item in rows if item["machine"] == machine)
+
+    assert row["state"] == "ready"
+    assert row["completed"] == 0
+    assert row["latest"] is None
+    assert row["timeline"] == []
+
+
 def test_cannot_remove_local(authed):
     assert authed.request("DELETE", "/api/hub/registry/machines/local").status_code == 400
 

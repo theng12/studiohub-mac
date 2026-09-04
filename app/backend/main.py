@@ -1108,6 +1108,9 @@ def _registry_identity_changes(
 def _reload_registry_and_note_repair(prepared_registry: Any = None) -> None:
     """Reload once, then notify repair and managed-release coordinators."""
     monitor.reload_registry()
+    ledger.reconcile_machine_registrations({
+        row.get("machine", "local") for row in monitor.registry
+    })
     coordinator = getattr(app.state, "enrollment_repair_coordinator", None)
     if coordinator is not None:
         coordinator.note_registry_reload(
@@ -4113,14 +4116,25 @@ def remove_machine_route(machine: str):
     prepared = coordinator.resolve_registry_rows([
         row for row in monitor.registry if row.get("machine") != machine
     ])
+    settings = control_plane.load_settings()
+    receipt = time.time()
     try:
         with coordinator.controller_mutation(machine=machine):
             coordinator._require_registry_rows_current(current)
             studio_ids = {studio["id"] for studio in monitor.registry
                           if studio.get("machine") == machine}
+            ledger.begin_machine_removal(
+                machine,
+                controller_id=settings.get("controller_id"),
+                site_id=settings.get("site_id"),
+                received_at=receipt,
+            )
             removed = remove_machine(machine)
             if not removed:
                 raise HTTPException(404, f"no registered studios for machine {machine!r}")
+            ledger.reconcile_machine_registrations({
+                row.get("machine", "local") for row in registry.load_registry()
+            }, received_at=receipt)
             _reload_registry_and_note_repair(prepared)
     except RepairStoreError as exc:
         _raise_registry_mutation_error(exc)
@@ -4129,7 +4143,17 @@ def remove_machine_route(machine: str):
     fleet_ops.forget_machine(machine, studio_ids)
     for sid in studio_ids:
         broker.set_maintenance(sid, False)
-    return {"ok": True, "removed": removed}
+    epoch = ledger.machine_registration_epoch(machine) or {}
+    registry_absent = not any(
+        row.get("machine") == machine for row in monitor.registry
+    )
+    return {
+        "ok": True, "removed": removed, "machine": machine,
+        "controller_id": settings.get("controller_id"),
+        "site_id": settings.get("site_id"),
+        "epoch_closed_at": epoch.get("closed_at"),
+        "registry_absent": registry_absent,
+    }
 
 
 @app.delete("/api/hub/registry/studios/{studio_id:path}")

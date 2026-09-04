@@ -1234,6 +1234,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.18.5", date: "2026-09-05", items: [
+    "<b>Fixed:</b> a removed Mac no longer remains on active Fleet Stats because of old retained activity. Remove now confirms the exact machine, controller/site, closed registration epoch, and that its active registry row is gone.",
+    "If the same stable Mac is enrolled again, its active board starts fresh using this Controller’s receipt time, so a stale worker clock cannot make it look busy or long idle. Historical Stats and retired-machine filters keep their retained work as before.",
+    "Update Studio Hub normally. Offline and disabled Macs remain registered until you explicitly Remove them; no remote Mac is removed automatically.",
+  ] },
   { v: "2.18.4", date: "2026-09-02", items: [
     "<b>A Controller now tells you when a registered Mac belongs to another site.</b> If an Agent rejects this site's fleet token and its health endpoint reports a different site, its row says <i>now enrolled at site X — Remove this stale entry</i> instead of a generic token or reachability error. Moving a Mac never notifies its old Controller, so this is where it gets noticed. Nothing is removed automatically.",
     "A same-site token rejection still reads <i>token mismatch</i>. The extra health probe runs only after a token rejection, so healthy peers cost nothing.",

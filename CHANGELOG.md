@@ -10,6 +10,23 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.18.5] — 2026-09-05
+
+### Fixed — retired Macs no longer linger in active Fleet Stats
+
+- Removing a registered Mac now records a durable closed registration epoch,
+  clears the active controller registration and live caches, and returns the
+  exact machine, controller/site, closed epoch, and registry confirmation to
+  the caller. A retried restart repairs either ordering of the registry JSON
+  and SQLite writes without deleting historical activity.
+- Re-enrolling the same stable machine ID opens a fresh active epoch. Fleet
+  Stats considers only activity received by this Controller during that epoch,
+  so a stale worker clock or old terminal event cannot make a newly enrolled
+  Mac appear immediately busy or long idle. Historical Stats totals, filters,
+  and retired-machine visibility are unchanged.
+- Update Studio Hub normally. No remote Mac is removed automatically; offline
+  and disabled registrations remain fleet members until an explicit Remove.
+
 ## [2.18.4] — 2026-09-02
 
 ### Added — a Controller now says when a registered Mac belongs to another site

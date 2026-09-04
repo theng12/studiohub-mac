@@ -225,6 +225,29 @@ def test_activity_origin_migration_roundtrip_and_bounded_device(reset):
     assert row["origin_device"] == "x" * 160
 
 
+def test_registration_epoch_reconciliation_recovers_either_write_order(reset):
+    """An unfinished unregister intent is resolved from the live registry."""
+    first = ledger.reconcile_machine_registrations({"mac-a"}, received_at=10.0)
+    assert first["mac-a"]["active_since"] == 10.0
+
+    # SQLite intent persisted before the registry write: registry still wins.
+    ledger.begin_machine_removal("mac-a", controller_id="controller-0300",
+                                 site_id="site-0300", received_at=20.0)
+    kept = ledger.reconcile_machine_registrations({"mac-a"}, received_at=21.0)
+    assert kept["mac-a"]["active_since"] == 10.0
+
+    # Registry write persisted before SQLite could close its epoch: recovery
+    # closes it once, and a later re-enrollment starts a distinct epoch.
+    ledger.begin_machine_removal("mac-a", received_at=30.0)
+    assert ledger.reconcile_machine_registrations(set(), received_at=31.0) == {}
+    closed = ledger.machine_registration_epoch("mac-a")
+    assert closed["closed_at"] == 31.0
+    assert ledger.reconcile_machine_registrations(set(), received_at=32.0) == {}
+    assert ledger.machine_registration_epoch("mac-a")["closed_at"] == 31.0
+    reopened = ledger.reconcile_machine_registrations({"mac-a"}, received_at=40.0)
+    assert reopened["mac-a"]["active_since"] == 40.0
+
+
 def test_clearing_job_assets_only_unlinks_files_owned_by_this_hub(reset):
     local = DATA_DIR / "owned.png"
     local.write_bytes(b"owned")

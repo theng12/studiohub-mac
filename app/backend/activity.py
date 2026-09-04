@@ -324,8 +324,13 @@ def _state_at(machine: str, statuses: dict, studios: list[dict], live: list[dict
     return "unknown", now, None, latest
 
 
-def _utilization(machine: str, since_s: float, now: float, *, partial: bool) -> dict:
-    rows = ledger.machine_state_transitions(machine, before_s=now)
+def _utilization(machine: str, since_s: float, now: float, *, partial: bool,
+                 active_since: float | None = None) -> dict:
+    if active_since is not None:
+        since_s = max(since_s, active_since)
+    rows = ledger.machine_state_transitions(
+        machine, before_s=now, since_s=active_since,
+    )
     before = [row for row in rows if row["observed_at"] <= since_s]
     after = [row for row in rows if row["observed_at"] > since_s]
     if not before:
@@ -428,11 +433,23 @@ def fleet_snapshot(registry: list[dict], statuses: dict, batches: dict,
     grouped = _machine_groups(registry)
     live = _observed_jobs(registry, statuses, batches, now)
     all_events = ledger.activity_events(since_s=now - RETENTION_S)
+    epochs = {
+        machine: ledger.machine_registration_epoch(machine)
+        for machine in grouped
+    }
+    active_events = [
+        row for row in all_events
+        if (not (epoch := epochs.get(row["machine"]))
+            or row.get("activity_received_at") is not None
+            and row["activity_received_at"] >= epoch["active_since"])
+    ]
     rows, pulse = [], {state: 0 for state in (
         "working", "just_finished", "ready", "long_idle", "offline", "needs_attention", "unknown",
     )}
     for machine, studios in grouped.items():
-        events = [row for row in all_events if row["machine"] == machine]
+        epoch = epochs.get(machine)
+        active_since = epoch["active_since"] if epoch else None
+        events = [row for row in active_events if row["machine"] == machine]
         state, fallback_since, current, latest = _state_at(
             machine, statuses, studios, live, events, now,
         )
@@ -450,7 +467,9 @@ def fleet_snapshot(registry: list[dict], statuses: dict, batches: dict,
             limitation = "Activity evidence pending"
         elif not complete:
             limitation = "Direct activity partially unavailable"
-        transitions = ledger.machine_state_transitions(machine, before_s=now)
+        transitions = ledger.machine_state_transitions(
+            machine, before_s=now, since_s=active_since,
+        )
         previous = next((row for row in reversed(transitions) if row["state"] == state), None)
         state_since = (previous or {}).get("state_since")
         if state_since is None:
@@ -459,8 +478,10 @@ def fleet_snapshot(registry: list[dict], statuses: dict, batches: dict,
                         and (row.get("finished_at") or row["observed_at"]) >= since_s)
         failed = sum(1 for row in events if row["state"] == "error"
                      and (row.get("finished_at") or row["observed_at"]) >= since_s)
-        median_runtime_s, relative = _performance(machine, all_events, current, latest, since_s)
-        timeline = [row for row in events if row["observed_at"] >= since_s][:20]
+        median_runtime_s, relative = _performance(
+            machine, active_events, current, latest, max(since_s, active_since or since_s),
+        )
+        timeline = [row for row in events if row["activity_received_at"] >= since_s][:20]
         row = {
             "machine": machine, "state": state, "state_since": state_since,
             "state_duration_s": round(max(0.0, now - state_since), 1),
@@ -480,6 +501,7 @@ def fleet_snapshot(registry: list[dict], statuses: dict, batches: dict,
             "utilization": _utilization(
                 machine, since_s, now,
                 partial=(not complete),
+                active_since=active_since,
             ),
             "limitation": limitation, "timeline": timeline,
         }
