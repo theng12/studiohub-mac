@@ -107,6 +107,23 @@ CREATE TABLE IF NOT EXISTS machine_state_transitions (
 );
 CREATE INDEX IF NOT EXISTS idx_machine_state_transitions_machine_time
   ON machine_state_transitions(machine, observed_at ASC);
+CREATE TABLE IF NOT EXISTS machine_registration_epochs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  machine TEXT NOT NULL,
+  active_since REAL NOT NULL,
+  closed_at REAL,
+  controller_id TEXT,
+  site_id TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_machine_registration_epochs_active
+  ON machine_registration_epochs(machine) WHERE closed_at IS NULL;
+CREATE TABLE IF NOT EXISTS machine_registration_reconciliation (
+  machine TEXT PRIMARY KEY,
+  action TEXT NOT NULL,
+  requested_at REAL NOT NULL,
+  controller_id TEXT,
+  site_id TEXT
+);
 """
 
 
@@ -304,6 +321,7 @@ def record_activity_ownership(*, machine: str, studio: str, job_id: str,
 
 def record_machine_state(*, machine: str, reachable: bool, working: bool,
                          state: str = "unknown", observed_at: float | None = None,
+                         since_s: float | None = None,
                          conn: sqlite3.Connection | None = None) -> bool:
     """Store only actual machine reachability/working transitions."""
     observed_at = float(time.time() if observed_at is None else observed_at)
@@ -311,10 +329,14 @@ def record_machine_state(*, machine: str, reachable: bool, working: bool,
     if conn is None:
         conn = _conn()
     try:
+        where, args = ["machine = ?"], [machine]
+        if since_s is not None:
+            where.append("observed_at >= ?")
+            args.append(float(since_s))
         previous = conn.execute(
             "SELECT reachable, working, state FROM machine_state_transitions "
-            "WHERE machine = ? ORDER BY observed_at DESC, id DESC LIMIT 1",
-            (machine,),
+            f"WHERE {' AND '.join(where)} ORDER BY observed_at DESC, id DESC LIMIT 1",
+            args,
         ).fetchone()
         current = (int(bool(reachable)), int(bool(working)))
         if previous and (previous["reachable"], previous["working"], previous["state"]) == (*current, state):
@@ -333,8 +355,12 @@ def record_machine_state(*, machine: str, reachable: bool, working: bool,
     return True
 
 
-def machine_state_transitions(machine: str, *, before_s: float | None = None) -> list[dict]:
+def machine_state_transitions(machine: str, *, before_s: float | None = None,
+                              since_s: float | None = None) -> list[dict]:
     where, args = ["machine = ?"], [machine]
+    if since_s is not None:
+        where.append("observed_at >= ?")
+        args.append(float(since_s))
     if before_s is not None:
         where.append("observed_at <= ?")
         args.append(float(before_s))
@@ -344,6 +370,112 @@ def machine_state_transitions(machine: str, *, before_s: float | None = None) ->
             f"WHERE {' AND '.join(where)} ORDER BY observed_at ASC, id ASC", args,
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def _registration_epoch(row: sqlite3.Row | None) -> dict | None:
+    return dict(row) if row is not None else None
+
+
+def begin_machine_removal(machine: str, *, controller_id: str | None = None,
+                          site_id: str | None = None,
+                          received_at: float | None = None) -> dict:
+    """Durably record an unregister intent before changing registry JSON.
+
+    Registry JSON and SQLite cannot commit atomically.  Reconciliation keeps an
+    intent whose meaning is resolved from the registry after either write
+    ordering: an extant registry row cancels it; an absent row closes the epoch.
+    """
+    received_at = float(time.time() if received_at is None else received_at)
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM machine_registration_epochs "
+            "WHERE machine = ? AND closed_at IS NULL", (machine,),
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                "INSERT INTO machine_registration_epochs "
+                "(machine, active_since, controller_id, site_id) VALUES (?, ?, ?, ?)",
+                (machine, received_at, controller_id, site_id),
+            )
+            row = conn.execute(
+                "SELECT * FROM machine_registration_epochs "
+                "WHERE machine = ? AND closed_at IS NULL", (machine,),
+            ).fetchone()
+        conn.execute(
+            "INSERT INTO machine_registration_reconciliation "
+            "(machine, action, requested_at, controller_id, site_id) VALUES (?, 'remove', ?, ?, ?) "
+            "ON CONFLICT(machine) DO UPDATE SET action = excluded.action, "
+            "requested_at = excluded.requested_at, controller_id = excluded.controller_id, "
+            "site_id = excluded.site_id",
+            (machine, received_at, controller_id, site_id),
+        )
+    return _registration_epoch(row) or {}
+
+
+def reconcile_machine_registrations(machines: set[str], *,
+                                    received_at: float | None = None) -> dict[str, dict]:
+    """Repair registration epochs from the current registry idempotently."""
+    received_at = float(time.time() if received_at is None else received_at)
+    machines = {machine for machine in machines if isinstance(machine, str) and machine}
+    with _conn() as conn:
+        intents = conn.execute(
+            "SELECT machine FROM machine_registration_reconciliation WHERE action = 'remove'"
+        ).fetchall()
+        for intent in intents:
+            machine = intent["machine"]
+            if machine not in machines:
+                conn.execute(
+                    "UPDATE machine_registration_epochs SET closed_at = ? "
+                    "WHERE machine = ? AND closed_at IS NULL",
+                    (received_at, machine),
+                )
+            conn.execute(
+                "DELETE FROM machine_registration_reconciliation WHERE machine = ?",
+                (machine,),
+            )
+        placeholders = ", ".join("?" for _ in machines)
+        if machines:
+            conn.execute(
+                "UPDATE machine_registration_epochs SET closed_at = ? "
+                f"WHERE closed_at IS NULL AND machine NOT IN ({placeholders})",
+                (received_at, *machines),
+            )
+        else:
+            conn.execute(
+                "UPDATE machine_registration_epochs SET closed_at = ? WHERE closed_at IS NULL",
+                (received_at,),
+            )
+        for machine in machines:
+            current = conn.execute(
+                "SELECT id FROM machine_registration_epochs "
+                "WHERE machine = ? AND closed_at IS NULL", (machine,),
+            ).fetchone()
+            if current is None:
+                conn.execute(
+                    "INSERT INTO machine_registration_epochs (machine, active_since) VALUES (?, ?)",
+                    (machine, received_at),
+                )
+        rows = conn.execute(
+            "SELECT machine, active_since, closed_at, controller_id, site_id "
+            "FROM machine_registration_epochs WHERE closed_at IS NULL"
+        ).fetchall()
+    return {row["machine"]: dict(row) for row in rows}
+
+
+def machine_registration_epoch(machine: str, *, conn: sqlite3.Connection | None = None) -> dict | None:
+    owns_connection = conn is None
+    if conn is None:
+        conn = _conn()
+    try:
+        row = conn.execute(
+            "SELECT machine, active_since, closed_at, controller_id, site_id "
+            "FROM machine_registration_epochs WHERE machine = ? "
+            "ORDER BY id DESC LIMIT 1", (machine,),
+        ).fetchone()
+    finally:
+        if owns_connection:
+            conn.close()
+    return _registration_epoch(row)
 
 
 def prune_activity(before_s: float, *, conn: sqlite3.Connection | None = None) -> None:

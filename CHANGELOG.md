@@ -10,6 +10,20 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.19.5] — 2026-09-05
+
+### Fixed — capacity evidence and fleet-retirement state remain truthful
+
+- Merges the current capacity-evidence, memory-aware arbitration, and strict
+  transcription-identity fixes with the retired-fleet activity safeguards.
+- Replayed terminal worker activity cannot cross a removal/re-enrollment
+  boundary: active state uses the immutable first Controller receipt, and a
+  new epoch receives its own transition even if the visible state is unchanged.
+- Retired Macs no longer affect active-board performance comparisons. Fleet
+  utilization begins at its first observed epoch state and is labelled partial
+  rather than inventing prior uptime. Remove reports failures and confirms the
+  machine, Controller/site, closed epoch, and absent active registration.
+
 ## [2.19.4] — 2026-09-05
 
 ### Fixed — deterministic capacity evidence verification
@@ -90,6 +104,38 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
   first, and Chat batches rotate by their last dispatch turn so one queued
   batch cannot consume every free worker wave. Existing leases, exact model
   revision checks, memory admission, and running work remain authoritative.
+
+## [2.18.6] — 2026-09-05
+
+### Fixed — a re-enrolled Mac now starts with clean live-state coverage
+
+- Replayed terminal worker activity can no longer cross a removal/re-enrollment
+  boundary: active state uses the immutable first Controller receipt, while
+  polls record a new state transition for the new registration epoch even when
+  the visible state is unchanged.
+- Fleet utilization now begins at the first observed state in a new epoch and
+  is labelled partial rather than inventing uptime before that observation.
+  Retired machines no longer affect active-board performance comparisons.
+- Remove now reports a failed request without refreshing the list, and only
+  refreshes after displaying the returned machine, controller/site, epoch, and
+  active-registry confirmation. Failed removal cannot create an empty epoch.
+
+## [2.18.5] — 2026-09-05
+
+### Fixed — retired Macs no longer linger in active Fleet Stats
+
+- Removing a registered Mac now records a durable closed registration epoch,
+  clears the active controller registration and live caches, and returns the
+  exact machine, controller/site, closed epoch, and registry confirmation to
+  the caller. A retried restart repairs either ordering of the registry JSON
+  and SQLite writes without deleting historical activity.
+- Re-enrolling the same stable machine ID opens a fresh active epoch. Fleet
+  Stats considers only activity received by this Controller during that epoch,
+  so a stale worker clock or old terminal event cannot make a newly enrolled
+  Mac appear immediately busy or long idle. Historical Stats totals, filters,
+  and retired-machine visibility are unchanged.
+- Update Studio Hub normally. No remote Mac is removed automatically; offline
+  and disabled registrations remain fleet members until an explicit Remove.
 
 ## [2.18.4] — 2026-09-02
 

@@ -682,3 +682,75 @@ def test_out_of_policy_clock_skew_is_partial_unknown_evidence(reset):
         assert machine["state"] == "unknown"
         assert machine["limitation"] == "Activity reporter clock skew exceeds policy"
         assert machine["utilization"]["evidence"] == "partial"
+
+
+def test_active_fleet_performance_excludes_retired_machine_events(reset):
+    from backend import activity
+
+    current = _studio("mac-current")
+    for machine, runtimes in {"mac-current": [20, 21, 22], "mac-retired": [10, 11, 12]}.items():
+        for index, runtime in enumerate(runtimes):
+            ledger.record_activity_event(
+                machine=machine, studio=f"image@{machine}", job_id=f"{machine}-{index}",
+                state="done", model="org/model", source="direct",
+                started_at=10.0, finished_at=10.0 + runtime, runtime_s=runtime,
+                observed_at=100.0 + index,
+            )
+
+    row = activity.fleet_snapshot(
+        [current], {current["id"]: _status()}, {}, since_s=0.0, now=200.0,
+    )["machines"][0]
+
+    assert row["median_runtime_s"] == 21.0
+    assert row["relative_performance"] is None
+
+
+def test_first_current_epoch_transition_covers_only_observed_time(reset):
+    from backend import activity
+
+    studio = _studio("mac-a")
+    ledger.reconcile_machine_registrations({"mac-a"}, received_at=100.0)
+    ledger.record_machine_state(machine="mac-a", reachable=True, working=False,
+                                state="ready", observed_at=120.0)
+
+    row = activity.fleet_snapshot(
+        [studio], {studio["id"]: _status()}, {}, since_s=0.0, now=200.0,
+    )["machines"][0]
+
+    assert row["utilization"] == {"ratio": 0.0, "evidence": "partial"}
+
+
+def test_reenrollment_poll_records_a_new_epoch_transition_for_unchanged_state(reset):
+    from backend import activity
+
+    studio = _studio("mac-a")
+    statuses = {studio["id"]: _status()}
+    ledger.reconcile_machine_registrations({"mac-a"}, received_at=100.0)
+    activity.observe_poll([studio], statuses, {}, now=110.0)
+    ledger.begin_machine_removal("mac-a", received_at=120.0)
+    ledger.reconcile_machine_registrations(set(), received_at=120.0)
+    ledger.reconcile_machine_registrations({"mac-a"}, received_at=130.0)
+
+    activity.observe_poll([studio], statuses, {}, now=140.0)
+    transitions = ledger.machine_state_transitions("mac-a", since_s=130.0)
+
+    assert [(row["state"], row["observed_at"]) for row in transitions] == [("ready", 140.0)]
+
+
+def test_reenrollment_poll_ignores_old_terminal_history_when_recording_state(reset):
+    from backend import activity
+
+    studio = _studio("mac-a")
+    ledger.reconcile_machine_registrations({"mac-a"}, received_at=100.0)
+    ledger.record_activity_event(
+        machine="mac-a", studio=studio["id"], job_id="old-terminal", state="done",
+        model="org/model", source="direct", finished_at=100.0, observed_at=100.0,
+    )
+    ledger.begin_machine_removal("mac-a", received_at=110.0)
+    ledger.reconcile_machine_registrations(set(), received_at=110.0)
+    ledger.reconcile_machine_registrations({"mac-a"}, received_at=120.0)
+
+    activity.observe_poll([studio], {studio["id"]: _status()}, {}, now=120.0 + activity.LONG_IDLE_S)
+    transition = ledger.machine_state_transitions("mac-a", since_s=120.0)[-1]
+
+    assert transition["state"] == "ready"
