@@ -363,7 +363,7 @@ async def _eligible_studios(monitor, model: str, item: dict | None = None) -> li
                 or broker.machine_is_quarantined(machine)
                 or float(avoided.get(machine, 0) or 0) > now):
             continue
-        availability = await monitor.get_transcription(studio)
+        availability = await monitor.scheduling_transcription(studio)
         models = (availability or {}).get("models", [])
         if (availability or {}).get("available") and any(
                 m.get("repo") == model and m.get("cached", True) for m in models):
@@ -372,6 +372,21 @@ async def _eligible_studios(monitor, model: str, item: dict | None = None) -> li
         broker._studio_total_memory_gb(studio), studio["id"],
     ))
     return eligible
+
+
+def has_queued_work() -> bool:
+    """Whether transcription has work ready to compete for a shared Mac."""
+    now = time.time()
+    return any(
+        not batch.get("cancelled")
+        and not execution_identity.lease_expired(batch.get("genstudio_execution"))
+        and any(
+            item.get("state") == "queued"
+            and (not item.get("retry_at") or item["retry_at"] <= now)
+            for item in batch.get("items") or []
+        )
+        for batch in batches.values()
+    )
 
 
 def _expire_genstudio_batch(batch: dict) -> bool:
@@ -435,7 +450,12 @@ async def dispatch_once(monitor) -> int:
                 continue
             for studio in await _eligible_studios(monitor, batch["model"], item):
                 machine = studio.get("machine", "local")
-                availability = await monitor.get_transcription(studio)
+                from . import chat_jobs
+                if not broker.external_dispatch_allowed(
+                        machine, "transcription",
+                        other_lane_has_work=chat_jobs.has_queued_work()):
+                    continue
+                availability = await monitor.scheduling_transcription(studio)
                 entry = next((row for row in (availability or {}).get("models", [])
                               if row.get("repo") == batch["model"]),
                              {"repo": batch["model"]})
@@ -446,6 +466,7 @@ async def dispatch_once(monitor) -> int:
                 owner = f"transcription:{batch['id']}:{item['index']}"
                 if not broker.acquire_external_machine(machine, owner):
                     continue
+                broker.note_external_dispatch(machine, "transcription")
                 item.update(
                     state="running", studio=studio["id"], error=None,
                     studio_task_id=f"stt-{batch['id']}-{item['index']}",
@@ -801,3 +822,4 @@ def reset_for_tests() -> None:
     _dispatcher_task = _cleanup_task = None
     _shutting_down = False
     broker._external_machine_leases.clear()
+    broker._external_lane_turn.clear()

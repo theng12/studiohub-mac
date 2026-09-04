@@ -1001,6 +1001,32 @@ def test_machine_lease_blocks_other_heavy_studios_on_same_mac(reset):
     assert [s["id"] for s in broker._eligible_studios("render", "pool")] == [render["id"]]
 
 
+def test_external_lanes_take_turns_per_physical_machine_and_single_lane_stays_work_conserving(
+        reset):
+    assert broker.external_dispatch_allowed(
+        "local", "chat", other_lane_has_work=False,
+    ) is True
+
+    broker.note_external_dispatch("local", "chat")
+    assert broker.external_dispatch_allowed(
+        "local", "chat", other_lane_has_work=True,
+    ) is False
+    assert broker.external_dispatch_allowed(
+        "local", "transcription", other_lane_has_work=True,
+    ) is True
+
+    broker.note_external_dispatch("local", "transcription")
+    assert broker.external_dispatch_allowed(
+        "local", "transcription", other_lane_has_work=True,
+    ) is False
+    assert broker.external_dispatch_allowed(
+        "local", "chat", other_lane_has_work=True,
+    ) is True
+    assert broker.external_dispatch_allowed(
+        "local", "transcription", other_lane_has_work=False,
+    ) is True
+
+
 def test_render_batches_have_queue_priority_without_preemption(reset):
     image = broker.submit_batch({"modality": "image", "model": "a/b",
                                  "items": [{"prompt": "image"}]})
@@ -1305,7 +1331,8 @@ def test_constrained_voice_queue_gets_next_high_memory_worker_before_kokoro(
 ):
     mon = broker._monitor()
     voice = next(studio for studio in mon.registry if studio["id"] == "voice")
-    mon._catalog_cache[voice["id"]] = (1.0, {"models": [
+    mon.status[voice["id"]] = {"status": "up"}
+    mon._catalog_cache[voice["id"]] = (time.time(), {"models": [
         {
             "repo": "mlx-community/Kokoro-82M-bf16",
             "min_unified_memory_gb": 8,

@@ -20,7 +20,9 @@ from .registry import DATA_DIR
 
 SETTINGS_FILE = DATA_DIR / "memory_admission_overrides.json"
 DEFAULT_MIN_FREE_MEMORY_GB = 2.0
-SUPPORTED_MODALITIES = frozenset({"image", "voice", "music", "video"})
+SUPPORTED_MODALITIES = frozenset({
+    "image", "voice", "transcription", "music", "video",
+})
 
 # These are measured fleet defaults, intentionally allowed to be less
 # conservative than a worker catalog. FLUX.2 Klein 4B MLX 4-bit has completed

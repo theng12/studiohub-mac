@@ -6,6 +6,10 @@ from backend import broker, memory_admission
 FLUX_REPO = "AITRADER/FLUX2-klein-4B-mlx-4bit"
 
 
+def test_transcription_is_subject_to_memory_admission(reset):
+    assert memory_admission.applies_to("transcription") is True
+
+
 def _flux_entry():
     return {
         "repo": FLUX_REPO,

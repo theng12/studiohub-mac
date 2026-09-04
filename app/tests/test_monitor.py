@@ -1,5 +1,6 @@
 import asyncio
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -384,6 +385,113 @@ async def test_whisper_models_join_fleet_inventory(monitor, seed_catalog):
     assert inventory["endpoint_count"] == 1
     assert inventory["ready_count"] == 1
     assert len(inventory["models"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_scheduler_catalog_reads_only_fresh_error_free_cache(
+        monitor, monkeypatch):
+    studio = next(row for row in monitor.registry if row["id"] == "image")
+    monitor.status[studio["id"]] = {"status": "up"}
+    observed = {"models": [{"repo": "org/model", "cache": {"state": "cached"}}]}
+    monitor._catalog_cache[studio["id"]] = (time.time(), observed)
+
+    async def unexpected_live_refresh(*args, **kwargs):
+        raise AssertionError("scheduler catalog lookup must never refresh a worker")
+
+    monkeypatch.setattr(monitor, "get_catalog", unexpected_live_refresh)
+    assert await monitor.scheduling_catalog(studio) == observed
+
+    monitor._catalog_cache[studio["id"]] = (
+        time.time() - mon.CATALOG_STALE_S - 1, observed,
+    )
+    assert await monitor.scheduling_catalog(studio) is None
+
+    monitor._catalog_cache[studio["id"]] = (time.time(), observed)
+    monitor._catalog_meta[studio["id"]] = {
+        "catalog_last_error": "refresh failed",
+    }
+    assert await monitor.scheduling_catalog(studio) is None
+
+
+@pytest.mark.asyncio
+async def test_scheduler_transcription_reads_only_fresh_error_free_cache(
+        monitor, monkeypatch):
+    studio = next(row for row in monitor.registry if row["id"] == "voice")
+    monitor.status[studio["id"]] = {"status": "up"}
+    observed = {
+        "available": True,
+        "models": [{"repo": "org/whisper", "cached": True}],
+    }
+    monitor._transcribe_cache[studio["id"]] = (time.time(), observed)
+
+    async def unexpected_live_refresh(*args, **kwargs):
+        raise AssertionError("scheduler transcription lookup must never refresh a worker")
+
+    monkeypatch.setattr(monitor, "get_transcription", unexpected_live_refresh)
+    assert await monitor.scheduling_transcription(studio) == observed
+
+    monitor._transcribe_cache[studio["id"]] = (
+        time.time() - mon.CATALOG_STALE_S - 1, observed,
+    )
+    assert await monitor.scheduling_transcription(studio) is None
+
+    monitor._transcribe_cache[studio["id"]] = (time.time(), observed)
+    monitor._catalog_meta[studio["id"]] = {
+        "transcription_last_error": "refresh failed",
+    }
+    assert await monitor.scheduling_transcription(studio) is None
+
+
+@pytest.mark.asyncio
+async def test_catalog_source_errors_are_persisted_independently(
+        monitor, tmp_path):
+    path = tmp_path / "catalog-observations.json"
+    now = time.time()
+    monitor.catalog_state_path = path
+    monitor._catalog_cache["voice"] = (now, {"models": [{"repo": "tts"}]})
+    monitor._transcribe_cache["voice"] = (
+        now, {"available": True, "models": [{"repo": "stt"}]},
+    )
+    monitor._catalog_meta["voice"] = {
+        "catalog_last_attempt_at": now,
+        "catalog_last_success_at": now,
+        "catalog_last_error": None,
+        "transcription_last_attempt_at": now,
+        "transcription_last_success_at": now,
+        "transcription_last_error": "Whisper refresh failed",
+    }
+    monitor._save_catalog_state()
+
+    restarted = mon.StudioMonitor(catalog_state_path=path)
+    try:
+        assert restarted.catalog_observation("voice")["last_error"] is None
+        assert restarted.catalog_observation(
+            "voice", transcription=True,
+        )["last_error"] == "Whisper refresh failed"
+    finally:
+        await restarted._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_legacy_catalog_error_survives_source_metadata_upgrade(
+        monitor, tmp_path):
+    path = tmp_path / "catalog-observations.json"
+    now = time.time()
+    studio = next(row for row in monitor.registry if row["id"] == "image")
+    monitor.status[studio["id"]] = {"status": "up"}
+    monitor.catalog_state_path = path
+    monitor._catalog_cache[studio["id"]] = (now, {"models": []})
+    # This is the pre-v3 durable shape: source-specific keys do not exist.
+    monitor._catalog_meta[studio["id"]] = {
+        "last_error": "refresh failed",
+    }
+    monitor._save_catalog_state()
+
+    restarted = mon.StudioMonitor(catalog_state_path=path)
+    try:
+        assert await restarted.scheduling_catalog(studio) is None
+    finally:
+        await restarted._client.aclose()
 
 
 @pytest.mark.asyncio

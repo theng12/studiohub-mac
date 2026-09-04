@@ -379,7 +379,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `GET /api/hub/memory` | Read model-memory policy, loaded-model state, friendly process title, and reachability for every model-hosting Studio |
 | `PUT /api/hub/memory-policy` | Apply `{mode, studio_ids?}` using `performance`, `balanced`, `memory_saver`, or `immediate` |
 | `POST /api/hub/memory/release` | Release idle model/accelerator memory on selected Studios; returns one result per worker |
-| `GET /api/hub/memory-admission` | Read catalog, Hub-default, and effective total/free RAM floors for locally brokered Image, Voice, Music, and Video models |
+| `GET /api/hub/memory-admission` | Read catalog, Hub-default, and effective total/free RAM floors for locally brokered Image, Voice, Transcription, Music, and Video models |
 | `PUT /api/hub/memory-admission` · `DELETE /api/hub/memory-admission?model=...` | Save `{model, min_total_memory_gb, min_free_memory_gb}` or reset one model to its visible Hub default |
 | `GET /api/releases` | Current Hub version and complete release details read from the shipped changelog |
 | `GET /api/hub/summary` | One-shot dashboard payload (studios + resources + queues) |

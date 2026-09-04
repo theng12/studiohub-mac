@@ -952,6 +952,30 @@ def test_capability_snapshot_uses_effective_flux_ram_policy(
     assert model["availability"]["available_now"] is True
 
 
+def test_transcription_capacity_respects_total_memory_floor(
+        authed, monitor, monkeypatch):
+    _seed_capability_site(monitor)
+    whisper = monitor._transcribe_cache["voice"][1]["models"][0]
+    whisper["min_unified_memory_gb"] = 8
+    monkeypatch.setattr(capabilities, "host_stats", lambda: {
+        "total_gb": 1, "available_gb": 1,
+    })
+
+    payload = authed.get("/api/hub/capabilities").json()
+    voice = _worker(payload, "voice")
+    model = _model(voice, "audio.transcription")
+    supply = next(row for row in payload["model_supply"]
+                  if row["internal_model_id"] == "org/whisper")
+
+    assert model["memory_admission"]["effective_min_total_memory_gb"] == 8
+    assert model["memory_admission"]["eligible_now"] is False
+    assert model["availability"]["available_now"] is False
+    assert model["availability"]["capacity_eligible"] is False
+    assert model["availability"]["reason"] == "insufficient_total_memory"
+    assert supply["eligible_physical_slots_total"] == 0
+    assert supply["machines"][0]["capacity_eligible"] is False
+
+
 def test_withdrawn_release_intent_removes_convergence_signal_and_leaves_capacity(
         authed, monitor, monkeypatch, tmp_path):
     """Withdrawal must make the release signal disappear, not read as converged.

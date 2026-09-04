@@ -10,6 +10,25 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.19.1] — 2026-09-05
+
+### Fixed — schedulers now use only fresh, successful worker evidence
+
+- Local Chat, Transcription, and broker catalog lookups now use a cache-only
+  scheduling view. A stale last-good catalog or an observation whose refresh
+  failed remains available for diagnostics, but cannot silently route new
+  work. Catalog and Whisper refresh attempts persist separate freshness and
+  error metadata, while older durable observation files remain readable.
+- Transcription model admission now applies the same total/free unified-memory
+  floors as the other local generation lanes, so low-memory Macs stay out of
+  both current routing and total eligible capacity for that model.
+- Chat and Transcription share a per-physical-Mac turn token. When both queues
+  are waiting, the next newly-free shared Mac goes to the opposite lane; when
+  only one queue has work it remains work-conserving. Existing durable leases,
+  exact revision checks, memory gates, and per-batch turns are unchanged.
+- No worker, model, enrollment, fleet-machine, deployment, restart, or live
+  job behavior changes automatically. Update Studio Hub normally.
+
 ## [2.19.0] — 2026-09-05
 
 ### Added — capacity evidence now separates compatible supply from free slots

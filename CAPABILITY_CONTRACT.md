@@ -153,7 +153,7 @@ count, transcript requirement, and accepted formats. These are worker-owned
 execution facts. Studio Hub sanitizes and relays them; it does not invent or
 normalize model limits.
 
-Locally brokered Image, Voice, Music, and Video generation models also report
+Locally brokered Image, Voice, Transcription, Music, and Video models also report
 `memory_admission`: catalog, Hub-default, and effective minimum total/free RAM,
 policy source, current observed memory, and whether the machine is eligible
 now. Operator overrides are site-local scheduling policy; they do not modify

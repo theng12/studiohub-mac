@@ -435,7 +435,7 @@ async def _eligible_studios(
                 or not studio_enabled(machine, studio["id"])
                 or machine in broker.busy_machines()):
             continue
-        catalog = await monitor.get_catalog(studio)
+        catalog = await monitor.scheduling_catalog(studio)
         entry = next((item for item in (catalog or {}).get("models", [])
                       if item.get("repo") == model or model in (item.get("aliases") or [])), None)
         if not entry or not broker.is_cached(entry):
@@ -464,6 +464,21 @@ async def _eligible_studios(
         broker._studio_total_memory_gb(studio), studio["id"],
     ))
     return eligible
+
+
+def has_queued_work() -> bool:
+    """Whether Chat has work ready to compete for a shared physical Mac."""
+    now = time.time()
+    return any(
+        not batch.get("cancelled")
+        and not execution_identity.lease_expired(batch.get("genstudio_execution"))
+        and any(
+            pack.get("state") == "queued"
+            and (not pack.get("retry_at") or pack["retry_at"] <= now)
+            for pack in batch.get("packs") or []
+        )
+        for batch in batches.values()
+    )
 
 
 async def dispatch_once(monitor) -> int:
@@ -522,7 +537,12 @@ async def dispatch_once(monitor) -> int:
             dispatched_this_batch = False
             for studio in eligible:
                 machine = studio.get("machine", "local")
-                catalog = await monitor.get_catalog(studio)
+                from . import transcription_jobs
+                if not broker.external_dispatch_allowed(
+                        machine, "chat",
+                        other_lane_has_work=transcription_jobs.has_queued_work()):
+                    continue
+                catalog = await monitor.scheduling_catalog(studio)
                 entry = next((item for item in (catalog or {}).get("models", [])
                               if item.get("repo") == batch["model"]
                               or batch["model"] in (item.get("aliases") or [])), {})
@@ -534,6 +554,7 @@ async def dispatch_once(monitor) -> int:
                 owner = f"chat:{batch['id']}:{pack['index']}"
                 if not broker.acquire_external_machine(machine, owner):
                     continue
+                broker.note_external_dispatch(machine, "chat")
                 pack.update(
                     state="running", studio=studio["id"], error=None,
                     retry_at=None, started_at=time.time(),
@@ -799,3 +820,4 @@ def reset_for_tests() -> None:
     _dispatcher_task = None
     _shutting_down = False
     broker._external_machine_leases.clear()
+    broker._external_lane_turn.clear()
