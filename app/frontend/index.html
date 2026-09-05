@@ -1234,6 +1234,12 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.19.6", date: "2026-09-05", items: [
+    "<b>Fixed:</b> remote Studio work now requires a fresh peer-Hub snapshot that is reachable, authenticated, and connected.",
+    "Missing, stale, disconnected, and token-rejected peers stay visible for diagnosis but cannot receive new work. A remote HTTP 401 stays quarantined until a protected Studio proxy check succeeds; resource-only replies cannot restore dispatch.",
+    "Resource checks now fail closed unless valid, and every scheduler rechecks peer authority before creating work or sending it to a Studio. Work whose authority changed stays queued without consuming an attempt.",
+    "Local dispatch is unchanged. No token, enrollment, worker, model, or running job changes automatically.",
+  ]},
   { v: "2.19.5", date: "2026-09-05", items: [
     "<b>Fixed:</b> current capacity evidence, memory-aware arbitration, and strict transcription identity are now released alongside truthful retired-fleet activity handling.",
     "A re-enrolled Mac gets fresh live-state coverage even if an Agent replays an old terminal job. Retired Macs stay out of active Fleet Stats, utilization never invents prior uptime, and Remove reports either its error or the confirmed closed epoch.",

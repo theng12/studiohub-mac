@@ -1,10 +1,11 @@
 import asyncio
 import json
+import time
 
 import pytest
 from fastapi import HTTPException
 
-from backend import broker, chat_jobs as jobs, control_plane
+from backend import broker, chat_jobs as jobs, control_plane, peers
 
 
 MODEL = "mlx-community/Llama-3.2-3B-Instruct-4bit"
@@ -136,8 +137,99 @@ def _add_chat_workers(monitor, count: int) -> list[dict]:
         }
         monitor.registry.append(worker)
         monitor.status[worker["id"]] = {"status": "up"}
+        peers._cache[worker["machine"]] = (
+            time.time(), {"reachable": True, "auth": True, "status": "connected"},
+        )
         workers.append(worker)
     return workers
+
+
+async def _available_chat(_studio):
+    return {"models": [{"repo": MODEL, "cache": {"state": "cached"}}]}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("snapshot", [
+    {"reachable": True, "auth": False, "status": "token_rejected"},
+    None,
+])
+async def test_remote_chat_excludes_rejected_or_unknown_peer(
+        reset, monitor, monkeypatch, snapshot):
+    worker = _add_chat_workers(monitor, 1)[0]
+    if snapshot is not None:
+        peers._cache[worker["machine"]] = (time.time(), snapshot)
+    else:
+        peers.invalidate(worker["machine"], rejected=True)
+    monkeypatch.setattr(monitor, "scheduling_catalog", _available_chat)
+
+    assert await jobs._eligible_studios(monitor, MODEL) == []
+
+
+@pytest.mark.asyncio
+async def test_remote_chat_includes_authenticated_connected_peer(reset, monitor, monkeypatch):
+    worker = _add_chat_workers(monitor, 1)[0]
+    peers._cache[worker["machine"]] = (
+        time.time(), {"reachable": True, "auth": True, "status": "connected"},
+    )
+    monkeypatch.setattr(monitor, "scheduling_catalog", _available_chat)
+
+    assert await jobs._eligible_studios(monitor, MODEL) == [worker]
+
+
+@pytest.mark.asyncio
+async def test_remote_chat_401_invalidates_peer_readiness(reset, monitor, monkeypatch):
+    batch, _ = jobs.create_batch(_payload(1, 1))
+    worker = _add_chat_workers(monitor, 1)[0]
+
+    class Rejected:
+        status_code = 401
+        text = "Hub token required"
+
+    async def post(*_args, **_kwargs):
+        return Rejected()
+
+    monkeypatch.setattr(monitor, "scheduling_catalog", _available_chat)
+    monkeypatch.setattr(monitor._client, "post", post)
+
+    assert await jobs.dispatch_once(monitor) == 1
+    await asyncio.gather(*list(jobs._pack_tasks.values()))
+    assert batch["packs"][0]["state"] == "error"
+    assert peers.cached(worker["machine"]) is None
+
+
+@pytest.mark.asyncio
+async def test_chat_scheduler_rechecks_peer_after_await(reset, monitor, monkeypatch):
+    batch, _ = jobs.create_batch(_payload(1, 1))
+    worker = _add_chat_workers(monitor, 1)[0]
+
+    async def other_lane(_monitor, _machine):
+        peers.invalidate(worker["machine"])
+        return False
+
+    async def prepare(*_args):
+        return "run", "ready"
+
+    from backend import transcription_jobs
+    monkeypatch.setattr(monitor, "scheduling_catalog", _available_chat)
+    monkeypatch.setattr(transcription_jobs, "has_dispatchable_work", other_lane)
+    monkeypatch.setattr(broker, "prepare_machine_memory", prepare)
+
+    assert await jobs.dispatch_once(monitor) == 0
+    assert batch["packs"][0]["state"] == "queued"
+    assert batch["packs"][0]["tries"] == 0
+
+
+@pytest.mark.asyncio
+async def test_local_chat_does_not_require_peer_status(reset, monitor, monkeypatch):
+    local = {
+        "id": "chat", "title": "Chat Studio KH", "modality": "chat",
+        "machine": "local", "host": "127.0.0.1", "port": 47871,
+    }
+    monitor.registry.append(local)
+    monitor.status[local["id"]] = {"status": "up"}
+    monkeypatch.setattr(monitor, "scheduling_catalog", _available_chat)
+
+    assert await jobs._eligible_studios(monitor, MODEL) == [local]
 
 
 def test_api_submission_is_authenticated_persistent_and_idempotent(authed, client):
@@ -513,7 +605,9 @@ async def test_remote_chat_pack_uses_connected_peer_hub(reset, monitor, monkeypa
     batch, _ = jobs.create_batch(_payload())
     worker = _add_chat_workers(monitor, 1)[0]
     peers.set_fleet_token("shared-secret")
-    peers._cache[worker["machine"]] = (1.0, {"status": "connected", "reachable": True})
+    peers._cache[worker["machine"]] = (
+        time.time(), {"status": "connected", "reachable": True, "auth": True},
+    )
 
     async def catalog(studio):
         return {"models": [{"repo": MODEL, "cache": {"state": "cached"}}]}

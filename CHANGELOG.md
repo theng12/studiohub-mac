@@ -10,6 +10,26 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.19.6] — 2026-09-05
+
+### Fixed — only authenticated peer Hubs can receive new work
+
+- New remote Studio dispatch requires a fresh peer-Hub snapshot that is
+  reachable, authenticated, and connected. Missing, stale, disconnected, or
+  token-rejected peers remain visible for diagnosis but cannot receive Chat,
+  Transcription, Image, Voice, Video, Music, or Render work.
+- A remote HTTP 401 immediately removes that peer's dispatch readiness. The
+  current request remains on its established safe terminal/reconciliation
+  path; this release does not retry it on another worker. A resource-only Hub
+  refresh cannot undo that quarantine: only a successful protected Studio
+  proxy probe for the rejected modality restores it.
+- Resource refreshes now accept only a valid successful response, and each
+  scheduler rechecks peer authority after its awaited preparation and again
+  before a worker request. Work whose authority changed before acceptance stays
+  queued without consuming an attempt.
+- Local Studio dispatch is unchanged. No fleet token is rotated or distributed,
+  and no running work, enrollment, model, or worker state changes automatically.
+
 ## [2.19.5] — 2026-09-05
 
 ### Fixed — capacity evidence and fleet-retirement state remain truthful

@@ -1489,6 +1489,8 @@ def _eligible_studios(modality: str, routing: str) -> list[dict]:
         if (s["modality"] != modality or s["id"] in _busy
                 or s["id"] in _maintenance or machine in leased_machines):
             continue
+        if not peers.dispatch_ready(s):
+            continue
         # a machine the operator has disabled stays monitored but takes no jobs
         if not machine_enabled(s.get("machine", "local")):
             continue
@@ -1726,6 +1728,9 @@ async def _dispatch_loop():
                     # this Mac in the meantime never overlaps generation/render.
                     if studio.get("machine", "local") in busy_machines():
                         continue
+                    generation = peers.dispatch_generation(studio)
+                    if not peers.dispatch_ready(studio, generation):
+                        continue
                     b["governor_note"] = None
                     item = queued.pop(compatible_index)
                     _clear_worker_attempt_evidence(item)
@@ -1736,6 +1741,7 @@ async def _dispatch_loop():
                     # worker id if the new POST loses its response.
                     item["studio_job_id"] = None
                     item["tries"] += 1
+                    item["_dispatch_generation"] = generation
                     item["_reserved"] = reserve
                     _reserved["gb"] += reserve
                     _busy.add(studio["id"])
@@ -1977,6 +1983,16 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
     )
     ref_mode = body.pop("ref_mode", None)
     body.pop("reference_images", None)  # never forward references as JSON
+    generation = item.get("_dispatch_generation")
+
+    def requeue_if_peer_changed() -> bool:
+        if generation is None or peers.dispatch_ready(studio, generation):
+            return False
+        item.update(state="queued", studio=None, studio_job_id=None,
+                    tries=max(0, int(item.get("tries") or 0) - 1),
+                    error="worker authentication changed before dispatch")
+        return True
+
     try:
         if _expire_genstudio_batch(b):
             item["state"] = "cancelled"
@@ -1999,6 +2015,8 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
                 return
             if reference.get("transcript"):
                 body["ref_transcript"] = reference["transcript"]
+            if requeue_if_peer_changed():
+                return
             url, headers = studio_request(
                 studio, "/api/generate/txt2speech/reference"
             )
@@ -2047,6 +2065,8 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
                 return
             if b["modality"] == "video":
                 body["mode"] = "img2video"
+                if requeue_if_peer_changed():
+                    return
                 url, headers = studio_request(studio, "/api/generate/video2video")
                 r = await client.post(
                     url,
@@ -2054,6 +2074,8 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
                     files={"file": (f"reference{_ext(mime)}", img_bytes, mime)},
                     headers=headers)
             else:
+                if requeue_if_peer_changed():
+                    return
                 url, headers = studio_request(studio, f"/api/generate/{mode}")
                 r = await client.post(
                     url,
@@ -2061,8 +2083,13 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
                     files={"image": (f"reference{_ext(mime)}", img_bytes, mime)},
                     headers=headers)
         else:
+            if requeue_if_peer_changed():
+                return
             url, headers = studio_request(studio, endpoint)
             r = await client.post(url, json=body, headers=headers)
+        if r.status_code == 401 and studio.get("machine", "local") != "local":
+            peers.invalidate(studio["machine"], rejected=True,
+                             modality=studio["modality"])
         if r.status_code >= 400 and voice_reference_asset_id:
             try:
                 worker_detail = r.json().get("detail")
@@ -2121,6 +2148,9 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             jr = await client.get(
                 url, headers=headers)
             if jr.status_code >= 400:
+                if jr.status_code == 401 and studio.get("machine", "local") != "local":
+                    peers.invalidate(studio["machine"], rejected=True,
+                                     modality=studio["modality"])
                 raise _worker_http_error(jr)
             j = jr.json()["job"]
             _persist_worker_execution_started_at(b, item, j)
@@ -2217,6 +2247,7 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
         _busy.discard(studio["id"])
         _reserved["gb"] = max(0.0, _reserved["gb"] - item.get("_reserved", 0.0))
         item["_reserved"] = 0.0
+        item.pop("_dispatch_generation", None)
         await _post_item_webhook(client, b, item)   # per-scene result → client
         await _maybe_finish(client, b)
         _wakeup.set()
