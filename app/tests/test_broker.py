@@ -6,11 +6,12 @@ import time
 import httpx
 import pytest
 
-from backend import broker, ledger, shared_voices, workload_policy
+from backend import broker, ledger, peers, shared_voices, workload_policy
 
 
 def _add_legacy_worker(monitor, modality: str, *, machine: str = "local") -> dict:
-    ports = {"chat": 47871, "music": 47872, "video": 47869, "render": 47874}
+    ports = {"image": 47868, "chat": 47871, "music": 47872, "video": 47869,
+             "render": 47874}
     worker = {
         "id": modality if machine == "local" else f"{modality}@{machine}",
         "title": f"{modality.title()} Studio KH",
@@ -22,6 +23,47 @@ def _add_legacy_worker(monitor, modality: str, *, machine: str = "local") -> dic
     monitor.registry.append(worker)
     monitor.status[worker["id"]] = {"status": "unknown"}
     return worker
+
+
+def _mark_peers_connected(*studios):
+    for studio in studios:
+        if studio.get("machine", "local") != "local":
+            peers._cache[studio["machine"]] = (
+                time.time(), {"reachable": True, "auth": True, "status": "connected"},
+            )
+
+
+@pytest.mark.parametrize("snapshot", [
+    {"reachable": True, "auth": False, "status": "token_rejected"},
+    None,
+])
+def test_remote_broker_excludes_rejected_or_unknown_peer(reset, snapshot):
+    monitor = broker._monitor()
+    worker = _add_legacy_worker(monitor, "image", machine="mac-b")
+    monitor.status[worker["id"]] = {"status": "up"}
+    if snapshot is not None:
+        peers._cache[worker["machine"]] = (time.time(), snapshot)
+
+    assert broker._eligible_studios("image", "pool") == []
+
+
+def test_remote_broker_includes_authenticated_connected_peer(reset):
+    monitor = broker._monitor()
+    worker = _add_legacy_worker(monitor, "image", machine="mac-b")
+    monitor.status[worker["id"]] = {"status": "up"}
+    peers._cache[worker["machine"]] = (
+        time.time(), {"reachable": True, "auth": True, "status": "connected"},
+    )
+
+    assert broker._eligible_studios("image", "pool") == [worker]
+
+
+def test_local_broker_does_not_require_peer_status(reset):
+    monitor = broker._monitor()
+    local = next(studio for studio in monitor.registry if studio["id"] == "image")
+    monitor.status[local["id"]] = {"status": "up"}
+
+    assert broker._eligible_studios("image", "pool") == [local]
 
 
 async def _run_dispatch_loop_briefly(seconds: float = 0.5) -> None:
@@ -781,12 +823,14 @@ async def test_authentication_failure_is_terminal_without_retry(reset):
     item.update(state="running", tries=1, studio="image@mac-b")
     studio = {"id": "image@mac-b", "modality": "image", "machine": "mac-b",
               "host": "100.1.1.1", "port": 47868}
+    _mark_peers_connected(studio)
 
     await broker._run_item(_RejectedClient(401), batch, item, studio)
 
     assert item["state"] == "error"
     assert item["error_code"] == "WORKER_TERMINAL_ERROR"
     assert item["tries"] == 1 and item["retry_at"] is None
+    assert peers.cached("mac-b") is None
 
 
 @pytest.mark.asyncio
@@ -1082,6 +1126,7 @@ def _seed_audio_priority_fleet(monkeypatch, machines: dict,
                       "machine": machine, "host": f"10.0.0.{len(mon.registry)}"}
             mon.registry.append(worker)
             mon.status[worker["id"]] = {"status": "up"}
+            _mark_peers_connected(worker)
             mon._catalog_cache[worker["id"]] = (
                 time.time(), {"models": [entries[modality]]})
     monkeypatch.setattr(broker.peers, "cached",
@@ -1215,6 +1260,7 @@ def test_local_inference_workers_prefer_the_smallest_available_ram_tier(
     mon.registry.extend(workers)
     for worker in workers:
         mon.status[worker["id"]] = {"status": "up"}
+    _mark_peers_connected(*workers)
     memory = {
         "mac-8": {"host": {"total_gb": 8, "available_gb": 6}},
         "mac-16": {"host": {"total_gb": 16, "available_gb": 12}},
@@ -1238,6 +1284,7 @@ def _register_remote_workers(monkeypatch, modality, port, hardware):
     mon.registry.extend(workers)
     for worker in workers:
         mon.status[worker["id"]] = {"status": "up"}
+    _mark_peers_connected(*workers)
     cached = {machine: {"host": host} for machine, host in hardware.items()}
     monkeypatch.setattr(broker.peers, "cached", lambda machine: cached.get(machine))
     return workers
@@ -1405,6 +1452,7 @@ def test_render_workers_rank_by_reported_hardware_score(reset):
     mon.registry.append(remote)
     mon.status[local["id"]] = {"status": "up", "health": {"render_score": 20}}
     mon.status[remote["id"]] = {"status": "up", "health": {"render_score": 100}}
+    _mark_peers_connected(remote)
     try:
         eligible = broker._eligible_studios("render", "pool")
         assert [s["id"] for s in eligible[:2]] == [remote["id"], local["id"]]
@@ -1420,6 +1468,7 @@ def test_remote_render_routing_excludes_hub_machine(reset):
     mon.registry.append(remote)
     mon.status[local["id"]] = {"status": "up", "health": {"render_score": 500}}
     mon.status[remote["id"]] = {"status": "up", "health": {"render_score": 1}}
+    _mark_peers_connected(remote)
     try:
         eligible = broker._eligible_studios("render", "remote")
         assert [s["id"] for s in eligible] == [remote["id"]]
@@ -1452,6 +1501,7 @@ def test_voice_pool_eligibility_is_machine_blind(reset):
     mon.registry.append(remote)
     mon.status[local["id"]] = {"status": "up"}
     mon.status[remote["id"]] = {"status": "up"}
+    _mark_peers_connected(remote)
     try:
         eligible = broker._eligible_studios("voice", "pool")
         assert {s["id"] for s in eligible} == {"voice", "voice@macmini-m1-01"}
@@ -1691,6 +1741,7 @@ async def test_remote_dispatch_does_not_reserve_local_memory(reset, monkeypatch)
     monitor.registry.append(remote)
     monitor.status[local["id"]] = {"status": "down"}
     monitor.status[remote["id"]] = {"status": "up"}
+    _mark_peers_connected(remote)
     entry = {"repo": "a/b", "cache": {"state": "cached"},
              "min_unified_memory_gb": 8, "min_free_memory_gb": 3.0}
     monitor._catalog_cache[remote["id"]] = (time.time(), {"models": [entry]})
@@ -1732,6 +1783,7 @@ async def test_dispatch_to_second_worker_clears_previous_attempt_evidence(reset,
     monitor.registry.append(second)
     monitor.status[local["id"]] = {"status": "down"}
     monitor.status[second["id"]] = {"status": "up"}
+    _mark_peers_connected(second)
     entry = {
         "repo": "a/b", "cache": {"state": "cached"},
         "min_unified_memory_gb": 8, "min_free_memory_gb": 3.0,

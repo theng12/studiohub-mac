@@ -1489,6 +1489,8 @@ def _eligible_studios(modality: str, routing: str) -> list[dict]:
         if (s["modality"] != modality or s["id"] in _busy
                 or s["id"] in _maintenance or machine in leased_machines):
             continue
+        if not peers.dispatch_ready(s):
+            continue
         # a machine the operator has disabled stays monitored but takes no jobs
         if not machine_enabled(s.get("machine", "local")):
             continue
@@ -2063,6 +2065,8 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
         else:
             url, headers = studio_request(studio, endpoint)
             r = await client.post(url, json=body, headers=headers)
+        if r.status_code == 401 and studio.get("machine", "local") != "local":
+            peers.invalidate(studio["machine"])
         if r.status_code >= 400 and voice_reference_asset_id:
             try:
                 worker_detail = r.json().get("detail")
@@ -2121,6 +2125,8 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             jr = await client.get(
                 url, headers=headers)
             if jr.status_code >= 400:
+                if jr.status_code == 401 and studio.get("machine", "local") != "local":
+                    peers.invalidate(studio["machine"])
                 raise _worker_http_error(jr)
             j = jr.json()["job"]
             _persist_worker_execution_started_at(b, item, j)

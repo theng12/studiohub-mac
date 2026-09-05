@@ -265,6 +265,27 @@ def cached(machine: str) -> dict | None:
     return entry[1] if entry else None
 
 
+def dispatch_ready(studio: dict) -> bool:
+    """Whether a Studio has authority to receive newly dispatched work."""
+    if studio.get("machine", "local") == "local":
+        return True
+    entry = _cache.get(studio.get("machine"))
+    if not entry:
+        return False
+    try:
+        observed_at, snapshot = entry
+        age = time.time() - observed_at
+    except (TypeError, ValueError):
+        return False
+    return (
+        isinstance(snapshot, dict)
+        and 0 <= age < PEER_TTL_S
+        and snapshot.get("reachable") is True
+        and snapshot.get("auth") is True
+        and snapshot.get("status") == "connected"
+    )
+
+
 def invalidate(machine: str) -> None:
     """Force the next resource refresh to re-read one peer Mac."""
     _cache.pop(machine, None)

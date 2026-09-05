@@ -11,7 +11,7 @@ import uuid
 import httpx
 from fastapi import HTTPException
 
-from . import broker, cloud_guard, execution_identity, ledger
+from . import broker, cloud_guard, execution_identity, ledger, peers
 from .peers import studio_request
 from .registry import machine_enabled, studio_enabled
 
@@ -435,6 +435,8 @@ async def _eligible_studios(
                 or not studio_enabled(machine, studio["id"])
                 or machine in broker.busy_machines()):
             continue
+        if not peers.dispatch_ready(studio):
+            continue
         catalog = await monitor.scheduling_catalog(studio)
         entry = next((item for item in (catalog or {}).get("models", [])
                       if item.get("repo") == model or model in (item.get("aliases") or [])), None)
@@ -645,6 +647,8 @@ async def _run_pack(monitor, batch: dict, pack: dict, studio: dict, owner: str) 
             timeout=httpx.Timeout(connect=5, read=600, write=30, pool=5),
         )
         if response.status_code >= 400:
+            if response.status_code == 401 and studio.get("machine", "local") != "local":
+                peers.invalidate(studio["machine"])
             error = RuntimeError(f"HTTP {response.status_code}: {response.text[:500] or 'Chat completion failed'}")
             error.transient = response.status_code in {408, 409, 425, 429, 500, 502, 503, 504}
             raise error

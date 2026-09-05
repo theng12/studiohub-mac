@@ -10,7 +10,7 @@ import httpx
 import pytest
 from fastapi import HTTPException, UploadFile
 
-from backend import broker, control_plane, ledger, transcription_jobs as jobs
+from backend import broker, control_plane, ledger, peers, transcription_jobs as jobs
 
 
 def _multipart(names=("chapter-1.wav", "chapter-2.wav"), bodies=(b"one", b"two")):
@@ -241,7 +241,115 @@ def _add_remote_voice(monitor, machine="mac-b"):
     local = next(s for s in monitor.registry if s["id"] == "voice")
     remote = {**local, "id": f"voice@{machine}", "machine": machine, "host": "10.0.0.2"}
     monitor.registry.append(remote)
+    _mark_peers_connected(remote)
     return local, remote
+
+
+def _mark_peers_connected(*studios):
+    for studio in studios:
+        if studio.get("machine", "local") != "local":
+            peers._cache[studio["machine"]] = (
+                time.time(), {"reachable": True, "auth": True, "status": "connected"},
+            )
+
+
+async def _available_whisper(_studio):
+    return {"available": True, "models": [{"repo": "mlx/whisper", "cached": True}]}
+
+
+@pytest.mark.asyncio
+async def test_remote_transcription_excludes_token_rejected_peer(reset, monitor, monkeypatch):
+    _, remote = _add_remote_voice(monitor)
+    monitor.registry = [remote]
+    monitor.status[remote["id"]] = {"status": "up"}
+    peers._cache[remote["machine"]] = (
+        time.time(), {"reachable": True, "auth": False, "status": "token_rejected"},
+    )
+    monkeypatch.setattr(monitor, "scheduling_transcription", _available_whisper)
+
+    assert await jobs._eligible_studios(monitor, "mlx/whisper") == []
+
+
+@pytest.mark.asyncio
+async def test_remote_transcription_excludes_peer_without_status_snapshot(reset, monitor, monkeypatch):
+    _, remote = _add_remote_voice(monitor)
+    monitor.registry = [remote]
+    monitor.status[remote["id"]] = {"status": "up"}
+    peers.invalidate(remote["machine"])
+    monkeypatch.setattr(monitor, "scheduling_transcription", _available_whisper)
+
+    assert await jobs._eligible_studios(monitor, "mlx/whisper") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("snapshot,age", [
+    ({"reachable": True, "auth": True, "status": "connected"}, peers.PEER_TTL_S + 1),
+    ({"reachable": True, "status": "connected"}, 0),
+    ({"reachable": True, "auth": False, "status": "connected"}, 0),
+    ({"reachable": False, "auth": True, "status": "unreachable"}, 0),
+])
+async def test_remote_transcription_requires_fresh_authenticated_connected_peer(
+        reset, monitor, monkeypatch, snapshot, age):
+    _, remote = _add_remote_voice(monitor)
+    monitor.registry = [remote]
+    monitor.status[remote["id"]] = {"status": "up"}
+    peers._cache[remote["machine"]] = (time.time() - age, snapshot)
+    monkeypatch.setattr(monitor, "scheduling_transcription", _available_whisper)
+
+    assert await jobs._eligible_studios(monitor, "mlx/whisper") == []
+
+
+@pytest.mark.asyncio
+async def test_remote_transcription_includes_authenticated_connected_peer(reset, monitor, monkeypatch):
+    _, remote = _add_remote_voice(monitor)
+    monitor.registry = [remote]
+    monitor.status[remote["id"]] = {"status": "up"}
+    peers._cache[remote["machine"]] = (
+        time.time(), {"reachable": True, "auth": True, "status": "connected"},
+    )
+    monkeypatch.setattr(monitor, "scheduling_transcription", _available_whisper)
+
+    assert await jobs._eligible_studios(monitor, "mlx/whisper") == [remote]
+
+
+@pytest.mark.asyncio
+async def test_local_transcription_does_not_require_peer_status(reset, monitor, monkeypatch):
+    local = next(studio for studio in monitor.registry if studio["id"] == "voice")
+    monitor.status[local["id"]] = {"status": "up"}
+    monkeypatch.setattr(monitor, "scheduling_transcription", _available_whisper)
+
+    assert await jobs._eligible_studios(monitor, "mlx/whisper") == [local]
+
+
+@pytest.mark.asyncio
+async def test_remote_transcription_401_quarantines_peer_before_next_selection(
+        reset, monitor, monkeypatch):
+    first = await _create_direct(1)
+    _, remote = _add_remote_voice(monitor)
+    monitor.registry = [remote]
+    monitor.status[remote["id"]] = {"status": "up"}
+    peers._cache[remote["machine"]] = (
+        time.time(), {"reachable": True, "auth": True, "status": "connected"},
+    )
+
+    class Rejected:
+        status_code = 401
+        text = "Hub token required"
+
+        def json(self):
+            return {"detail": self.text}
+
+    async def post(*_args, **_kwargs):
+        return Rejected()
+
+    monkeypatch.setattr(monitor, "scheduling_transcription", _available_whisper)
+    monkeypatch.setattr(monitor._client, "post", post)
+
+    assert await jobs.dispatch_once(monitor) == 1
+    await asyncio.gather(*list(jobs._item_tasks.values()))
+    assert first["items"][0]["state"] == "error"
+    assert peers.cached(remote["machine"]) is None
+    assert await jobs._eligible_studios(monitor, "mlx/whisper") == []
 
 
 @pytest.mark.asyncio
@@ -325,6 +433,7 @@ async def test_chat_and_transcription_take_shared_machine_turns(
         studio["id"]: {"status": "up"}
         for studio in monitor.registry
     }
+    _mark_peers_connected(*monitor.registry)
 
     async def catalog(_studio):
         return {"models": [{"repo": "mlx/chat-model", "cache": {"state": "cached"}}]}
@@ -387,6 +496,7 @@ async def test_ineligible_opposite_lane_does_not_block_shared_machine(
         studio["id"]: {"status": "up"}
         for studio in monitor.registry
     }
+    _mark_peers_connected(*monitor.registry)
 
     async def catalog(_studio):
         return {"models": [{"repo": "mlx/chat-model",
@@ -442,6 +552,7 @@ async def test_memory_ineligible_opposite_lane_does_not_block_shared_machine(
         studio["id"]: {"status": "up"}
         for studio in monitor.registry
     }
+    _mark_peers_connected(*monitor.registry)
 
     async def catalog(_studio):
         return {"models": [{"repo": "mlx/chat-model",
@@ -501,6 +612,7 @@ async def test_memory_admission_failure_advances_shared_machine_turn(
         studio["id"]: {"status": "up"}
         for studio in monitor.registry
     }
+    _mark_peers_connected(*monitor.registry)
 
     async def catalog(_studio):
         return {"models": [{"repo": "mlx/chat-model",
@@ -708,6 +820,7 @@ async def test_transcription_eligible_studios_use_smallest_sufficient_ram_first(
     monitor.registry.append(remote_large)
     for studio in (local, remote, remote_large):
         monitor.status[studio["id"]] = {"status": "up"}
+    _mark_peers_connected(remote_large)
     memory = {
         "local": {"total_gb": 16, "available_gb": 12},
         "mac-8": {"total_gb": 8, "available_gb": 6},

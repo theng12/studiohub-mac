@@ -14,7 +14,7 @@ from pathlib import Path
 import httpx
 from fastapi import HTTPException, UploadFile
 
-from . import broker, execution_identity, ledger, model_exposure
+from . import broker, execution_identity, ledger, model_exposure, peers
 from .peers import studio_request
 from .registry import DATA_DIR, machine_enabled, studio_enabled
 
@@ -405,6 +405,8 @@ async def _eligible_studios(monitor, model: str, item: dict | None = None,
                 or broker.machine_is_quarantined(machine)
                 or float(avoided.get(machine, 0) or 0) > now):
             continue
+        if not peers.dispatch_ready(studio):
+            continue
         availability = await monitor.scheduling_transcription(studio)
         models = (availability or {}).get("models", [])
         if ((availability or {}).get("available") and any(
@@ -595,6 +597,8 @@ async def _run_item(monitor, batch: dict, item: dict, studio: dict, owner: str) 
                 headers=headers, timeout=300.0,
             )
         if response.status_code >= 400:
+            if response.status_code == 401 and studio.get("machine", "local") != "local":
+                peers.invalidate(studio["machine"])
             try:
                 detail = response.json().get("detail")
             except Exception:
