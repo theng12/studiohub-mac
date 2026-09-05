@@ -10,6 +10,24 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.20.0] — 2026-09-05
+
+### Added — safe Voice Studio restart recovery
+
+- Accepted Voice Studio work now keeps its original worker job and request
+  identity through a Hub restart. It is marked **uncertain** instead of being
+  submitted again; terminal history cannot be cleared while that recovery is
+  unresolved.
+- The Jobs view can reconcile that exact Voice job, request normal
+  cancellation, and—only after the operator explicitly chooses it—restart the
+  locally managed Voice Studio service. The Hub first drains new Voice work,
+  refuses a restart when another active Voice job is present or cannot be
+  verified, waits for health, and adopts only a verified final result for the
+  original job ID.
+- A missing identity, failed restart, or health timeout remains actionable
+  uncertainty. No Voice request is auto-resubmitted and no service, worker, or
+  fleet Mac changes automatically.
+
 ## [2.19.6] — 2026-09-05
 
 ### Fixed — only authenticated peer Hubs can receive new work

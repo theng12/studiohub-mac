@@ -2,13 +2,14 @@ import asyncio
 import contextlib
 import fcntl
 import os
+import plistlib
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from starlette.testclient import TestClient
 
-from backend import control, control_plane, fleet_ops, peers, registry, startup_services
+from backend import broker, control, control_plane, fleet_ops, peers, registry, startup_services
 from backend import main
 
 
@@ -133,6 +134,203 @@ def test_startup_install_runs_trusted_script_and_verifies_launchd(tmp_path, monk
     result = startup_services.install_service("image")
     assert result["ok"] is True and result["changed"] is True
     assert result["service"]["installed"] is True
+
+
+def test_voice_restart_runs_only_the_trusted_installed_service(tmp_path, monkeypatch):
+    app_dir, launch_agents = _seed_app(tmp_path, monkeypatch, "voice")
+    _mark_installed(app_dir, launch_agents, "voice")
+    restart = app_dir / "restart_service.sh"
+    restart.write_text("#!/bin/bash\n")
+    spec = startup_services.SERVICE_SPECS["voice"]
+    loaded = {spec["server_label"], spec["watchdog_label"]}
+
+    def fake_run(command, **kwargs):
+        if command[0] == "/bin/launchctl":
+            return SimpleNamespace(returncode=0 if command[-1].rsplit("/", 1)[-1] in loaded else 1)
+        assert command == ["/bin/bash", str(restart.resolve())]
+        assert kwargs["cwd"] == app_dir
+        return SimpleNamespace(returncode=0, stdout="restart requested", stderr="")
+
+    monkeypatch.setattr(startup_services.subprocess, "run", fake_run)
+    monkeypatch.setattr(startup_services, "verified_voice_service", lambda: {"installed": True})
+
+    result = startup_services.restart_voice_service()
+
+    assert result["ok"] is True and result["changed"] is True
+    assert result["service"]["installed"] is True
+
+
+@pytest.mark.asyncio
+async def test_voice_recovery_drains_exact_job_without_restarting_service(reset, monkeypatch):
+    submitted = broker.submit_batch({
+        "modality": "voice", "model": "local/voice", "items": [{"text": "recover"}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="uncertain", studio="voice", studio_job_id="voice-job-1")
+    main.monitor.registry = [{
+        "id": "voice", "modality": "voice", "machine": "local",
+        "host": "127.0.0.1", "port": 47870,
+    }]
+    events = []
+
+    async def reconciliation(*_args, **_kwargs):
+        events.append("reconcile")
+        return "active"
+
+    async def signal(_client, target):
+        events.append(("cancel", target["studio_job_id"]))
+        return True
+
+    async def no_delay(_seconds):
+        return None
+
+    monkeypatch.setattr(main, "VOICE_RECOVERY_GRACE_S", 0)
+    monkeypatch.setattr(main, "_reconcile_voice_recovery_job", reconciliation)
+    monkeypatch.setattr(broker, "_signal_worker_cancel", signal)
+    monkeypatch.setattr(main.asyncio, "sleep", no_delay)
+    monkeypatch.setattr(startup_services, "restart_voice_service", lambda: events.append("restart"))
+
+    result = await main._recover_voice_item(batch, item, main.monitor.registry[0], False, object())
+
+    assert result["forced"] is False
+    assert events == ["reconcile", ("cancel", "voice-job-1"), "reconcile"]
+    assert item["state"] == "uncertain"
+    assert item["recovery"]["phase"] == "manual_action_required"
+    assert broker.in_maintenance("voice") is False
+
+
+@pytest.mark.asyncio
+async def test_forced_voice_recovery_restarts_then_adopts_only_original_final_job(reset, monkeypatch):
+    submitted = broker.submit_batch({
+        "modality": "voice", "model": "local/voice", "items": [{"text": "recover"}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="uncertain", studio="voice", studio_job_id="voice-job-1")
+    studio = {"id": "voice", "modality": "voice", "machine": "local",
+              "host": "127.0.0.1", "port": 47870}
+    events = []
+    states = iter(["active", "active", "done"])
+
+    async def reconciliation(*_args, **_kwargs):
+        value = next(states)
+        events.append(("reconcile", value))
+        return value
+
+    async def signal(_client, _target):
+        events.append("cancel")
+        return True
+
+    async def no_other(_client, _studio, job_id):
+        events.append(("other-active", job_id))
+        return False
+
+    async def healthy(_client, _studio):
+        events.append("health")
+        return True
+
+    async def run_here(fn):
+        return fn()
+
+    monkeypatch.setattr(main, "VOICE_RECOVERY_GRACE_S", 0)
+    monkeypatch.setattr(main, "_managed_local_voice_service", lambda _studio: {"installed": True})
+    monkeypatch.setattr(main, "_reconcile_voice_recovery_job", reconciliation)
+    monkeypatch.setattr(broker, "_signal_worker_cancel", signal)
+    monkeypatch.setattr(main, "_other_active_voice_jobs", no_other)
+    monkeypatch.setattr(main, "_wait_voice_recovery_health", healthy)
+    monkeypatch.setattr(main.asyncio, "to_thread", run_here)
+    monkeypatch.setattr(startup_services, "restart_voice_service", lambda: events.append("restart"))
+
+    result = await main._recover_voice_item(batch, item, studio, True, object())
+
+    assert result["ok"] is True and result["forced"] is True and result["state"] == "done"
+    assert events == [
+        ("reconcile", "active"), "cancel", ("reconcile", "active"),
+        ("other-active", "voice-job-1"), "restart", "health", ("reconcile", "done"),
+    ]
+    assert broker.in_maintenance("voice") is False
+
+
+@pytest.mark.asyncio
+async def test_forced_voice_recovery_keeps_uncertain_when_health_times_out(reset, monkeypatch):
+    submitted = broker.submit_batch({
+        "modality": "voice", "model": "local/voice", "items": [{"text": "recover"}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="uncertain", studio="voice", studio_job_id="voice-job-1")
+    studio = {"id": "voice", "modality": "voice", "machine": "local",
+              "host": "127.0.0.1", "port": 47870}
+
+    async def active(*_args, **_kwargs):
+        return "active"
+
+    async def signal(*_args, **_kwargs):
+        return True
+
+    async def no_other(*_args, **_kwargs):
+        return False
+
+    async def unhealthy(*_args, **_kwargs):
+        return False
+
+    async def run_here(fn):
+        return fn()
+
+    monkeypatch.setattr(main, "VOICE_RECOVERY_GRACE_S", 0)
+    monkeypatch.setattr(main, "_managed_local_voice_service", lambda _studio: {"installed": True})
+    monkeypatch.setattr(main, "_reconcile_voice_recovery_job", active)
+    monkeypatch.setattr(broker, "_signal_worker_cancel", signal)
+    monkeypatch.setattr(main, "_other_active_voice_jobs", no_other)
+    monkeypatch.setattr(main, "_wait_voice_recovery_health", unhealthy)
+    monkeypatch.setattr(main.asyncio, "to_thread", run_here)
+    monkeypatch.setattr(startup_services, "restart_voice_service", lambda: None)
+
+    result = await main._recover_voice_item(batch, item, studio, True, object())
+
+    assert result["ok"] is False and result["forced"] is True
+    assert item["state"] == "uncertain"
+    assert item["recovery"]["phase"] == "manual_action_required"
+    assert "did not become healthy" in item["recovery"]["reason"]
+    assert broker.in_maintenance("voice") is True
+    broker.set_maintenance("voice", False)
+
+
+@pytest.mark.asyncio
+async def test_forced_voice_recovery_refuses_to_interrupt_another_active_voice_job(reset, monkeypatch):
+    submitted = broker.submit_batch({
+        "modality": "voice", "model": "local/voice", "items": [{"text": "recover"}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="uncertain", studio="voice", studio_job_id="voice-job-1")
+    studio = {"id": "voice", "modality": "voice", "machine": "local",
+              "host": "127.0.0.1", "port": 47870}
+    restarted = []
+
+    async def active(*_args, **_kwargs):
+        return "active"
+
+    async def signal(*_args, **_kwargs):
+        return True
+
+    async def another_job(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr(main, "VOICE_RECOVERY_GRACE_S", 0)
+    monkeypatch.setattr(main, "_managed_local_voice_service", lambda _studio: {"installed": True})
+    monkeypatch.setattr(main, "_reconcile_voice_recovery_job", active)
+    monkeypatch.setattr(broker, "_signal_worker_cancel", signal)
+    monkeypatch.setattr(main, "_other_active_voice_jobs", another_job)
+    monkeypatch.setattr(startup_services, "restart_voice_service", lambda: restarted.append(True))
+
+    result = await main._recover_voice_item(batch, item, studio, True, object())
+
+    assert result["ok"] is False and result["forced"] is True
+    assert restarted == []
+    assert item["recovery"]["phase"] == "manual_action_required"
+    assert "another active job" in item["recovery"]["reason"]
 
 
 def test_startup_uninstall_runs_trusted_script_and_verifies_service_is_gone(
@@ -1399,3 +1597,182 @@ def test_dashboard_exposes_one_time_remote_studio_update_repair():
     assert "complete machine-local ENVIRONMENT" in dashboard
     assert "Models, enrollment, voices, and jobs are not changed" in dashboard
     assert "update the Agent Hub first" in dashboard
+
+@pytest.mark.asyncio
+async def test_voice_recovery_rejects_malformed_or_unknown_job_listing(reset):
+    studio = {"id": "voice", "modality": "voice", "machine": "local",
+              "host": "127.0.0.1", "port": 47870, "app": "voicestudio-mac.git"}
+
+    class Response:
+        status_code = 200
+        def __init__(self, payload): self.payload = payload
+        def json(self): return self.payload
+    class Client:
+        def __init__(self, payload): self.payload = payload
+        async def get(self, *_args, **_kwargs): return Response(self.payload)
+
+    assert await main._other_active_voice_jobs(Client({"jobs": [{"id": "other", "state": "mystery"}]}), studio, "original") is None
+    assert await main._other_active_voice_jobs(Client({"jobs": [{"state": "running"}]}), studio, "original") is None
+    assert await main._other_active_voice_jobs(Client({"jobs": [{"id": "other", "state": "running"}]}), studio, "original") is True
+    assert await main._other_active_voice_jobs(Client({"jobs": [{"id": "other", "state": "uncertain"}]}), studio, "original") is None
+
+
+def test_voice_recovery_requires_exact_registered_launchd_target(monkeypatch):
+    expected = {"installed": True, "server_loaded": True, "watchdog_loaded": True,
+                "app": "voicestudio-mac.git"}
+    monkeypatch.setattr(startup_services, "verified_voice_service", lambda: expected)
+    exact = {"id": "voice", "modality": "voice", "machine": "local",
+             "host": "127.0.0.1", "port": 47870, "app": "voicestudio-mac.git"}
+    assert main._managed_local_voice_service(exact) == expected
+    assert main._managed_local_voice_service({**exact, "port": 47871}) is None
+    assert main._managed_local_voice_service({**exact, "id": "voice@other"}) is None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_rejects_different_worker_job_identity(reset):
+    submitted = broker.submit_batch({"modality": "voice", "model": "local/voice", "items": [{"text": "recover"}]})
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="uncertain", studio="voice", studio_job_id="original")
+    studio = {"id": "voice", "modality": "voice", "machine": "local", "host": "127.0.0.1", "port": 47870}
+
+    class Response:
+        status_code = 200
+        def json(self): return {"job": {"id": "other", "state": "done"}}
+    class Client:
+        async def get(self, *_args, **_kwargs): return Response()
+
+    assert await main._reconcile_voice_recovery_job(Client(), batch, item, studio) == "unknown"
+    assert item["state"] == "uncertain"
+
+@pytest.mark.asyncio
+async def test_voice_recovery_cancels_before_bounded_reconcile_grace(reset, monkeypatch):
+    submitted = broker.submit_batch({"modality": "voice", "model": "local/voice", "items": [{"text": "recover"}]})
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="uncertain", studio="voice", studio_job_id="voice-job-1")
+    studio = {"id": "voice", "modality": "voice", "machine": "local", "host": "127.0.0.1", "port": 47870}
+    events = []
+    async def reconcile(*_args): events.append("reconcile"); return "active"
+    async def signal(*_args): events.append("cancel"); return True
+    async def sleep(_seconds): events.append("grace")
+    monkeypatch.setattr(main, "VOICE_RECOVERY_GRACE_S", 1)
+    monkeypatch.setattr(main, "_reconcile_voice_recovery_job", reconcile)
+    monkeypatch.setattr(broker, "_signal_worker_cancel", signal)
+    monkeypatch.setattr(main.asyncio, "sleep", sleep)
+
+    result = await main._recover_voice_item(batch, item, studio, False, object())
+
+    assert result["ok"] is False
+    assert events == ["reconcile", "cancel", "grace", "reconcile"]
+
+
+@pytest.mark.asyncio
+async def test_voice_recovery_preserves_an_operator_maintenance_drain(reset, monkeypatch):
+    submitted = broker.submit_batch({"modality": "voice", "model": "local/voice", "items": [{"text": "recover"}]})
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="uncertain", studio="voice", studio_job_id="voice-job-1")
+    studio = {"id": "voice", "modality": "voice", "machine": "local", "host": "127.0.0.1", "port": 47870}
+    broker.set_maintenance("voice", True)
+    async def terminal(*_args): return "cancelled"
+    monkeypatch.setattr(main, "_reconcile_voice_recovery_job", terminal)
+
+    result = await main._recover_voice_item(batch, item, studio, False, object())
+
+    assert result["state"] == "cancelled"
+    assert broker.in_maintenance("voice") is True
+    broker.set_maintenance("voice", False)
+
+
+@pytest.mark.asyncio
+async def test_voice_recovery_route_rejects_a_concurrent_same_item(reset):
+    submitted = broker.submit_batch({"modality": "voice", "model": "local/voice", "items": [{"text": "recover"}]})
+    batch_id = submitted["batch_id"]
+    broker.batches[batch_id]["items"][0].update(
+        state="uncertain", studio="voice", studio_job_id="voice-job-1",
+    )
+    item_key = ("item", f"{batch_id}:0")
+    service_key = ("service", "voice")
+    second = broker.submit_batch({"modality": "voice", "model": "local/voice", "items": [{"text": "second"}]})
+    broker.batches[second["batch_id"]]["items"][0].update(
+        state="uncertain", studio="voice", studio_job_id="voice-job-2",
+    )
+    with main._voice_recovery_guard:
+        main._voice_recovery_inflight.update({item_key, service_key})
+    try:
+        with pytest.raises(main.HTTPException, match="already in progress"):
+            await main.hub_recover_voice_job(batch_id, 0, main.VoiceRecoveryBody())
+        with pytest.raises(main.HTTPException, match="already in progress"):
+            await main.hub_recover_voice_job(second["batch_id"], 0, main.VoiceRecoveryBody())
+    finally:
+        with main._voice_recovery_guard:
+            main._voice_recovery_inflight.difference_update({item_key, service_key})
+
+def test_verified_voice_service_rejects_lookalike_launchd_plist(tmp_path, monkeypatch):
+    app_dir, launch_agents = _seed_app(tmp_path, monkeypatch, "voice")
+    _mark_installed(app_dir, launch_agents, "voice")
+    spec = startup_services.SERVICE_SPECS["voice"]
+    for name, body in (("voicestudio-serve.sh", "--port 47870\n"),
+                       ("voicestudio-watchdog.sh", "PORT=47870\n")):
+        (app_dir / name).write_text(body)
+    def plist(label, script):
+        (launch_agents / f"{label}.plist").write_bytes(plistlib.dumps({
+            "Label": label, "ProgramArguments": [str(app_dir / script)],
+        }))
+    plist(spec["server_label"], "voicestudio-serve.sh")
+    plist(spec["watchdog_label"], "voicestudio-watchdog.sh")
+    monkeypatch.setattr(startup_services, "_launchd_loaded", lambda _label: True)
+
+    assert startup_services.verified_voice_service()["installed"] is True
+    plist(spec["server_label"], "other-script.sh")
+    assert startup_services.verified_voice_service() is None
+
+
+@pytest.mark.asyncio
+async def test_voice_recovery_keeps_drain_if_cancelled_during_restart(reset, monkeypatch):
+    submitted = broker.submit_batch({"modality": "voice", "model": "local/voice", "items": [{"text": "recover"}]})
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="uncertain", studio="voice", studio_job_id="voice-job-1")
+    studio = {"id": "voice", "modality": "voice", "machine": "local", "host": "127.0.0.1", "port": 47870, "app": "voicestudio-mac.git"}
+    entered, release = asyncio.Event(), asyncio.Event()
+    async def active(*_args): return "active"
+    async def signal(*_args): return True
+    async def none_other(*_args): return False
+    async def blocked(_fn):
+        entered.set()
+        await release.wait()
+    monkeypatch.setattr(main, "VOICE_RECOVERY_GRACE_S", 0)
+    monkeypatch.setattr(main, "_reconcile_voice_recovery_job", active)
+    monkeypatch.setattr(main, "_managed_local_voice_service", lambda _studio: {"installed": True})
+    monkeypatch.setattr(broker, "_signal_worker_cancel", signal)
+    monkeypatch.setattr(main, "_other_active_voice_jobs", none_other)
+    monkeypatch.setattr(main.asyncio, "to_thread", blocked)
+    task = asyncio.create_task(main._recover_voice_item(batch, item, studio, True, object()))
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert broker.in_maintenance("voice") is True
+    broker.set_maintenance("voice", False)
+    release.set()
+
+def test_verified_voice_service_treats_symlinked_or_malformed_plist_as_unavailable(tmp_path, monkeypatch):
+    app_dir, launch_agents = _seed_app(tmp_path, monkeypatch, "voice")
+    _mark_installed(app_dir, launch_agents, "voice")
+    spec = startup_services.SERVICE_SPECS["voice"]
+    for name, body in (("voicestudio-serve.sh", "--port 47870\n"),
+                       ("voicestudio-watchdog.sh", "PORT=47870\n")):
+        (app_dir / name).write_text(body)
+    for label, script in ((spec["server_label"], "voicestudio-serve.sh"),
+                          (spec["watchdog_label"], "voicestudio-watchdog.sh")):
+        (launch_agents / f"{label}.plist").write_bytes(plistlib.dumps({"Label": label, "ProgramArguments": [str(app_dir / script)]}))
+    monkeypatch.setattr(startup_services, "_launchd_loaded", lambda _label: True)
+    server = launch_agents / f"{spec['server_label']}.plist"
+    outside = tmp_path / "outside.plist"
+    outside.write_bytes(server.read_bytes())
+    server.unlink(); server.symlink_to(outside)
+    assert startup_services.verified_voice_service() is None
+    server.unlink(); server.write_bytes(b'<?xml version="1.0"?><plist><dict><key>Label</key>')
+    assert startup_services.verified_voice_service() is None

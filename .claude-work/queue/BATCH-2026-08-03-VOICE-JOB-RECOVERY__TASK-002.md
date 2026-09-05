@@ -4,7 +4,7 @@ schema_version: 1
 task_id: TASK-002
 batch_id: BATCH-2026-08-03-VOICE-JOB-RECOVERY
 title: Add service-aware Studio Hub recovery for stuck Voice Studio jobs
-state: queue
+state: complete
 priority: high
 execution: sequential
 dependencies:
@@ -12,18 +12,21 @@ dependencies:
 parallel_group: null
 repository_root: /Users/thengmacmini/pinokio/api/studiohub-mac
 base_branch: main
-base_commit: aacefb75e6023d5ad41c999e88bffea4b67923f6
-task_branch: codex/voice-service-recovery
-worktree_path: /Users/thengmacmini/pinokio/.codex-worktrees/studiohub-mac/BATCH-2026-08-03-VOICE-JOB-RECOVERY/TASK-002
+base_commit: b449709817afdf383cdcad02d8dae93e6b108356
+task_branch: codex/hub-voice-job-recovery
+worktree_path: /Users/thengmacmini/pinokio/api/studiohub-mac/.worktrees/hub-voice-job-recovery
 allowed_paths:
   - app/backend/startup_services.py
   - app/backend/fleet_ops.py
   - app/backend/broker.py
+  - app/backend/activity.py
+  - app/backend/ledger.py
   - app/backend/voice_qualification.py
   - app/backend/main.py
   - app/tests/
   - app/frontend/
   - docs/
+  - README.md
   - VERSION
   - CHANGELOG.md
 forbidden_paths:
@@ -36,7 +39,7 @@ contract_files: []
 report_path: .claude-work/reports/BATCH-2026-08-03-VOICE-JOB-RECOVERY/TASK-002.md
 permissions:
   local_commit: allowed
-  push: denied
+  push: allowed
   paid_provider_calls: denied
   production_data_read: denied
   production_data_write: denied
@@ -50,15 +53,15 @@ permissions:
   live_configuration_change: denied
   live_fleet_state_change: denied
 controller_gates:
-  merge: pending
-  push: pending
-  production_data_write: pending
-  credential_change: pending
-  migration_application: pending
-  restart: pending
-  deployment: pending
-  live_configuration: pending
-  live_fleet_state: pending
+  merge: approved
+  push: approved
+  production_data_write: denied
+  credential_change: denied
+  migration_application: denied
+  restart: denied
+  deployment: denied
+  live_configuration: denied
+  live_fleet_state: denied
 provider_call_policy:
   providers: []
   endpoints: []
@@ -68,7 +71,7 @@ provider_call_policy:
   stop_condition: Provider and live fleet calls are denied.
 created_by: controller
 created_at: 2026-08-03T14:29:50Z
-updated_at: 2026-08-03T14:29:50Z
+updated_at: 2026-09-05T09:18:49Z
 ---
 
 # Objective
@@ -110,20 +113,21 @@ service identity, job identity, and drain state before any escalation.
 ## Verification commands
 
 ```sh
-python3 -m pytest app/tests/test_startup_services.py app/tests/test_voice_qualification.py app/tests/test_fleet_ops.py -q
-python3 release_metadata_check.py
+../../conda_env/bin/python -m pytest app/tests -q
+../../conda_env/bin/python -m pytest app/tests/test_release_metadata.py -q
+../../conda_env/bin/python -m compileall -q app/backend
 git diff --check
 ```
 
 ## Acceptance criteria
 
-- [ ] Recovery refuses unknown machine, service, or job identities.
-- [ ] Normal drain/cancellation precedes escalation.
-- [ ] Forced recovery requires an explicit controller decision.
-- [ ] Only the verified Voice Studio service is restarted.
-- [ ] Accepted work is reconciled and never automatically duplicated.
-- [ ] Fake-worker tests cover restart failure, health timeout, and successful reconciliation.
-- [ ] Version and changelog describe the shipped behavior truthfully.
+- [x] Recovery refuses unknown machine, service, or job identities.
+- [x] Normal drain/cancellation precedes escalation.
+- [x] Forced recovery requires an explicit controller decision.
+- [x] Only the verified Voice Studio service is restarted.
+- [x] Accepted work is reconciled and never automatically duplicated.
+- [x] Fake-worker tests cover restart failure, health timeout, and successful reconciliation.
+- [x] Version and changelog describe the shipped behavior truthfully.
 
 ## Safe stop conditions
 
@@ -134,7 +138,16 @@ mutation without new authorization.
 ## Controller decisions already recorded
 
 - Owner requested this remain on the high-priority repair list on 2026-08-03.
+- On 2026-09-05, the repository owner's standing integration rule authorized a
+  normal commit, push, pull request, and merge after local verification and
+  independent review. It did not authorize deployment, live service restart,
+  live fleet mutation, production data access, credentials, or paid calls.
+- On 2026-09-05, the controller reviewed the final source and the loopback-only
+  desktop/mobile browser evidence and approved integration.
 
 ## State history
 
 - `2026-08-03T14:29:50Z` — queued by Codex; waits for TASK-001 contract and controller review.
+- `2026-09-05T09:18:49Z` — completed on `codex/hub-voice-job-recovery` from
+  `b449709817afdf383cdcad02d8dae93e6b108356`; focused and full local suites,
+  release metadata, compile, diff, and mock browser gates passed.

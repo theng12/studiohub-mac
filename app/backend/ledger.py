@@ -613,7 +613,7 @@ def prepare_database() -> Path | None:
 def save_batch(batch: dict):
     """Write-through persistence for the restart-safe broker queue."""
     states = {i["state"] for i in batch["items"]}
-    finished = int(not (states & {"queued", "running"}))
+    finished = int(not (states & {"queued", "running", "cancel_requested", "uncertain"}))
     with _conn() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO batches (id, created_at, finished, payload) "

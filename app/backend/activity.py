@@ -15,8 +15,8 @@ from collections import defaultdict
 from . import control_plane, ledger
 
 SCHEMA = "kh-studio.activity.v1"
-VALID_STATES = frozenset({"queued", "running", "done", "error", "cancelled"})
-ACTIVE_STATES = frozenset({"queued", "running"})
+VALID_STATES = frozenset({"queued", "running", "cancel_requested", "uncertain", "done", "error", "cancelled"})
+ACTIVE_STATES = frozenset({"queued", "running", "cancel_requested", "uncertain"})
 TERMINAL_STATES = frozenset({"done", "error", "cancelled"})
 RETENTION_S = 30 * 86400
 JUST_FINISHED_S = 15 * 60

@@ -618,7 +618,7 @@ def _expire_genstudio_batch(batch: dict) -> bool:
         return False
     unfinished = [
         item for item in batch.get("items") or []
-        if item.get("state") in {"queued", "running"}
+        if item.get("state") in {"queued", "running", "cancel_requested"}
     ]
     # A lease protects ownership while work is still executing. Once every
     # item is terminal, expiring that lease must not rewrite a completed batch
@@ -682,18 +682,95 @@ def renew_execution_lease(renewal: dict) -> bool:
     return True
 
 
+def _voice_recovery_owns(item: dict) -> bool:
+    """Whether recovery owns this accepted Voice identity, including after terminal adoption."""
+    return item.get("state") == "uncertain" or isinstance(item.get("recovery"), dict)
+
+
+def _mark_voice_uncertain(item: dict, reason: str) -> None:
+    """Fence accepted Voice work that cannot be safely replayed.
+
+    Voice Studio owns native generation and an accepted request may continue
+    after this Hub process exits.  Keep the exact worker identity for an
+    operator to reconcile; clearing it or putting the item back on the queue
+    could submit the customer's audio twice.
+    """
+    item["state"] = "uncertain"
+    item["retry_at"] = None
+    item["recovery"] = {
+        "phase": "uncertain",
+        "reason": reason,
+        "updated_at": time.time(),
+    }
+
+
+def set_voice_recovery(item: dict, phase: str, reason: str) -> dict:
+    """Persist the small, safe operator trail for one Voice item."""
+    if phase not in {
+        "uncertain", "draining", "cancel_requested", "restart_requested",
+        "health_wait", "reconciled", "manual_action_required",
+    }:
+        raise ValueError("unknown Voice recovery phase")
+    recovery = dict(item.get("recovery") or {})
+    recovery.update({
+        "phase": phase,
+        "reason": str(reason)[:500],
+        "updated_at": time.time(),
+    })
+    item["recovery"] = recovery
+    return recovery
+
+
+def voice_recovery_item(batch_id: str, item_index: int) -> tuple[dict, dict]:
+    """Return one durable Voice recovery target without widening job control."""
+    batch = batches.get(batch_id) or ledger.load_batch(batch_id)
+    if batch is None:
+        raise ValueError("unknown batch")
+    if batch.get("modality") != "voice":
+        raise ValueError("Voice recovery is available only for Voice jobs")
+    item = next((row for row in batch.get("items", [])
+                 if row.get("index") == item_index), None)
+    if item is None:
+        raise ValueError("unknown job item")
+    if item.get("state") not in {"running", "cancel_requested", "uncertain"}:
+        raise ValueError("Voice recovery requires an active or uncertain job")
+    if not item.get("studio") or not item.get("studio_job_id"):
+        _mark_voice_uncertain(
+            item,
+            "The original Voice Studio identity is unavailable; manual action is required.",
+        )
+        set_voice_recovery(
+            item, "manual_action_required",
+            "The original Voice Studio identity is unavailable; manual action is required.",
+        )
+        batches[batch["id"]] = batch
+        ledger.save_batch(batch)
+        raise ValueError("original Voice Studio identity is unavailable")
+    batches[batch["id"]] = batch
+    return batch, item
+
+
 def restore_batches():
-    """Reload unfinished batches from hub.db after a Hub restart. Items that
-    were mid-flight ('running') go back to 'queued' — their studio-side job is
-    orphaned but the work is simply redone (generation is idempotent-enough;
-    the ledger keys on the new artifact)."""
+    """Reload unfinished batches after a Hub restart.
+
+    Historic non-Voice jobs retain their retry behavior.  A Voice item that
+    was running is never automatically replayed: its native request may have
+    been accepted before the Hub stopped, so it becomes a durable, actionable
+    uncertainty record instead.
+    """
     for b in ledger.load_unfinished_batches():
         if _expire_genstudio_batch(b):
             batches[b["id"]] = b
             ledger.save_batch(b)
             continue
         for it in b["items"]:
-            if it["state"] == "running":
+            if it["state"] in {"running", "cancel_requested"} and b.get("modality") == "voice":
+                _mark_voice_uncertain(
+                    it,
+                    "Hub restarted while Voice Studio work was active; "
+                    "the original job must be reconciled before any retry.",
+                )
+            elif it["state"] == "running":
                 it["state"] = "queued"
                 it["studio"] = None
                 it["studio_job_id"] = None
@@ -824,10 +901,13 @@ def _submit_batch_locked(envelope: dict) -> dict:
             "prompt": it.get("prompt") or it.get("text") or "",
             "seed": it.get("seed"),
             "params": it.get("params") or {},
-            "state": "queued",       # queued|running|done|error|cancelled
+            "state": "queued",       # queued|running|done|error|cancelled|uncertain
             "tries": 0,
             "studio": None,
             "studio_job_id": None,
+            "client_request_id": (
+                f"studiohub:{batch_id}:{i}" if modality == "voice" else None
+            ),
             "artifact_path": None,
             "artifact_url": None,
             "asset_id": None,
@@ -1004,7 +1084,7 @@ def batch_summary(b: dict) -> dict:
         })
     retrying = [i for i in items if i["state"] == "queued"
                 and (i.get("retry_at") or 0) > now]
-    active = bool(states.count("queued") or states.count("running"))
+    active = bool(states.count("queued") or states.count("running") or states.count("cancel_requested") or states.count("uncertain"))
     processing_started_at = min(started_at) if started_at else None
     last_activity_at = max(activity_at)
     # A missing worker progress report is normal for some local MLX models, so
@@ -1025,9 +1105,11 @@ def batch_summary(b: dict) -> dict:
         "retrying": len(retrying),
         "next_retry_at": min((i["retry_at"] for i in retrying), default=None),
         "running": states.count("running"),
+        "cancel_requested": states.count("cancel_requested"),
         "done": states.count("done"),
         "error": states.count("error"),
         "cancelled_items": states.count("cancelled"),
+        "uncertain": states.count("uncertain"),
         "avg_s": avg_s,
         "running_items": running_items,
         "processing_started_at": processing_started_at,
@@ -1110,7 +1192,7 @@ async def cancel_batches(modality: str | None = None) -> dict:
     targets = [
         b["id"] for b in batches.values()
         if (modality is None or b.get("modality") == modality)
-        and any(it.get("state") in ("queued", "running") for it in b.get("items", []))
+        and any(it.get("state") in ("queued", "running", "cancel_requested") for it in b.get("items", []))
     ]
     results = []
     async with httpx.AsyncClient() as client:
@@ -1137,7 +1219,8 @@ def clear_finished_batches(modality: str | None = None,
             continue
         if modality is not None and b.get("modality") != modality:
             continue
-        if any(it.get("state") in ("queued", "running") for it in b.get("items", [])):
+        if any(it.get("state") in ("queued", "running", "cancel_requested", "uncertain")
+               for it in b.get("items", [])):
             continue
         selected.append(candidate_id)
     for candidate_id in selected:
@@ -1252,6 +1335,16 @@ def public_item(b: dict, item: dict) -> dict:
             result["error_code"] = _sanitize_public_error_code(result["error_code"])
         if result.get("error") is not None:
             result["error"] = _sanitize_public_error(result["error"])
+    recovery = item.get("recovery")
+    if isinstance(recovery, dict):
+        safe_recovery = {
+            "phase": str(recovery.get("phase") or "uncertain")[:80],
+            "reason": _sanitize_public_error(recovery.get("reason") or ""),
+        }
+        updated_at = recovery.get("updated_at")
+        if isinstance(updated_at, (int, float)) and not isinstance(updated_at, bool):
+            safe_recovery["updated_at"] = updated_at
+        result["recovery"] = safe_recovery
     return result
 
 
@@ -1322,7 +1415,7 @@ async def _cache_voice_artifact_metadata(client: httpx.AsyncClient, item: dict,
 
 async def _record_worker_success(client: httpx.AsyncClient, b: dict, item: dict,
                                  studio: dict, job: dict, body: dict,
-                                 t_start: float):
+                                 t_start: float, *, recovery: bool = False):
     """Adopt a completed worker job into the Hub ledger.
 
     This is deliberately separate from the normal poll loop: if the network
@@ -1332,6 +1425,12 @@ async def _record_worker_success(client: httpx.AsyncClient, b: dict, item: dict,
     if _expire_genstudio_batch(b):
         await _signal_worker_cancel(client, item)
         return
+    if b.get("modality") == "voice":
+        expected_job_id = str(item.get("studio_job_id") or "")
+        if not expected_job_id or str(job.get("id") or "") != expected_job_id:
+            raise ValueError("worker result did not match the accepted Voice job identity")
+        if _voice_recovery_owns(item) and not recovery:
+            return
     _persist_worker_execution_started_at(b, item, job)
     if item.get("state") == "done" and item.get("asset_id"):
         return  # terminal polling/recovery is idempotent
@@ -1376,6 +1475,8 @@ async def _record_worker_success(client: httpx.AsyncClient, b: dict, item: dict,
     if b["modality"] == "voice" and worker_url:
         await _cache_voice_artifact_metadata(
             client, item, studio, worker_url, job.get("bytes"), job.get("sha256"))
+        if _voice_recovery_owns(item) and not recovery:
+            return
     else:
         item["sha256"] = job.get("sha256")
         item["bytes"] = job.get("bytes")
@@ -1421,15 +1522,19 @@ async def _recover_worker_job(client, b: dict, item: dict, studio: dict,
             if jr.status_code >= 400:
                 return False  # 404/4xx means the worker no longer has the job
             job = jr.json().get("job") or {}
+            if _voice_recovery_owns(item):
+                return False
             _persist_worker_execution_started_at(b, item, job)
             _record_worker_resource_usage(item, job)
             state = job.get("state")
-            if state in ("queued", "running"):
+            if state in ("queued", "running", "cancel_requested"):
                 _record_worker_progress(item, job.get("progress"))
                 await asyncio.sleep(POLL_S)
                 continue
             if state == "done" and not job.get("error"):
                 await _record_worker_success(client, b, item, studio, job, body, t_start)
+                if _voice_recovery_owns(item):
+                    return False
                 _mark_machine_success(studio)
                 return True
             return False  # the original job genuinely failed or was cancelled
@@ -1448,7 +1553,7 @@ async def _maybe_finish(client: httpx.AsyncClient, b: dict):
     if b.get("done_notified"):
         return
     states = {i["state"] for i in b["items"]}
-    if states & {"queued", "running"}:
+    if states & {"queued", "running", "cancel_requested", "uncertain"}:
         return  # not terminal yet
     if not b.get("finished_at"):
         b["finished_at"] = time.time()
@@ -1597,7 +1702,8 @@ def _queued_batches() -> list[dict]:
     work-conserving when no constrained job is waiting.
     """
     return sorted(
-        batches.values(),
+        (batch for batch in batches.values()
+         if any(item.get("state") == "queued" for item in batch.get("items", []))),
         key=lambda b: (MODALITY_PRIORITY.get(b["modality"], 10),
                        -_batch_memory_constraint_gb(b),
                        b.get("last_dispatched_at", 0),
@@ -1994,6 +2100,8 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
         return True
 
     try:
+        if _voice_recovery_owns(item):
+            return  # recovery owns the accepted Voice identity; never race adoption
         if _expire_genstudio_batch(b):
             item["state"] = "cancelled"
             item["error"] = "GenStudio execution lease expired"
@@ -2135,6 +2243,8 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
         # poll the studio's async job until terminal
         while True:
             await asyncio.sleep(POLL_S)
+            if _voice_recovery_owns(item):
+                return  # explicit recovery has taken ownership of this job
             if _expire_genstudio_batch(b) or b["cancelled"]:
                 await _signal_worker_cancel(client, item)
                 item["state"] = "cancelled"
@@ -2153,11 +2263,13 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
                                      modality=studio["modality"])
                 raise _worker_http_error(jr)
             j = jr.json()["job"]
+            if _voice_recovery_owns(item):
+                return
             _persist_worker_execution_started_at(b, item, j)
             _record_worker_identity(item, studio, j)
             _record_worker_resource_usage(item, j)
             state = j.get("state")
-            if state in ("queued", "running"):
+            if state in ("queued", "running", "cancel_requested"):
                 _record_worker_progress(item, j.get("progress"))
                 item["chunk_index"] = j.get("chunk_index")
                 item["chunk_total"] = j.get("chunk_total")
@@ -2169,9 +2281,13 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
                 )
             # terminal + no error = success
             await _record_worker_success(client, b, item, studio, j, body, t_start)
+            if _voice_recovery_owns(item):
+                return
             _mark_machine_success(studio)
             return
     except Exception as e:
+        if _voice_recovery_owns(item):
+            return
         # The worker may have completed even though this status request lost
         # its connection. Reconcile the original job before considering a
         # retry; otherwise one image can be generated twice or reported as a
@@ -2180,9 +2296,18 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             item["state"] = "cancelled"
             item["error"] = "Cancelled by user"
             return
-        if await _recover_worker_job(client, b, item, studio, body, t_start):
+        recovered = await _recover_worker_job(client, b, item, studio, body, t_start)
+        if _voice_recovery_owns(item) or recovered:
             return
         message = str(e) or type(e).__name__
+        if (b.get("modality") == "voice" and item.get("studio_job_id")
+                and _is_transport_failure(e, message)):
+            _mark_voice_uncertain(
+                item,
+                "The accepted Voice Studio job could not be reconciled; "
+                "it was not retried automatically.",
+            )
+            return
         retryable = getattr(e, "retryable", True)
         item["last_progress_at"] = time.time()
         now = time.time()
