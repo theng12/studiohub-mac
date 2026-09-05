@@ -38,6 +38,13 @@ DEFAULT_HUB_PORT = 47873
 PEER_TTL_S = 12.0
 PEER_TIMEOUT_S = 5.0
 
+# Changes to the local fleet credential invalidate any peer response that began
+# under the previous credential.  Per-machine proxy rejections live in the
+# cache as a tombstone so normal cache clearing also clears test/process state.
+_auth_generation = 0
+_DISPATCH_REJECTED = "_dispatch_rejected"
+_DISPATCH_MODALITY = "_dispatch_modality"
+
 # machine -> (ts, {"host": {...}|None, "studios": {modality: stats}, "reachable": bool})
 _cache: dict[str, tuple[float, dict]] = {}
 _peer_alert_state: dict[str, dict] = {}
@@ -72,11 +79,16 @@ def current_fleet_token() -> str | None:
 
 
 def set_fleet_token(token: str):
+    global _auth_generation
     value = (token or "").strip() or secrets.token_urlsafe(24)
+    previous = current_fleet_token()
     for path in (FLEET_TOKEN_FILE, SHARED_STUDIO_TOKEN_FILE):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(value + "\n")
         os.chmod(path, 0o600)
+    if previous and previous != value:
+        _auth_generation += 1
+        _cache.clear()
 
 
 def studio_headers(studio: dict | None = None) -> dict[str, str]:
@@ -150,6 +162,19 @@ async def refresh(registry: list[dict], client: httpx.AsyncClient):
 
 async def _refresh_stale(machines, stale, client, now):
 
+    def store(machine: str, snapshot: dict, entry, auth_generation: int,
+              *, clears_rejection: bool = False) -> bool:
+        # A 401 proxy quarantine or fleet-token change must win over a resource
+        # request that was already in flight.
+        if auth_generation != _auth_generation or _cache.get(machine) is not entry:
+            return False
+        if (entry and entry[1].get(_DISPATCH_REJECTED)
+                and not clears_rejection):
+            snapshot[_DISPATCH_REJECTED] = True
+            snapshot[_DISPATCH_MODALITY] = entry[1].get(_DISPATCH_MODALITY)
+        _cache[machine] = (now, snapshot)
+        return True
+
     def note_reachability(machine: str, snapshot: dict) -> None:
         state = _peer_alert_state.setdefault(
             machine, {"failures": 0, "alerted": False},
@@ -186,57 +211,82 @@ async def _refresh_stale(machines, stale, client, now):
         )
 
     async def one(machine: str, studios: list[dict]):
+        entry = _cache.get(machine)
         s0 = studios[0]
         url = _peer_url(s0)
         token = _peer_token(s0)
+        auth_generation = _auth_generation
         headers = {"X-Hub-Token": token} if token else {}
         try:
             r = await client.get(f"{url}/api/hub/resources?local_only=true",
                                   headers=headers, timeout=PEER_TIMEOUT_S)
-            if r.status_code == 401:
+            if r.status_code in (401, 403):
                 # Hub is reachable but rejected the token → clearest possible signal
                 # that the fleet tokens don't match on that machine.
                 snapshot = {"host": None, "studios": {},
                             "reachable": True, "auth": False,
                             "status": ("no_token" if not token
                                        else "token_rejected")}
-                if token:
+                if r.status_code == 401 and token:
                     foreign = await _foreign_site(client, url)
                     if foreign:
                         snapshot.update(status="foreign_site", **foreign)
-                _cache[machine] = (now, snapshot)
-                note_reachability(machine, snapshot)
+                if store(machine, snapshot, entry, auth_generation):
+                    note_reachability(machine, snapshot)
                 return
             data = r.json()
+            if (r.status_code != 200 or not isinstance(data, dict)
+                    or not isinstance(data.get("host"), dict)
+                    or not isinstance(data.get("studios"), dict)):
+                snapshot = {"host": None, "studios": {},
+                            "reachable": True, "auth": False,
+                            "status": "resource_error"}
+                if store(machine, snapshot, entry, auth_generation):
+                    note_reachability(machine, snapshot)
+                return
             snapshot = {
                 "host": data.get("host"),
                 "studios": data.get("studios", {}),
                 "proxy": data.get("proxy"),
                 "reachable": True, "auth": True, "status": "connected",
             }
-            _cache[machine] = (now, snapshot)
-            note_reachability(machine, snapshot)
+            clears_rejection = False
+            if entry and entry[1].get(_DISPATCH_REJECTED):
+                modality = entry[1].get(_DISPATCH_MODALITY) or s0["modality"]
+                probe = await client.get(
+                    f"{url}/studio/{modality}/api/catalog",
+                    headers=headers, timeout=PEER_TIMEOUT_S,
+                )
+                try:
+                    clears_rejection = (
+                        probe.status_code == 200 and isinstance(probe.json(), dict)
+                    )
+                except (AttributeError, ValueError):
+                    clears_rejection = False
+            if store(machine, snapshot, entry, auth_generation,
+                     clears_rejection=clears_rejection):
+                note_reachability(machine, snapshot)
         except httpx.ConnectError:
             # TCP refused: nothing is listening on :47873 there — the Studio Hub
             # isn't actually running on that machine (even if its studios are).
             snapshot = {"host": None, "studios": {},
                         "reachable": False, "auth": True,
                         "status": "no_hub"}
-            _cache[machine] = (now, snapshot)
-            note_reachability(machine, snapshot)
+            if store(machine, snapshot, entry, auth_generation):
+                note_reachability(machine, snapshot)
         except (httpx.TimeoutException, httpx.ConnectTimeout):
             # Packets dropped: a firewall is blocking :47873, or the Mac is asleep/off.
             snapshot = {"host": None, "studios": {},
                         "reachable": False, "auth": True,
                         "status": "unreachable"}
-            _cache[machine] = (now, snapshot)
-            note_reachability(machine, snapshot)
+            if store(machine, snapshot, entry, auth_generation):
+                note_reachability(machine, snapshot)
         except Exception:
             snapshot = {"host": None, "studios": {},
                         "reachable": False, "auth": True,
                         "status": "unreachable"}
-            _cache[machine] = (now, snapshot)
-            note_reachability(machine, snapshot)
+            if store(machine, snapshot, entry, auth_generation):
+                note_reachability(machine, snapshot)
 
     await asyncio.gather(*(one(m, machines[m]) for m in stale))
 
@@ -262,15 +312,17 @@ async def _foreign_site(client, url: str) -> dict | None:
 
 def cached(machine: str) -> dict | None:
     entry = _cache.get(machine)
-    return entry[1] if entry else None
+    return entry[1] if entry and not entry[1].get(_DISPATCH_REJECTED) else None
 
 
-def dispatch_ready(studio: dict) -> bool:
+def dispatch_ready(studio: dict, generation=None) -> bool:
     """Whether a Studio has authority to receive newly dispatched work."""
     if studio.get("machine", "local") == "local":
         return True
     entry = _cache.get(studio.get("machine"))
     if not entry:
+        return False
+    if generation is not None and generation != (_auth_generation, id(entry)):
         return False
     try:
         observed_at, snapshot = entry
@@ -279,6 +331,7 @@ def dispatch_ready(studio: dict) -> bool:
         return False
     return (
         isinstance(snapshot, dict)
+        and not snapshot.get(_DISPATCH_REJECTED)
         and 0 <= age < PEER_TTL_S
         and snapshot.get("reachable") is True
         and snapshot.get("auth") is True
@@ -286,9 +339,24 @@ def dispatch_ready(studio: dict) -> bool:
     )
 
 
-def invalidate(machine: str) -> None:
-    """Force the next resource refresh to re-read one peer Mac."""
-    _cache.pop(machine, None)
+def dispatch_generation(studio: dict):
+    """Capture the authority checked immediately before a scheduler commits work."""
+    if studio.get("machine", "local") == "local":
+        return None
+    entry = _cache.get(studio.get("machine"))
+    if not dispatch_ready(studio) or not entry:
+        return None
+    return _auth_generation, id(entry)
+
+
+def invalidate(machine: str, *, rejected: bool = False,
+               modality: str | None = None) -> None:
+    """Forget a peer snapshot, retaining a proxy-auth quarantine when rejected."""
+    if rejected:
+        _cache[machine] = (0, {_DISPATCH_REJECTED: True,
+                               _DISPATCH_MODALITY: modality})
+    else:
+        _cache.pop(machine, None)
 
 
 def forget_machine(machine: str) -> None:

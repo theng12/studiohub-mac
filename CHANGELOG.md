@@ -20,7 +20,13 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
   Transcription, Image, Voice, Video, Music, or Render work.
 - A remote HTTP 401 immediately removes that peer's dispatch readiness. The
   current request remains on its established safe terminal/reconciliation
-  path; this release does not retry it on another worker.
+  path; this release does not retry it on another worker. A resource-only Hub
+  refresh cannot undo that quarantine: only a successful protected Studio
+  proxy probe for the rejected modality restores it.
+- Resource refreshes now accept only a valid successful response, and each
+  scheduler rechecks peer authority after its awaited preparation and again
+  before a worker request. Work whose authority changed before acceptance stays
+  queued without consuming an attempt.
 - Local Studio dispatch is unchanged. No fleet token is rotated or distributed,
   and no running work, enrollment, model, or worker state changes automatically.
 

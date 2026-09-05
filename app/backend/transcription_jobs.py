@@ -540,6 +540,9 @@ async def dispatch_once(monitor) -> int:
                 if decision != "run":
                     broker.note_external_memory_block(machine, "transcription")
                     continue
+                generation = peers.dispatch_generation(studio)
+                if not peers.dispatch_ready(studio, generation):
+                    continue
                 owner = f"transcription:{batch['id']}:{item['index']}"
                 if not broker.acquire_external_machine(machine, owner):
                     continue
@@ -564,7 +567,9 @@ async def dispatch_once(monitor) -> int:
                 batch["last_dispatched_at"] = time.time()
                 busy_studios.add(studio["id"])
                 _save(batch)
-                task = asyncio.create_task(_run_item(monitor, batch, item, studio, owner))
+                task = asyncio.create_task(_run_item(
+                    monitor, batch, item, studio, owner, generation,
+                ))
                 _item_tasks[(batch["id"], item["index"])] = task
                 assigned += 1
                 made_progress = True
@@ -574,7 +579,8 @@ async def dispatch_once(monitor) -> int:
     return assigned
 
 
-async def _run_item(monitor, batch: dict, item: dict, studio: dict, owner: str) -> None:
+async def _run_item(monitor, batch: dict, item: dict, studio: dict, owner: str,
+                    generation=None) -> None:
     started = time.time()
     try:
         if _expire_genstudio_batch(batch):
@@ -589,6 +595,11 @@ async def _run_item(monitor, batch: dict, item: dict, studio: dict, owner: str) 
         }
         if batch.get("language"):
             data["language"] = batch["language"]
+        if generation is not None and not peers.dispatch_ready(studio, generation):
+            item.update(state="queued", studio=None, studio_task_id=None,
+                        tries=max(0, item["tries"] - 1),
+                        error="worker authentication changed before dispatch")
+            return
         url, headers = studio_request(studio, "/api/transcribe")
         with input_path.open("rb") as handle:
             response = await monitor._client.post(
@@ -598,7 +609,8 @@ async def _run_item(monitor, batch: dict, item: dict, studio: dict, owner: str) 
             )
         if response.status_code >= 400:
             if response.status_code == 401 and studio.get("machine", "local") != "local":
-                peers.invalidate(studio["machine"])
+                peers.invalidate(studio["machine"], rejected=True,
+                                 modality=studio["modality"])
             try:
                 detail = response.json().get("detail")
             except Exception:

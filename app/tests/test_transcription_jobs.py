@@ -353,6 +353,37 @@ async def test_remote_transcription_401_quarantines_peer_before_next_selection(
 
 
 @pytest.mark.asyncio
+async def test_transcription_scheduler_rechecks_peer_after_await(reset, monitor, monkeypatch):
+    batch = await _create_direct(1)
+    _, remote = _add_remote_voice(monitor)
+    monitor.registry = [remote]
+    monitor.status[remote["id"]] = {"status": "up"}
+    posted = []
+
+    async def other_lane(_monitor, _machine):
+        peers.invalidate(remote["machine"], rejected=True)
+        return False
+
+    async def prepare(*_args):
+        return "run", "ready"
+
+    async def post(*_args, **_kwargs):
+        posted.append(True)
+        return _Response()
+
+    from backend import chat_jobs
+    monkeypatch.setattr(monitor, "scheduling_transcription", _available_whisper)
+    monkeypatch.setattr(chat_jobs, "has_dispatchable_work", other_lane)
+    monkeypatch.setattr(broker, "prepare_machine_memory", prepare)
+    monkeypatch.setattr(monitor._client, "post", post)
+
+    assert await jobs.dispatch_once(monitor) == 0
+    assert batch["items"][0]["state"] == "queued"
+    assert batch["items"][0]["tries"] == 0
+    assert posted == []
+
+
+@pytest.mark.asyncio
 async def test_capable_workers_share_work_one_transcription_each(reset, monitor, monkeypatch):
     batch = await _create_direct(3)
     local, remote = _add_remote_voice(monitor)

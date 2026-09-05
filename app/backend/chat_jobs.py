@@ -597,6 +597,9 @@ async def dispatch_once(monitor) -> int:
                     broker.note_external_memory_block(machine, "chat")
                     batch["queue_note"] = f"{studio['id']}: {note}"
                     continue
+                generation = peers.dispatch_generation(studio)
+                if not peers.dispatch_ready(studio, generation):
+                    continue
                 owner = f"chat:{batch['id']}:{pack['index']}"
                 if not broker.acquire_external_machine(machine, owner):
                     continue
@@ -609,7 +612,7 @@ async def dispatch_once(monitor) -> int:
                 batch["last_dispatched_at"] = time.time()
                 busy_studios.add(studio["id"])
                 task = asyncio.create_task(
-                    _run_pack(monitor, batch, pack, studio, owner)
+                    _run_pack(monitor, batch, pack, studio, owner, generation)
                 )
                 _pack_tasks[(batch["id"], pack["index"])] = task
                 _save(batch)
@@ -627,7 +630,8 @@ async def dispatch_once(monitor) -> int:
     return assigned
 
 
-async def _run_pack(monitor, batch: dict, pack: dict, studio: dict, owner: str) -> None:
+async def _run_pack(monitor, batch: dict, pack: dict, studio: dict, owner: str,
+                    generation=None) -> None:
     started = time.time()
     try:
         if _expire_genstudio_batch(batch):
@@ -641,6 +645,10 @@ async def _run_pack(monitor, batch: dict, pack: dict, studio: dict, owner: str) 
                            f"scene IDs: {json.dumps(missing)}. Do not repeat completed IDs.",
             })
         body = {"model": batch["model"], "messages": messages, "stream": False, **pack["params"]}
+        if generation is not None and not peers.dispatch_ready(studio, generation):
+            pack.update(state="queued", studio=None, tries=max(0, pack["tries"] - 1),
+                        error="worker authentication changed before dispatch")
+            return
         url, headers = studio_request(studio, "/v1/chat/completions")
         response = await monitor._client.post(
             url, json=body, headers=headers,
@@ -648,7 +656,8 @@ async def _run_pack(monitor, batch: dict, pack: dict, studio: dict, owner: str) 
         )
         if response.status_code >= 400:
             if response.status_code == 401 and studio.get("machine", "local") != "local":
-                peers.invalidate(studio["machine"])
+                peers.invalidate(studio["machine"], rejected=True,
+                                 modality=studio["modality"])
             error = RuntimeError(f"HTTP {response.status_code}: {response.text[:500] or 'Chat completion failed'}")
             error.transient = response.status_code in {408, 409, 425, 429, 500, 502, 503, 504}
             raise error

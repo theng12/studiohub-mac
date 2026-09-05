@@ -1776,6 +1776,41 @@ async def test_remote_dispatch_does_not_reserve_local_memory(reset, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_broker_scheduler_rechecks_peer_after_await(reset, monkeypatch):
+    monitor = broker._monitor()
+    local = next(studio for studio in monitor.registry if studio["id"] == "image")
+    remote = {**local, "id": "image@mac-b", "machine": "mac-b", "host": "10.0.0.2"}
+    monitor.registry.append(remote)
+    monitor.status[local["id"]] = {"status": "down"}
+    monitor.status[remote["id"]] = {"status": "up"}
+    _mark_peers_connected(remote)
+    dispatched = asyncio.Event()
+
+    async def catalog(_studio, _model):
+        peers.invalidate(remote["machine"], rejected=True)
+        return {"repo": "a/b", "cache": {"state": "cached"}}
+
+    async def run_item(*_args):
+        dispatched.set()
+
+    monkeypatch.setattr(broker, "_catalog_entry", catalog)
+    monkeypatch.setattr(broker, "_run_item", run_item)
+    submitted = broker.submit_batch({
+        "modality": "image", "model": "a/b", "items": [{"prompt": "remote"}],
+    })
+    item = broker.batches[submitted["batch_id"]]["items"][0]
+    dispatcher = asyncio.create_task(broker._dispatch_loop())
+    try:
+        await asyncio.sleep(0.05)
+        assert dispatched.is_set() is False
+        assert item["state"] == "queued" and item["tries"] == 0
+    finally:
+        dispatcher.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await dispatcher
+
+
+@pytest.mark.asyncio
 async def test_dispatch_to_second_worker_clears_previous_attempt_evidence(reset, monkeypatch):
     monitor = broker._monitor()
     local = next(studio for studio in monitor.registry if studio["id"] == "image")

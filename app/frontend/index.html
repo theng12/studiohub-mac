@@ -1236,7 +1236,8 @@ let LIVE_RELEASE_NOTES = null;
 const RELEASE_NOTES = [
   { v: "2.19.6", date: "2026-09-05", items: [
     "<b>Fixed:</b> remote Studio work now requires a fresh peer-Hub snapshot that is reachable, authenticated, and connected.",
-    "Missing, stale, disconnected, and token-rejected peers stay visible for diagnosis but cannot receive new work. A remote HTTP 401 immediately removes that peer from dispatch; the current request follows its existing safe terminal/reconciliation path.",
+    "Missing, stale, disconnected, and token-rejected peers stay visible for diagnosis but cannot receive new work. A remote HTTP 401 stays quarantined until a protected Studio proxy check succeeds; resource-only replies cannot restore dispatch.",
+    "Resource checks now fail closed unless valid, and every scheduler rechecks peer authority before creating work or sending it to a Studio. Work whose authority changed stays queued without consuming an attempt.",
     "Local dispatch is unchanged. No token, enrollment, worker, model, or running job changes automatically.",
   ]},
   { v: "2.19.5", date: "2026-09-05", items: [

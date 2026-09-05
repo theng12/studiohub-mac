@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 import pytest
 
@@ -26,6 +28,29 @@ class FakeResp:
 
     def json(self):
         return self._data
+
+
+class PausedGet:
+    def __init__(self):
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def get(self, _url, headers=None, timeout=None):
+        self.started.set()
+        await self.release.wait()
+        return FakeResp(data={"host": {}, "studios": {}})
+
+
+class ProxyProbeGet:
+    def __init__(self, proxy_status):
+        self.proxy_status = proxy_status
+        self.urls = []
+
+    async def get(self, url, headers=None, timeout=None):
+        self.urls.append(url)
+        if "/studio/" in url:
+            return FakeResp(self.proxy_status, {"models": []})
+        return FakeResp(data={"host": {}, "studios": {}})
 
 
 class FakeSyncClient:
@@ -293,6 +318,55 @@ async def test_refresh_success_caches_host(reset):
     assert c["reachable"] and c["host"]["total_gb"] == 64
     assert c["studios"]["image"]["rss_gb"] == 3
     assert c["studios"]["voice"]["proxy"]["port"] == 47869
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,data", [
+    (403, {"detail": "forbidden"}),
+    (404, {"detail": "missing"}),
+    (500, {"detail": "failed"}),
+    (200, {"host": {}, "studios": []}),
+])
+async def test_refresh_only_authorizes_valid_resource_snapshot(reset, status, data):
+    await peers.refresh(REMOTE, FakeGet(resp=FakeResp(status, data)))
+
+    snapshot = peers.cached("mac-b")
+    assert snapshot["status"] != "connected"
+    assert peers.dispatch_ready(REMOTE[0]) is False
+
+
+@pytest.mark.asyncio
+async def test_proxy_auth_invalidation_survives_resource_refresh(reset):
+    peers.invalidate("mac-b", rejected=True, modality="image")
+    client = ProxyProbeGet(401)
+
+    await peers.refresh(REMOTE, client)
+
+    assert peers.dispatch_ready(REMOTE[0]) is False
+    assert client.urls[-1].endswith("/studio/image/api/catalog")
+
+
+@pytest.mark.asyncio
+async def test_authenticated_proxy_probe_clears_quarantine(reset):
+    peers.invalidate("mac-b", rejected=True, modality="image")
+
+    await peers.refresh(REMOTE, ProxyProbeGet(200))
+
+    assert peers.dispatch_ready(REMOTE[0]) is True
+
+
+@pytest.mark.asyncio
+async def test_inflight_resource_refresh_cannot_restore_proxy_auth(reset):
+    client = PausedGet()
+    task = asyncio.create_task(peers.refresh(REMOTE, client))
+    await client.started.wait()
+
+    peers.invalidate("mac-b", rejected=True)
+    client.release.set()
+    await task
+
+    assert peers.cached("mac-b") is None
+    assert peers.dispatch_ready(REMOTE[0]) is False
 
 
 @pytest.mark.asyncio

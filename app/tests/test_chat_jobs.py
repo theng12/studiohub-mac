@@ -159,7 +159,7 @@ async def test_remote_chat_excludes_rejected_or_unknown_peer(
     if snapshot is not None:
         peers._cache[worker["machine"]] = (time.time(), snapshot)
     else:
-        peers.invalidate(worker["machine"])
+        peers.invalidate(worker["machine"], rejected=True)
     monkeypatch.setattr(monitor, "scheduling_catalog", _available_chat)
 
     assert await jobs._eligible_studios(monitor, MODEL) == []
@@ -195,6 +195,28 @@ async def test_remote_chat_401_invalidates_peer_readiness(reset, monitor, monkey
     await asyncio.gather(*list(jobs._pack_tasks.values()))
     assert batch["packs"][0]["state"] == "error"
     assert peers.cached(worker["machine"]) is None
+
+
+@pytest.mark.asyncio
+async def test_chat_scheduler_rechecks_peer_after_await(reset, monitor, monkeypatch):
+    batch, _ = jobs.create_batch(_payload(1, 1))
+    worker = _add_chat_workers(monitor, 1)[0]
+
+    async def other_lane(_monitor, _machine):
+        peers.invalidate(worker["machine"])
+        return False
+
+    async def prepare(*_args):
+        return "run", "ready"
+
+    from backend import transcription_jobs
+    monkeypatch.setattr(monitor, "scheduling_catalog", _available_chat)
+    monkeypatch.setattr(transcription_jobs, "has_dispatchable_work", other_lane)
+    monkeypatch.setattr(broker, "prepare_machine_memory", prepare)
+
+    assert await jobs.dispatch_once(monitor) == 0
+    assert batch["packs"][0]["state"] == "queued"
+    assert batch["packs"][0]["tries"] == 0
 
 
 @pytest.mark.asyncio
