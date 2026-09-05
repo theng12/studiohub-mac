@@ -1153,7 +1153,7 @@ def test_drain_waits_for_leases_then_installs_through_the_manual_path(
     triggered = []
     monkeypatch.setattr(updater, "trigger_update",
                         lambda **kwargs: triggered.append(kwargs))
-    monkeypatch.setattr(updater, "_hold_drain_until_settled", lambda skipped: None)
+    monkeypatch.setattr(updater, "_hold_drain_until_settled", lambda: None)
     updater._drain_lock.acquire()
     updater._drain_and_update()
     assert triggered == [{"after_current": False}]
@@ -1161,22 +1161,32 @@ def test_drain_waits_for_leases_then_installs_through_the_manual_path(
     assert "release" not in drain.calls
 
 
-def test_a_ghost_lease_cannot_block_the_drain_forever(updater: AutoUpdater, monkeypatch):
-    """A lease its worker never finishes must bound the wait, not stop it."""
-    drain = FakeDrain()
-    drain._pending = []
-    monkeypatch.setattr(drain, "pending", lambda: ["voice@a is still running an item"])
+def test_drain_timeout_defers_without_installing_over_accepted_work(updater: AutoUpdater, monkeypatch):
+    """A deadline gives this site's drain back; it never installs across a lease."""
+    drain = FakeDrain([["voice@a is still running an item"]])
     monkeypatch.setattr(updater, "drain", drain)
     monkeypatch.setattr("backend.auto_update.time.sleep", lambda _seconds: None)
     updater.save_settings({"mode": "off", "frequency": "daily", "maintenance_hour": 1,
                            "idle_only": True, "drain_timeout_minutes": 1})
     clock = iter([0.0] + [61.0] * 20)
     monkeypatch.setattr("backend.auto_update.time.monotonic", lambda: next(clock))
-    skipped = updater._wait_for_drain()
-    assert skipped == ["voice@a is still running an item"]
-    details = updater.public_status()["details"]
-    assert any("timed out after 1 minute(s)" in line for line in details)
-    assert any("Not waited for: voice@a" in line for line in details)
+    triggered = []
+    monkeypatch.setattr(updater, "trigger_update", lambda **kwargs: triggered.append(kwargs))
+    monkeypatch.setattr(updater, "_hold_drain_until_settled", lambda: None)
+
+    updater._drain_lock.acquire()
+    updater._drain_and_update()
+
+    assert triggered == []
+    assert drain.calls == ["pending", "release"]
+    status = updater.public_status()
+    assert status["state"] == "deferred"
+    assert "still running" in status["defer_reason"]
+    assert any("timed out after 1 minute(s)" in line for line in status["details"])
+    assert "Update was not started. Retry after current work finishes." in status["details"]
+    assert status["pending_manual"] is False
+    assert status["next_retry"] is None
+    assert updater._drain_lock.locked() is False
 
 
 def test_a_failed_install_gives_the_site_back(updater: AutoUpdater, monkeypatch):
@@ -1203,7 +1213,7 @@ def test_a_stalled_install_still_rejoins_the_fleet(updater: AutoUpdater, monkeyp
     clock = iter([0.0] + [10_000.0] * 20)
     monkeypatch.setattr("backend.auto_update.time.monotonic", lambda: next(clock))
     updater._write_status(state="updating")
-    updater._hold_drain_until_settled([])
+    updater._hold_drain_until_settled()
     assert drain.calls == ["release"]
 
 

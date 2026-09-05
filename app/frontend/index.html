@@ -1234,6 +1234,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.20.1", date: "2026-09-06", items: [
+    "<b>Update after current work now stops safely at its deadline.</b> If accepted work is still running, Studio Hub defers the update and gives back only the workers it withdrew; it never starts an install over that work.",
+    "The result identifies the remaining work and asks you to retry after it finishes. No automatic retry, cancellation, or restart is added, and explicit Update now behavior is unchanged.",
+  ]},
   { v: "2.20.0", date: "2026-09-05", items: [
     "<b>Voice recovery now preserves accepted work.</b> If Studio Hub restarts while Voice Studio work is active, the original worker identity becomes an actionable uncertainty instead of being submitted a second time.",
     "Jobs can reconcile that exact worker job and request its normal stop. Restart Voice service is an explicit operator choice: it pauses new Voice work, refuses if another active job cannot be ruled out, waits for the managed service to become healthy, and adopts only a verified final result from the original job.",

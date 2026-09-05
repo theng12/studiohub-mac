@@ -58,8 +58,8 @@ class SiteDrain(Protocol):
     Idle-gated updates are unsound on a production fleet: the machines are never
     spontaneously free, so waiting for idleness never ends. Instead the site
     declares a maintenance intent, stops granting new leases so the global
-    scheduler routes work elsewhere, waits a bounded time for already-leased
-    work to finish, and then installs through the ordinary manual path.
+    scheduler routes work elsewhere, and waits a bounded time for already-
+    leased work to finish. A deadline defers the update and rejoins the site.
     """
 
     def begin(self) -> list[str]:
@@ -1175,9 +1175,18 @@ class AutoUpdater:
 
     def _drain_and_update(self) -> None:
         try:
-            skipped = self._wait_for_drain()
+            try:
+                self._wait_for_drain()
+            except UpdateDeferred as exc:
+                self._release_drain()
+                self._write_status(
+                    state="deferred", defer_reason=str(exc), next_retry=None,
+                    pending_manual=False, last_update_result="Update deferred",
+                    details=[str(exc), "Update was not started. Retry after current work finishes."],
+                )
+                return
             self.trigger_update(after_current=False)
-            self._hold_drain_until_settled(skipped)
+            self._hold_drain_until_settled()
         except Exception as exc:
             self.log.exception("drained update failed")
             self._release_drain()
@@ -1187,13 +1196,8 @@ class AutoUpdater:
         finally:
             self._drain_lock.release()
 
-    def _wait_for_drain(self) -> list[str]:
-        """Wait a bounded time for leased work, then say what was not waited for.
-
-        A lease whose worker never reports the attempt as finished (a ghost
-        lease) must not hold the site out of the fleet forever, so the wait ends
-        at the owner-configured timeout and the update proceeds regardless.
-        """
+    def _wait_for_drain(self) -> None:
+        """Wait a bounded time for leased work or defer without installing."""
         minutes = self.settings()["drain_timeout_minutes"]
         deadline = time.monotonic() + self._drain_timeout_seconds()
         pending = list(self.drain.pending() or [])
@@ -1205,15 +1209,12 @@ class AutoUpdater:
             time.sleep(2)
             pending = list(self.drain.pending() or [])
         if pending:
-            self.log.warning("drain timed out after %s minute(s); proceeding without: %s",
-                             minutes, "; ".join(pending))
-            self._write_status(
-                state="draining", last_update_result="Draining this site before updating",
-                details=[f"Drain timed out after {minutes} minute(s); installing anyway.",
-                         *[f"Not waited for: {value}" for value in pending[:6]]])
-        return pending
+            reason = (f"Drain timed out after {minutes} minute(s); accepted work is still running: "
+                      + "; ".join(pending[:6]))
+            self.log.warning("%s", reason)
+            raise UpdateDeferred(reason)
 
-    def _hold_drain_until_settled(self, skipped: list[str]) -> None:
+    def _hold_drain_until_settled(self) -> None:
         """Hold the withdrawal while the installer runs, then always release it.
 
         On success the service restart clears the in-process drain anyway; this
@@ -1225,11 +1226,6 @@ class AutoUpdater:
             if self._read_status().get("state") not in {"draining", "updating", "restarting"}:
                 break
         self._release_drain()
-        if skipped:
-            status = self._read_status()
-            details = status.get("details") if isinstance(status.get("details"), list) else []
-            self._write_status(details=[*details, *[f"Not waited for: {value}"
-                                                    for value in skipped[:6]]])
 
     def trigger_update(self, *, after_current: bool = False, target_commit: Optional[str] = None,
                        target_version: Optional[str] = None, operation_id: Optional[str] = None) -> dict:

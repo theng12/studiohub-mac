@@ -10,6 +10,17 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.20.1] — 2026-09-06
+
+### Fixed — safe deadline for Update after current work
+
+- When accepted work remains at a controller-local drain deadline, Studio Hub
+  now defers the update and releases only the workers that update withdrew.
+  It never starts an install over that work.
+- The result names the remaining work and asks the operator to retry after it
+  finishes. No automatic retry, restart, cancellation, or new control surface
+  is introduced; explicit Update now behavior is unchanged.
+
 ## [2.20.0] — 2026-09-05
 
 ### Added — safe Voice Studio restart recovery
