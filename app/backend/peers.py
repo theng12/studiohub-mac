@@ -355,8 +355,13 @@ def invalidate(machine: str, *, rejected: bool = False,
     if rejected:
         _cache[machine] = (0, {_DISPATCH_REJECTED: True,
                                _DISPATCH_MODALITY: modality})
-    else:
-        _cache.pop(machine, None)
+        return
+    entry = _cache.get(machine)
+    if entry and entry[1].get(_DISPATCH_REJECTED):
+        # Force a resource refresh without erasing a worker-auth quarantine.
+        _cache[machine] = (0, entry[1])
+        return
+    _cache.pop(machine, None)
 
 
 def forget_machine(machine: str) -> None:

@@ -1,9 +1,10 @@
 import asyncio
+import time
 
 import httpx
 import pytest
 
-from backend import peers
+from backend import broker, peers
 
 
 REMOTE = [{"id": "image@mac-b", "modality": "image", "host": "100.1.1.1",
@@ -42,15 +43,16 @@ class PausedGet:
 
 
 class ProxyProbeGet:
-    def __init__(self, proxy_status):
+    def __init__(self, proxy_status, resource_data=None):
         self.proxy_status = proxy_status
+        self.resource_data = resource_data or {"host": {}, "studios": {}}
         self.urls = []
 
     async def get(self, url, headers=None, timeout=None):
         self.urls.append(url)
         if "/studio/" in url:
             return FakeResp(self.proxy_status, {"models": []})
-        return FakeResp(data={"host": {}, "studios": {}})
+        return FakeResp(data=self.resource_data)
 
 
 class FakeSyncClient:
@@ -367,6 +369,52 @@ async def test_inflight_resource_refresh_cannot_restore_proxy_auth(reset):
 
     assert peers.cached("mac-b") is None
     assert peers.dispatch_ready(REMOTE[0]) is False
+
+
+@pytest.mark.asyncio
+async def test_memory_refresh_preserves_proxy_quarantine_until_authenticated_repair(
+    reset, monkeypatch,
+):
+    monitor = broker._monitor()
+    studio = {**REMOTE[0], "id": "image@mac-b"}
+    monitor.registry.append(studio)
+    peers._cache["mac-b"] = (
+        time.time(),
+        {"host": {"total_gb": 8, "available_gb": 1.0},
+         "reachable": True, "auth": True, "status": "connected"},
+    )
+    release_started = asyncio.Event()
+    resume_release = asyncio.Event()
+
+    async def release_idle_siblings(_client, _studio):
+        release_started.set()
+        await resume_release.wait()
+        return {"busy": [], "released": 1}
+
+    monkeypatch.setattr(broker, "release_idle_siblings", release_idle_siblings)
+    client = ProxyProbeGet(
+        401, {"host": {"total_gb": 8, "available_gb": 3.0}, "studios": {}},
+    )
+    preparing = asyncio.create_task(broker.prepare_machine_memory(
+        client, studio, "image/model",
+        {"repo": "image/model", "min_unified_memory_gb": 8,
+         "min_free_memory_gb": 2.0},
+    ))
+    await asyncio.wait_for(release_started.wait(), timeout=1.0)
+
+    peers.invalidate("mac-b", rejected=True, modality="image")
+    resume_release.set()
+    decision, _note = await asyncio.wait_for(preparing, timeout=2.0)
+
+    assert decision == "wait"
+    assert peers.dispatch_ready(studio) is False
+    assert peers.dispatch_generation(studio) is None
+
+    peers.invalidate("mac-b")
+    await peers.refresh([studio], ProxyProbeGet(
+        200, {"host": {"total_gb": 8, "available_gb": 3.0}, "studios": {}},
+    ))
+    assert peers.dispatch_ready(studio) is True
 
 
 @pytest.mark.asyncio
