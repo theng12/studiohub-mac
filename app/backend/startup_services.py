@@ -12,10 +12,12 @@ import contextlib
 import datetime as dt
 import fcntl
 import os
+import plistlib
 import shutil
 import socket
 import subprocess
 import time
+from xml.parsers.expat import ExpatError
 from pathlib import Path
 
 from . import control
@@ -194,6 +196,43 @@ def retirement_lock(modality: str):
         yield
 
 
+def verified_voice_service() -> dict | None:
+    """Verify the installed local Voice launchd pair targets this checkout and port."""
+    service = inspect_service("voice")
+    if not (service.get("installed") and service.get("server_loaded")
+            and service.get("watchdog_loaded")):
+        return None
+    app_dir = _app_dir("voice")
+    if app_dir is None:
+        return None
+    root = app_dir.resolve()
+    spec = SERVICE_SPECS["voice"]
+    expected = {
+        spec["server_label"]: root / "voicestudio-serve.sh",
+        spec["watchdog_label"]: root / "voicestudio-watchdog.sh",
+    }
+    try:
+        for label, script in expected.items():
+            plist_path = _launch_agents_dir() / f"{label}.plist"
+            if plist_path.is_symlink() or not plist_path.is_file():
+                return None
+            with plist_path.open("rb") as handle:
+                payload = plistlib.load(handle)
+            if (not isinstance(payload, dict) or payload.get("Label") != label
+                    or payload.get("ProgramArguments") != [str(script)]
+                    or script.is_symlink() or not script.is_file()
+                    or script.resolve().parent != root):
+                return None
+        server = (root / "voicestudio-serve.sh").read_text(encoding="utf-8")
+        watchdog = (root / "voicestudio-watchdog.sh").read_text(encoding="utf-8")
+    except (OSError, ValueError, UnicodeError, ExpatError, plistlib.InvalidFileException):
+        return None
+    port = str(spec["port"])
+    if f"--port {port}" not in server or f"PORT={port}" not in watchdog:
+        return None
+    return service
+
+
 def inspect_service(modality: str) -> dict:
     spec = SERVICE_SPECS.get(modality)
     if spec is None:
@@ -326,6 +365,40 @@ def install_service(modality: str) -> dict:
         raise ValueError("Installer finished, but launchd did not load both services.")
     return {"ok": True, "changed": True, "service": after,
             "detail": "Automatic startup installed and verified"}
+
+
+def restart_voice_service() -> dict:
+    """Request one verified local Voice Studio service restart.
+
+    This is intentionally narrower than the fleet lifecycle controls: recovery
+    may restart only the locally installed Voice launchd service, after the
+    caller has drained and recorded the exact job it is reconciling.
+    """
+    before = verified_voice_service()
+    if before is None:
+        raise ValueError("Voice Studio's exact managed startup service is not installed.")
+    app_dir = _app_dir("voice")
+    script = (_safe_service_script(app_dir, "restart_service.sh")
+              if app_dir is not None else None)
+    if app_dir is None or script is None:
+        raise ValueError("Trusted Voice Studio restart service is unavailable.")
+    try:
+        result = subprocess.run(
+            ["/bin/bash", str(script)], cwd=app_dir,
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError("Voice Studio restart request timed out.") from exc
+    except OSError as exc:
+        raise ValueError(f"Voice Studio restart service could not run: {exc}") from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "Voice Studio restart failed").strip()
+        raise ValueError(detail[-500:])
+    after = verified_voice_service()
+    if after is None:
+        raise ValueError("Voice Studio restart request completed, but its managed service is unavailable.")
+    return {"ok": True, "changed": True, "service": after,
+            "detail": "Voice Studio restart requested"}
 
 
 def uninstall_service(modality: str) -> dict:

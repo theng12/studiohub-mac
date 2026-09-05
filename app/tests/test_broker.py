@@ -1879,3 +1879,161 @@ def test_restore_batches_requeues_running(reset):
     # the in-flight item must be re-queued (its studio job is orphaned)
     assert broker.batches["bx"]["items"][0]["state"] == "queued"
     assert broker.batches["bx"]["items"][0]["studio"] is None
+
+
+def test_restore_keeps_accepted_voice_identity_as_uncertain(reset):
+    batch = {
+        "id": "voice-restart", "modality": "voice", "model": "local/voice",
+        "created_at": 1.0, "cancelled": False, "shared_params": {}, "routing": "pool",
+        "items": [{
+            "index": 0, "state": "running", "studio": "voice@mac-a",
+            "studio_job_id": "voice-job-1", "client_request_id": "studiohub:voice-restart:0",
+            "prompt": "keep this accepted request", "seed": None, "params": {},
+            "tries": 1, "artifact_path": None, "artifact_url": None, "asset_id": None,
+            "error": None, "retry_at": 4.0,
+        }],
+    }
+    ledger.save_batch(batch)
+
+    broker.restore_batches()
+
+    restored = broker.batches[batch["id"]]["items"][0]
+    assert restored["state"] == "uncertain"
+    assert restored["studio"] == "voice@mac-a"
+    assert restored["studio_job_id"] == "voice-job-1"
+    assert restored["client_request_id"] == "studiohub:voice-restart:0"
+    assert restored["retry_at"] is None
+    assert restored["recovery"]["phase"] == "uncertain"
+    assert broker._queued_batches() == []
+
+    summary = broker.batch_summary(broker.batches[batch["id"]])
+    assert summary["uncertain"] == 1
+    public = broker.public_item(broker.batches[batch["id"]], restored)
+    assert public["recovery"]["phase"] == "uncertain"
+    assert broker.clear_finished_batches(batch_id=batch["id"])["cleared"] == 0
+
+
+@pytest.mark.asyncio
+async def test_accepted_voice_transport_failure_never_requeues(reset, monkeypatch):
+    submitted = broker.submit_batch({
+        "modality": "voice", "model": "local/voice",
+        "items": [{"text": "Do not submit this audio twice."}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="running", tries=1, studio="voice@mac-a")
+    studio = {
+        "id": "voice@mac-a", "modality": "voice", "machine": "mac-a",
+        "host": "127.0.0.1", "port": 47870,
+    }
+
+    class AcceptedThenLostClient:
+        async def post(self, *_args, **_kwargs):
+            return _PeerRouteResponse({"job": {"id": "voice-job-1", "state": "running"}})
+
+        async def get(self, *_args, **_kwargs):
+            raise httpx.RemoteProtocolError("connection lost")
+
+    async def no_reconciliation(*_args, **_kwargs):
+        return False
+
+    async def no_delay(_seconds):
+        return None
+
+    monkeypatch.setattr(broker, "_recover_worker_job", no_reconciliation)
+    monkeypatch.setattr(broker.asyncio, "sleep", no_delay)
+
+    await broker._run_item(AcceptedThenLostClient(), batch, item, studio)
+
+    assert item["state"] == "uncertain"
+    assert item["studio"] == "voice@mac-a"
+    assert item["studio_job_id"] == "voice-job-1"
+    assert item["client_request_id"] == f"studiohub:{batch['id']}:0"
+    assert item["retry_at"] is None
+    assert broker._queued_batches() == []
+
+@pytest.mark.asyncio
+async def test_uncertain_and_cancel_requested_batches_remain_unfinished(reset):
+    submitted = broker.submit_batch({
+        "modality": "voice", "model": "local/voice", "items": [{"text": "hold"}],
+        "webhook": "http://client.invalid/complete",
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+
+    class Client:
+        def __init__(self): self.calls = []
+        async def post(self, *args, **kwargs): self.calls.append(args)
+
+    for state in ("uncertain", "cancel_requested"):
+        item["state"] = state
+        batch.pop("finished_at", None)
+        batch.pop("done_notified", None)
+        client = Client()
+        await broker._maybe_finish(client, batch)
+        assert "finished_at" not in batch and not batch.get("done_notified")
+        assert client.calls == []
+        assert batch["id"] in {row["id"] for row in ledger.load_unfinished_batches()}
+        assert broker.clear_finished_batches(batch_id=batch["id"])["cleared"] == 0
+
+@pytest.mark.asyncio
+async def test_normal_poller_does_not_adopt_a_recovery_owned_voice_item(reset):
+    submitted = broker.submit_batch({"modality": "voice", "model": "local/voice", "items": [{"text": "hold"}]})
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="uncertain", studio="voice", studio_job_id="voice-job-1")
+    studio = {"id": "voice", "modality": "voice", "machine": "local", "host": "127.0.0.1", "port": 47870}
+
+    class Client:
+        async def post(self, *_args, **_kwargs): raise AssertionError("poller must not dispatch")
+
+    await broker._run_item(Client(), batch, item, studio)
+    assert item["state"] == "uncertain"
+
+@pytest.mark.asyncio
+async def test_normal_voice_adoption_yields_to_recovery_during_artifact_await(reset, monkeypatch):
+    submitted = broker.submit_batch({"modality": "voice", "model": "local/voice", "items": [{"text": "hold"}]})
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="running", studio="voice", studio_job_id="voice-job-1")
+    studio = {"id": "voice", "modality": "voice", "machine": "local", "host": "127.0.0.1", "port": 47870}
+    entered, release = asyncio.Event(), asyncio.Event()
+    async def blocked(*_args):
+        entered.set()
+        await release.wait()
+    monkeypatch.setattr(broker, "_cache_voice_artifact_metadata", blocked)
+    job = {"id": "voice-job-1", "state": "done", "output_url": "/audio", "output_path": "/tmp/audio.wav"}
+    task = asyncio.create_task(broker._record_worker_success(object(), batch, item, studio, job, {}, 0.0))
+    await entered.wait()
+    item["state"] = "uncertain"  # recovery route claims ownership while metadata is in flight
+    release.set()
+    await task
+    assert item["state"] == "uncertain"
+    assert item.get("asset_id") is None
+
+@pytest.mark.asyncio
+async def test_recovery_terminal_adoption_still_fences_an_older_poller(reset, monkeypatch):
+    submitted = broker.submit_batch({"modality": "voice", "model": "local/voice", "items": [{"text": "hold"}]})
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="running", studio="voice", studio_job_id="voice-job-1")
+    studio = {"id": "voice", "modality": "voice", "machine": "local", "host": "127.0.0.1", "port": 47870}
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = []
+    async def cache(*_args):
+        calls.append("cache")
+        if len(calls) == 1:
+            entered.set()
+            await release.wait()
+    monkeypatch.setattr(broker, "_cache_voice_artifact_metadata", cache)
+    recorded = []
+    monkeypatch.setattr(broker.ledger, "record_asset", lambda **_kwargs: recorded.append(True) or "recovery-asset")
+    job = {"id": "voice-job-1", "state": "done", "output_url": "/audio", "output_path": "/tmp/audio.wav"}
+    old_poller = asyncio.create_task(broker._record_worker_success(object(), batch, item, studio, job, {}, 0.0))
+    await entered.wait()
+    await broker._record_worker_success(object(), batch, item, studio, job, {}, 0.0, recovery=True)
+    item["recovery"] = {"phase": "reconciled"}
+    release.set()
+    await old_poller
+    assert item["state"] == "done" and item["asset_id"] == "recovery-asset"
+    assert recorded == [True]

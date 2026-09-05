@@ -754,3 +754,9 @@ def test_reenrollment_poll_ignores_old_terminal_history_when_recording_state(res
     transition = ledger.machine_state_transitions("mac-a", since_s=120.0)[-1]
 
     assert transition["state"] == "ready"
+
+def test_activity_snapshot_keeps_voice_recovery_states_active():
+    from backend import activity
+    for state in ("cancel_requested", "uncertain"):
+        validated = activity.validate_snapshot(_snapshot(active=_job(state=state)))
+        assert validated and validated["active"]["state"] == state

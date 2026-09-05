@@ -406,6 +406,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/execution-assets/voice-references` | Temporarily stage one checksum-bound GenStudio customer voice reference for a site attempt |
 | `DELETE /api/hub/execution-assets/voice-references/{asset_id}` | Remove a staged private reference early; automatic expiry remains the fallback |
 | `GET /api/hub/jobs` · `GET /api/hub/jobs/{batch}` · `DELETE /api/hub/jobs/{batch}` | Track / cancel batches; terminal history remains visible across Hub restarts |
+| `POST /api/hub/jobs/{batch}/items/{index}/voice-recovery` | Reconcile one uncertain local Voice job. `{"force": true}` is the explicit operator choice to request cancellation, restart the verified local Voice service, wait for health, and reconcile the original worker job—never submit a replacement job. |
 | `POST /api/hub/jobs/clear` · `POST /api/hub/jobs/{batch}/clear` | Clear terminal generation history and Hub-owned ledger/files only; remote worker output is never removed |
 | `GET /api/hub/assets` · `POST /api/hub/assets/scan` | Asset ledger (query: `q`, `modality`, `studio`, `batch_id`) |
 | `POST /api/hub/assets/upload` | Upload a reference image once → `{asset_id}` (for img2img continuity) |
@@ -476,8 +477,10 @@ or internal route during migration:
 2. Submit work: `POST /api/hub/jobs` with `label` (your app's name) and,
    ideally, `webhook` — the Hub POSTs the batch summary (incl. per-item
    `artifact_url`) to that URL the moment the batch finishes. No polling.
-3. Or poll `GET /api/hub/jobs/{batch_id}` — this survives Hub restarts
-   (batches are persisted in `hub.db`; in-flight items are safely re-queued).
+3. Or poll `GET /api/hub/jobs/{batch_id}` — this survives Hub restarts.
+   Image and other historic in-flight items keep their existing retry path;
+   accepted Voice items become durable `uncertain` records and must be
+   reconciled against their original worker job before any operator action.
 
 ### Corrupt ledger recovery
 

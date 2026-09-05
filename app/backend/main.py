@@ -58,6 +58,10 @@ from .resources import host_stats, proxy_stats, studio_process_stats
 TITLE = "Studio Hub KH"
 FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
 PROCESS_TITLE_APPLIED = apply_process_title()
+VOICE_RECOVERY_GRACE_S = 5.0
+VOICE_RECOVERY_HEALTH_TIMEOUT_S = 30.0
+_voice_recovery_guard = threading.Lock()
+_voice_recovery_inflight: set[tuple[str, str]] = set()
 
 
 class UpdateRequest(BaseModel):
@@ -90,6 +94,10 @@ class AutoUpdateRequestBody(BaseModel):
 
 
 class HubRestartBody(BaseModel):
+    force: bool = False
+
+
+class VoiceRecoveryBody(BaseModel):
     force: bool = False
 
 
@@ -2235,6 +2243,207 @@ async def hub_proxy_job_artifact(batch_id: str, item_index: int):
                              headers=headers, background=BackgroundTask(close_worker_stream))
 
 
+def _save_voice_recovery(batch: dict, item: dict, phase: str, reason: str) -> None:
+    broker.set_voice_recovery(item, phase, reason)
+    broker.batches[batch["id"]] = batch
+    ledger.save_batch(batch)
+
+
+async def _reconcile_voice_recovery_job(
+    client: httpx.AsyncClient, batch: dict, item: dict, studio: dict,
+) -> str:
+    """Adopt only a verified final result for the accepted Voice job id."""
+    from .peers import studio_request
+
+    expected_id = str(item.get("studio_job_id") or "")
+    if not expected_id:
+        return "unknown"
+    url, headers = studio_request(studio, f"/api/generate/jobs/{expected_id}")
+    try:
+        response = await client.get(url, headers=headers, timeout=15.0)
+        job = response.json()["job"] if response.status_code < 400 else None
+    except (httpx.HTTPError, TypeError, ValueError, KeyError):
+        return "unknown"
+    if not isinstance(job, dict) or str(job.get("id") or "") != expected_id:
+        return "unknown"
+    state = job.get("state")
+    if state in {"queued", "running", "cancel_requested"}:
+        return "active"
+    if state == "done" and not job.get("error"):
+        body = dict(batch.get("shared_params") or {})
+        body.update(item.get("params") or {})
+        body["repo"] = batch["model"]
+        body["text"] = item.get("prompt") or ""
+        await broker._record_worker_success(
+            client, batch, item, studio, job, body,
+            float(item.get("run_started") or time.time()), recovery=True,
+        )
+        _save_voice_recovery(batch, item, "reconciled", "Verified completed audio from the original Voice Studio job.")
+        await broker._maybe_finish(client, batch)
+        return "done"
+    if state in {"error", "cancelled"}:
+        broker._record_worker_failure(
+            item, studio, job, float(item.get("run_started") or time.time()),
+        )
+        item["state"] = state
+        item["retry_at"] = None
+        item["error"] = str(job.get("error") or f"Voice Studio job {state}")[:1000]
+        _save_voice_recovery(batch, item, "reconciled", f"Verified original Voice Studio job {state}.")
+        await broker._maybe_finish(client, batch)
+        return state
+    return "unknown"
+
+
+def _managed_local_voice_service(studio: dict) -> dict | None:
+    """Return the exact launchd-managed local Voice target, never a look-alike."""
+    spec = startup_services.SERVICE_SPECS["voice"]
+    if (studio.get("id") != "voice" or studio.get("modality") != "voice"
+            or studio.get("machine", "local") != "local"
+            or studio.get("host") not in {"127.0.0.1", "localhost"}
+            or studio.get("port") != spec["port"]
+            or studio.get("app") != spec["app"]):
+        return None
+    return startup_services.verified_voice_service()
+
+
+async def _wait_voice_recovery_health(
+    client: httpx.AsyncClient, studio: dict,
+) -> bool:
+    from .peers import studio_request
+
+    deadline = time.monotonic() + VOICE_RECOVERY_HEALTH_TIMEOUT_S
+    while True:
+        url, headers = studio_request(studio, "/api/health")
+        try:
+            response = await client.get(url, headers=headers, timeout=5.0)
+            if response.status_code == 200:
+                return True  # target identity was proven from the launchd service before restart
+        except httpx.HTTPError:
+            pass
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+
+
+async def _other_active_voice_jobs(
+    client: httpx.AsyncClient, studio: dict, original_job_id: str,
+) -> bool | None:
+    """Return whether restart would interrupt another job; malformed evidence is unsafe."""
+    from .peers import studio_request
+
+    url, headers = studio_request(studio, "/api/generate/jobs")
+    try:
+        response = await client.get(url, headers=headers, timeout=15.0)
+        payload = response.json() if response.status_code == 200 else None
+    except (httpx.HTTPError, ValueError):
+        return None
+    jobs = payload.get("jobs") if isinstance(payload, dict) else None
+    known = {"queued", "running", "cancel_requested", "done", "error", "cancelled", "uncertain"}
+    if not isinstance(jobs, list):
+        return None
+    for job in jobs:
+        if not isinstance(job, dict) or not isinstance(job.get("id"), str) or not job["id"]:
+            return None
+        if job.get("state") not in known:
+            return None
+        if job["id"] != original_job_id:
+            if job["state"] == "uncertain":
+                return None
+            if job["state"] in {"queued", "running", "cancel_requested"}:
+                return True
+    return False
+
+
+async def _recover_voice_item(
+    batch: dict, item: dict, studio: dict, force: bool, client: httpx.AsyncClient,
+) -> dict:
+    """Drain, cancel, and reconcile one Voice job; force permits its exact service restart."""
+    if studio.get("machine", "local") != "local":
+        _save_voice_recovery(batch, item, "manual_action_required", "This Voice job belongs to another Mac and needs recovery on that Mac.")
+        return {"ok": False, "forced": False, "recovery": item["recovery"]}
+
+    studio_id = studio["id"]
+    prior_maintenance = broker.in_maintenance(studio_id)
+    keep_maintenance = prior_maintenance
+    broker.set_maintenance(studio_id, True)
+    try:
+        _save_voice_recovery(batch, item, "draining", "New work is paused while the original Voice job is reconciled.")
+        state = await _reconcile_voice_recovery_job(client, batch, item, studio)
+        if state in {"done", "error", "cancelled"}:
+            return {"ok": True, "forced": False, "state": state, "recovery": item["recovery"]}
+
+        signalled = await broker._signal_worker_cancel(client, item)
+        _save_voice_recovery(batch, item, "cancel_requested", "Cancellation requested for the original Voice Studio job." if signalled else "Voice Studio cancellation could not be confirmed; the original job remains uncertain.")
+        if VOICE_RECOVERY_GRACE_S:
+            await asyncio.sleep(VOICE_RECOVERY_GRACE_S)
+        state = await _reconcile_voice_recovery_job(client, batch, item, studio)
+        if state in {"done", "error", "cancelled"}:
+            return {"ok": True, "forced": False, "state": state, "recovery": item["recovery"]}
+        if not force:
+            _save_voice_recovery(batch, item, "manual_action_required", "The original Voice Studio job was not verified final. Choose the explicit service restart action to continue recovery.")
+            return {"ok": False, "forced": False, "recovery": item["recovery"]}
+
+        if _managed_local_voice_service(studio) is None:
+            _save_voice_recovery(batch, item, "manual_action_required", "The registered Voice target is not the installed local launchd service; it was not restarted.")
+            return {"ok": False, "forced": True, "recovery": item["recovery"]}
+        other_active = await _other_active_voice_jobs(client, studio, str(item["studio_job_id"]))
+        if other_active is not False:
+            _save_voice_recovery(batch, item, "manual_action_required", "Voice Studio has another active job; its service was not restarted." if other_active else "Voice Studio job activity could not be verified; its service was not restarted.")
+            return {"ok": False, "forced": True, "recovery": item["recovery"]}
+
+        _save_voice_recovery(batch, item, "restart_requested", "Restarting the locally managed Voice Studio service by explicit operator choice.")
+        keep_maintenance = True  # cancellation during restart must leave this service drained
+        try:
+            await asyncio.to_thread(startup_services.restart_voice_service)
+        except ValueError as exc:
+            keep_maintenance = True
+            _save_voice_recovery(batch, item, "manual_action_required", str(exc))
+            return {"ok": False, "forced": True, "recovery": item["recovery"]}
+        _save_voice_recovery(batch, item, "health_wait", "Waiting for the restarted Voice Studio service to become healthy.")
+        if not await _wait_voice_recovery_health(client, studio):
+            _save_voice_recovery(batch, item, "manual_action_required", "Voice Studio did not become healthy after the requested restart.")
+            return {"ok": False, "forced": True, "recovery": item["recovery"]}
+        keep_maintenance = prior_maintenance
+        state = await _reconcile_voice_recovery_job(client, batch, item, studio)
+        if state in {"done", "error", "cancelled"}:
+            return {"ok": True, "forced": True, "state": state, "recovery": item["recovery"]}
+        _save_voice_recovery(batch, item, "manual_action_required", "Voice Studio is healthy, but the original job is not a verified final result.")
+        return {"ok": False, "forced": True, "recovery": item["recovery"]}
+    finally:
+        if not keep_maintenance:
+            broker.set_maintenance(studio_id, False)
+
+
+@app.post("/api/hub/jobs/{batch_id}/items/{item_index}/voice-recovery")
+async def hub_recover_voice_job(batch_id: str, item_index: int, body: VoiceRecoveryBody):
+    try:
+        batch, item = broker.voice_recovery_item(batch_id, item_index)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    recovery_keys = {
+        ("item", f"{batch_id}:{item_index}"),
+        ("service", str(item["studio"])),
+    }
+    with _voice_recovery_guard:
+        if _voice_recovery_inflight.intersection(recovery_keys):
+            raise HTTPException(409, "Voice recovery is already in progress for this item or service")
+        _voice_recovery_inflight.update(recovery_keys)
+    try:
+        studio = next((row for row in monitor.registry if row.get("id") == item.get("studio")), None)
+        if studio is None:
+            _save_voice_recovery(batch, item, "manual_action_required", "The original Voice Studio is no longer registered; manual action is required.")
+            raise HTTPException(409, "original Voice Studio is no longer registered")
+        if item.get("state") in {"running", "cancel_requested"}:
+            item["state"] = "uncertain"  # stop the normal poller before reconciliation
+            item["retry_at"] = None
+            _save_voice_recovery(batch, item, "draining", "Recovery now owns the accepted Voice Studio job.")
+        async with httpx.AsyncClient() as client:
+            return await _recover_voice_item(batch, item, studio, body.force, client)
+    finally:
+        with _voice_recovery_guard:
+            _voice_recovery_inflight.difference_update(recovery_keys)
+
+
 @app.post("/api/hub/jobs/{batch_id}/items/{item_index}/ack")
 async def hub_ack_job_artifact(batch_id: str, item_index: int):
     """Start worker retention only after the main machine verifies receipt."""
@@ -2290,7 +2499,8 @@ def hub_clear_finished_batch(batch_id: str):
     b = broker.batches.get(batch_id) or ledger.load_batch(batch_id)
     if not b:
         raise HTTPException(404, "unknown batch")
-    if any(it.get("state") in ("queued", "running") for it in b.get("items", [])):
+    if any(it.get("state") in ("queued", "running", "cancel_requested", "uncertain")
+           for it in b.get("items", [])):
         raise HTTPException(409, "cancel the active batch before clearing it")
     result = broker.clear_finished_batches(batch_id=batch_id)
     return {"ok": True, **result,

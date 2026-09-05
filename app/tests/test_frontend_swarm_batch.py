@@ -122,3 +122,16 @@ def test_image_resource_evidence_is_visible_in_generation_details():
     assert "lowest free 1.50 GB" in rendered
     assert "pressure warn" in rendered
     assert "MLX peak 4.75 GB" in rendered
+
+
+def test_voice_uncertainty_stays_visible_with_explicit_recovery_actions():
+    source = _source()
+
+    assert 'function recoverVoiceItem(batchId, itemIndex, force)' in source
+    assert '/voice-recovery' in source
+    assert 'i.state === "uncertain"' in source
+    assert 'Restart Voice service' in source
+    assert 'Stop and reconcile' in source
+    assert '(b.cancel_requested || 0)' in source
+    assert 'b.uncertain' in source
+    assert 'const status = $("#voice-job-action-status");' in source

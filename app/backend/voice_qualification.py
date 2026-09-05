@@ -611,7 +611,7 @@ async def _preflight(monitor, request: dict[str, Any], client: httpx.AsyncClient
         jobs = None
     if not isinstance(jobs, list):
         raise QualificationError("WORKER_IDLE_UNKNOWN", "The selected Voice Studio did not provide a safe idle-job snapshot.")
-    if any(str(item.get("state") or "").lower() in {"queued", "running"}
+    if any(str(item.get("state") or "").lower() in {"queued", "running", "cancel_requested", "uncertain"}
            for item in jobs if isinstance(item, dict)):
         raise QualificationError("WORKER_NOT_IDLE", "The selected Voice Studio has active generation work.")
 
@@ -918,7 +918,7 @@ async def poll(monitor, attempt_id: str, client: httpx.AsyncClient) -> dict[str,
     worker_started_at = _safe_number(job.get("started_at"))
     if worker_started_at is not None:
         attempt["worker_started_at"] = worker_started_at
-    if state in {"queued", "running"}:
+    if state in {"queued", "running", "cancel_requested"}:
         target_seconds = _safe_number(attempt.get("target_audio_duration_seconds"))
         execution_started_at = _safe_number(attempt.get("worker_started_at"))
         if execution_started_at is None and state == "running":

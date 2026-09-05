@@ -1234,6 +1234,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.20.0", date: "2026-09-05", items: [
+    "<b>Voice recovery now preserves accepted work.</b> If Studio Hub restarts while Voice Studio work is active, the original worker identity becomes an actionable uncertainty instead of being submitted a second time.",
+    "Jobs can reconcile that exact worker job and request its normal stop. Restart Voice service is an explicit operator choice: it pauses new Voice work, refuses if another active job cannot be ruled out, waits for the managed service to become healthy, and adopts only a verified final result from the original job.",
+    "A missing identity, restart failure, or health timeout stays visible for manual action. No job is auto-resubmitted and no worker or fleet machine changes automatically.",
+  ]},
   { v: "2.19.6", date: "2026-09-05", items: [
     "<b>Fixed:</b> remote Studio work now requires a fresh peer-Hub snapshot that is reachable, authenticated, and connected.",
     "Missing, stale, disconnected, and token-rejected peers stay visible for diagnosis but cannot receive new work. A remote HTTP 401 stays quarantined until a protected Studio proxy check succeeds; resource-only replies cannot restore dispatch.",
@@ -3655,7 +3660,7 @@ function renderGenerationBatches(modality) {
   const { rows: list, pages, total } = pageSlice(modality, sorted);
   el.innerHTML = (total ? pagerHTML(modality, total, pages) : "") + list.map(b => {
     const pct = b.total ? Math.round(100 * (b.done + b.error + b.cancelled_items) / b.total) : 0;
-    const active = b.queued + (b.retrying || 0) + b.running > 0;
+    const active = b.queued + (b.retrying || 0) + b.running + (b.cancel_requested || 0) + (b.uncertain || 0) > 0;
     const runs = (b.running_items || []).map(ri => {
       const mlab = mlabel(ri.machine);
       // a studio only counts as reporting real progress when it's > 0 — many
@@ -3674,7 +3679,7 @@ function renderGenerationBatches(modality) {
     }).join("");
     return `<div class="card section">
       <div class="top"><h3 style="font-size:13.5px">${esc(b.modality)} · ${esc(b.model)}</h3>
-        <span class="sub" style="margin-left:auto">${b.done}/${b.total} done${b.error ? ` · ${b.error} failed` : ""}${b.running ? ` · ${b.running} running` : ""}${b.retrying ? ` · ${b.retrying} retrying` : ""}</span>
+        <span class="sub" style="margin-left:auto">${b.done}/${b.total} done${b.error ? ` · ${b.error} failed` : ""}${b.uncertain ? ` · ${b.uncertain} needs recovery` : ""}${b.cancel_requested ? ` · ${b.cancel_requested} stopping` : ""}${b.running ? ` · ${b.running} running` : ""}${b.retrying ? ` · ${b.retrying} retrying` : ""}</span>
         ${active ? `<button class="btn stop" style="margin-left:10px" onclick="cancelBatch('${jsq(b.id)}')">${b.cancelled ? "Retry stop" : "Cancel"}</button>` : `<button class="btn" style="margin-left:10px" onclick="clearGenerationBatch('${jsq(b.id)}')">Clear</button>`}</div>
       <div class="prog"><i style="width:${pct}%"></i></div>
       ${runs ? `<div class="runs">${runs}</div>` : ""}
@@ -3706,11 +3711,14 @@ async function loadGenerationItems(details, batchId) {
   </tr></thead><tbody>${data.items.map(i => {
     const machine = i.studio && i.studio.includes("@") ? i.studio.split("@")[1] : (i.studio || "—");
     const retrying = i.state === "queued" && i.retry_at && i.retry_at > Date.now() / 1000;
+    const recovery = i.recovery && i.state === "uncertain" ? `<br><span class="sub">${esc(i.recovery.reason || "Recovery needs attention.")}</span>` : "";
+    const recoveryActions = data.modality === "voice" && i.state === "uncertain"
+      ? `<br><button class="btn" onclick="recoverVoiceItem('${jsq(batchId)}',${Number(i.index)},false)">Stop and reconcile</button> <button class="btn stop" onclick="recoverVoiceItem('${jsq(batchId)}',${Number(i.index)},true)">Restart Voice service</button>` : "";
     return `<tr><td>${i.index + 1}</td><td>${esc(i.prompt || "")}</td>
       <td>${txStatePill(retrying ? "retrying" : i.state)}${retrying ? `<br><span class="sub">in ${fmtDur(i.retry_at - Date.now() / 1000)}</span>` : ""}</td><td class="num">${i.tries || 0}/3</td>
       <td>${esc(mlabel(machine))}</td><td class="num">${fmtDur(i.duration_s)}</td>
       <td class="sub">${resourceUsageHTML(i.resource_usage)}</td>
-      <td class="tx-error">${esc(i.error || "—")}</td></tr>`;
+      <td class="tx-error">${esc(i.error || "—")}${recovery}${recoveryActions}</td></tr>`;
   }).join("")}</tbody></table></div>`;
   if (data.items.every(i => ["done", "error", "cancelled"].includes(i.state))) {
     generationItemCache.set(batchId, html);
@@ -3720,6 +3728,19 @@ async function loadGenerationItems(details, batchId) {
   // The card may have been redrawn while the request was in flight. Only
   // write into the current element when it is still the same open detail.
   if (details.open) body.innerHTML = html;
+}
+async function recoverVoiceItem(batchId, itemIndex, force) {
+  if (force && !confirm("Restart the locally managed Voice Studio service after requesting cancellation of this exact job? Other active Voice jobs block the restart.")) return;
+  const response = await api(`/api/hub/jobs/${encodeURIComponent(batchId)}/items/${itemIndex}/voice-recovery`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ force }),
+  });
+  const result = await response.json().catch(() => ({}));
+  const status = $("#voice-job-action-status");
+  if (status) status.textContent = response.ok
+    ? (result.ok ? "Voice recovery reconciled the original job." : (result.recovery?.reason || "Voice recovery needs manual action."))
+    : (result.detail || "Voice recovery could not start.");
+  generationItemCache.delete(batchId);
+  loadBatches();
 }
 async function loadBatches() {
   const [r, tx, chat] = await Promise.all([
