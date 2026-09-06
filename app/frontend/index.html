@@ -1234,6 +1234,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.20.2", date: "2026-09-06", items: [
+    "<b>Jobs listing can be narrowed.</b> <code>GET /api/hub/jobs</code> accepts <code>active=true</code> and <code>limit=N</code>; together they return every unfinished batch plus the newest finished ones up to N. Callers that pass nothing still get the full history.",
+    "Why: a busy controller's full listing was 24,920 batches (14 MB) and the GenStudio fleet page pulled it from every location every 20 seconds just to count queued and running work.",
+  ]},
   { v: "2.20.1", date: "2026-09-06", items: [
     "<b>Update after current work now stops safely at its deadline.</b> If accepted work is still running, Studio Hub defers the update and gives back only the workers it withdrew; it never starts an install over that work.",
     "The result identifies the remaining work and asks you to retry after it finishes. No automatic retry, cancellation, or restart is added, and explicit Update now behavior is unchanged.",

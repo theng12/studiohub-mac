@@ -1328,6 +1328,46 @@ def test_jobs_submit_list_get_cancel(authed):
     assert authed.get("/api/hub/jobs/does-not-exist").status_code == 404
 
 
+def test_jobs_list_can_be_narrowed_to_active_work_and_capped(authed):
+    """The fleet dashboard polls this every 20 s; the whole retention window is not an answer.
+
+    ``active=true`` keeps every unfinished batch, ``limit`` caps the newest-first
+    list, and together they return the unfinished batches plus the newest
+    finished ones up to the cap. No parameters means the full history, as before.
+    """
+    from backend import broker, ledger
+    for index, created in enumerate((10.0, 20.0, 30.0)):
+        ledger.save_batch({
+            "id": f"finished-{index}", "created_at": created, "modality": "image",
+            "model": "org/model", "cancelled": False,
+            "items": [{"index": 0, "state": "done", "tries": 1, "finished_at": created + 1}],
+        })
+        broker.batches.pop(f"finished-{index}", None)
+    r = authed.post("/api/hub/jobs", json={"modality": "image", "model": "a/b",
+                                           "items": [{"prompt": "still queued"}]})
+    live = r.json()["batch_id"]
+    try:
+        everything = authed.get("/api/hub/jobs").json()["batches"]
+        assert {b["id"] for b in everything} >= {live, "finished-0", "finished-1", "finished-2"}
+
+        active_only = authed.get("/api/hub/jobs?active=true").json()["batches"]
+        assert live in {b["id"] for b in active_only}
+        assert not any(b["id"].startswith("finished-") for b in active_only)
+
+        newest_two = authed.get("/api/hub/jobs?limit=2").json()["batches"]
+        assert len(newest_two) == 2
+        assert newest_two[0]["created_at"] >= newest_two[1]["created_at"]
+
+        combined = authed.get("/api/hub/jobs?active=true&limit=2").json()["batches"]
+        assert [b["id"] for b in combined][0] == live
+        assert len(combined) == 2 and combined[1]["id"] == "finished-2"
+    finally:
+        authed.request("DELETE", f"/api/hub/jobs/{live}")
+        authed.post(f"/api/hub/jobs/{live}/clear")
+        for index in range(3):
+            authed.post(f"/api/hub/jobs/finished-{index}/clear")
+
+
 def test_finished_jobs_remain_in_list_after_broker_memory_is_cleared(authed):
     from backend import broker, ledger
 
