@@ -2152,15 +2152,40 @@ def hub_submit_jobs(envelope: dict):
 
 
 @app.get("/api/hub/jobs")
-def hub_list_jobs():
+def hub_list_jobs(active: bool = False, limit: int | None = None):
     # Finished batches leave broker memory after a restart, but remain in the
     # SQLite ledger until the operator clears them.  Merge both sources so the
     # Jobs workspace is a durable history instead of a process-lifetime view.
+    #
+    # Without parameters this is the whole retention window, which on a busy
+    # controller is tens of thousands of summaries (14 MB on 2026-09-06) --
+    # far too much for a fleet dashboard that polls every 20 seconds only to
+    # count queued and running work.  ``active=true`` keeps every unfinished
+    # batch; ``limit=N`` caps the newest-first list.  Together they return every
+    # unfinished batch plus the newest finished ones up to N in total, so a
+    # stalled batch is never hidden behind recent history.  Old callers that
+    # pass nothing get exactly what they always did.
     batches = {batch["id"]: batch for batch in ledger.load_finished_batches()}
     batches.update({batch["id"]: batch for batch in broker.batches.values()})
-    return {"batches": [broker.batch_summary(batch)
-                        for batch in sorted(batches.values(),
-                                            key=lambda row: -row["created_at"])]}
+    summaries = [broker.batch_summary(batch)
+                 for batch in sorted(batches.values(),
+                                     key=lambda row: -row["created_at"])]
+    if active:
+        # The same notion of "still has work" that batch_summary uses for its
+        # stall clock: anything queued, retrying, running, being cancelled or
+        # uncertain. A batch whose every item is done, errored or cancelled is
+        # history, whether or not the ledger stamped a batch-level finished_at.
+        def _has_work(summary: dict) -> bool:
+            return any(summary.get(key, 0) for key in
+                       ("queued", "retrying", "running", "cancel_requested", "uncertain"))
+        unfinished = [s for s in summaries if _has_work(s)]
+        if limit is not None and limit >= 0:
+            finished = [s for s in summaries if not _has_work(s)]
+            unfinished += finished[:max(0, limit - len(unfinished))]
+        summaries = unfinished
+    elif limit is not None and limit >= 0:
+        summaries = summaries[:limit]
+    return {"batches": summaries}
 
 
 @app.get("/api/hub/jobs/{batch_id}")

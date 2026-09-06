@@ -10,6 +10,20 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.20.2] — 2026-09-06
+
+### Changed — the jobs listing can be narrowed
+
+- `GET /api/hub/jobs` accepts `active=true` (only unfinished batches) and
+  `limit=N` (newest first). Together they return every unfinished batch plus
+  the newest finished ones up to N in total, so stalled work is never hidden
+  behind history. Callers that pass nothing still receive the whole retention
+  window, exactly as before.
+- Why: on a busy controller the full listing was 24,920 summaries (14 MB), and
+  the GenStudio fleet page pulls it from every location every 20 seconds only
+  to count queued and running work. The page stalled for the full 15-second
+  read timeout on each rendering location.
+
 ## [2.20.1] — 2026-09-06
 
 ### Fixed — safe deadline for Update after current work
