@@ -10,6 +10,26 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.20.3] — 2026-09-07
+
+### Fixed — busy machines are re-offered, not backed off
+
+- A fleet Mac that answers a managed update with HTTP 409 because its Studio
+  still has active work is now retried every 60 seconds instead of climbing the
+  failure backoff ladder (60s → 5m → 15m → 1h → 4h → 24h). Busy is a wait, not
+  a failure. Genuine failures — offline, authentication rejected, and update
+  failures — keep the exact ladder they had.
+- Re-arming an active release now re-offers its outstanding machines at once.
+  Replaying `POST /api/hub/maintenance/release-intent/{release_id}/activate` on
+  a degraded job makes every retryable component (and a retryable catalog row)
+  due immediately, so the adopted job runs again instead of returning unchanged.
+  Adoption is otherwise untouched: same job id, no duplicate job, and a replay
+  carrying a different GenStudio run reference is still rejected.
+- Why: on 2026-09-07 six machines were rendering throughout a release run. Each
+  one exhausted the ladder while busy, settled at a retry roughly 24 hours out,
+  and the site's re-arm adopted the finished job and changed nothing — even
+  though the machines went idle minutes later.
+
 ## [2.20.2] — 2026-09-06
 
 ### Changed — the jobs listing can be narrowed

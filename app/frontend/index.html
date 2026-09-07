@@ -1234,6 +1234,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.20.3", date: "2026-09-07", items: [
+    "<b>Busy machines retry every minute instead of backing off to a day.</b> A Mac that is still rendering answers a managed update with a busy reply; Studio Hub now treats that as a wait and re-offers the update after 60 seconds, every time. Genuine failures — offline, authentication rejected, update failed — keep the existing 60s → 5m → 15m → 1h → 4h → 24h backoff.",
+    "<b>A re-armed release now re-offers its outstanding machines at once.</b> Replaying the activation of a degraded release makes every waiting machine due immediately, so the same job resumes instead of reporting no change. It stays the same job with the same id, and a replay carrying a different GenStudio run reference is still refused.",
+    "Why: six machines were rendering throughout a release run, each exhausted its backoff while busy and settled on a retry about a day out, even though they went idle minutes later. No worker, fleet machine, or running job changes automatically.",
+  ]},
   { v: "2.20.2", date: "2026-09-06", items: [
     "<b>Jobs listing can be narrowed.</b> <code>GET /api/hub/jobs</code> accepts <code>active=true</code> and <code>limit=N</code>; together they return every unfinished batch plus the newest finished ones up to N. Callers that pass nothing still get the full history.",
     "Why: a busy controller's full listing was 24,920 batches (14 MB) and the GenStudio fleet page pulled it from every location every 20 seconds just to count queued and running work.",

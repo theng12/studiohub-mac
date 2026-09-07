@@ -33,6 +33,7 @@ STATE_FILE = registry.DATA_DIR / "release_reconciliation.json"
 LOCK_FILE = registry.DATA_DIR / "release_reconciliation.json.lock"
 DUE_SCAN_INTERVAL_SECONDS = 15 * 60
 RETRY_DELAYS = (60, 300, 900, 3600, 14_400, 86_400)
+BUSY_RETRY_SECONDS = 60
 ADOPTION_LEASE_SECONDS = 5 * 60
 
 _SCHEMA = "genstudio.studio-fleet-release-intent"
@@ -103,6 +104,20 @@ def retry_delay(attempt: int) -> int:
     if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
         raise ValueError("attempt must be a positive integer")
     return RETRY_DELAYS[min(attempt, len(RETRY_DELAYS)) - 1]
+
+
+def component_retry_delay(state: str, attempt: int) -> int:
+    """Return the exact next-offer delay for one retryable component state.
+
+    Busy is a wait, not a failure.  A machine that answers 409 because its
+    Studio still has active work has not failed; it has asked us to come back.
+    Escalating the failure ladder there pushes the next offer up to a day out
+    and strands a fleet that goes idle minutes later, so busy always re-offers
+    at a flat one-minute cadence.  Genuine failures keep the exact ladder.
+    """
+    if state == "pending_busy":
+        return BUSY_RETRY_SECONDS
+    return retry_delay(attempt)
 
 
 def _canonical_manifest(manifest: dict[str, Any]) -> bytes:
@@ -1315,6 +1330,32 @@ class ReleaseReconciler:
             }
         return machines
 
+    @staticmethod
+    def _reoffer_retryable(job: dict[str, Any], now: float) -> int:
+        """Pull one waiting job's outstanding retries forward to now.
+
+        GenStudio re-arms a site by replaying the activation.  A job that is
+        only waiting on backed-off rows must not answer that replay by
+        changing nothing, so every retryable component row (and a retryable
+        catalog row) becomes due immediately and the job summary is refreshed.
+        Nothing else about adoption moves: same job, same fences and leases.
+        """
+        if job["state"] not in {"degraded", "waiting_busy"}:
+            return 0
+        reoffered = 0
+        for machine in job["machines"].values():
+            for row in machine["components"].values():
+                if row["state"] in RETRYABLE_COMPONENT_STATES and row["next_retry"] > now:
+                    row["next_retry"] = now
+                    reoffered += 1
+        catalog = job["catalog"]
+        if catalog["state"] == "retryable_failure" and catalog["next_retry"] > now:
+            catalog["next_retry"] = now
+            reoffered += 1
+        if reoffered:
+            _refresh_job(job)
+        return reoffered
+
     def activate(self, release_id: str, *, genstudio_run_reference: str | None) -> dict[str, Any]:
         if not isinstance(release_id, str) or not _RELEASE_ID_RE.fullmatch(release_id):
             raise ValueError("release_id is invalid")
@@ -1332,8 +1373,13 @@ class ReleaseReconciler:
                     raise ValueError("activation replay changed GenStudio run reference")
                 activation = state["activation"]
                 if activation and activation["release_id"] == release_id:
-                    return self._find_job(state, activation["job_id"])
-                return existing
+                    adopted = self._find_job(state, activation["job_id"])
+                else:
+                    adopted = existing
+                self._reoffer_retryable(
+                    adopted, _finite_time(self._clock(), "activation replay time"),
+                )
+                return adopted
             now = _finite_time(self._clock(), "activated_at")
             job = {
                 "id": job_id,
@@ -1580,7 +1626,9 @@ class ReleaseReconciler:
             )
             if state in RETRYABLE_COMPONENT_STATES:
                 row["attempt"] += 1
-                row["next_retry"] = validated_retry or now + retry_delay(row["attempt"])
+                row["next_retry"] = validated_retry or now + component_retry_delay(
+                    state, row["attempt"],
+                )
             else:
                 row["next_retry"] = None
             if _clean_failure:
