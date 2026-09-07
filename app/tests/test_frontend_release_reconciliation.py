@@ -111,3 +111,11 @@ def test_managed_release_polling_is_bounded_and_replaces_existing_timer():
     }
     assert "scheduleManagedReleasePoll(active" in source
     assert "scheduleManagedReleasePoll(MANAGED_RELEASE_ERROR_POLL_MS)" in source
+
+
+def test_component_failure_note_is_shown_escaped_under_the_status():
+    source = FRONTEND.read_text()
+
+    assert 'row.failure_note ? `<span class="sub managed-release-note-line">' in source
+    assert "${esc(row.failure_note)}" in source
+    assert ".managed-release-note-line{display:block" in source

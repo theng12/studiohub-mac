@@ -482,18 +482,22 @@ async def _run_managed_hub_update(
             target_version=target["version"],
             operation_id=operation_id,
         )
-    except (UpdateError, ValueError, OSError):
+    except (UpdateError, ValueError, OSError) as exc:
         failure_code = managed_failure_code(auto_updater.public_status())
         return {
             "component": "hub",
             "state": "retryable_failure",
             "error_code": failure_code or "update_refused",
+            "failure_note": f"{type(exc).__name__}: {exc}",
         }
     if not isinstance(result, dict) or result.get("state") == "failed":
+        details = result.get("details") if isinstance(result, dict) else None
+        note = "; ".join(str(item) for item in details) if isinstance(details, list) and details else None
         return {
             "component": "hub",
             "state": "retryable_failure",
             "error_code": managed_failure_code(result) or "update_refused",
+            "failure_note": note,
         }
     return {"component": "hub", "state": "restarting"}
 

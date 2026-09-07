@@ -91,6 +91,61 @@ _DEFAULT_ERROR_CODES = {
     "release_blocked": "health_mismatch",
 }
 
+# States that may carry the informational note.  Busy is a wait, not a failure,
+# so it never carries one.
+_FAILURE_NOTE_STATES = {
+    "pending_offline", "retryable_failure", "auth_blocked", "release_blocked",
+}
+FAILURE_NOTE_LIMIT = 160
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _failure_note(value: object) -> str | None:
+    """Bound one updater-authored message for display only.
+
+    The note is informational: it is never parsed, never branched on, and never
+    becomes release-block evidence.  The closed ``error_code`` set remains the
+    only machine-readable failure signal.  Anything that is not a usable string
+    collapses to ``None``.
+    """
+    if not isinstance(value, str):
+        return None
+    text = _CONTROL_CHARS_RE.sub(" ", value)
+    text = "".join(char for char in text if char.isprintable())
+    return " ".join(text.split())[:FAILURE_NOTE_LIMIT] or None
+
+
+def _exception_note(exc: BaseException) -> str | None:
+    """Preserve the exact local reason a managed update failed, for display."""
+    return _failure_note(f"{type(exc).__name__}: {exc}")
+
+
+def _migrate_component_rows(value: object) -> object:
+    """Tolerate durable rows written before ``failure_note`` existed."""
+    if not isinstance(value, dict):
+        return value
+    jobs = value.get("jobs")
+    if not isinstance(jobs, dict):
+        return value
+    for job in jobs.values():
+        if not isinstance(job, dict):
+            continue
+        containers = [job.get("components")]
+        machines = job.get("machines")
+        if isinstance(machines, dict):
+            containers.extend(
+                machine.get("components")
+                for machine in machines.values()
+                if isinstance(machine, dict)
+            )
+        for components in containers:
+            if not isinstance(components, dict):
+                continue
+            for row in components.values():
+                if isinstance(row, dict):
+                    row.setdefault("failure_note", None)
+    return value
+
 _PATH_LOCKS: dict[str, threading.RLock] = {}
 _PATH_OWNERS: dict[str, str] = {}
 _PATH_LOCKS_GUARD = threading.Lock()
@@ -346,7 +401,8 @@ def _validate_agent_state(value: object) -> dict[str, Any]:
             raise ValueError("managed child components are invalid")
         for name, row in job["components"].items():
             row_fields = {"component", "installed", "state", "observed_version",
-                          "observed_commit", "observed_release_id", "error_code"}
+                          "observed_commit", "observed_release_id", "error_code",
+                          "failure_note"}
             if not isinstance(row, dict) or set(row) != row_fields or row["component"] != name:
                 raise ValueError("managed child component row is invalid")
             if not isinstance(row["installed"], bool) or row["state"] not in COMPONENT_STATES:
@@ -357,6 +413,9 @@ def _validate_agent_state(value: object) -> dict[str, Any]:
                 raise ValueError("installed managed child component is not_installed")
             if row["error_code"] is not None and row["error_code"] not in _ERROR_DETAILS:
                 raise ValueError("managed child error code is invalid")
+            note = row["failure_note"]
+            if note is not None and (not isinstance(note, str) or note != _failure_note(note)):
+                raise ValueError("managed child failure note is invalid")
             if row["state"] in RETRYABLE_COMPONENT_STATES | {"release_blocked"}:
                 if row["error_code"] is None:
                     raise ValueError("managed child error state lacks an error code")
@@ -516,6 +575,7 @@ def _validate_component(row: object, *, installed_target: dict[str, Any] | None 
     fields = {
         "installed", "expected_version", "expected_commit", "observed_version",
         "observed_commit", "state", "attempt", "error_code", "detail", "next_retry",
+        "failure_note",
     }
     if not isinstance(row, dict) or set(row) != fields:
         raise ValueError("component row fields are invalid")
@@ -556,6 +616,9 @@ def _validate_component(row: object, *, installed_target: dict[str, Any] | None 
     expected_detail = _ERROR_DETAILS.get(code) if code else None
     if row["detail"] != expected_detail:
         raise ValueError("component error detail is invalid")
+    note = row["failure_note"]
+    if note is not None and (not isinstance(note, str) or note != _failure_note(note)):
+        raise ValueError("component failure note is invalid")
     retry_at = _finite_time(row["next_retry"], "component next_retry", allow_none=True)
     if row["state"] in RETRYABLE_COMPONENT_STATES:
         if retry_at is None or code is None:
@@ -1078,7 +1141,7 @@ class ReleaseReconciler:
             )
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             raise ValueError("durable release reconciliation state is invalid") from exc
-        return _validate_state(value)
+        return _validate_state(_migrate_component_rows(value))
 
     def _load_agent_disk(self) -> dict[str, Any]:
         if not self.agent_state_path.exists():
@@ -1092,7 +1155,7 @@ class ReleaseReconciler:
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             raise ValueError("durable managed child state is invalid") from exc
         try:
-            return _validate_agent_state(value)
+            return _validate_agent_state(_migrate_component_rows(value))
         except ValueError as exc:
             raise ValueError("durable managed child state is invalid") from exc
 
@@ -1316,6 +1379,7 @@ class ReleaseReconciler:
                     "error_code": None,
                     "detail": None,
                     "next_retry": None,
+                    "failure_note": None,
                 }
             machines[machine] = {
                 "id": machine,
@@ -1562,6 +1626,7 @@ class ReleaseReconciler:
         observed_version: str | None = None,
         observed_commit: str | None = None,
         error_code: str | None = None,
+        failure_note: str | None = None,
         next_retry: float | None = None,
         fence: int | None = None,
         _clean_failure: bool = False,
@@ -1584,6 +1649,9 @@ class ReleaseReconciler:
             raise ValueError("error code is invalid")
         if error_code is not None and state not in RETRYABLE_COMPONENT_STATES | {"release_blocked"}:
             raise ValueError("error code is invalid for this component state")
+        if failure_note is not None and not isinstance(failure_note, str):
+            raise ValueError("failure note must be a string")
+        note = _failure_note(failure_note) if state in _FAILURE_NOTE_STATES else None
         if _clean_failure and (
             state not in RETRYABLE_COMPONENT_STATES
             or error_code != "clean_checkout_health_failure"
@@ -1623,6 +1691,7 @@ class ReleaseReconciler:
                 observed_commit=observed_commit,
                 error_code=code,
                 detail=_ERROR_DETAILS.get(code) if code else None,
+                failure_note=note,
             )
             if state in RETRYABLE_COMPONENT_STATES:
                 row["attempt"] += 1
@@ -1927,6 +1996,7 @@ class ReleaseReconciler:
                     "observed_commit": None,
                     "observed_release_id": None,
                     "error_code": None,
+                    "failure_note": None,
                 }
             state["jobs"][job_id] = {
                 "id": job_id,
@@ -1963,6 +2033,7 @@ class ReleaseReconciler:
             raise ValueError("managed child component result is invalid")
         state_name = _result_state(result)
         error_code = _result_error_code(result, state_name)
+        note = _failure_note(result.get("failure_note") or result.get("detail"))
 
         def mutate(state: dict[str, Any]) -> None:
             try:
@@ -2037,6 +2108,7 @@ class ReleaseReconciler:
                     observed_release if state == "release_blocked" and manifest_mismatch else None
                 ),
                 error_code=code,
+                failure_note=note if state in _FAILURE_NOTE_STATES else None,
             )
             rows = list(job["components"].values())
             now = _finite_time(self._clock(), "managed child result time")
@@ -2158,9 +2230,10 @@ class ReleaseReconciler:
                     result = await self._await(self._hub_runner(target, operation_id))
                 except LeaseLostError:
                     raise
-                except Exception:
+                except Exception as exc:
                     result = {"component": "hub", "state": "retryable_failure",
-                              "error_code": "unknown_failure"}
+                              "error_code": "unknown_failure",
+                              "failure_note": _exception_note(exc)}
                 if not isinstance(result, dict):
                     result = {"component": "hub", "state": "retryable_failure",
                               "error_code": "invalid_evidence"}
@@ -2180,6 +2253,7 @@ class ReleaseReconciler:
                               if studio.get("machine", "local") == "local"]
             local_monitor = type("AgentManagedMonitor", (), {"registry": local_registry})()
             self._assert_agent_fence(job_id, fence)
+            runner_note = None
             try:
                 results = await self._await(self._component_runner(
                     local_monitor,
@@ -2188,8 +2262,9 @@ class ReleaseReconciler:
                 ))
             except LeaseLostError:
                 raise
-            except Exception:
+            except Exception as exc:
                 results = []
+                runner_note = _exception_note(exc)
             self._assert_agent_fence(job_id, fence)
             seen = set()
             for result in results if isinstance(results, list) else []:
@@ -2204,6 +2279,7 @@ class ReleaseReconciler:
                     "component": component,
                     "state": "retryable_failure",
                     "error_code": "invalid_evidence",
+                    "failure_note": runner_note,
                 }, fence=fence)
         return self.managed_update_snapshot(job_id)
 
@@ -2399,13 +2475,19 @@ class ReleaseReconciler:
                     if fence_guard is not None:
                         fence_guard()
                 except httpx.HTTPStatusError as exc:
-                    if exc.response.status_code in {401, 403}:
-                        return {"state": "auth_blocked", "error_code": "auth_rejected"}
-                    if exc.response.status_code == 409:
+                    code = exc.response.status_code
+                    note = f"agent refused the managed update (HTTP {code})"
+                    if code in {401, 403}:
+                        return {"state": "auth_blocked", "error_code": "auth_rejected",
+                                "failure_note": note}
+                    if code == 409:
                         return {"state": "pending_busy", "error_code": "busy"}
-                    return {"state": "retryable_failure", "error_code": "update_refused"}
+                    return {"state": "retryable_failure", "error_code": "update_refused",
+                            "failure_note": note}
             if not admitted_ok or child_id is None:
-                return {"state": "pending_offline", "error_code": "transport_unavailable"}
+                return {"state": "pending_offline",
+                        "error_code": "transport_unavailable",
+                        "failure_note": "agent did not accept the managed update before the deadline"}
             while time.monotonic() < deadline:
                 try:
                     if fence_guard is not None:
@@ -2432,11 +2514,13 @@ class ReleaseReconciler:
                 except (httpx.TransportError, httpx.TimeoutException):
                     pass
                 except httpx.HTTPStatusError as exc:
-                    if exc.response.status_code in {401, 403}:
+                    code = exc.response.status_code
+                    note = f"agent snapshot read failed (HTTP {code})"
+                    if code in {401, 403}:
                         return {"job_id": child_id, "state": "auth_blocked",
-                                "error_code": "auth_rejected"}
+                                "error_code": "auth_rejected", "failure_note": note}
                     return {"job_id": child_id, "state": "retryable_failure",
-                            "error_code": "update_refused"}
+                            "error_code": "update_refused", "failure_note": note}
                 await asyncio.sleep(self._poll_seconds)
                 if fence_guard is not None:
                     fence_guard()
@@ -2444,6 +2528,7 @@ class ReleaseReconciler:
             "job_id": child_id,
             "state": "pending_offline",
             "error_code": "transport_unavailable",
+            "failure_note": "agent did not report a terminal result before the deadline",
         }
 
     @staticmethod
@@ -2549,6 +2634,7 @@ class ReleaseReconciler:
             return False
         state = _result_state(result)
         error_code = _result_error_code(result, state)
+        note = _failure_note(result.get("failure_note") or result.get("detail"))
         observed_version = (result.get("observed_version") or result.get("target_version")
                             or result.get("to_version"))
         observed_commit = result.get("observed_commit") or result.get("target_commit")
@@ -2601,6 +2687,7 @@ class ReleaseReconciler:
             )
         elif state in RETRYABLE_COMPONENT_STATES:
             kwargs["error_code"] = error_code
+        kwargs["failure_note"] = note
         clean_failure = (
             state in RETRYABLE_COMPONENT_STATES
             and error_code == "clean_checkout_health_failure"
@@ -2613,13 +2700,14 @@ class ReleaseReconciler:
 
     def _mark_machine_pending(
         self, job_id: str, machine: str, state: str, error_code: str, *, fence: int,
+        failure_note: str | None = None,
     ) -> None:
         job = self.job_snapshot(job_id)
         for component, row in job["machines"][machine]["components"].items():
             if row["installed"] and row["state"] != "current":
                 self.record_component(
                     job_id, machine, component, state=state, error_code=error_code,
-                    fence=fence,
+                    failure_note=failure_note, fence=fence,
                 )
 
     def _exclude_machine_if_disabled(
@@ -2645,6 +2733,7 @@ class ReleaseReconciler:
                         error_code=None,
                         detail=None,
                         next_retry=None,
+                        failure_note=None,
                     )
             machine_row["state"] = _machine_summary(machine_row)
             _refresh_job(job)
@@ -2705,19 +2794,22 @@ class ReleaseReconciler:
                 self._assert_site_fence(job_id, fence)
         except LeaseLostError:
             raise
-        except (httpx.TransportError, httpx.TimeoutException):
+        except (httpx.TransportError, httpx.TimeoutException) as exc:
             self._mark_machine_pending(
                 job_id, machine, "pending_offline", "transport_unavailable", fence=fence,
+                failure_note=_exception_note(exc),
             )
             return False
-        except ValueError:
+        except ValueError as exc:
             self._mark_machine_pending(
                 job_id, machine, "retryable_failure", "invalid_evidence", fence=fence,
+                failure_note=_exception_note(exc),
             )
             return False
-        except Exception:
+        except Exception as exc:
             self._mark_machine_pending(
                 job_id, machine, "retryable_failure", "unknown_failure", fence=fence,
+                failure_note=_exception_note(exc),
             )
             return False
         if not isinstance(result, dict):
@@ -2725,6 +2817,7 @@ class ReleaseReconciler:
                 job_id, machine, "retryable_failure", "invalid_evidence", fence=fence,
             )
             return False
+        remote_note = _failure_note(result.get("failure_note") or result.get("detail"))
         child_id = result.get("job_id")
         if child_id is not None:
             self.persist_remote_job(job_id, machine, child_id, fence=fence)
@@ -2743,11 +2836,12 @@ class ReleaseReconciler:
                 self._mark_machine_pending(
                     job_id, machine, retry_state,
                     error_code if error_code in _ERROR_DETAILS else "invalid_evidence",
-                    fence=fence,
+                    fence=fence, failure_note=remote_note,
                 )
                 return False
             self._mark_machine_pending(
                 job_id, machine, "retryable_failure", "invalid_evidence", fence=fence,
+                failure_note=remote_note,
             )
             return False
         return any(
@@ -2771,14 +2865,16 @@ class ReleaseReconciler:
                    and row["components"][name]["state"] in eligible]
         if pending:
             self._assert_site_fence(job_id, fence)
+            runner_note = None
             try:
                 results = await self._await(self._component_runner(
                     local_monitor, manifest, operation_id=row["operation_id"],
                 ))
             except LeaseLostError:
                 raise
-            except Exception:
+            except Exception as exc:
                 results = []
+                runner_note = _exception_note(exc)
             self._assert_site_fence(job_id, fence)
             seen = set()
             for result in results if isinstance(results, list) else []:
@@ -2793,7 +2889,7 @@ class ReleaseReconciler:
                 self.record_component(
                     job_id, machine, component,
                     state="retryable_failure", error_code="invalid_evidence",
-                    fence=fence,
+                    failure_note=runner_note, fence=fence,
                 )
         hub = self.job_snapshot(job_id)["machines"][machine]["components"]["hub"]
         if hub["state"] in eligible:
@@ -2820,9 +2916,10 @@ class ReleaseReconciler:
                     result = await self._await(self._hub_runner(target, row["operation_id"]))
                 except LeaseLostError:
                     raise
-                except Exception:
+                except Exception as exc:
                     result = {"component": "hub", "state": "retryable_failure",
-                              "error_code": "unknown_failure"}
+                              "error_code": "unknown_failure",
+                              "failure_note": _exception_note(exc)}
                 if not isinstance(result, dict):
                     result = {"component": "hub", "state": "retryable_failure",
                               "error_code": "invalid_evidence"}
@@ -3108,6 +3205,7 @@ class ReleaseReconciler:
                 "observed_commit": observed_commit,
                 "state": row["state"],
                 "next_retry": row["next_retry"],
+                "failure_note": row["failure_note"],
                 "converged": bool(
                     row["state"] == "current"
                     and observed_version == row["expected_version"]
