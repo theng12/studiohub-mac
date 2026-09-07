@@ -307,6 +307,105 @@ def test_retry_backoff_is_deterministic_and_caps_at_one_day():
         retry_delay(0)
 
 
+def test_busy_component_reoffers_every_minute_without_escalating(tmp_path):
+    from backend.release_reconciliation import component_retry_delay
+
+    assert [component_retry_delay("pending_busy", attempt) for attempt in (1, 3, 6, 9)] == [
+        60, 60, 60, 60,
+    ]
+    clock = Clock()
+    service = _service(tmp_path, clock=clock)
+    manifest = _manifest()
+    service.replace_intent(manifest)
+    job = service.activate(manifest["release_id"], genstudio_run_reference=None)
+
+    for occurrence in range(1, 7):
+        row = service.record_component(
+            job["id"], "mac-a", "voice", state="pending_busy",
+        )
+        assert row["attempt"] == occurrence
+        assert row["error_code"] == "busy"
+        if occurrence in (1, 3, 6):
+            assert row["next_retry"] == clock() + 60
+            waiting = service.job_snapshot(job["id"])
+            assert waiting["state"] == "degraded"
+            assert waiting["next_retry"] == clock() + 60
+        clock.advance(60)
+
+
+@pytest.mark.parametrize(
+    "state", ["pending_offline", "retryable_failure", "auth_blocked"],
+)
+def test_genuine_failures_keep_the_escalating_retry_ladder(tmp_path, state):
+    clock = Clock()
+    service = _service(tmp_path, clock=clock)
+    manifest = _manifest()
+    service.replace_intent(manifest)
+    job = service.activate(manifest["release_id"], genstudio_run_reference=None)
+
+    for expected in (60, 300, 900, 3600, 14_400, 86_400, 86_400):
+        row = service.record_component(job["id"], "mac-a", "voice", state=state)
+        assert row["next_retry"] == clock() + expected
+        clock.advance(expected)
+
+
+def test_activation_replay_reoffers_every_outstanding_component(tmp_path):
+    clock = Clock()
+    service = _service(tmp_path, clock=clock)
+    manifest = _manifest()
+    service.replace_intent(manifest)
+    job = service.activate(manifest["release_id"], genstudio_run_reference="run-7")
+    for delay in (60, 300, 900, 3600, 14_400):
+        service.record_component(job["id"], "mac-a", "voice", state="pending_busy")
+        service.record_component(job["id"], "local", "image", state="pending_offline")
+        clock.advance(delay)
+    service.record_component(job["id"], "mac-a", "voice", state="pending_busy")
+    service.record_component(job["id"], "local", "image", state="pending_offline")
+
+    stranded = service.job_snapshot(job["id"])
+    assert stranded["state"] == "degraded"
+    assert stranded["machines"]["local"]["components"]["image"]["next_retry"] == clock() + 86_400
+    assert stranded["machines"]["mac-a"]["components"]["voice"]["next_retry"] == clock() + 60
+    assert stranded["next_retry"] == clock() + 60
+
+    replay = service.activate(manifest["release_id"], genstudio_run_reference="run-7")
+    assert replay["id"] == job["id"]
+    assert replay["state"] == "degraded"
+    assert replay["next_retry"] == clock()
+    for machine, component in (("mac-a", "voice"), ("local", "image")):
+        assert replay["machines"][machine]["components"][component]["next_retry"] == clock()
+
+    assert service.resume_due() == 2
+    runnable = service.job_snapshot(job["id"])
+    assert runnable["state"] == "running"
+    assert runnable["next_retry"] is None
+    for machine, component in (("mac-a", "voice"), ("local", "image")):
+        assert runnable["machines"][machine]["components"][component]["state"] == "checking"
+
+    with pytest.raises(ValueError, match="run reference"):
+        service.activate(manifest["release_id"], genstudio_run_reference="run-8")
+
+
+@pytest.mark.parametrize("state", ["running", "complete"])
+def test_activation_replay_leaves_running_and_complete_jobs_untouched(tmp_path, state):
+    clock = Clock()
+    service = _service(tmp_path, clock=clock)
+    manifest = _manifest()
+    service.replace_intent(manifest)
+    job = service.activate(manifest["release_id"], genstudio_run_reference="run-9")
+    if state == "complete":
+        _converge(service, job["id"])
+    service.persist_job(job["id"], state=state)
+
+    before = _raw_state(tmp_path)
+    replay = service.activate(manifest["release_id"], genstudio_run_reference="run-9")
+
+    assert replay["id"] == job["id"]
+    assert replay["state"] == state
+    assert replay["next_retry"] is None
+    assert _raw_state(tmp_path) == before
+
+
 def test_state_and_public_snapshots_redact_secrets_paths_commands_and_host_details(tmp_path):
     unsafe = {
         "reachable": False,
@@ -1414,6 +1513,52 @@ async def test_target_local_pending_does_not_block_later_machine(tmp_path):
     assert job["finished_at"] is None
     assert job["machines"]["mac-a"]["components"]["hub"]["next_retry"] is not None
     assert job["machines"]["mac-b"]["components"]["hub"]["state"] == "current"
+
+
+@pytest.mark.asyncio
+async def test_rearmed_release_reoffers_a_busy_machine_on_the_next_pass(tmp_path):
+    clock = Clock()
+    busy = {"mac-a": True}
+    passes = []
+
+    async def remote_bundle(machine, _body, _existing_job_id):
+        passes.append(machine)
+        if machine == "mac-a" and busy["mac-a"]:
+            busy["mac-a"] = False
+            return {"job_id": "agent-mac-a", "components": [
+                _exact_result(name, "pending_busy", error_code="busy")
+                for name in ("hub", "image", "voice")
+            ]}
+        return {"job_id": f"agent-{machine}", "components": [
+            _exact_result(name) for name in ("hub", "image", "voice")
+        ]}
+
+    async def local_components(_monitor, _manifest, *, operation_id):
+        del operation_id
+        return [_exact_result("image"), _exact_result("voice")]
+
+    async def local_hub(_target, _operation_id):
+        return _exact_result("hub")
+
+    service, manifest = _execution_service(
+        tmp_path, clock=clock,
+        remote_bundle_runner=remote_bundle,
+        component_runner=local_components,
+        hub_runner=local_hub,
+    )
+
+    degraded = await service.run(manifest["release_id"])
+    assert degraded["state"] == "degraded"
+    assert degraded["machines"]["mac-a"]["components"]["hub"]["state"] == "pending_busy"
+    assert degraded["next_retry"] == clock() + 60
+
+    replay = service.activate(manifest["release_id"], genstudio_run_reference=None)
+    assert replay["id"] == degraded["id"]
+    assert replay["next_retry"] == clock()
+
+    rerun = await service.run(manifest["release_id"])
+    assert rerun["state"] == "complete"
+    assert passes == ["mac-a", "mac-b", "mac-a"]
 
 
 @pytest.mark.asyncio
