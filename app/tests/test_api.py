@@ -288,6 +288,9 @@ async def test_managed_hub_runner_preserves_clean_checkout_health_failure(monkey
         "component": "hub",
         "state": "retryable_failure",
         "error_code": "clean_checkout_health_failure",
+        "failure_note": (
+            "The updated app did not attest to the expected commit and version."
+        ),
     }
 
 

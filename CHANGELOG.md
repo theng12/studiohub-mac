@@ -10,6 +10,33 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.20.4] — 2026-09-07
+
+### Fixed — a failed managed update records its own reason
+
+- Every component row in the durable release-reconciliation state, in the
+  controller job snapshot (`GET /api/hub/maintenance/release-jobs/{job_id}`),
+  in the agent snapshot (`GET /api/hub/maintenance/managed-update/{job_id}`),
+  and in the release-intent capability summary now carries an additive
+  informational `failure_note`. It holds the updater's own one-line reason —
+  "component updater unavailable or refused update (HTTP 503)", an exception
+  class and message, a hub `UpdateError` — recorded at the moment the failure
+  happened, so nobody has to inspect local logs on a headless fleet Mac.
+- The note is display-only. It is sanitized (whitespace collapsed, control
+  characters removed, printable text only) and hard-capped at 160 characters,
+  it is set only for `retryable_failure`, `auth_blocked`, `release_blocked`
+  and `pending_offline`, and it is cleared as soon as the component is
+  recorded in any other state. `pending_busy` never carries one, because busy
+  is a wait rather than a failure.
+- The stable `error_code` set is unchanged and remains the only machine-
+  readable failure signal: nothing branches on the note, it never becomes
+  release-block evidence, and it is not part of the `detail` mapping. Durable
+  `release_reconciliation.json` files written before this release load
+  unchanged, with the field defaulting to none.
+- Why: during a managed fleet release on 2026-09-07 several machines ended
+  with `unknown_failure` and "managed update failed; inspect local logs". The
+  real reason existed at the moment of failure and was thrown away.
+
 ## [2.20.3] — 2026-09-07
 
 ### Fixed — busy machines are re-offered, not backed off

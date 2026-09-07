@@ -3285,3 +3285,187 @@ async def test_catalog_ack_persistence_ambiguity_replays_same_operation(tmp_path
     assert current["state"] == "complete"
     assert operations[0] == operations[1]
     assert hub_calls == ["hub"]
+
+
+def test_updater_reason_is_sanitized_and_bounded(tmp_path):
+    from backend.release_reconciliation import FAILURE_NOTE_LIMIT
+
+    service = _service(tmp_path)
+    manifest = _manifest()
+    service.replace_intent(manifest)
+    job = service.activate(manifest["release_id"], genstudio_run_reference=None)
+
+    row = service.record_component(
+        job["id"], "mac-a", "image", state="retryable_failure",
+        error_code="unknown_failure",
+        failure_note="component updater unavailable\n\x07 or refused\t" + "x" * 300,
+    )
+
+    note = row["failure_note"]
+    assert len(note) == FAILURE_NOTE_LIMIT == 160
+    assert note.startswith("component updater unavailable or refused x")
+    assert not any(char in note for char in "\n\t\x07")
+    assert row["error_code"] == "unknown_failure"
+    assert row["detail"] == "managed update failed; inspect local logs"
+    assert service.job_snapshot(job["id"])["machines"]["mac-a"]["components"]["image"][
+        "failure_note"
+    ] == note
+
+    with pytest.raises(ValueError, match="failure note"):
+        service.record_component(
+            job["id"], "mac-a", "image", state="retryable_failure",
+            error_code="unknown_failure", failure_note=["not", "a", "string"],
+        )
+
+
+@pytest.mark.parametrize(
+    "state, extra",
+    [
+        ("checking", {}),
+        ("updating", {}),
+        ("current", {"observed_version": "1.30.1", "observed_commit": "b" * 40}),
+        ("pending_busy", {}),
+    ],
+)
+def test_failure_note_is_cleared_when_the_component_moves_on(tmp_path, state, extra):
+    service = _service(tmp_path)
+    manifest = _manifest()
+    service.replace_intent(manifest)
+    job = service.activate(manifest["release_id"], genstudio_run_reference=None)
+
+    failed = service.record_component(
+        job["id"], "mac-a", "image", state="retryable_failure",
+        error_code="unknown_failure", failure_note="git fetch exited 128",
+    )
+    assert failed["failure_note"] == "git fetch exited 128"
+
+    moved = service.record_component(job["id"], "mac-a", "image", state=state, **extra)
+    assert moved["failure_note"] is None
+    assert service.job_snapshot(job["id"])["machines"]["mac-a"]["components"]["image"][
+        "failure_note"
+    ] is None
+
+
+def test_busy_component_never_carries_a_failure_note(tmp_path):
+    service = _service(tmp_path)
+    manifest = _manifest()
+    service.replace_intent(manifest)
+    job = service.activate(manifest["release_id"], genstudio_run_reference=None)
+
+    row = service.record_component(
+        job["id"], "mac-a", "voice", state="pending_busy",
+        failure_note="agent is still rendering",
+    )
+
+    assert row["error_code"] == "busy"
+    assert row["failure_note"] is None
+    raw = _raw_state(tmp_path)
+    assert "still rendering" not in json.dumps(raw)
+
+
+def test_durable_state_written_before_failure_notes_still_loads(tmp_path):
+    service = _service(tmp_path)
+    manifest = _manifest()
+    service.replace_intent(manifest)
+    job = service.activate(manifest["release_id"], genstudio_run_reference=None)
+    service.record_component(
+        job["id"], "mac-a", "image", state="retryable_failure",
+        error_code="unknown_failure", failure_note="git fetch exited 128",
+    )
+
+    raw = _raw_state(tmp_path)
+    for machine in raw["jobs"][job["id"]]["machines"].values():
+        for row in machine["components"].values():
+            assert row.pop("failure_note", "missing") != "missing"
+    (tmp_path / "release_reconciliation.json").write_text(json.dumps(raw))
+
+    reloaded = _service(tmp_path).job_snapshot(job["id"])
+    row = reloaded["machines"]["mac-a"]["components"]["image"]
+    assert row["failure_note"] is None
+    assert row["error_code"] == "unknown_failure"
+    assert row["detail"] == "managed update failed; inspect local logs"
+
+
+@pytest.mark.asyncio
+async def test_updater_detail_is_recorded_as_the_component_failure_note(tmp_path):
+    detail = "component updater unavailable or refused update (HTTP 503)"
+
+    async def remote_bundle(machine, _body, _existing_job_id):
+        image = (
+            _exact_result("image", "retryable_failure",
+                          error_code="updater_unavailable", detail=detail)
+            if machine == "mac-a" else _exact_result("image")
+        )
+        return {"job_id": f"agent-{machine}", "components": [
+            _exact_result("hub"), image, _exact_result("voice"),
+        ]}
+
+    service, manifest = _execution_service(
+        tmp_path,
+        remote_bundle_runner=remote_bundle,
+        component_runner=lambda *_args, **_kwargs: [
+            _exact_result("image"), _exact_result("voice"),
+        ],
+        hub_runner=lambda *_args: _exact_result("hub"),
+    )
+    job = await service.run(manifest["release_id"])
+
+    row = job["machines"]["mac-a"]["components"]["image"]
+    assert row["state"] == "retryable_failure"
+    assert row["error_code"] == "updater_unavailable"
+    assert row["detail"] == "exact managed updater is unavailable"
+    assert row["failure_note"] == detail
+    assert job["machines"]["mac-b"]["components"]["image"]["failure_note"] is None
+    evidence = service.capability_evidence()
+    assert evidence["machines"]["mac-a"]["components"]["image"]["failure_note"] == detail
+
+
+@pytest.mark.asyncio
+async def test_controller_exception_path_records_the_exception_text(tmp_path):
+    async def remote_bundle(_machine, _body, _existing_job_id):
+        raise RuntimeError("agent socket closed mid-update")
+
+    service, manifest = _execution_service(
+        tmp_path,
+        remote_bundle_runner=remote_bundle,
+        component_runner=lambda *_args, **_kwargs: [
+            _exact_result("image"), _exact_result("voice"),
+        ],
+        hub_runner=lambda *_args: _exact_result("hub"),
+    )
+    job = await service.run(manifest["release_id"])
+
+    row = job["machines"]["mac-a"]["components"]["hub"]
+    assert row["state"] == "retryable_failure"
+    assert row["error_code"] == "unknown_failure"
+    assert row["failure_note"] == "RuntimeError: agent socket closed mid-update"
+
+
+@pytest.mark.asyncio
+async def test_agent_snapshot_exposes_the_updater_reason(tmp_path):
+    async def hub_runner(_target, _operation_id):
+        raise RuntimeError("hub updater refused the exact commit")
+
+    service, manifest = _execution_service(
+        tmp_path,
+        hub_runner=hub_runner,
+        component_runner=lambda *_args, **_kwargs: [
+            _exact_result("image"), _exact_result("voice"),
+        ],
+    )
+    body = {
+        "release_id": manifest["release_id"],
+        "operation_id": service.job_snapshot(
+            service.state_snapshot()["activation"]["job_id"]
+        )["machines"]["mac-a"]["operation_id"],
+        "components": deepcopy(manifest["components"]),
+    }
+    admission = service.admit_managed_update(body)
+    snapshot = await service.run_managed_update(admission["job_id"])
+
+    rows = {row["component"]: row for row in snapshot["components"]}
+    assert rows["hub"]["state"] == "retryable_failure"
+    assert rows["hub"]["error_code"] == "unknown_failure"
+    assert rows["hub"]["failure_note"] == (
+        "RuntimeError: hub updater refused the exact commit"
+    )
