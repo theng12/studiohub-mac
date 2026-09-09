@@ -798,11 +798,23 @@ class RepairStore:
                 if not exact_controller:
                     connection.rollback()
                     raise RepairStoreError("controller_snapshot_changed")
+                # Only a completion recorded within THIS repair effort may
+                # refuse this ticket.  `complete` is terminal — nothing moves a
+                # completed row's `updated_at` afterwards — so that column is
+                # the completion time, and a row completed before this ticket
+                # was issued is history from an earlier effort.  Letting such a
+                # row refuse forever is what locked a once-repaired Mac out of
+                # every later repair.  A missing `issued_at` falls back to the
+                # strict rule rather than opening the window.
+                effort_started_at = (
+                    float(row["issued_at"]) if row["issued_at"] is not None else 0.0
+                )
                 if connection.execute(
                     """SELECT 1 FROM enrollment_repair_requests
                        WHERE target_machine = ? AND request_id != ? AND state = 'complete'
+                         AND updated_at >= ?
                        LIMIT 1""",
-                    (row["target_machine"], str(request_id)),
+                    (row["target_machine"], str(request_id), effort_started_at),
                 ).fetchone() is not None:
                     connection.rollback()
                     raise RepairStoreError("repair_already_complete")

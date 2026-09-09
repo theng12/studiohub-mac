@@ -336,6 +336,86 @@ def test_redeem_rejects_a_different_completed_request_for_the_same_target(store,
         ).fetchone() == ("issued", None)
 
 
+def complete_request(store, request_id, *, target=TARGET_A):
+    return store.adopt_status(
+        request_id,
+        {
+            "request_id": request_id,
+            "state": "complete",
+            "identity": {
+                "role": "agent", "site_id": "site-a", "site_name": "Site A",
+                "controller_id": target.machine,
+            },
+        },
+        direct_source=target.resolved_address,
+    )
+
+
+def test_a_machine_completed_earlier_can_be_batched_and_redeem_a_later_ticket(
+    store, clock,
+):
+    first = store.create_or_adopt_batch(["mac-a"])
+    first_request = first["requests"][0]["request_id"]
+    issue(store, first_request)
+    clock.value = 1100.0
+    redeem(store, first_request)
+    complete_request(store, first_request)
+
+    # The completion is now history: a later repair effort issues its ticket
+    # after it, so nothing about that row may refuse the new redemption.
+    clock.value = 1105.0
+    second = store.create_or_adopt_batch(["mac-a"])
+    assert second["batch_id"] != first["batch_id"]
+    assert "adopted_requests" not in second
+    second_request = second["requests"][0]["request_id"]
+    assert second_request != first_request
+    issue(store, second_request)
+
+    claim = redeem(store, second_request)
+
+    assert claim["request_id"] == second_request
+    assert claim["controller_id"] == "mac-a"
+    with sqlite3.connect(store.path) as connection:
+        assert connection.execute(
+            "SELECT ticket_status, state FROM enrollment_repair_requests WHERE request_id = ?",
+            (second_request,),
+        ).fetchone() == ("redeemed", "redeemed")
+
+
+def test_redeem_still_refuses_a_completion_recorded_after_this_ticket_was_issued(
+    store, clock,
+):
+    first = store.create_or_adopt_batch(["mac-a"])
+    first_request = first["requests"][0]["request_id"]
+    issue(store, first_request)
+    clock.value = 1100.0
+    redeem(store, first_request)
+    complete_request(store, first_request)
+
+    clock.value = 1105.0
+    second = store.create_or_adopt_batch(["mac-a"])
+    second_request = second["requests"][0]["request_id"]
+    issue(store, second_request)
+    # The target completed again after this ticket was issued: one repair
+    # effort, two tickets, and only the first may be honoured.
+    with sqlite3.connect(store.path) as connection:
+        connection.execute(
+            "UPDATE enrollment_repair_requests SET updated_at = ? WHERE request_id = ?",
+            (1106.0, first_request),
+        )
+        connection.commit()
+    clock.value = 1110.0
+
+    with pytest.raises(RepairStoreError, match="repair_already_complete"):
+        redeem(store, second_request)
+
+    with sqlite3.connect(store.path) as connection:
+        assert connection.execute(
+            "SELECT ticket_status, redeemed_at FROM enrollment_repair_requests WHERE request_id = ?",
+            (second_request,),
+        ).fetchone() == ("issued", None)
+
+
 def test_duplicate_owner_batch_adopts_unresolved_target_without_new_ticket(store):
     first = store.create_or_adopt_batch(["mac-a"])
     second = store.create_or_adopt_batch(["mac-a"])
