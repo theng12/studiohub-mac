@@ -1139,6 +1139,47 @@ def _raise_repair_error(exc: RepairStoreError | RepairExecutorError) -> None:
     raise HTTPException(status, {"code": code}) from exc
 
 
+def _http_error_code(exc: HTTPException) -> str:
+    detail = exc.detail
+    code = detail.get("code") if isinstance(detail, dict) else detail
+    return str(code or "repair_refused")[:80]
+
+
+def _note_redemption_refusal(
+    request: Request,
+    body: Any,
+    *,
+    code: str,
+    status: int,
+) -> None:
+    """Record why a redemption was refused, on the request it was about.
+
+    Best effort and evidence only: the HTTP answer is already decided, and a
+    refusal that cannot be attributed to a known request — or that cannot be
+    written — is dropped silently rather than changing what the caller sees.
+    """
+    try:
+        coordinator = getattr(
+            request.app.state, "enrollment_repair_coordinator", None,
+        )
+        recorder = getattr(coordinator, "note_redemption_refusal", None)
+        request_id = getattr(body, "request_id", None)
+        if not callable(recorder) or not isinstance(request_id, str) or not request_id:
+            return
+        client = getattr(request, "client", None)
+        source = str(getattr(client, "host", "") or "").split("%", 1)[0] or None
+        machine = str(getattr(body, "target_machine_id", "") or "") or None
+        recorder(
+            request_id,
+            code=str(code)[:80],
+            status=int(status),
+            source=source,
+            target_machine=machine,
+        )
+    except Exception:
+        pass
+
+
 def _repair_status_expected_source(executor: Any, request_id: str) -> str:
     reader = getattr(executor, "expected_status_source", None)
     if callable(reader):
@@ -1298,7 +1339,17 @@ async def redeem_enrollment_repair_ticket(
     request: Request,
     body: EnrollmentRepairRedemptionBody,
 ):
-    direct_source, token = _require_repair_service(request)
+    try:
+        direct_source, token = _require_repair_service(request)
+    except HTTPException as exc:
+        # Defence in depth only: this is a strict fleet service path, so the
+        # auth middleware normally answers a token or source refusal before the
+        # route runs and there is nothing here to attach evidence to.  That
+        # class of refusal is recovered from the Agent's journal instead.
+        _note_redemption_refusal(
+            request, body, code=_http_error_code(exc), status=exc.status_code,
+        )
+        raise
     try:
         snapshot = await asyncio.to_thread(
             registry.repair_machine_snapshot,
@@ -1312,9 +1363,21 @@ async def redeem_enrollment_repair_ticket(
             body.model_dump(by_alias=True), direct_source=direct_source, fleet_token=token,
         )
     except registry.RepairRegistryAmbiguity as exc:
+        # The answer stays generic; the durable note keeps the real reason.
+        _note_redemption_refusal(request, body, code=str(exc.code), status=403)
         raise HTTPException(403, {"code": "source_host_mismatch"}) from exc
     except (RepairStoreError, RepairExecutorError) as exc:
+        code = str(exc.code)[:80]
+        _note_redemption_refusal(
+            request, body, code=code,
+            status=_REPAIR_ERROR_HTTP.get(code, 409),
+        )
         _raise_repair_error(exc)
+    except HTTPException as exc:
+        _note_redemption_refusal(
+            request, body, code=_http_error_code(exc), status=exc.status_code,
+        )
+        raise
 
 
 @app.get("/api/hub/enrollment-repair/status/{request_id}")

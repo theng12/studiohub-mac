@@ -827,3 +827,131 @@ def test_conflict_evidence_ignores_a_malformed_prior_outcome(store, clock):
     )
 
     assert adopted["evidence"] == {"agent_terminal_state": "needs_review"}
+
+
+def test_adopting_never_applied_keeps_the_agent_callback_failure(store, clock):
+    """`never_applied` with no reason is what the owner used to be left with.
+
+    An Agent that accepted a dispatch and could not reach back now reports
+    why, and that reason must reach the request's durable evidence.
+    """
+    batch = store.create_or_adopt_batch(["mac-a"])
+    request_id = batch["requests"][0]["request_id"]
+    issue(store, request_id)
+    clock.value = 1100.0
+
+    adopted = store.adopt_status(
+        request_id,
+        {
+            "request_id": request_id,
+            "state": "never_applied",
+            "error_code": "transport_unavailable",
+            "callback_error": {
+                "at": 1050.0,
+                "kind": "http",
+                "status": 403,
+                "code": "source_host_mismatch",
+                "detail": "x" * 400,
+            },
+        },
+        direct_source=TARGET_A.resolved_address,
+    )
+
+    assert adopted["state"] == "retryable"
+    assert adopted["evidence"] == {
+        "agent_terminal_state": "never_applied",
+        "agent_callback_error": {
+            "at": 1050.0,
+            "kind": "http",
+            "status": 403,
+            "code": "source_host_mismatch",
+            "detail": "x" * 160,
+        },
+    }
+
+
+@pytest.mark.parametrize("callback_error", [
+    None,
+    "transport_unavailable",
+    {"status": 403},
+    {"kind": "telepathy", "code": "nope"},
+    {"code": "source_host_mismatch", "status": 403},
+])
+def test_a_malformed_agent_callback_failure_is_dropped(store, clock, callback_error):
+    batch = store.create_or_adopt_batch(["mac-a"])
+    request_id = batch["requests"][0]["request_id"]
+    issue(store, request_id)
+    clock.value = 1100.0
+
+    adopted = store.adopt_status(
+        request_id,
+        {
+            "request_id": request_id,
+            "state": "never_applied",
+            "callback_error": callback_error,
+        },
+        direct_source=TARGET_A.resolved_address,
+    )
+
+    assert adopted["evidence"] == {"agent_terminal_state": "never_applied"}
+
+
+def test_an_out_of_range_callback_status_is_dropped_but_the_kind_is_kept(store, clock):
+    batch = store.create_or_adopt_batch(["mac-a"])
+    request_id = batch["requests"][0]["request_id"]
+    issue(store, request_id)
+    clock.value = 1100.0
+
+    adopted = store.adopt_status(
+        request_id,
+        {
+            "request_id": request_id,
+            "state": "never_applied",
+            "callback_error": {"kind": "http", "status": 99, "at": "soon"},
+        },
+        direct_source=TARGET_A.resolved_address,
+    )
+
+    assert adopted["evidence"] == {
+        "agent_terminal_state": "never_applied",
+        "agent_callback_error": {"kind": "http"},
+    }
+
+
+def test_redemption_refusals_are_bounded_and_never_move_request_state(store, clock):
+    batch = store.create_or_adopt_batch(["mac-a"])
+    request_id = batch["requests"][0]["request_id"]
+    issue(store, request_id)
+    before = store.request(request_id)
+
+    for index in range(7):
+        clock.value = 1100.0 + index
+        store.record_redemption_refusal(
+            request_id,
+            code=f"refusal-{index}",
+            status=403,
+            source="100.64.0.10",
+            target_machine="mac-a",
+        )
+
+    after = store.request(request_id)
+    refusals = after["evidence"]["redemption_refusals"]
+    assert [row["code"] for row in refusals] == [
+        f"refusal-{index}" for index in range(2, 7)
+    ]
+    assert refusals[-1] == {
+        "at": 1106.0,
+        "code": "refusal-6",
+        "status": 403,
+        "source": "100.64.0.10",
+        "target_machine": "mac-a",
+    }
+    assert after["state"] == before["state"]
+    assert after["error_code"] == before["error_code"]
+    assert after["updated_at"] == before["updated_at"]
+
+    with pytest.raises(RepairStoreError) as unknown:
+        store.record_redemption_refusal(
+            "request-that-does-not-exist", code="nope", status=403,
+        )
+    assert unknown.value.code == "request_not_found"

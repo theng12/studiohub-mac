@@ -32,6 +32,13 @@ TICKET_STATES = ("issued", "redeemed", "expired")
 _MAX_ERROR_CODE = 80
 _MAX_EVIDENCE_BYTES = 16_384
 _SHA256_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+# A refused redemption otherwise leaves no trace: the HTTP answer goes back to
+# the target and nothing durable records that this Controller said no.  Keep a
+# short, bounded, credential-free trail on the request it was about.
+REDEMPTION_REFUSAL_LIMIT = 5
+_MAX_REFUSAL_SOURCE = 64
+_MAX_CALLBACK_DETAIL = 160
+_CALLBACK_ERROR_KINDS = frozenset({"http", "transport", "local"})
 
 
 class RepairStoreError(ValueError):
@@ -417,12 +424,90 @@ class RepairStore:
             evidence["prior_repair_updated_at"] = float(updated_at)
         return evidence if "prior_repair_state" in evidence else {}
 
+    @staticmethod
+    def _agent_callback_evidence(value: Any) -> dict[str, Any]:
+        """Record why the target's redemption callback failed, if it said.
+
+        Only the fixed, bounded shape the executor writes is adopted: a kind,
+        a stable code, an HTTP status and a short detail line.  No identity
+        value, ticket or token is part of it, and an unrecognised shape is
+        dropped rather than stored.
+        """
+        if not isinstance(value, Mapping):
+            return {}
+        failure: dict[str, Any] = {}
+        kind = value.get("kind")
+        if kind in _CALLBACK_ERROR_KINDS:
+            failure["kind"] = str(kind)
+        code = value.get("code")
+        if isinstance(code, str) and 0 < len(code) <= _MAX_ERROR_CODE:
+            failure["code"] = code
+        status = value.get("status")
+        if (not isinstance(status, bool) and isinstance(status, int)
+                and 100 <= status <= 599):
+            failure["status"] = int(status)
+        detail = value.get("detail")
+        if isinstance(detail, str) and detail.strip():
+            failure["detail"] = detail.strip()[:_MAX_CALLBACK_DETAIL]
+        at = value.get("at")
+        if (not isinstance(at, bool) and isinstance(at, (int, float))
+                and math.isfinite(float(at))):
+            failure["at"] = float(at)
+        return {"agent_callback_error": failure} if "kind" in failure else {}
+
     def _merge_evidence(self, raw: str | None, values: Mapping[str, Any]) -> str:
         evidence = self._decode_json(raw)
         if not isinstance(evidence, dict):
             evidence = {}
         evidence.update(values)
         return self._json(evidence)
+
+    def record_redemption_refusal(
+        self,
+        request_id: str,
+        *,
+        code: str,
+        status: int,
+        source: str | None = None,
+        target_machine: str | None = None,
+    ) -> None:
+        """Append one bounded refusal to a request's evidence.
+
+        This is evidence only: no state, error code, ticket status or
+        ``updated_at`` moves, so recording why a redemption was refused can
+        never change what the request is allowed to do next.
+        """
+        entry: dict[str, Any] = {
+            "at": float(self.clock()),
+            "code": str(code)[:_MAX_ERROR_CODE],
+            "status": int(status),
+            "source": str(source)[:_MAX_REFUSAL_SOURCE] if source else None,
+        }
+        if target_machine:
+            entry["target_machine"] = str(target_machine)[:100]
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """SELECT evidence_json FROM enrollment_repair_requests
+                   WHERE request_id = ?""",
+                (str(request_id),),
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                raise RepairStoreError("request_not_found")
+            existing = self._decode_json(row["evidence_json"])
+            prior = existing.get("redemption_refusals") if isinstance(existing, dict) else None
+            kept = [item for item in prior if isinstance(item, dict)] if isinstance(prior, list) else []
+            evidence = self._merge_evidence(
+                row["evidence_json"],
+                {"redemption_refusals": [*kept, entry][-REDEMPTION_REFUSAL_LIMIT:]},
+            )
+            connection.execute(
+                """UPDATE enrollment_repair_requests SET evidence_json = ?
+                   WHERE request_id = ?""",
+                (evidence, str(request_id)),
+            )
+            connection.commit()
 
     def _refresh_batch_locked(
         self,
@@ -864,7 +949,8 @@ class RepairStore:
             evidence = self._merge_evidence(
                 row["evidence_json"],
                 {"agent_terminal_state": terminal,
-                 **self._prior_repair_evidence(status.get("conflict"))},
+                 **self._prior_repair_evidence(status.get("conflict")),
+                 **self._agent_callback_evidence(status.get("callback_error"))},
             )
             changed = connection.execute(
                 """UPDATE enrollment_repair_requests

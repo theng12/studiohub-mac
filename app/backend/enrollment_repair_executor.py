@@ -16,7 +16,7 @@ import threading
 import time
 import weakref
 from contextlib import asynccontextmanager, contextmanager
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -35,6 +35,11 @@ from .registry import DATA_DIR
 
 JOURNAL_FILE = DATA_DIR / ".enrollment_repair_journal.json"
 CALLBACK_TIMEOUT_SECONDS = 5.0
+# A refused or lost redemption callback is the one failure the Controller
+# cannot see for itself.  Record why, credential-free and bounded, so an
+# expired journal says more than "never_applied".
+CALLBACK_ERROR_CODE_LIMIT = 64
+CALLBACK_ERROR_DETAIL_LIMIT = 160
 AGENT_STATES = (
     "accepted", "redemption_attempted", "applying",
     "complete", "never_applied", "needs_review",
@@ -99,6 +104,37 @@ def _source_address(value: str) -> str:
 
 def _hash(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def _redacted(value: Any, redact: Sequence[str], limit: int) -> str | None:
+    """Bound one free-form string and remove every secret we know of first."""
+    if not isinstance(value, str):
+        return None
+    text = value
+    for secret in redact:
+        if isinstance(secret, str) and len(secret) >= 8:
+            text = text.replace(secret, "[redacted]")
+    text = " ".join(text.split())
+    return text[:limit] or None
+
+
+def _response_failure(response: Any) -> tuple[str | None, str | None]:
+    """Read a Controller's JSON refusal without trusting its shape.
+
+    The Hub answers `{"detail": {"code": ...}}`; older or proxied answers may
+    carry a bare string detail or a top-level code.  Anything else is ignored
+    rather than copied, so no unexpected body ever reaches the journal.
+    """
+    if not isinstance(response, Mapping):
+        return None, None
+    detail = response.get("detail")
+    if isinstance(detail, Mapping):
+        code = detail.get("code")
+        return (code if isinstance(code, str) else None), None
+    if isinstance(detail, str):
+        return None, detail
+    code = response.get("code")
+    return (code if isinstance(code, str) else None), None
 
 
 def _dispatch_digest(payload: Mapping[str, Any]) -> str:
@@ -266,12 +302,44 @@ class RepairExecutor:
             journal = dict(journal)
             journal["state"] = "never_applied"
             journal.pop("outcome", None)
-            journal.pop("error_code", None)
             journal.pop("ticket", None)
             journal.pop("claim", None)
+            # The reason this journal never reached its claim is the only thing
+            # the Controller can act on, so `error_code` and `callback_error`
+            # survive expiry.  Ticket and claim material never does.
             journal["updated_at"] = float(self.clock())
             self._save_journal(journal)
         return journal
+
+    def _callback_error(
+        self,
+        kind: str,
+        *,
+        status: Any = None,
+        code: Any = None,
+        detail: Any = None,
+        redact: Sequence[str] = (),
+    ) -> dict[str, Any]:
+        """Say why one redemption callback failed, without any credential.
+
+        ``detail`` is only ever built here from a bounded, self-generated
+        string — an exception class name, or a Controller-supplied ``detail``
+        field — and every secret this attempt knows of is removed from it
+        before it is truncated.
+        """
+        entry: dict[str, Any] = {
+            "at": float(self.clock()),
+            "kind": str(kind)[:16],
+        }
+        if isinstance(status, int) and not isinstance(status, bool):
+            entry["status"] = int(status)
+        cleaned_code = _redacted(code, redact, CALLBACK_ERROR_CODE_LIMIT)
+        if cleaned_code:
+            entry["code"] = cleaned_code
+        cleaned_detail = _redacted(detail, redact, CALLBACK_ERROR_DETAIL_LIMIT)
+        if cleaned_detail:
+            entry["detail"] = cleaned_detail
+        return entry
 
     @staticmethod
     def _outcome_summary(journal: Mapping[str, Any]) -> dict[str, Any]:
@@ -286,6 +354,17 @@ class RepairExecutor:
         }
         if journal.get("error_code"):
             summary["error_code"] = str(journal["error_code"])[:64]
+        callback_error = journal.get("callback_error")
+        if isinstance(callback_error, Mapping):
+            failure: dict[str, Any] = {}
+            code = callback_error.get("code")
+            if isinstance(code, str) and code:
+                failure["code"] = code[:CALLBACK_ERROR_CODE_LIMIT]
+            status = callback_error.get("status")
+            if isinstance(status, int) and not isinstance(status, bool):
+                failure["status"] = int(status)
+            if failure:
+                summary["callback_error"] = failure
         updated_at = journal.get("updated_at")
         if (not isinstance(updated_at, bool)
                 and isinstance(updated_at, (int, float))
@@ -323,6 +402,9 @@ class RepairExecutor:
             result["outcome"] = "unknown"
         if journal.get("error_code"):
             result["error_code"] = str(journal["error_code"])
+        callback_error = journal.get("callback_error")
+        if isinstance(callback_error, Mapping):
+            result["callback_error"] = dict(callback_error)
         if journal.get("state") == "complete" and isinstance(journal.get("identity"), Mapping):
             result["identity"] = dict(journal["identity"])
             if isinstance(journal.get("applied_at"), (int, float)):
@@ -432,6 +514,9 @@ class RepairExecutor:
         updated.pop("outcome", None)
         updated.pop("ticket", None)
         updated.pop("claim", None)
+        if state == "complete":
+            # A completed repair redeemed its claim, so no callback failed.
+            updated.pop("callback_error", None)
         if error_code is None:
             updated.pop("error_code", None)
         else:
@@ -590,14 +675,20 @@ class RepairExecutor:
             journal["state"] = "redemption_attempted"
             journal["outcome"] = "unknown"
             journal.pop("error_code", None)
+            # `callback_error` always describes the most recent attempt.
+            journal.pop("callback_error", None)
             journal["updated_at"] = float(self.clock())
             self._save_journal(journal)
 
             token = peers.current_fleet_token()
             if token is None:
                 journal["error_code"] = "fleet_token_unavailable"
+                journal["callback_error"] = self._callback_error(
+                    "local", code="fleet_token_unavailable",
+                )
                 self._save_journal(journal)
                 return self._result(journal)
+            redact = (str(journal.get("ticket") or ""), token)
             redemption = {
                 "schema": "studiohub.enrollment-repair-redemption",
                 "schema_version": 1,
@@ -624,29 +715,53 @@ class RepairExecutor:
                         return status, response, _source_address(connection.direct_peer)
 
                 status, response, peer = await asyncio.wait_for(redeem(), timeout=remaining)
-            except TimeoutError:
+            except TimeoutError as exc:
                 journal["error_code"] = "transport_unavailable"
+                journal["callback_error"] = self._callback_error(
+                    "transport", code="callback_timeout",
+                    detail=type(exc).__name__, redact=redact,
+                )
                 journal["updated_at"] = float(self.clock())
                 self._save_journal(journal)
                 return self._result(journal)
             except PinnedTransportError as exc:
+                journal["callback_error"] = self._callback_error(
+                    "transport", code=str(exc), redact=redact,
+                )
                 if str(exc) == "callback_source_mismatch":
                     return self._review(journal, "callback_source_mismatch")
                 journal["error_code"] = "transport_unavailable"
                 journal["updated_at"] = float(self.clock())
                 self._save_journal(journal)
                 return self._result(journal)
-            except Exception:
+            except Exception as exc:
                 journal["error_code"] = "transport_unavailable"
+                journal["callback_error"] = self._callback_error(
+                    "transport", code="callback_failed",
+                    detail=type(exc).__name__, redact=redact,
+                )
                 journal["updated_at"] = float(self.clock())
                 self._save_journal(journal)
                 return self._result(journal)
             if peer != origin.address:
+                journal["callback_error"] = self._callback_error(
+                    "local", code="callback_source_mismatch", redact=redact,
+                )
                 return self._review(journal, "callback_source_mismatch")
             if 300 <= status < 400:
+                journal["callback_error"] = self._callback_error(
+                    "http", status=status, code="callback_url_invalid",
+                    redact=redact,
+                )
                 return self._review(journal, "callback_url_invalid")
             if status != 200:
+                refused_code, refused_detail = _response_failure(response)
                 journal["error_code"] = "transport_unavailable"
+                journal["callback_error"] = self._callback_error(
+                    "http", status=status, code=refused_code,
+                    detail=refused_detail, redact=redact,
+                )
+                journal["updated_at"] = float(self.clock())
                 self._save_journal(journal)
                 return self._result(journal)
             expected_claim = {

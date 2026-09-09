@@ -10,6 +10,63 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.21.2] — 2026-09-09
+
+### Fixed — a repair that ends `never_applied` now says why the callback failed
+
+- An Agent whose redemption callback fails now records the reason in its own
+  journal as `callback_error`, a bounded credential-free
+  `{at, kind: "http"|"transport"|"local", status?, code?, detail?}`. Every
+  failure path writes one: a connection error, a timeout, a non-2xx answer
+  (carrying the Controller's own `detail.code` and HTTP status),
+  `callback_url_invalid` on a redirect, `callback_source_mismatch` on a peer
+  that is not the dispatching Controller, and a locally missing fleet token.
+  `detail` is only ever an exception class name or the Controller's own detail
+  line, stripped of every secret this attempt knows of and capped at 160
+  characters; no ticket, token or identity value can reach it.
+- Expiry to `never_applied` keeps `callback_error` and `error_code`. Those are
+  the only things anyone can act on, and expiry used to discard them along with
+  the ticket and claim material, which is still dropped. `GET .../status`,
+  `_result` and the conflict `_outcome_summary` (code and status only) carry
+  the failure, and a Controller that adopts the Agent's terminal status merges
+  it into the request's evidence as `agent_callback_error`.
+- A Controller that refuses a redemption now records why, on the request the
+  callback was about. `POST /api/hub/enrollment-repair-tickets/redeem` appends
+  a bounded five-entry `redemption_refusals` list of
+  `{at, code, status, source, target_machine?}` for a registry ambiguity, a
+  store or executor refusal, and a source-host mismatch. The recorded `code` is
+  the real reason even where the HTTP body stays deliberately generic — a
+  registry ambiguity still answers `source_host_mismatch` — and a refusal for a
+  request id this Hub does not know is dropped silently. Recording is evidence
+  only: no state, error code, ticket status or `updated_at` moves, the HTTP
+  answer is unchanged, and a failure to record can never reach the caller.
+- The repair row now reads "Redemption refused: <code> (HTTP <status>) from
+  <source> at <time>" and "Agent callback failed: <kind> <code> <detail>" under
+  the existing status line, so both sides of a lost callback are visible
+  without a Terminal.
+- Why: on 2026-09-09 controller `terranash-0300` repaired one Agent that
+  accepted the dispatch and never redeemed its ticket. At the 120-second
+  deadline the Controller adopted `never_applied` with evidence
+  `{"agent_terminal_state": "never_applied"}` and nothing else. Five other
+  Agents had redeemed minutes earlier, the clocks agreed, the fleet token
+  matched and the registry held one row per host — and there was no way to find
+  out what had happened, because the Controller recorded nothing when it
+  refused a redemption, the Agent kept no record of a failed callback, expiry
+  threw away the reason, and no log endpoint existed.
+
+### Safety
+
+- No identity, ticket, callback-source, fleet-credential or settings-preimage
+  check is relaxed, and no HTTP status or error code an Agent already saw
+  changes. Both new fields are validated on adoption rather than trusted: an
+  unrecognised `kind`, an out-of-range status, a non-finite timestamp or a
+  malformed shape is dropped instead of stored, and both lists are bounded.
+- A refusal answered by the strict fleet-service auth middleware — a rejected
+  fleet token, a credential substitute, a non-private source — never reaches
+  the route, so the Controller has no request to attach evidence to. That class
+  is recovered from the Agent's side instead, through the same
+  `callback_error` it writes and the Controller later adopts.
+
 ## [2.21.1] — 2026-09-09
 
 ### Fixed — a refused repair no longer locks that Mac out of every later repair

@@ -287,6 +287,12 @@ async def test_redirect_and_proxy_environment_are_never_used(tmp_path, monkeypat
         "request_id": REQUEST_ID,
         "state": "needs_review",
         "error_code": "callback_url_invalid",
+        "callback_error": {
+            "at": 1_000.0,
+            "kind": "http",
+            "status": 302,
+            "code": "callback_url_invalid",
+        },
     }
     assert len(connection.calls) == 1
     assert [item.address for item in opened] == [ADDRESS]
@@ -309,11 +315,18 @@ async def test_lost_response_before_claim_save_expires_to_never_applied(
 
     result = await executor.apply(dispatch(), direct_source=ADDRESS)
 
+    callback_error = {
+        "at": 1_000.0,
+        "kind": "transport",
+        "code": "callback_timeout",
+        "detail": "TimeoutError",
+    }
     assert result == {
         "request_id": REQUEST_ID,
         "state": "redemption_attempted",
         "outcome": "unknown",
         "error_code": "transport_unavailable",
+        "callback_error": callback_error,
     }
     journal = json.loads(journal_path.read_text())
     assert journal["state"] == "redemption_attempted"
@@ -326,11 +339,20 @@ async def test_lost_response_before_claim_save_expires_to_never_applied(
     clock.value = dispatch()["redemption_expires_at"]
     status_result = executor.status(REQUEST_ID, direct_source=ADDRESS)
 
-    assert status_result == {"request_id": REQUEST_ID, "state": "never_applied"}
+    # Expiry keeps the only thing the Controller can act on: why the callback
+    # never landed.  Ticket and claim material still never survives it.
+    assert status_result == {
+        "request_id": REQUEST_ID,
+        "state": "never_applied",
+        "error_code": "transport_unavailable",
+        "callback_error": callback_error,
+    }
     expired = json.loads(journal_path.read_text())
     assert expired["state"] == "never_applied"
+    assert expired["callback_error"] == callback_error
     assert "ticket" not in expired
     assert "claim" not in expired
+    assert TICKET not in json.dumps(expired)
     assert settings_path.read_bytes() == original
 
 
@@ -365,6 +387,7 @@ async def test_identical_dispatch_adopts_and_different_unresolved_request_confli
             "request_id": REQUEST_ID,
             "state": "redemption_attempted",
             "error_code": "transport_unavailable",
+            "callback_error": {"code": "callback_timeout"},
             "updated_at": clock.value,
         },
     }
@@ -1785,7 +1808,120 @@ async def test_unresolved_conflict_reports_the_prior_state_without_identity(
         "request_id": REQUEST_ID,
         "state": "redemption_attempted",
         "error_code": "transport_unavailable",
+        "callback_error": {"code": "callback_timeout"},
         "updated_at": 1_000.0,
     }
     assert "identity" not in refused["conflict"]
     assert "ticket" not in refused["conflict"]
+
+
+@pytest.mark.asyncio
+async def test_refused_callback_records_status_and_code_and_survives_expiry(
+    tmp_path, monkeypatch
+):
+    """A Controller that refuses the redemption must leave a readable reason.
+
+    Before this, every non-2xx answer collapsed into `transport_unavailable`
+    and expiry threw even that away, so an owner saw `never_applied` with
+    nothing to act on.
+    """
+    clock = Clock()
+    connection = FakeConnection(
+        status=403, response={"detail": {"code": "source_host_mismatch"}},
+    )
+    executor, settings_path, journal_path = make_executor(
+        tmp_path, monkeypatch, connection, clock=clock
+    )
+    original = json.dumps(settings(), sort_keys=True).encode()
+    settings_path.write_bytes(original)
+
+    result = await executor.apply(dispatch(), direct_source=ADDRESS)
+
+    expected = {
+        "at": 1_000.0,
+        "kind": "http",
+        "status": 403,
+        "code": "source_host_mismatch",
+    }
+    assert result["state"] == "redemption_attempted"
+    assert result["error_code"] == "transport_unavailable"
+    assert result["callback_error"] == expected
+    assert json.loads(journal_path.read_text())["callback_error"] == expected
+
+    clock.value = dispatch()["redemption_expires_at"]
+    expired = executor.status(REQUEST_ID, direct_source=ADDRESS)
+
+    assert expired["state"] == "never_applied"
+    assert expired["error_code"] == "transport_unavailable"
+    assert expired["callback_error"] == expected
+    journal = json.loads(journal_path.read_text())
+    assert journal["state"] == "never_applied"
+    assert journal["callback_error"] == expected
+    assert "ticket" not in journal and "claim" not in journal
+    assert settings_path.read_bytes() == original
+    assert TICKET not in json.dumps(journal)
+
+
+@pytest.mark.asyncio
+async def test_callback_error_carries_no_ticket_or_token_from_failure_text(
+    tmp_path, monkeypatch
+):
+    """The reason line is built from bounded text, never from raw error text."""
+    cases = (
+        (
+            FakeConnection(error=TimeoutError("lost response " + TICKET)),
+            {"kind": "transport", "code": "callback_timeout",
+             "detail": "TimeoutError"},
+        ),
+        (
+            FakeConnection(
+                error=PinnedTransportError("transport_response_invalid"),
+            ),
+            {"kind": "transport", "code": "transport_response_invalid"},
+        ),
+        (
+            FakeConnection(status=500, response={"detail": FLEET_TOKEN}),
+            {"kind": "http", "status": 500, "detail": "[redacted]"},
+        ),
+    )
+    for index, (connection, expected) in enumerate(cases):
+        case = tmp_path / f"case-{index}"
+        case.mkdir()
+        clock = Clock()
+        executor, settings_path, journal_path = make_executor(
+            case, monkeypatch, connection, clock=clock
+        )
+        settings_path.write_text(json.dumps(settings()))
+
+        result = await executor.apply(dispatch(), direct_source=ADDRESS)
+
+        assert result["callback_error"] == {"at": 1_000.0, **expected}
+        encoded = journal_path.read_text()
+        assert TICKET not in json.dumps(result)
+        assert FLEET_TOKEN not in json.dumps(result["callback_error"])
+        assert result["error_code"] == "transport_unavailable"
+        assert json.loads(encoded)["callback_error"] == {"at": 1_000.0, **expected}
+
+
+@pytest.mark.asyncio
+async def test_a_retried_dispatch_replaces_the_previous_callback_error(
+    tmp_path, monkeypatch
+):
+    """`callback_error` always describes the most recent attempt, not history."""
+    clock = Clock()
+    connection = FakeConnection(status=503, response={"detail": {"code": "busy"}})
+    executor, settings_path, journal_path = make_executor(
+        tmp_path, monkeypatch, connection, clock=clock
+    )
+    settings_path.write_text(json.dumps(settings()))
+    first = await executor.apply(dispatch(), direct_source=ADDRESS)
+    assert first["callback_error"]["code"] == "busy"
+
+    connection.status = 200
+    connection.response = claim()
+    clock.value = 1_010.0
+    second = await executor.apply(dispatch(), direct_source=ADDRESS)
+
+    assert second["state"] == "complete"
+    assert "callback_error" not in second
+    assert "callback_error" not in json.loads(journal_path.read_text())

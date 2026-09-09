@@ -55,6 +55,8 @@ _AGENT_ERROR_CODES = {
     "settings_state_ambiguous", "settings_writer_busy", "ticket_expired",
     "transport_unavailable",
 }
+_AGENT_CALLBACK_KINDS = {"http", "transport", "local"}
+_MAX_CALLBACK_DETAIL = 160
 _BOOTSTRAP_REQUIRED_GATES = (
     "target_exact", "token_exact", "update_supported", "restart_verifiable",
     "hub_idle", "studios_idle", "enabled", "conflict_free",
@@ -518,7 +520,37 @@ class EnrollmentRepairCoordinator:
         conflict = EnrollmentRepairCoordinator._conflict_outcome(response.get("conflict"))
         if conflict:
             result["conflict"] = conflict
+        callback_error = EnrollmentRepairCoordinator._callback_error_outcome(
+            response.get("callback_error")
+        )
+        if callback_error:
+            result["callback_error"] = callback_error
         return result
+
+    @staticmethod
+    def _callback_error_outcome(value: Any) -> dict[str, Any]:
+        """Keep only the stable, credential-free reason a callback failed."""
+        if not isinstance(value, Mapping):
+            return {}
+        failure: dict[str, Any] = {}
+        kind = value.get("kind")
+        if kind in _AGENT_CALLBACK_KINDS:
+            failure["kind"] = str(kind)
+        code = value.get("code")
+        if isinstance(code, str) and 0 < len(code) <= 80:
+            failure["code"] = code
+        status = value.get("status")
+        if (not isinstance(status, bool) and isinstance(status, int)
+                and 100 <= status <= 599):
+            failure["status"] = int(status)
+        detail = value.get("detail")
+        if isinstance(detail, str) and detail.strip():
+            failure["detail"] = detail.strip()[:_MAX_CALLBACK_DETAIL]
+        at = value.get("at")
+        if (not isinstance(at, bool) and isinstance(at, (int, float))
+                and math.isfinite(float(at))):
+            failure["at"] = float(at)
+        return failure if "kind" in failure else {}
 
     @staticmethod
     def _conflict_outcome(value: Any) -> dict[str, Any]:
@@ -1121,11 +1153,42 @@ class EnrollmentRepairCoordinator:
             status = {**status, "conflict": conflict}
         elif "conflict" in status:
             status = {key: value for key, value in status.items() if key != "conflict"}
+        callback_error = self._callback_error_outcome(status.get("callback_error"))
+        if callback_error:
+            status = {**status, "callback_error": callback_error}
+        elif "callback_error" in status:
+            status = {
+                key: value for key, value in status.items()
+                if key != "callback_error"
+            }
         adopted = self.store.adopt_status(request_id, status, direct_source=source)
         if adopted["state"] == "complete" and not was_complete:
             self._peer_invalidator(machine)
             self._wake_peer(machine)
         return adopted
+
+    def note_redemption_refusal(
+        self,
+        request_id: str,
+        *,
+        code: str,
+        status: int,
+        source: str | None = None,
+        target_machine: str | None = None,
+    ) -> None:
+        """Record why this Controller refused one redemption callback.
+
+        Evidence only — nothing about the request's state, authority or
+        ticket changes, and the HTTP answer the target already received is
+        unaffected.
+        """
+        self.store.record_redemption_refusal(
+            request_id,
+            code=code,
+            status=status,
+            source=source,
+            target_machine=target_machine,
+        )
 
     async def dispatch_next(self) -> dict[str, Any] | None:
         """Commit one target-bound ticket, then write it on the same pinned socket."""
