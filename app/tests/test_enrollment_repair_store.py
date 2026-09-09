@@ -488,6 +488,103 @@ def test_exact_revalidation_resolves_only_preclaim_review(store, clock):
     assert store.batch(live["batch_id"])["requests"][0]["state"] == "needs_review"
 
 
+def test_expired_unredeemed_review_becomes_retryable_with_prior_error_evidence(
+    store, clock,
+):
+    batch = store.create_or_adopt_batch(["mac-a"])
+    request_id = batch["requests"][0]["request_id"]
+    issue(store, request_id)
+    store.mark_dispatched(request_id)
+    store.adopt_status(
+        request_id,
+        {
+            "request_id": request_id,
+            "state": "needs_review",
+            "error_code": "request_conflict",
+        },
+        direct_source=TARGET_A.resolved_address,
+    )
+    clock.value = 1200.0
+
+    store.resolve_expired_unredeemed_review(request_id)
+
+    resolved = store.batch(batch["batch_id"])["requests"][0]
+    assert resolved["state"] == "retryable"
+    assert resolved["error_code"] is None
+    assert resolved["evidence"] == {
+        "agent_terminal_state": "needs_review",
+        "review_resolution": "ticket_expired_unredeemed",
+        "prior_error_code": "request_conflict",
+    }
+    with sqlite3.connect(store.path) as connection:
+        assert connection.execute(
+            """SELECT ticket_status, redeemed_at
+               FROM enrollment_repair_requests WHERE request_id = ?""",
+            (request_id,),
+        ).fetchone() == ("expired", None)
+
+
+def test_review_inside_its_redemption_window_is_never_resolved(store, clock):
+    batch = store.create_or_adopt_batch(["mac-a"])
+    request_id = batch["requests"][0]["request_id"]
+    issue(store, request_id)
+    store.mark_dispatched(request_id)
+    store.adopt_status(
+        request_id,
+        {
+            "request_id": request_id,
+            "state": "needs_review",
+            "error_code": "request_conflict",
+        },
+        direct_source=TARGET_A.resolved_address,
+    )
+    clock.value = 1119.0
+
+    with pytest.raises(RepairStoreError, match="review_not_expired"):
+        store.resolve_expired_unredeemed_review(request_id)
+
+    assert store.batch(batch["batch_id"])["requests"][0]["state"] == "needs_review"
+
+
+def test_redeemed_review_is_never_resolved_by_ticket_expiry(store, clock):
+    batch = store.create_or_adopt_batch(["mac-a"])
+    request_id = batch["requests"][0]["request_id"]
+    issue(store, request_id)
+    clock.value = 1100.0
+    redeem(store, request_id)
+    store.adopt_status(
+        request_id,
+        {"request_id": request_id, "state": "needs_review"},
+        direct_source=TARGET_A.resolved_address,
+    )
+    clock.value = 1200.0
+
+    with pytest.raises(RepairStoreError, match="review_not_expired"):
+        store.resolve_expired_unredeemed_review(request_id)
+
+    current = store.batch(batch["batch_id"])["requests"][0]
+    assert current["state"] == "needs_review"
+    assert current["redeemed_at"] is not None
+
+
+def test_preclaim_review_stays_on_the_preclaim_path(store, clock):
+    batch = store.create_or_adopt_batch(["mac-a"])
+    request_id = batch["requests"][0]["request_id"]
+    store.fail_before_claim(
+        request_id, state="needs_review", error_code="duplicate_host",
+    )
+    clock.value = 1200.0
+
+    with pytest.raises(RepairStoreError, match="review_not_expired"):
+        store.resolve_expired_unredeemed_review(request_id)
+
+    store.resolve_preclaim_review(request_id, evidence_code="registry_exact")
+
+    resolved = store.batch(batch["batch_id"])["requests"][0]
+    assert resolved["state"] == "retryable"
+    assert resolved["evidence"] == {"preclaim_resolution": "registry_exact"}
+
+
 def test_park_changes_only_scheduling_state_and_not_durable_authority(store):
     store.create_or_adopt_batch(["mac-a"])
     request = store.claim_next_dispatch()

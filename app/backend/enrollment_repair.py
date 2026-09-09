@@ -593,6 +593,7 @@ class EnrollmentRepairCoordinator:
         rows = self._rows()
         token = self._token_reader()
         controller_role = self._controller_role()
+        self._resolve_expired_unredeemed_review()
         request_states = self._request_states()
         machines = []
         for machine in self._remote_machines(rows):
@@ -619,6 +620,42 @@ class EnrollmentRepairCoordinator:
                 row["request_id"], evidence_code="registry_unambiguous",
             )
 
+    def _resolve_expired_unredeemed_review(self, machine: str | None = None) -> None:
+        """Release targets whose review ticket expired without any redemption.
+
+        A refused dispatch left the target in `needs_review` holding a ticket
+        the Agent never redeemed.  Once the redemption deadline passes that row
+        can no longer authorize anything, yet it still counted as an unresolved
+        request and made every later repair of that Mac impossible.  Resolving
+        it to `retryable` here — oldest first — restores both batch creation
+        and the dashboard's offer of that Mac.
+        """
+        now = float(self._clock())
+        clause = " AND target_machine = ?" if machine is not None else ""
+        parameters: tuple[Any, ...] = (
+            (now, machine) if machine is not None else (now,)
+        )
+        with self.store._connect() as connection:
+            rows = connection.execute(
+                """SELECT request_id FROM enrollment_repair_requests
+                   WHERE state = 'needs_review' AND redeemed_at IS NULL
+                     AND issued_at IS NOT NULL
+                     AND redemption_expires_at IS NOT NULL
+                     AND redemption_expires_at <= ?"""
+                + clause
+                + " ORDER BY created_at ASC",
+                parameters,
+            ).fetchall()
+        for row in rows:
+            try:
+                self.store.resolve_expired_unredeemed_review(
+                    row["request_id"], now=now,
+                )
+            except RepairStoreError:
+                # Another caller resolved or revived the row between the read
+                # and the guarded write; the store's rule stays authoritative.
+                continue
+
     def create_batch(self, machines: Sequence[str]) -> dict[str, Any]:
         rows = self._rows()
         token = self._token_reader()
@@ -643,6 +680,7 @@ class EnrollmentRepairCoordinator:
                 rejected[machine] = outcome["code"]
                 continue
             self._resolve_preclaim_review(machine)
+            self._resolve_expired_unredeemed_review(machine)
             accepted.append(machine)
         if not accepted:
             return {"requests": [], "rejected": rejected}

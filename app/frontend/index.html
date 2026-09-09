@@ -1248,6 +1248,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.21.1", date: "2026-09-09", items: [
+    "<b>A Mac whose repair was refused can be repaired again.</b> When a repair was refused before the Mac ever used its one-time repair ticket, that row sat in \"needs review\" forever and blocked every later repair of the same Mac — the Repair eligible Macs list simply stopped offering it, and starting a new repair was rejected. Once the ticket's two-minute window has passed, that row now becomes an ordinary retryable one and the Mac is offered again.",
+    "Nothing that actually happened is thrown away: a Mac that really did use its ticket still waits for its result, a repair still running is untouched, and a finished repair is never rewritten. The usual eligibility checks still decide whether the retry may go ahead.",
+    "Why: after the 2.21.0 fix went out, one of the ten Macs from the failed 9 Sep run still could not be repaired — the Hub answered \"this Mac already belongs to an active repair batch\" for a batch that had ended hours earlier.",
+  ]},
   { v: "2.21.0", date: "2026-09-09", items: [
     "<b>Every Hub is reachable by its owner before anyone sets it up.</b> A Hub that has never been given an owner password now accepts the default password <code>123456</code> — over Tailscale or on the Mac itself only, never over the LAN, and with the same lockout after repeated wrong attempts. A banner sits above the tabs on every page until you replace it, and you can now change the password from a signed-in browser instead of only on the Mac.",
     "<b>Joining a location hands the Mac its password.</b> When an Agent enrolls, the controller passes it a scrambled verifier of the site's owner password — never the password itself — and the Agent adopts it only if nobody has chosen one on that Mac. Changing the controller's password re-sends it to every reachable Agent; an Agent whose owner picked its own password keeps it. On an Agent, the sign-in box now names the two things that actually work: the fleet token from the controller's Remote → Machine mode page, or the default password.",
