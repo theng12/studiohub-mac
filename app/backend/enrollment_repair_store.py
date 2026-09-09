@@ -994,6 +994,65 @@ class RepairStore:
             self._refresh_batch_locked(connection, row["batch_id"], now)
             connection.commit()
 
+    def resolve_expired_unredeemed_review(
+        self,
+        request_id: str,
+        *,
+        now: float | None = None,
+    ) -> None:
+        """Free a review whose ticket expired before any redemption happened.
+
+        A ``needs_review`` request that was issued a ticket the target never
+        redeemed, and whose redemption deadline has passed, protects nothing:
+        the ticket can no longer be redeemed by anyone, so no identity write
+        can still follow from it.  Such a row is therefore resolved exactly
+        like the preclaim case — it becomes ``retryable`` so a later batch may
+        be created for that target.  A redeemed row, a row still inside its
+        redemption window, and a row that never had a ticket are all refused.
+        """
+        moment = float(self.clock() if now is None else now)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM enrollment_repair_requests WHERE request_id = ?",
+                (str(request_id),),
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                raise RepairStoreError("request_not_found")
+            if not (
+                row["state"] == "needs_review"
+                and row["redeemed_at"] is None
+                and row["issued_at"] is not None
+                and row["redemption_expires_at"] is not None
+                and float(row["redemption_expires_at"]) <= moment
+            ):
+                connection.rollback()
+                raise RepairStoreError("review_not_expired")
+            evidence = self._merge_evidence(
+                row["evidence_json"],
+                {
+                    "review_resolution": "ticket_expired_unredeemed",
+                    "prior_error_code": row["error_code"],
+                },
+            )
+            changed = connection.execute(
+                """UPDATE enrollment_repair_requests
+                   SET state = 'retryable', error_code = NULL,
+                       ticket_status = 'expired', evidence_json = ?,
+                       updated_at = ?
+                   WHERE request_id = ? AND state = 'needs_review'
+                     AND redeemed_at IS NULL AND issued_at IS NOT NULL
+                     AND redemption_expires_at IS NOT NULL
+                     AND redemption_expires_at <= ?""",
+                (evidence, moment, str(request_id), moment),
+            ).rowcount
+            if changed != 1:
+                connection.rollback()
+                raise RepairStoreError("review_not_expired")
+            self._refresh_batch_locked(connection, row["batch_id"], moment)
+            connection.commit()
+
     def flag_registry_changed(
         self,
         request_id: str,

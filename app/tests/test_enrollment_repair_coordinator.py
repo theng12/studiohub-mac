@@ -452,6 +452,150 @@ def test_resolved_preclaim_ambiguity_can_retry_without_unlocking_agent_review(re
     assert coordinator.create_batch(["mac-a"])["requests"][0]["request_id"] == live
 
 
+_REPAIR_TARGET = TargetIdentity(
+    "mac-a", "agent-a.test", "100.64.0.10", "http://100.64.0.20:47873",
+)
+_REPAIR_CONTROLLER = ControllerIdentity("controller", "site", "Site", "controller")
+
+
+def _refused_dispatch_review(store, clock):
+    """Reproduce the live refusal: a wider batch, dispatched, never redeemed.
+
+    The batch covers two Macs so a later single-Mac batch cannot be adopted as
+    a replay — exactly the shape that made the owner's retry return 409.
+    """
+    batch = store.create_or_adopt_batch(["mac-a", "mac-b"])
+    request_id = next(
+        row["request_id"] for row in batch["requests"]
+        if row["target_machine"] == "mac-a"
+    )
+    store.issue_ticket(
+        request_id,
+        target=_REPAIR_TARGET,
+        controller=_REPAIR_CONTROLLER,
+        fleet_token_digest="a" * 64,
+        ticket_digest=hashlib.sha256(b"repair-ticket").hexdigest(),
+        redemption_expires_at=float(clock.value) + 120.0,
+    )
+    store.mark_dispatched(request_id)
+    store.adopt_status(
+        request_id,
+        {
+            "request_id": request_id,
+            "state": "needs_review",
+            "error_code": "request_conflict",
+        },
+        direct_source=_REPAIR_TARGET.resolved_address,
+    )
+    return request_id
+
+
+def _repair_coordinator(repair_store, clock):
+    repair_store.clock = clock
+    rows = _records(
+        ("mac-a", "agent-a.test", ["image"]),
+        ("mac-b", "agent-b.test", ["voice"]),
+    )
+    return _coordinator(repair_store, rows, {
+        "agent-a.test": ["100.64.0.10"], "agent-b.test": ["100.64.0.11"],
+    })
+
+
+def test_refused_dispatch_review_expires_and_the_mac_can_be_repaired_again(
+    repair_store,
+):
+    clock = MutableClock()
+    coordinator = _repair_coordinator(repair_store, clock)
+    refused = _refused_dispatch_review(repair_store, clock)
+    clock.value = 2000.0
+
+    retry = coordinator.create_batch(["mac-a"])
+
+    assert [row["target_machine"] for row in retry["requests"]] == ["mac-a"]
+    assert retry["requests"][0]["request_id"] != refused
+    assert retry["requests"][0]["state"] == "queued"
+    resolved = repair_store.request(refused)
+    assert resolved["state"] == "retryable"
+    assert resolved["error_code"] is None
+    assert resolved["evidence"] == {
+        "agent_terminal_state": "needs_review",
+        "review_resolution": "ticket_expired_unredeemed",
+        "prior_error_code": "request_conflict",
+    }
+
+
+def test_refused_dispatch_review_still_blocks_inside_its_redemption_window(
+    repair_store,
+):
+    clock = MutableClock()
+    coordinator = _repair_coordinator(repair_store, clock)
+    refused = _refused_dispatch_review(repair_store, clock)
+    clock.value = 1060.0
+
+    with pytest.raises(ValueError, match="already belong to active repair batches"):
+        coordinator.create_batch(["mac-a"])
+
+    assert repair_store.request(refused)["state"] == "needs_review"
+
+
+def test_redeemed_review_still_blocks_a_new_batch_after_ticket_expiry(repair_store):
+    clock = MutableClock()
+    coordinator = _repair_coordinator(repair_store, clock)
+    batch = repair_store.create_or_adopt_batch(["mac-a", "mac-b"])
+    request_id = next(
+        row["request_id"] for row in batch["requests"]
+        if row["target_machine"] == "mac-a"
+    )
+    repair_store.issue_ticket(
+        request_id,
+        target=_REPAIR_TARGET,
+        controller=_REPAIR_CONTROLLER,
+        fleet_token_digest="a" * 64,
+        ticket_digest=hashlib.sha256(b"repair-ticket").hexdigest(),
+        redemption_expires_at=1120.0,
+    )
+    clock.value = 1100.0
+    repair_store.redeem(
+        request_id, ticket="repair-ticket", redemption_expires_at=1120.0,
+        target_machine="mac-a", direct_source="100.64.0.10",
+        observed_identity={},
+        registry_snapshot=_REPAIR_TARGET,
+        controller=_REPAIR_CONTROLLER,
+        fleet_token_digest="a" * 64,
+    )
+    repair_store.adopt_status(
+        request_id,
+        {"request_id": request_id, "state": "needs_review"},
+        direct_source="100.64.0.10",
+    )
+    clock.value = 2000.0
+
+    with pytest.raises(ValueError, match="already belong to active repair batches"):
+        coordinator.create_batch(["mac-a"])
+
+    assert repair_store.request(request_id)["state"] == "needs_review"
+
+
+def test_eligibility_reports_an_expired_unredeemed_review_as_retryable(repair_store):
+    clock = MutableClock()
+    coordinator = _repair_coordinator(repair_store, clock)
+    refused = _refused_dispatch_review(repair_store, clock)
+
+    inside_window = {
+        row["machine"]: row for row in coordinator.eligibility()["machines"]
+    }
+    assert inside_window["mac-a"]["request_state"] == "needs_review"
+
+    clock.value = 2000.0
+    after_expiry = {
+        row["machine"]: row for row in coordinator.eligibility()["machines"]
+    }
+
+    assert after_expiry["mac-a"]["request_state"] == "retryable"
+    assert after_expiry["mac-a"]["eligible"] is True
+    assert repair_store.request(refused)["state"] == "retryable"
+
+
 @pytest.mark.asyncio
 async def test_controller_stores_digest_before_dispatch_and_plaintext_only_in_memory(
     repair_store,

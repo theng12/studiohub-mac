@@ -10,6 +10,47 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.21.1] — 2026-09-09
+
+### Fixed — a refused repair no longer locks that Mac out of every later repair
+
+- A repair request that ends in `needs_review` holding a ticket the target
+  never redeemed, whose redemption deadline has passed, is now resolved to
+  `retryable` instead of counting as an unresolved request forever. Such a row
+  can no longer authorize anything — the ticket is past its 120-second
+  redemption window and no Agent can redeem it — so it protects nothing, which
+  is exactly the reasoning that already applied to the preclaim case.
+- `RepairStore.resolve_expired_unredeemed_review()` performs that transition
+  under `BEGIN IMMEDIATE`, requiring `state = 'needs_review'`,
+  `redeemed_at IS NULL`, `issued_at IS NOT NULL` and
+  `redemption_expires_at <= now` both when it reads the row and again in the
+  guarded write. It sets `state = 'retryable'`, clears `error_code`, marks the
+  ticket `expired`, and merges `review_resolution: ticket_expired_unredeemed`
+  plus the `prior_error_code` into the existing evidence, keeping the
+  `prior_repair_*` fields recorded in 2.21.0. A redeemed row, a row still
+  inside its redemption window, and a row that never had a ticket are all
+  refused with `review_not_expired`.
+- The controller applies the same resolution for each accepted machine before
+  creating a batch, and while reading repair eligibility, so a Mac stuck this
+  way is offered again under "Repair eligible Macs" and its row reads
+  "Try again when it is reachable" rather than "needs manual verification".
+- Why: on 2026-09-09 the controller dispatched a ten-Mac repair batch and every
+  Agent refused it with `request_conflict` — the 2.20.4 resolved-journal bug
+  fixed in 2.21.0. With the Agents upgraded, creating a new one-machine batch
+  for one of those Macs returned 409 `repair_request_rejected` ("target
+  machines already belong to active repair batches"), because the dead
+  `needs_review` row from the refused dispatch was still counted as active and
+  nothing in the Hub could ever move it out.
+
+### Safety
+
+- No identity, ticket, callback-source, fleet-credential or settings-preimage
+  check is relaxed. A row whose ticket was actually redeemed still needs status
+  adoption, a `confirmation_pending` row is untouched, and a `complete` row is
+  never rewritten. A resolved row becomes retryable only; the ordinary
+  eligibility checks still decide whether a new repair may be issued, so a Mac
+  whose review came from an ambiguous registry is still refused at that gate.
+
 ## [2.21.0] — 2026-09-09
 
 ### Added — every Hub is reachable by its owner before it is set up
