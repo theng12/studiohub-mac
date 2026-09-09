@@ -10,6 +10,39 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.21.3] — 2026-09-09
+
+### Fixed — a Mac repaired once can now redeem a later repair ticket
+
+- `RepairStore.redeem()` refused any ticket while ANY other request for the
+  same `target_machine` sat in state `complete`, with no time bound. One
+  successful repair therefore locked that Mac out of every later redemption
+  for the life of the database — the check read
+  `state = 'complete'` alone. The refusal is now scoped to the same repair
+  effort: `state = 'complete' AND updated_at >= <this row's issued_at>`.
+  A completion recorded before this ticket was issued is history from an
+  earlier effort and no longer refuses anything.
+- `updated_at` is the completion time, not merely the last touch. `complete`
+  is terminal in this store: every other write to a request row is guarded on
+  a non-complete state, and 2.21.2's `redemption_refusals` evidence
+  deliberately leaves `updated_at` alone. A row missing `issued_at` — which
+  the redemption state guard already makes impossible — falls back to the old
+  strict rule rather than opening the window.
+- The guarantee the check exists for is unchanged: two tickets inside one
+  repair effort still cannot both be redeemed, and a target that completed
+  after this ticket was issued still answers `repair_already_complete`
+  (HTTP 409). No identity, ticket, fleet-credential, expiry or target-binding
+  check is touched, and batch creation — which already excluded `complete`
+  rows from "active" — is unchanged.
+- Why: on 2026-09-09 controller `terranash-0300` dispatched a fresh repair to
+  an Agent still reporting the wrong controller id — the exact mismatch the
+  repair exists to fix. The Agent accepted the dispatch and called back to
+  redeem, and the Controller refused with `repair_already_complete` because
+  that Mac had been marked complete by an earlier batch, after which its
+  identity drifted again. The Agent's journal then expired to `never_applied`.
+  This was the third "once, forever" lock in this flow, after the Agent
+  journal (2.21.0) and unredeemed review rows (2.21.1).
+
 ## [2.21.2] — 2026-09-09
 
 ### Fixed — a repair that ends `never_applied` now says why the callback failed

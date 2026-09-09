@@ -1248,6 +1248,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.21.3", date: "2026-09-09", items: [
+    "<b>A Mac that was repaired once can be repaired again for real.</b> Studio Hub used to turn away a Mac\u2019s call home the moment it saw that the same Mac had ever finished a repair before &mdash; even a repair from days earlier. So a Mac whose identity drifted a second time could be offered a new repair, accept it, and then be refused at the last step, every time. The refusal now applies only inside the repair that is actually running.",
+    "The protection it was there for is untouched: within one repair, a second ticket still cannot be used after the Mac has already finished, and that answer is unchanged. No identity, ticket, password or deadline check is relaxed.",
+    "Why: on 9 Sep a Mac still reporting the wrong location was sent a fresh repair, took it, called home &mdash; and was told \u201calready repaired\u201d, because it had been repaired once before and drifted again. Two minutes later its record simply read \u201cnever applied\u201d.",
+  ]},
   { v: "2.21.2", date: "2026-09-09", items: [
     "<b>A repair that ends \"never applied\" now tells you why.</b> When a Mac takes on a repair and then cannot report back, both sides keep the reason. The Mac records what happened to its call home &mdash; refused, timed out, connection lost, wrong address &mdash; and keeps that reason even after the two-minute window closes, instead of throwing it away. Studio Hub records the reason whenever it turns a call home away. The repair row now shows both: \"Redemption refused: &hellip; (HTTP 403) from &hellip;\" and \"Agent callback failed: &hellip;\".",
     "Nothing that already worked changes. The answer a Mac gets is exactly the same, the reason is kept as evidence only and never moves a repair forward or back, only the last five refusals are stored, and no ticket, token or password can appear in any of it.",
