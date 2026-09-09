@@ -630,3 +630,61 @@ async def test_refresh_same_site_token_rejection_stays_token_rejected(reset, mon
     client = RouteGet({"ok": True, "control_plane": {"site_id": "terranash-0300"}})
     await peers.refresh(REMOTE, client)
     assert peers.cached("mac-b")["status"] == "token_rejected"
+
+
+class FakePasswordClient:
+    def __init__(self, status=200, data=None):
+        self.status = status
+        self.data = {"ok": True, "installed": True} if data is None else data
+        self.calls = []
+
+    async def post(self, url, headers=None, json=None, timeout=None):
+        self.calls.append(("POST", url, headers, json, timeout))
+        return FakeResp(self.status, self.data)
+
+
+@pytest.mark.asyncio
+async def test_owner_password_broadcast_uses_the_current_fleet_credential(reset):
+    peers.set_fleet_token("shared-secret")
+    verifier = {"version": 1, "salt": "ab" * 16, "digest": "cd" * 64}
+    client = FakePasswordClient()
+
+    result = await peers.sync_owner_password(REMOTE, client, verifier)
+
+    method, url, headers, body, timeout = client.calls[0]
+    assert method == "POST"
+    assert url == "http://100.1.1.1:47873/api/hub/fleet/owner-password"
+    assert headers == {"X-Hub-Token": "shared-secret"}
+    assert body == {"schema_version": 1, "verifier": verifier}
+    assert timeout == peers.PEER_TIMEOUT_S
+    assert result["total"] == 1 and result["installed"] == 1
+    assert result["machines"]["mac-b"]["status"] == "installed"
+
+
+@pytest.mark.asyncio
+async def test_owner_password_broadcast_reports_agents_that_kept_their_own(reset):
+    peers.set_fleet_token("shared-secret")
+    client = FakePasswordClient(data={"ok": True, "installed": False})
+
+    result = await peers.sync_owner_password(
+        REMOTE, client, {"version": 1, "salt": "ab" * 16, "digest": "cd" * 64},
+    )
+
+    assert result["installed"] == 0 and result["unchanged"] == 1
+    assert result["machines"]["mac-b"]["status"] == "kept_own_password"
+
+
+@pytest.mark.asyncio
+async def test_owner_password_broadcast_survives_an_unreachable_agent(reset):
+    peers.set_fleet_token("shared-secret")
+
+    class Unreachable:
+        async def post(self, url, headers=None, json=None, timeout=None):
+            raise httpx.ConnectError("down")
+
+    result = await peers.sync_owner_password(
+        REMOTE, Unreachable(), {"version": 1, "salt": "ab" * 16, "digest": "cd" * 64},
+    )
+
+    assert result["installed"] == 0
+    assert result["machines"]["mac-b"]["status"] == "unreachable"

@@ -9,6 +9,10 @@ Trust model:
   password instead.
 - The static dashboard page itself is served without a token; its API calls
   are what get checked (the page shows the sign-in screen on first 401).
+- A Hub nobody has given a password to accepts one shipped default password,
+  under the same loopback/Tailscale rule and the same failure throttle, so an
+  unattended Mac is never unreachable to its owner.  Storing any password —
+  including the verifier an Agent inherits from its controller — ends that.
 
 The owner password is salted/scrypt-hashed. Browser sessions are random opaque
 values whose hashes are stored locally, so neither password nor session can be
@@ -20,8 +24,11 @@ import hmac
 import ipaddress
 import json
 import os
+import re
 import secrets
 import time
+from collections.abc import Mapping
+from typing import Any
 from urllib.parse import urlsplit
 
 from starlette.requests import Request
@@ -48,6 +55,18 @@ SESSION_TTL_S = SESSION_TTL_DAYS * 24 * 60 * 60
 _LOGIN_WINDOW_S = 15 * 60
 _MAX_LOGIN_FAILURES = 5
 _login_failures: dict[str, list[float]] = {}
+
+# A Hub that nobody has given a password to is still the owner's Hub. Until an
+# owner password exists, this one value signs in under exactly the same rules
+# as a real password: loopback or Tailscale only, same failure throttle. It
+# stops being accepted the moment any password is stored, including the
+# verifier an Agent inherits from its controller at enrolment.
+DEFAULT_OWNER_PASSWORD = "123456"
+PASSWORD_MODE_DEFAULT = "default"
+PASSWORD_MODE_CUSTOM = "custom"
+PASSWORD_MODE_INHERITED = "inherited"
+INHERITED_PASSWORD_SOURCE = "controller"
+_HEX_FIELD = re.compile(r"^[0-9a-f]+$")
 
 
 class ExactFleetServiceRequestError(ValueError):
@@ -151,10 +170,74 @@ def load_token() -> str:
     return token
 
 
-def password_configured() -> bool:
-    record = _read_private(PASSWORD_FILE, {})
+def _password_record() -> dict:
+    return _read_private(PASSWORD_FILE, {})
+
+
+def _configured(record: Mapping[str, Any]) -> bool:
     return all(isinstance(record.get(key), str) and record[key]
                for key in ("salt", "digest"))
+
+
+def password_configured() -> bool:
+    return _configured(_password_record())
+
+
+def password_mode() -> str:
+    """How this Hub's owner password came to be, for honest dashboard copy."""
+    record = _password_record()
+    if not _configured(record):
+        return PASSWORD_MODE_DEFAULT
+    if record.get("source") == INHERITED_PASSWORD_SOURCE:
+        return PASSWORD_MODE_INHERITED
+    return PASSWORD_MODE_CUSTOM
+
+
+def default_password_accepted(password: Any) -> bool:
+    """Whether the shipped default signs in right now."""
+    if password_configured() or not isinstance(password, str):
+        return False
+    return hmac.compare_digest(password, DEFAULT_OWNER_PASSWORD)
+
+
+def owner_password_verifier() -> dict | None:
+    """The stored salt/digest record — never a password, never recoverable."""
+    record = _password_record()
+    if not _configured(record):
+        return None
+    version = record.get("version")
+    return {
+        "version": version if isinstance(version, int) and not isinstance(version, bool) else 1,
+        "salt": record["salt"],
+        "digest": record["digest"],
+    }
+
+
+def validated_password_verifier(value: Any) -> dict | None:
+    """Accept only a well-formed hex verifier record of a bounded size."""
+    if not isinstance(value, Mapping) or value.get("version") != 1:
+        return None
+    fields = {}
+    for name, minimum, maximum in (("salt", 16, 256), ("digest", 32, 1024)):
+        field = value.get(name)
+        if (not isinstance(field, str) or len(field) % 2
+                or not minimum <= len(field) <= maximum
+                or _HEX_FIELD.fullmatch(field) is None):
+            return None
+        fields[name] = field
+    return {"version": 1, **fields}
+
+
+def install_password_verifier(
+    value: Any, *, source: str = INHERITED_PASSWORD_SOURCE,
+) -> bool:
+    """Install a fleet-supplied verifier, never over a password the owner chose."""
+    record = validated_password_verifier(value)
+    if record is None or password_mode() == PASSWORD_MODE_CUSTOM:
+        return False
+    _write_private(PASSWORD_FILE, {**record, "source": source})
+    clear_browser_sessions()
+    return True
 
 
 def _password_digest(password: str, salt: bytes) -> bytes:
@@ -171,6 +254,8 @@ def set_owner_password(password: str) -> None:
         raise ValueError("Enter a password.")
     salt = secrets.token_bytes(16)
     digest = _password_digest(password, salt)
+    # An owner-chosen password is always "custom": no source marker, so a later
+    # fleet broadcast can never replace it.
     _write_private(PASSWORD_FILE, {
         "version": 1,
         "salt": salt.hex(),

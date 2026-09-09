@@ -23,7 +23,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from . import control_plane, hardware_profiles, peers, registry
+from . import auth, control_plane, hardware_profiles, peers, registry
 from .controller_settings_lock import settings_writer_lock
 from .registry import DATA_DIR
 
@@ -186,13 +186,20 @@ def claim_enrollment_code(code: str, *, now: float | None = None) -> dict:
             connection.rollback()
             raise ValueError("Enrollment code could not be claimed.")
         connection.commit()
-    return {
+    claim = {
         "schema_version": 1,
         "site_id": settings["site_id"],
         "site_name": settings["site_name"],
         "controller_id": settings["controller_id"],
         "fleet_token": token,
     }
+    # Hand the joining Agent this site's owner password as a salted verifier, so
+    # the owner can reach it without ever typing a password on that Mac. Only a
+    # verifier travels; the password itself is not recoverable from it.
+    verifier = auth.owner_password_verifier()
+    if verifier is not None:
+        claim["owner_password_verifier"] = verifier
+    return claim
 
 
 def enrollment_credential_status(*, include_code: bool = False) -> dict:
@@ -266,6 +273,41 @@ def _allowed_private_ip(value: str) -> bool:
 
 def private_request_host(host: str | None) -> bool:
     return _allowed_private_ip(str(host or ""))
+
+
+def request_is_from_parent_controller(
+    host: str | None, parent_controller_url: str | None,
+) -> bool:
+    """Whether a request came from the exact host this Agent saved as its parent."""
+    source = str(host or "").split("%", 1)[0].strip()
+    parent = str(parent_controller_url or "").strip()
+    if not source or not parent or not _allowed_private_ip(source):
+        return False
+    try:
+        source_address = ipaddress.ip_address(source)
+        hostname = urlsplit(parent).hostname
+    except ValueError:
+        return False
+    if not hostname:
+        return False
+    hostname = hostname.rstrip(".").lower()
+    try:
+        candidates = {str(ipaddress.ip_address(hostname.split("%", 1)[0]))}
+    except ValueError:
+        try:
+            candidates = {
+                result[4][0].split("%", 1)[0]
+                for result in socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+            }
+        except OSError:
+            return False
+    for candidate in candidates:
+        try:
+            if ipaddress.ip_address(candidate) == source_address:
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 def validate_private_controller_url(value: str) -> str:
@@ -428,6 +470,7 @@ def _configuration_paths() -> tuple[Path, ...]:
         control_plane.DATABASE_URL_FILE,
         peers.FLEET_TOKEN_FILE,
         peers.SHARED_STUDIO_TOKEN_FILE,
+        auth.PASSWORD_FILE,
         hardware_profiles.MACHINE_PROFILES_FILE,
         registry.LABELS_FILE,
     )
@@ -512,12 +555,19 @@ def _validated_claim(value: dict) -> dict:
         raise ValueError("Controller returned an invalid controller ID.")
     if not 12 <= len(fleet_token) <= 512:
         raise ValueError("Controller returned an invalid site fleet credential.")
-    return {
+    validated = {
         "site_id": site_id,
         "site_name": site_name,
         "controller_id": controller_id,
         "fleet_token": fleet_token,
     }
+    # The owner-password verifier is optional and additive: a controller that
+    # has no owner password sends none, and a malformed one is dropped rather
+    # than failing an enrolment that is otherwise valid.
+    verifier = auth.validated_password_verifier(value.get("owner_password_verifier"))
+    if verifier is not None:
+        validated["owner_password_verifier"] = verifier
+    return validated
 
 
 async def claim_remote(controller_url: str, code: str,
@@ -579,6 +629,9 @@ def configure_joined_agent(controller_url: str, hardware_profile_id: str,
                 "parent_controller_url": base_url,
             }, clear_database_url=True)
             peers.set_fleet_token(values["fleet_token"])
+            inherited_password = auth.install_password_verifier(
+                values.get("owner_password_verifier")
+            )
             profile = hardware_profiles.set_machine_hardware_profile(
                 "local", hardware_profile_id)
             if machine_name is not None:
@@ -596,6 +649,9 @@ def configure_joined_agent(controller_url: str, hardware_profile_id: str,
             "Joined the controller over a private link",
             "Worker role and location identity saved automatically",
             "Site fleet credential stored in owner-only files",
+            ("Owner sign-in password inherited from the controller"
+             if inherited_password
+             else "Owner sign-in password on this Mac left unchanged"),
             "PostgreSQL and customer submission remain disabled",
             "Local hardware profile assigned",
         ],

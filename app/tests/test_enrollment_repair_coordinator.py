@@ -2051,3 +2051,45 @@ async def test_wake_scheduler_is_safe_from_a_worker_thread(repair_store):
         assert coordinator._scheduler_task.done()  # it ran (queue still empty) rather than never starting
     finally:
         await coordinator.stop()
+
+
+def test_dispatch_response_carries_only_an_allow_listed_prior_outcome():
+    from backend.enrollment_repair import EnrollmentRepairCoordinator
+
+    controller = ControllerIdentity(
+        role="controller", site_id="site-a", site_name="Site A",
+        controller_id="controller-a",
+    )
+    refusal = EnrollmentRepairCoordinator._dispatch_response(
+        "request-000000000000000000000002", "mac-a", controller,
+        {
+            "request_id": "request-000000000000000000000002",
+            "state": "needs_review",
+            "error_code": "request_conflict",
+            "conflict": {
+                "request_id": "request-000000000000000000000001",
+                "state": "complete",
+                "error_code": "settings_state_ambiguous",
+                "updated_at": 900.0,
+                "identity": {"site_id": "leaked"},
+                "ticket": "t" * 43,
+            },
+        },
+    )
+
+    assert refusal["conflict"] == {
+        "state": "complete",
+        "error_code": "settings_state_ambiguous",
+        "request_id": "request-000000000000000000000001",
+        "updated_at": 900.0,
+    }
+
+    invented = EnrollmentRepairCoordinator._dispatch_response(
+        "request-000000000000000000000002", "mac-a", controller,
+        {
+            "request_id": "request-000000000000000000000002",
+            "state": "needs_review",
+            "conflict": {"state": "invented", "error_code": "invented"},
+        },
+    )
+    assert "conflict" not in invented

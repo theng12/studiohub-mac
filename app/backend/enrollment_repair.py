@@ -515,7 +515,31 @@ class EnrollmentRepairCoordinator:
         if (state == "complete" and not isinstance(applied_at, bool)
                 and isinstance(applied_at, (int, float)) and math.isfinite(float(applied_at))):
             result["applied_at"] = float(applied_at)
+        conflict = EnrollmentRepairCoordinator._conflict_outcome(response.get("conflict"))
+        if conflict:
+            result["conflict"] = conflict
         return result
+
+    @staticmethod
+    def _conflict_outcome(value: Any) -> dict[str, Any]:
+        """Keep only the stable, credential-free description of a prior repair."""
+        if not isinstance(value, Mapping):
+            return {}
+        outcome: dict[str, Any] = {}
+        state = value.get("state")
+        if state in _AGENT_STATES:
+            outcome["state"] = str(state)
+        error_code = value.get("error_code")
+        if error_code in _AGENT_ERROR_CODES:
+            outcome["error_code"] = str(error_code)
+        request_id = value.get("request_id")
+        if isinstance(request_id, str) and 0 < len(request_id) <= 128:
+            outcome["request_id"] = request_id
+        updated_at = value.get("updated_at")
+        if (not isinstance(updated_at, bool) and isinstance(updated_at, (int, float))
+                and math.isfinite(float(updated_at))):
+            outcome["updated_at"] = float(updated_at)
+        return outcome if "state" in outcome else {}
 
     def _controller_role(self) -> bool:
         settings = self._settings_reader()
@@ -1052,6 +1076,13 @@ class EnrollmentRepairCoordinator:
             if status.get("identity") != expected_identity:
                 raise RepairStoreError("status_identity_mismatch")
         was_complete = request["state"] == "complete"
+        # Whatever route the evidence arrived on, only the allow-listed prior
+        # outcome may reach durable evidence.
+        conflict = self._conflict_outcome(status.get("conflict"))
+        if conflict:
+            status = {**status, "conflict": conflict}
+        elif "conflict" in status:
+            status = {key: value for key, value in status.items() if key != "conflict"}
         adopted = self.store.adopt_status(request_id, status, direct_source=source)
         if adopted["state"] == "complete" and not was_complete:
             self._peer_invalidator(machine)

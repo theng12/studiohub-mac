@@ -780,3 +780,135 @@ def test_new_controller_code_precommit_failure_holds_outer_lock_through_internal
         assert connection.execute("SELECT * FROM enrollment_codes").fetchall() == []
     assert not enrollment.ENROLLMENT_CODE_FILE.exists()
     assert _writer_busy() is False
+
+
+def test_claim_carries_the_controllers_password_verifier_not_a_password(reset):
+    from backend import auth
+
+    _controller()
+    peers.set_fleet_token("fleet-secret-for-location-a")
+    auth.set_owner_password("the site owner password")
+    issued = enrollment.create_enrollment_code(now=100)
+
+    claimed = enrollment.claim_enrollment_code(issued["code"], now=200)
+
+    verifier = claimed["owner_password_verifier"]
+    assert set(verifier) == {"version", "salt", "digest"}
+    assert "the site owner password" not in json.dumps(claimed)
+    assert auth.validated_password_verifier(verifier) == verifier
+
+
+def test_claim_omits_the_verifier_when_the_controller_has_no_password(reset):
+    _controller()
+    peers.set_fleet_token("fleet-secret-for-location-a")
+    issued = enrollment.create_enrollment_code(now=100)
+
+    claimed = enrollment.claim_enrollment_code(issued["code"], now=200)
+
+    assert "owner_password_verifier" not in claimed
+
+
+def test_joining_installs_the_inherited_password_only_when_none_was_chosen(reset):
+    from backend import auth
+
+    verifier = {"version": 1, "salt": "ab" * 16, "digest": "cd" * 64}
+    claim = {
+        "site_id": "location-b", "site_name": "Location B",
+        "controller_id": "controller-b", "fleet_token": "new-site-fleet-token",
+        "owner_password_verifier": verifier,
+    }
+
+    joined = enrollment.configure_joined_agent(
+        "http://100.70.0.2:47873", "mac-mini-m4-16gb", claim)
+
+    assert auth.password_mode() == "inherited"
+    assert "Owner sign-in password inherited from the controller" in joined["checklist"]
+    assert auth.default_password_accepted("123456") is False
+
+    # A password the owner chose on this Mac is never overwritten.
+    auth.set_owner_password("chosen on this mac")
+    rejoined = enrollment.configure_joined_agent(
+        "http://100.70.0.2:47873", "mac-mini-m4-16gb", claim)
+
+    assert auth.password_mode() == "custom"
+    assert auth.verify_owner_password("chosen on this mac")
+    assert "Owner sign-in password on this Mac left unchanged" in rejoined["checklist"]
+
+
+def test_a_malformed_inherited_verifier_never_fails_the_join(reset):
+    from backend import auth
+
+    joined = enrollment.configure_joined_agent(
+        "http://100.70.0.2:47873", "mac-mini-m4-16gb", {
+            "site_id": "location-b", "site_name": "Location B",
+            "controller_id": "controller-b", "fleet_token": "new-site-fleet-token",
+            "owner_password_verifier": {"version": 1, "salt": "nope", "digest": ""},
+        })
+
+    assert joined["ok"] is True
+    assert auth.password_mode() == "default"
+
+
+def test_request_is_from_parent_controller_pins_the_saved_host(reset):
+    assert enrollment.request_is_from_parent_controller(
+        "100.70.0.2", "http://100.70.0.2:47873") is True
+    assert enrollment.request_is_from_parent_controller(
+        "100.70.0.3", "http://100.70.0.2:47873") is False
+    assert enrollment.request_is_from_parent_controller(
+        "100.70.0.2", "") is False
+    assert enrollment.request_is_from_parent_controller(
+        None, "http://100.70.0.2:47873") is False
+    assert enrollment.request_is_from_parent_controller(
+        "8.8.8.8", "http://8.8.8.8:47873") is False
+
+
+def test_owner_password_broadcast_reaches_only_the_parent_controllers_agents(app, token):
+    from backend import auth
+
+    verifier = {"version": 1, "salt": "ab" * 16, "digest": "cd" * 64}
+    enrollment.configure_joined_agent(
+        "http://100.70.0.2:47873", "mac-mini-m4-16gb", {
+            "site_id": "location-a", "site_name": "Location A",
+            "controller_id": "controller-a", "fleet_token": "site-fleet-token-123",
+        })
+    peers.set_fleet_token("site-fleet-token-123")
+
+    stranger = TestClient(app, client=("100.70.0.9", 50000),
+                          headers={"X-Hub-Token": "site-fleet-token-123"})
+    refused = stranger.post("/api/hub/fleet/owner-password",
+                            json={"schema_version": 1, "verifier": verifier})
+    assert refused.status_code == 403
+    assert auth.password_mode() == "default"
+
+    parent = TestClient(app, client=("100.70.0.2", 50000),
+                        headers={"X-Hub-Token": "site-fleet-token-123"})
+    accepted = parent.post("/api/hub/fleet/owner-password",
+                           json={"schema_version": 1, "verifier": verifier})
+    assert accepted.status_code == 200
+    assert accepted.json() == {"ok": True, "installed": True,
+                               "password_mode": "inherited"}
+
+    auth.set_owner_password("chosen on this agent")
+    ignored = parent.post("/api/hub/fleet/owner-password",
+                          json={"schema_version": 1, "verifier": verifier})
+    assert ignored.status_code == 200
+    assert ignored.json()["installed"] is False
+    assert auth.verify_owner_password("chosen on this agent")
+
+
+def test_owner_password_broadcast_needs_the_fleet_credential_and_agent_role(app):
+    from backend import auth
+
+    verifier = {"version": 1, "salt": "ab" * 16, "digest": "cd" * 64}
+    peers.set_fleet_token("site-fleet-token-123")
+    body = {"schema_version": 1, "verifier": verifier}
+
+    anonymous = TestClient(app, client=("100.70.0.2", 50000))
+    assert anonymous.post("/api/hub/fleet/owner-password", json=body).status_code == 401
+
+    _controller()
+    controller_side = TestClient(app, client=("100.70.0.2", 50000),
+                                 headers={"X-Hub-Token": "site-fleet-token-123"})
+    refused = controller_side.post("/api/hub/fleet/owner-password", json=body)
+    assert refused.status_code == 409
+    assert auth.password_mode() == "default"

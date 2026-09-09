@@ -608,6 +608,58 @@ async def start_remote_studio_update_repair(
                 "error": f"can't reach the remote Hub ({exc})"}
 
 
+async def sync_owner_password(
+    registry: list[dict], client: httpx.AsyncClient, verifier: dict,
+) -> dict:
+    """Offer this controller's owner-password verifier to every connected Agent.
+
+    Reuses the fleet transport that already rotates the fleet credential: each
+    write is authenticated with the current fleet token and the Agent decides
+    whether to take it. An Agent with its own chosen password refuses, and an
+    unreachable Agent simply keeps what it has.
+    """
+    token = fleet_token()
+    machines = _remote_machines(registry)
+    headers = {"X-Hub-Token": token} if token else {}
+    body = {"schema_version": 1, "verifier": verifier}
+
+    async def one(machine: str, studios: list[dict]) -> tuple[str, dict]:
+        url = _peer_url(studios[0])
+        try:
+            response = await client.post(
+                f"{url}/api/hub/fleet/owner-password", headers=headers,
+                json=body, timeout=PEER_TIMEOUT_S)
+        except httpx.HTTPError as exc:
+            return machine, {"ok": False, "status": "unreachable",
+                             "detail": (str(exc).strip() or type(exc).__name__)[:180]}
+        if response.status_code in {401, 403}:
+            return machine, {"ok": False, "status": "refused",
+                             "detail": "peer rejected this controller's credential"}
+        if response.status_code >= 400:
+            return machine, {"ok": False, "status": "failed",
+                             "detail": f"peer returned HTTP {response.status_code}"}
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+        installed = bool(isinstance(payload, dict) and payload.get("installed"))
+        return machine, {
+            "ok": installed,
+            "status": "installed" if installed else "kept_own_password",
+            "detail": ("owner password inherited from this controller" if installed
+                       else "peer keeps the password its owner chose"),
+        }
+
+    rows = await asyncio.gather(*(one(machine, studios)
+                                  for machine, studios in machines.items()))
+    results = dict(rows)
+    installed = sum(row["ok"] for row in results.values())
+    return {
+        "total": len(results), "installed": installed,
+        "unchanged": len(results) - installed, "machines": results,
+    }
+
+
 async def sync_fleet_token(
     registry: list[dict], client: httpx.AsyncClient, new_token: str,
     *, local_commit: Callable[[str], None] = set_fleet_token,
