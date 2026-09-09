@@ -40,6 +40,10 @@ AGENT_STATES = (
     "complete", "never_applied", "needs_review",
 )
 _UNRESOLVED_STATES = {"accepted", "redemption_attempted", "applying"}
+_RESOLVED_STATES = {"complete", "never_applied", "needs_review"}
+# A resolved journal is history, not a lock.  Keep a short, bounded,
+# credential-free trail of superseded outcomes inside the same file.
+JOURNAL_HISTORY_LIMIT = 5
 _IDENTITY_ENV = (
     "STUDIOHUB_ROLE", "STUDIOHUB_SITE_ID", "STUDIOHUB_SITE_NAME",
     "STUDIOHUB_CONTROLLER_ID",
@@ -221,6 +225,8 @@ class RepairExecutor:
             valid = not has_ticket and not has_claim
         if not valid:
             raise RepairExecutorError("journal_invalid")
+        if "history" in value and not isinstance(value["history"], list):
+            raise RepairExecutorError("journal_invalid")
         return value
 
     def _save_journal(self, value: Mapping[str, Any]) -> None:
@@ -266,6 +272,46 @@ class RepairExecutor:
             journal["updated_at"] = float(self.clock())
             self._save_journal(journal)
         return journal
+
+    @staticmethod
+    def _outcome_summary(journal: Mapping[str, Any]) -> dict[str, Any]:
+        """Reduce one journal to a credential-free record of how it ended.
+
+        Identity values, tickets and claims are deliberately excluded: this is
+        carried in error bodies and archived on disk.
+        """
+        summary: dict[str, Any] = {
+            "request_id": str(journal.get("request_id", ""))[:128],
+            "state": str(journal.get("state", ""))[:32],
+        }
+        if journal.get("error_code"):
+            summary["error_code"] = str(journal["error_code"])[:64]
+        updated_at = journal.get("updated_at")
+        if (not isinstance(updated_at, bool)
+                and isinstance(updated_at, (int, float))
+                and math.isfinite(float(updated_at))):
+            summary["updated_at"] = float(updated_at)
+        return summary
+
+    def _superseded_history(self, journal: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Archive a resolved journal, newest first, bounded to a short trail."""
+        previous = journal.get("history")
+        rows = [dict(row) for row in previous
+                if isinstance(row, Mapping)] if isinstance(previous, list) else []
+        entry = self._outcome_summary(journal)
+        entry["archived_at"] = float(self.clock())
+        return [entry, *rows][:JOURNAL_HISTORY_LIMIT]
+
+    def _conflict(
+        self, request_id: str, journal: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Refuse a genuine double dispatch, saying what already holds the journal."""
+        return {
+            "request_id": request_id,
+            "state": "needs_review",
+            "error_code": "request_conflict",
+            "conflict": self._outcome_summary(journal),
+        }
 
     @staticmethod
     def _result(journal: Mapping[str, Any]) -> dict[str, Any]:
@@ -457,24 +503,29 @@ class RepairExecutor:
         request_id = payload.get("request_id", "") if isinstance(payload, Mapping) else ""
         request_id = request_id if isinstance(request_id, str) and len(request_id) <= 128 else ""
         try:
+            superseded_history: list[dict[str, Any]] | None = None
             existing = self._load_journal()
             if existing is not None:
                 existing = self._expire(existing)
                 if existing.get("state") in _UNRESOLVED_STATES:
                     if not hmac.compare_digest(str(existing.get("request_id", "")), request_id):
-                        return self._error(request_id, "request_conflict")
+                        return self._conflict(request_id, existing)
                     if not hmac.compare_digest(
                         str(existing.get("dispatch_digest", "")), _dispatch_digest(payload)
                     ):
-                        return self._error(request_id, "request_conflict")
+                        return self._conflict(request_id, existing)
                     if _source_address(direct_source) != existing.get("controller_address"):
                         return self._error(request_id, "callback_source_mismatch")
                     if existing.get("state") != "redemption_attempted":
                         return self._result(existing)
                 elif hmac.compare_digest(str(existing.get("request_id", "")), request_id):
                     return self._result(existing)
-                elif existing.get("state") in {"complete", "needs_review"}:
-                    return self._error(request_id, "request_conflict")
+                else:
+                    # A resolved journal records what an *earlier* request did.
+                    # Archive it and let this request proceed; only unresolved
+                    # journals are a real double dispatch.
+                    superseded_history = self._superseded_history(existing)
+                    existing = None
 
             parsed = self._parse_dispatch(payload)
             if parsed["redemption_expires_at"] <= float(self.clock()):
@@ -532,6 +583,8 @@ class RepairExecutor:
                     "created_at": now,
                     "updated_at": now,
                 }
+                if superseded_history:
+                    journal["history"] = superseded_history
             else:
                 journal = dict(existing)
             journal["state"] = "redemption_attempted"

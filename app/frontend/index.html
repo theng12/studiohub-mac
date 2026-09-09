@@ -22,6 +22,11 @@
   nav button { background: none; border: none; color: var(--dim); font: inherit; padding: 8px 14px; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
   nav button.active { color: var(--text); border-bottom-color: var(--accent); }
   main { padding: 20px 22px; max-width: 1240px; margin: 0 auto; }
+  .default-password-banner { display: flex; gap: 10px 14px; align-items: center; flex-wrap: wrap; padding: 12px 22px; border-bottom: 1px solid var(--warn); background: #d2992218; }
+  .default-password-banner b { color: var(--warn); }
+  .default-password-banner p { flex: 1; min-width: 260px; color: var(--dim); font-size: var(--font-secondary); }
+  .default-password-banner input { min-height: var(--control-min-height); background: var(--panel); border: 1px solid var(--border); border-radius: 7px; color: var(--text); font: inherit; padding: 6px 10px; min-width: 190px; }
+  .default-password-banner .sub { flex-basis: 100%; color: var(--dim); font-size: var(--font-secondary); }
 
   /* control bar */
   .controls { display: flex; gap: 8px 16px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
@@ -319,6 +324,15 @@
   <span class="ver" id="hub-ver" onclick="openWhatsNew()" style="cursor:pointer" title="See what's new"></span>
   <span class="muted" id="last-refresh" style="font-size:12px"></span>
 </header>
+<div id="default-password-banner" class="default-password-banner hide" role="region" aria-label="Default password warning">
+  <b>🔓 This Hub is using the default password. Change it now.</b>
+  <p id="default-password-copy">Anyone who can reach this Hub over Tailscale can sign in with <code>123456</code> until you set your own password.</p>
+  <input id="default-password-new" type="password" autocomplete="new-password" placeholder="New owner password" aria-label="New owner password">
+  <input id="default-password-confirm" type="password" autocomplete="new-password" placeholder="Confirm password" aria-label="Confirm new owner password">
+  <button class="go" type="button" onclick="saveDefaultPasswordBanner()">Set password</button>
+  <button class="btn" type="button" onclick="dismissDefaultPasswordBanner()">Not now</button>
+  <div class="sub" id="default-password-result" role="status" aria-live="polite"></div>
+</div>
 <nav>
   <button class="active" data-tab="overview">Overview</button>
   <button data-tab="models">Models</button>
@@ -1234,6 +1248,12 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.21.0", date: "2026-09-09", items: [
+    "<b>Every Hub is reachable by its owner before anyone sets it up.</b> A Hub that has never been given an owner password now accepts the default password <code>123456</code> — over Tailscale or on the Mac itself only, never over the LAN, and with the same lockout after repeated wrong attempts. A banner sits above the tabs on every page until you replace it, and you can now change the password from a signed-in browser instead of only on the Mac.",
+    "<b>Joining a location hands the Mac its password.</b> When an Agent enrolls, the controller passes it a scrambled verifier of the site's owner password — never the password itself — and the Agent adopts it only if nobody has chosen one on that Mac. Changing the controller's password re-sends it to every reachable Agent; an Agent whose owner picked its own password keeps it. On an Agent, the sign-in box now names the two things that actually work: the fleet token from the controller's Remote → Machine mode page, or the default password.",
+    "<b>A Mac that was repaired once can be repaired again.</b> A finished enrollment repair is now kept as history — up to five past outcomes inside the same record — instead of refusing every later repair forever. A refusal now only means a repair is genuinely still running, and it says which one and how far it got, so the row reads \"An earlier repair on 7 Sep ended needs_review\" instead of \"needs manual verification\" with nothing to verify.",
+    "Why: a Repair eligible Macs run failed on all ten Agents in about 30 milliseconds each, because every one of them had been repaired before. No identity, credential, or safety check was relaxed to fix it.",
+  ]},
   { v: "2.20.4", date: "2026-09-07", items: [
     "<b>A failed managed update now says why, right in the table.</b> When a component ends in a failure state, Studio Hub records the updater's own one-line reason next to the stable error code and shows it under the status. Nobody has to open a Terminal on a headless fleet Mac to read local logs any more.",
     "The stable error codes are unchanged and still the only thing anything decides on. The reason line is informational only — sanitized, capped at 160 characters, cleared as soon as the component moves on, and never carried by a busy machine, which is a wait rather than a failure.",
@@ -2288,15 +2308,48 @@ async function loadAuthInfo() {
   const value = response?.ok ? await response.json().catch(() => null) : null;
   if (value) authInfo = value;
   renderOwnerPassword();
+  renderDefaultPasswordBanner();
   return authInfo;
+}
+let defaultPasswordBannerDismissed = false;
+function isDefaultPasswordMode() { return authInfo?.password_mode === "default"; }
+function renderDefaultPasswordBanner() {
+  const banner = $("#default-password-banner");
+  if (!banner) return;
+  const show = isDefaultPasswordMode() && !defaultPasswordBannerDismissed;
+  banner.classList.toggle("hide", !show);
+  if (!show) return;
+  const copy = $("#default-password-copy");
+  if (copy) copy.textContent = authInfo?.can_change_password
+    ? "Anyone who can reach this Hub over Tailscale can sign in with 123456 until you set your own password."
+    : "Anyone who can reach this Hub over Tailscale can sign in with 123456. Sign in first, or open this Hub on its own Mac, to replace it.";
+}
+function dismissDefaultPasswordBanner() {
+  defaultPasswordBannerDismissed = true;
+  renderDefaultPasswordBanner();
+}
+async function saveDefaultPasswordBanner() {
+  const password = $("#default-password-new").value, confirmation = $("#default-password-confirm").value;
+  const result = $("#default-password-result");
+  if (!password) { result.textContent = "Enter a password."; return; }
+  if (password !== confirmation) { result.textContent = "The two passwords do not match."; return; }
+  result.textContent = "Saving…";
+  const response = await fetch("/api/auth/setup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }) }).catch(() => null);
+  const body = response ? await response.json().catch(() => ({})) : {};
+  if (!response?.ok) { result.textContent = body.detail || "Could not save the password. Sign in as the owner first."; return; }
+  $("#default-password-new").value = ""; $("#default-password-confirm").value = "";
+  result.textContent = body.message || "Password saved.";
+  await loadAuthInfo();
 }
 function renderOwnerPassword() {
   const local = $("#owner-password-local"), remote = $("#owner-password-remote");
   const copy = $("#owner-password-copy");
   if (!local || !remote || !copy || !authInfo) return;
-  local.classList.toggle("hide", !authInfo.can_configure_here);
+  // A signed-in owner can now change the password from anywhere, so the form
+  // follows can_change_password rather than "am I on the Hub Mac".
+  local.classList.toggle("hide", !authInfo.can_change_password);
   remote.classList.toggle("hide", authInfo.can_configure_here);
-  if (authInfo.can_configure_here) {
+  if (authInfo.can_change_password) {
     copy.textContent = authInfo.password_configured
       ? "Replace the owner password. This signs out every remembered browser immediately."
       : "Set one owner password for remote browser access. The password is stored only as a secure verifier.";
@@ -2307,11 +2360,16 @@ function renderOwnerPassword() {
   } else if (authInfo.password_configured) {
     copy.textContent = `Sign in with the owner password. A successful sign-in remembers this browser for ${authInfo.remember_days} days.`;
   } else {
-    copy.textContent = "An owner password has not been set yet. Open this Hub on its own Mac to create one.";
+    copy.textContent = "No owner password has been set. Sign in with the default password 123456, then replace it here.";
+  }
+  if (authInfo.can_change_password && authInfo.password_mode === "inherited") {
+    copy.textContent = "This Hub uses the owner password it inherited from its controller. Saving a password here replaces it and keeps it from being overwritten.";
+  } else if (authInfo.can_change_password && authInfo.password_mode === "default") {
+    copy.textContent = "No owner password has been set, so the default password 123456 signs in over Tailscale. Choose one now.";
   }
   const modeLocal = $("#mode-owner-local"), modeRemote = $("#mode-owner-remote"), modeCopy = $("#mode-owner-copy");
   if (modeLocal && modeRemote && modeCopy) {
-    modeLocal.classList.toggle("hide", !authInfo.can_configure_here);
+    modeLocal.classList.toggle("hide", !authInfo.can_change_password);
     modeRemote.classList.toggle("hide", authInfo.can_configure_here);
     modeCopy.textContent = copy.textContent;
   }
@@ -2345,19 +2403,30 @@ async function saveModeOwnerPassword() {
   result.textContent = body.message || "Password saved.";
   await loadAuthInfo();
 }
+function loginRecoveryCopy() {
+  return authInfo?.role === "agent"
+    ? "Enrolled Agent? Paste the fleet token shown on your Controller's Remote → Machine mode page. Or sign in with the default password 123456 if this Hub was never given one."
+    : "No password? Paste this Hub's token from the Remote tab on its own Mac.";
+}
 function showLogin() {
   const modal = $("#auth-login");
-  const configured = Boolean(authInfo?.password_configured && authInfo?.password_login_allowed);
+  const passwordUsable = Boolean(authInfo?.password_login_allowed);
+  const configured = Boolean(authInfo?.password_configured && passwordUsable);
+  const usingDefault = isDefaultPasswordMode() && passwordUsable;
   $("#auth-login-copy").textContent = configured
     ? `Use your owner password. This browser will stay signed in for ${authInfo.remember_days} days.`
-    : authInfo?.password_configured
-      ? "Password sign-in is available through the Hub's Tailscale address. Use that address instead, or use the recovery token below."
-      : "No owner password is set yet. Open the Remote tab on the Hub Mac to create one, or use the recovery token below.";
-  $("#auth-login-password").classList.toggle("hide", !configured);
-  $("#auth-login-submit").classList.toggle("hide", !configured);
+    : usingDefault
+      ? `This Hub has never been given a password. Sign in with the default password 123456, then change it. This browser stays signed in for ${authInfo.remember_days} days.`
+      : authInfo?.password_configured
+        ? `Password sign-in is available through the Hub's Tailscale address. Use that address instead. ${loginRecoveryCopy()}`
+        : `Password sign-in is available through the Hub's Tailscale address. ${loginRecoveryCopy()}`;
+  const tokenInput = $("#auth-token-input");
+  if (tokenInput) tokenInput.placeholder = authInfo?.role === "agent" ? "Fleet token" : "Hub token";
+  $("#auth-login-password").classList.toggle("hide", !(configured || usingDefault));
+  $("#auth-login-submit").classList.toggle("hide", !(configured || usingDefault));
   $("#auth-login-result").textContent = "";
   modal.classList.remove("hide");
-  if (configured) setTimeout(() => $("#auth-login-password").focus(), 0);
+  if (configured || usingDefault) setTimeout(() => $("#auth-login-password").focus(), 0);
 }
 function finishLogin(ok) {
   $("#auth-login").classList.add("hide");
@@ -2387,9 +2456,11 @@ async function submitOwnerLogin(event) {
   if (!response?.ok) { result.textContent = body.detail || "Could not sign in."; return; }
   // Stop keeping the raw recovery token in the browser once password sign-in works.
   hubToken = ""; localStorage.removeItem("hub_token");
-  authInfo = { ...(authInfo || {}), password_configured: true, session_active: true,
+  authInfo = { ...(authInfo || {}), session_active: true,
+               password_mode: body.password_mode || authInfo?.password_mode,
+               password_configured: (body.password_mode || authInfo?.password_mode) !== "default",
                remember_days: body.remember_days || authInfo?.remember_days || 90 };
-  renderOwnerPassword(); finishLogin(true);
+  renderOwnerPassword(); renderDefaultPasswordBanner(); finishLogin(true);
 }
 function toggleRecoveryToken() { $("#auth-recovery-token").classList.toggle("hide"); }
 function submitRecoveryToken() {
@@ -6728,9 +6799,21 @@ function repairCopy(request, eligibility) {
     ticket_expired: ["retryable", "The repair ticket expired before use. Nothing changed; retry when the Mac is reachable."],
     settings_writer_busy: ["retryable", "Another Studio Hub settings or setup change is running. Nothing changed; retry."],
     settings_preimage_changed: ["needs_review", "Needs review: local identity settings changed during repair. They were not overwritten."],
+    request_conflict: ["needs_review", "Needs review: another repair still holds this Mac's repair journal. No identity was changed."],
   };
   const [resolvedState, text] = failures[code] || [state, repairUiState(state, eligibility).text];
-  return { state: resolvedState, ...repairUiState(resolvedState, eligibility), text, evidence: resolvedState === "needs_review" ? code : "" };
+  const prior = priorRepairNote(request);
+  return { state: resolvedState, ...repairUiState(resolvedState, eligibility), text: prior ? `${text} ${prior}` : text, evidence: resolvedState === "needs_review" ? code : "" };
+}
+function priorRepairNote(request) {
+  const evidence = request?.evidence;
+  if (!evidence || typeof evidence !== "object") return "";
+  const state = evidence.prior_repair_state;
+  if (!state) return "";
+  const stamp = Number(evidence.prior_repair_updated_at);
+  const when = Number.isFinite(stamp) && stamp > 0 ? new Date(stamp * 1000).toLocaleDateString() : "";
+  const code = evidence.prior_repair_error_code;
+  return `An earlier repair${when ? ` on ${when}` : ""} ended ${state}${code ? ` (${code})` : ""}.`;
 }
 function renderRepairAction(machine, label, repair, eligibility, request) {
   if (!repairEligibilityIssuance) return "";

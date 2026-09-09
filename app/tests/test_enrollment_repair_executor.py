@@ -355,10 +355,18 @@ async def test_identical_dispatch_adopts_and_different_unresolved_request_confli
 
     assert adopted["state"] == "redemption_attempted"
     assert len(connection.calls) == 2
+    # An unresolved journal is a genuine double dispatch and is still refused —
+    # now saying which request holds it and how far that request had got.
     assert conflict == {
         "request_id": "request-000000000000000000000002",
         "state": "needs_review",
         "error_code": "request_conflict",
+        "conflict": {
+            "request_id": REQUEST_ID,
+            "state": "redemption_attempted",
+            "error_code": "transport_unavailable",
+            "updated_at": clock.value,
+        },
     }
     assert json.loads(journal_path.read_text())["request_id"] == REQUEST_ID
     assert first_journal != b""
@@ -1029,14 +1037,21 @@ async def test_subprocesses_share_journal_lock_for_adoption_and_conflict(
     results = await asyncio.gather(run(REQUEST_ID), run(second_request))
 
     callbacks = callbacks_path.read_text().splitlines()
-    assert len(callbacks) == 1
-    assert sum(result["state"] == "complete" for result in results) >= 1
-    if same_request:
-        assert {result["state"] for result in results} == {"complete"}
-    else:
-        conflict = next(result for result in results if result["state"] != "complete")
-        assert conflict["error_code"] == "request_conflict"
     journal = json.loads(journal_path.read_text())
+    assert {result["state"] for result in results} == {"complete"}
+    if same_request:
+        # The second process adopts the first one's finished work verbatim.
+        assert len(callbacks) == 1
+        assert callbacks == [REQUEST_ID]
+        assert "history" not in journal
+    else:
+        # Serialized, not raced: the second repair ran only after the first had
+        # finished, and the finished one is archived rather than blocking it.
+        assert len(callbacks) == 2
+        assert sorted(callbacks) == sorted({REQUEST_ID, second_request})
+        assert [row["request_id"] for row in journal["history"]] == [callbacks[0]]
+        assert journal["history"][0]["state"] == "complete"
+        assert journal["request_id"] == callbacks[1]
     assert journal["state"] == "complete"
     assert "ticket" not in journal
 
@@ -1622,3 +1637,155 @@ async def test_pinned_transport_total_deadline_bounds_slow_headers_and_body(
     assert elapsed < 0.08
     assert FLEET_TOKEN not in repr(error.value)
     assert TICKET not in repr(error.value)
+
+
+@pytest.mark.asyncio
+async def test_resolved_journal_is_archived_so_a_later_repair_can_run(
+    tmp_path, monkeypatch
+):
+    """A Mac that was repaired once must still be repairable later.
+
+    Until 2.21.0 a resolved journal refused every later request forever, so the
+    controller's batch failed on every previously repaired Agent in milliseconds
+    with `request_conflict` and nothing to review.
+    """
+    clock = Clock()
+    connection = FakeConnection(response=claim())
+    executor, settings_path, journal_path = make_executor(
+        tmp_path, monkeypatch, connection, clock=clock
+    )
+    settings_path.write_text(json.dumps(settings()))
+
+    first = await executor.apply(dispatch(), direct_source=ADDRESS)
+    assert first["state"] == "complete"
+
+    second_id = "request-000000000000000000000002"
+    clock.value = 1_050.0
+    connection.response = claim(dispatch(request_id=second_id))
+    second = await executor.apply(
+        dispatch(request_id=second_id), direct_source=ADDRESS
+    )
+
+    assert second["state"] == "complete"
+    assert "error_code" not in second
+    journal = json.loads(journal_path.read_text())
+    assert journal["request_id"] == second_id
+    assert journal["history"] == [{
+        "request_id": REQUEST_ID,
+        "state": "complete",
+        "archived_at": 1_050.0,
+        "updated_at": 1_000.0,
+    }]
+    # History is a credential-free trail: no identity, ticket or claim in it.
+    assert set(journal["history"][0]) == {
+        "request_id", "state", "archived_at", "updated_at"
+    }
+
+
+@pytest.mark.asyncio
+async def test_needs_review_and_never_applied_journals_are_archived_too(
+    tmp_path, monkeypatch
+):
+    clock = Clock()
+    connection = FakeConnection(response={"unexpected": True})
+    executor, settings_path, journal_path = make_executor(
+        tmp_path, monkeypatch, connection, clock=clock
+    )
+    settings_path.write_text(json.dumps(settings()))
+
+    reviewed = await executor.apply(dispatch(), direct_source=ADDRESS)
+    assert reviewed == {
+        "request_id": REQUEST_ID,
+        "state": "needs_review",
+        "error_code": "claim_invalid",
+    }
+
+    second_id = "request-000000000000000000000002"
+    clock.value = 1_050.0
+    connection.response = claim(dispatch(request_id=second_id))
+    second = await executor.apply(
+        dispatch(request_id=second_id), direct_source=ADDRESS
+    )
+
+    assert second["state"] == "complete"
+    journal = json.loads(journal_path.read_text())
+    assert journal["history"][0] == {
+        "request_id": REQUEST_ID,
+        "state": "needs_review",
+        "error_code": "claim_invalid",
+        "archived_at": 1_050.0,
+        "updated_at": 1_000.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_journal_history_is_bounded_and_newest_first(tmp_path, monkeypatch):
+    clock = Clock()
+    connection = FakeConnection(response=claim())
+    executor, settings_path, journal_path = make_executor(
+        tmp_path, monkeypatch, connection, clock=clock
+    )
+    settings_path.write_text(json.dumps(settings()))
+
+    ids = [f"request-00000000000000000000000{index}" for index in range(1, 9)]
+    for index, request_id in enumerate(ids):
+        clock.value = 1_000.0 + index
+        connection.response = claim(dispatch(request_id=request_id))
+        result = await executor.apply(
+            dispatch(request_id=request_id), direct_source=ADDRESS
+        )
+        assert result["state"] == "complete"
+
+    journal = json.loads(journal_path.read_text())
+    assert journal["request_id"] == ids[-1]
+    assert [row["request_id"] for row in journal["history"]] == ids[-2::-1][:5]
+    assert len(journal["history"]) == 5
+
+
+@pytest.mark.asyncio
+async def test_same_request_id_still_returns_the_unchanged_recorded_result(
+    tmp_path, monkeypatch
+):
+    clock = Clock()
+    connection = FakeConnection(response=claim())
+    executor, settings_path, journal_path = make_executor(
+        tmp_path, monkeypatch, connection, clock=clock
+    )
+    settings_path.write_text(json.dumps(settings()))
+
+    first = await executor.apply(dispatch(), direct_source=ADDRESS)
+    before = journal_path.read_bytes()
+    clock.value = 1_090.0
+
+    assert await executor.apply(dispatch(), direct_source=ADDRESS) == first
+    assert journal_path.read_bytes() == before
+    assert len(connection.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_unresolved_conflict_reports_the_prior_state_without_identity(
+    tmp_path, monkeypatch
+):
+    clock = Clock()
+    connection = FakeConnection(error=TimeoutError("lost"))
+    executor, settings_path, _ = make_executor(
+        tmp_path, monkeypatch, connection, clock=clock
+    )
+    settings_path.write_text(json.dumps(settings()))
+    await executor.apply(dispatch(), direct_source=ADDRESS)
+
+    clock.value = 1_060.0
+    refused = await executor.apply(
+        dispatch(request_id="request-000000000000000000000002"),
+        direct_source=ADDRESS,
+    )
+
+    assert refused["error_code"] == "request_conflict"
+    assert refused["conflict"] == {
+        "request_id": REQUEST_ID,
+        "state": "redemption_attempted",
+        "error_code": "transport_unavailable",
+        "updated_at": 1_000.0,
+    }
+    assert "identity" not in refused["conflict"]
+    assert "ticket" not in refused["conflict"]

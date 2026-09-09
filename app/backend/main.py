@@ -168,6 +168,13 @@ class OwnerPasswordBody(BaseModel):
     password: str = Field(min_length=1, max_length=1024)
 
 
+class OwnerPasswordVerifierBody(BaseModel):
+    """A controller's stored password verifier — salt and digest, never a password."""
+
+    schema_version: int = 1
+    verifier: dict = Field(default_factory=dict)
+
+
 class FleetStoragePolicyBody(BaseModel):
     enabled: bool = True
     retention_days: int = 30
@@ -701,25 +708,83 @@ app.include_router(gateway.router)
 @app.get("/api/auth/status")
 def auth_status(request: Request):
     """Public, non-sensitive browser-login capability check."""
+    owner_session = auth.valid_browser_session(
+        request.cookies.get(auth.SESSION_COOKIE_NAME))
     return {"password_configured": auth.password_configured(),
+            "password_mode": auth.password_mode(),
+            "role": control_plane.public_settings().get("role"),
             "can_configure_here": is_loopback(request),
+            "can_change_password": is_loopback(request) or owner_session,
             "password_login_allowed": is_loopback(request) or is_tailscale(request),
-            "session_active": auth.valid_browser_session(
-                request.cookies.get(auth.SESSION_COOKIE_NAME)),
+            "session_active": owner_session,
             "remember_days": auth.SESSION_TTL_DAYS}
 
 
 @app.post("/api/auth/setup")
-def auth_setup_owner_password(request: Request, body: OwnerPasswordBody):
-    """Set/replace the owner password only from the Hub Mac itself."""
-    if not is_loopback(request):
-        raise HTTPException(403, "Set the owner password on the Hub Mac itself.")
+async def auth_setup_owner_password(request: Request, body: OwnerPasswordBody):
+    """Set/replace the owner password from this Mac or a signed-in owner browser."""
+    owner_session = auth.valid_browser_session(
+        request.cookies.get(auth.SESSION_COOKIE_NAME))
+    if not is_loopback(request) and not owner_session:
+        raise HTTPException(
+            403,
+            "Set the owner password on the Hub Mac itself, or sign in as the owner first.",
+        )
     try:
         auth.set_owner_password(body.password)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    return {"ok": True, "remember_days": auth.SESSION_TTL_DAYS,
+    sync = await _propagate_owner_password()
+    return {"ok": True, "remember_days": auth.SESSION_TTL_DAYS, "sync": sync,
+            "password_mode": auth.password_mode(),
             "message": "Owner password saved. Existing remembered devices were signed out."}
+
+
+async def _propagate_owner_password() -> dict | None:
+    """Re-propagate a controller's rotated password to its reachable Agents.
+
+    Best effort by design: an unreachable Agent keeps the credential it has and
+    is repropagated the next time the owner saves. A propagation failure never
+    fails the owner's own password change.
+    """
+    if control_plane.public_settings().get("role") != "controller":
+        return None
+    verifier = auth.owner_password_verifier()
+    if verifier is None:
+        return None
+    try:
+        return await peers.sync_owner_password(
+            monitor.registry, monitor._client, verifier,
+        )
+    except Exception:
+        return None
+
+
+@app.post("/api/hub/fleet/owner-password")
+def receive_owner_password(request: Request, body: OwnerPasswordVerifierBody):
+    """Adopt the site owner password from this Agent's own controller.
+
+    Fleet-token authenticated, accepted only from the host this Agent already
+    saved as its parent controller, and never over a password the owner chose
+    on this Mac.
+    """
+    if not auth.valid_machine_token(request, HUB_TOKEN):
+        raise HTTPException(
+            401,
+            "Fleet credential required to propagate the owner password.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    settings = control_plane.load_settings()
+    if settings.get("role") != "agent":
+        raise HTTPException(409, {"code": "agent_role_required"})
+    if not enrollment.request_is_from_parent_controller(
+        request.client.host if request.client else None,
+        settings.get("parent_controller_url"),
+    ):
+        raise HTTPException(403, {"code": "parent_controller_required"})
+    installed = auth.install_password_verifier(body.verifier)
+    return {"ok": True, "installed": installed,
+            "password_mode": auth.password_mode()}
 
 
 @app.post("/api/auth/login")
@@ -727,15 +792,17 @@ def auth_login(request: Request, body: OwnerPasswordBody):
     """Issue a 90-day opaque, HttpOnly remembered-device session."""
     if not is_loopback(request) and not is_tailscale(request):
         raise HTTPException(403, "Password sign-in is available through the Tailscale address only.")
-    if not auth.password_configured():
-        raise HTTPException(409, "Set an owner password locally on the Hub Mac first.")
     if not auth.login_allowed(request):
         raise HTTPException(429, "Too many attempts. Try again in 15 minutes.")
-    if not auth.verify_owner_password(body.password):
+    accepted = (auth.verify_owner_password(body.password)
+                if auth.password_configured()
+                else auth.default_password_accepted(body.password))
+    if not accepted:
         auth.record_login_failure(request)
         raise HTTPException(401, "Incorrect password.")
     auth.clear_login_failures(request)
-    response = JSONResponse({"ok": True, "remember_days": auth.SESSION_TTL_DAYS})
+    response = JSONResponse({"ok": True, "remember_days": auth.SESSION_TTL_DAYS,
+                             "password_mode": auth.password_mode()})
     auth.set_browser_session_cookie(response, auth.create_browser_session())
     return response
 

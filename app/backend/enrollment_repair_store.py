@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import sqlite3
@@ -389,6 +390,32 @@ class RepairStore:
             )
             for field, value in expected.items()
         }
+
+    @staticmethod
+    def _prior_repair_evidence(conflict: Any) -> dict[str, Any]:
+        """Record why a target refused: an earlier repair still holds its journal.
+
+        Only the outcome of that earlier repair is stored — its state, stable
+        error code, request id and timestamp.  No identity value or ticket is
+        ever part of it.
+        """
+        if not isinstance(conflict, Mapping):
+            return {}
+        evidence: dict[str, Any] = {}
+        for field, name in (
+            ("state", "prior_repair_state"),
+            ("error_code", "prior_repair_error_code"),
+            ("request_id", "prior_repair_request_id"),
+        ):
+            value = conflict.get(field)
+            if isinstance(value, str) and 0 < len(value) <= 128:
+                evidence[name] = value
+        updated_at = conflict.get("updated_at")
+        if (not isinstance(updated_at, bool)
+                and isinstance(updated_at, (int, float))
+                and math.isfinite(float(updated_at))):
+            evidence["prior_repair_updated_at"] = float(updated_at)
+        return evidence if "prior_repair_state" in evidence else {}
 
     def _merge_evidence(self, raw: str | None, values: Mapping[str, Any]) -> str:
         evidence = self._decode_json(raw)
@@ -836,7 +863,8 @@ class RepairStore:
                 )
             evidence = self._merge_evidence(
                 row["evidence_json"],
-                {"agent_terminal_state": terminal},
+                {"agent_terminal_state": terminal,
+                 **self._prior_repair_evidence(status.get("conflict"))},
             )
             changed = connection.execute(
                 """UPDATE enrollment_repair_requests

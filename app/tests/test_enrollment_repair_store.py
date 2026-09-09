@@ -673,3 +673,60 @@ def test_expiry_rejects_stale_prior_request_state(store, clock):
             "SELECT state, ticket_status FROM enrollment_repair_requests WHERE request_id = ?",
             (request_id,),
         ).fetchone() == ("ticket_issued", "issued")
+
+
+def test_conflict_evidence_records_the_earlier_repair_outcome(store, clock):
+    """A refused repair must say what actually blocked it.
+
+    The dashboard used to show "needs manual verification" with nothing to
+    verify, because only `agent_terminal_state: needs_review` was stored.
+    """
+    batch = store.create_or_adopt_batch(["mac-a"])
+    request_id = batch["requests"][0]["request_id"]
+    issue(store, request_id)
+    clock.value = 1100.0
+
+    adopted = store.adopt_status(
+        request_id,
+        {
+            "request_id": request_id,
+            "state": "needs_review",
+            "error_code": "request_conflict",
+            "conflict": {
+                "request_id": "request-000000000000000000000001",
+                "state": "complete",
+                "error_code": "settings_state_ambiguous",
+                "updated_at": 900.0,
+            },
+        },
+        direct_source=TARGET_A.resolved_address,
+    )
+
+    assert adopted["state"] == "needs_review"
+    assert adopted["error_code"] == "request_conflict"
+    assert adopted["evidence"] == {
+        "agent_terminal_state": "needs_review",
+        "prior_repair_state": "complete",
+        "prior_repair_error_code": "settings_state_ambiguous",
+        "prior_repair_request_id": "request-000000000000000000000001",
+        "prior_repair_updated_at": 900.0,
+    }
+
+
+def test_conflict_evidence_ignores_a_malformed_prior_outcome(store, clock):
+    batch = store.create_or_adopt_batch(["mac-a"])
+    request_id = batch["requests"][0]["request_id"]
+    issue(store, request_id)
+    clock.value = 1100.0
+
+    adopted = store.adopt_status(
+        request_id,
+        {
+            "request_id": request_id,
+            "state": "needs_review",
+            "conflict": {"error_code": "request_conflict", "updated_at": "soon"},
+        },
+        direct_source=TARGET_A.resolved_address,
+    )
+
+    assert adopted["evidence"] == {"agent_terminal_state": "needs_review"}

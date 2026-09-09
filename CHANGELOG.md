@@ -10,6 +10,80 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.21.0] — 2026-09-09
+
+### Added — every Hub is reachable by its owner before it is set up
+
+- A Hub that has never been given an owner password now accepts the default
+  password `123456` at `POST /api/auth/login`, under the rules that already
+  governed password sign-in: loopback or the Tailscale address only, LAN
+  addresses still refused, and the same five-failures-per-15-minutes throttle.
+  It issues the ordinary 90-day remembered-device session. The moment any
+  password is stored the default stops being accepted.
+- `GET /api/auth/status` gains `password_mode` — `default` (none stored, the
+  default signs in), `custom` (the owner chose it) or `inherited` (it came from
+  this Agent's controller) — plus `role` and `can_change_password`. The
+  dashboard shows a persistent banner, dismissible for the page load, on every
+  tab while the mode is `default`, with the password form in it.
+- `POST /api/auth/setup` now also accepts a request carrying a valid remembered
+  owner-session cookie, so the banner's form works over Tailscale. Loopback is
+  unchanged; a request with neither is refused.
+- Enrolment carries the site password. `POST /api/hub/enrollment/claim` returns
+  an additive `owner_password_verifier` (`version`, `salt`, `digest`) when the
+  controller has an owner password — a salted scrypt verifier, never a
+  password, and never recoverable from what travels. A joining Agent installs
+  it only when it has no password of its own or is still on the default, and
+  records the mode as `inherited`.
+- Rotating a controller's password re-propagates it to reachable Agents over
+  the existing fleet transport, through the new fleet-token-authenticated
+  `POST /api/hub/fleet/owner-password`. An Agent accepts it only in the `agent`
+  role and only from the host it already saved as its parent controller, and
+  never over a password its own owner chose. Unreachable Agents keep what they
+  have and are offered it again on the next save.
+- On an Agent, the sign-in prompt now says what actually works: paste the fleet
+  token from the controller's Remote → Machine mode page, or sign in with the
+  default password if this Hub was never given one. Standalone and controller
+  Hubs keep the Hub-token wording.
+
+### Fixed — a finished repair no longer blocks every later repair
+
+- The target-side repair journal treats a **resolved** outcome (`complete`,
+  `needs_review`, `never_applied`) as history rather than a lock. A repair
+  request carrying a new `request_id` archives that record into a bounded
+  `history` list inside the same journal file — newest first, at most five
+  entries, each holding only the request id, state, stable error code and
+  timestamps — and then proceeds. `request_conflict` now means only what it
+  was meant to mean: an **unresolved** journal (`accepted`,
+  `redemption_attempted`, `applying`) belonging to a different request, which
+  is the genuine double dispatch. Replaying the same `request_id` still returns
+  the recorded result unchanged, and still performs no second redemption.
+- A genuine `request_conflict` now says what is in the way. The refusal body
+  carries a `conflict` block with the existing journal's `state`, `error_code`,
+  `request_id` and `updated_at` — no identity value, no ticket — the controller
+  stores it as `prior_repair_*` evidence on the request, and the dashboard row
+  adds "An earlier repair on <date> ended <state> (<code>)." to the
+  needs-review line.
+- Why: on 2026-09-09 the controller's "Repair eligible Macs" batch failed on
+  all ten Agents in about 30 ms each with `request_conflict`, because every one
+  of them had been repaired before and a resolved journal never expires. The
+  dashboard said "needs manual verification" with nothing to verify.
+
+### Safety
+
+- The default password is accepted only while no owner password is stored on
+  that Hub, and only over loopback or the Tailscale address — never over the
+  LAN, never with the throttle bypassed. Enrolling into a controller that has
+  an owner password replaces it immediately, so a fleet Mac stops accepting the
+  default the moment it joins. The banner exists to make an unset password
+  visible rather than silent.
+- Only a salted scrypt verifier is ever sent between Hubs, over the fleet
+  credential, and only to the host an Agent already trusts as its parent
+  controller. No password is transmitted, stored in plaintext, or recoverable
+  from what is transmitted.
+- The repair change removes no check. Identity, ticket, callback-source,
+  fleet-credential and settings-preimage verification are untouched; only the
+  meaning of a *resolved* journal changed.
+
 ## [2.20.4] — 2026-09-07
 
 ### Fixed — a failed managed update records its own reason
