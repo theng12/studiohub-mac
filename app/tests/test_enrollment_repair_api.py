@@ -1035,3 +1035,185 @@ async def test_repair_lifecycle_failure_still_cleans_release_runtime_and_monitor
     assert "monitor_stop" in events
     assert main.release_reconciler is None
     assert main.peers.release_reconciler is None
+
+
+def _issued_repair_request(app):
+    """Prepare one real dispatched request with an issued ticket to refuse."""
+    from backend import main
+
+    _set_controller()
+    peers.set_fleet_token(FLEET_TOKEN)
+    registry.add_user_entries(registry.build_machine_entries(
+        "100.64.0.10", "mac-a", ["image", "voice"],
+    ))
+    main.monitor.reload_registry()
+    store = RepairStore(enrollment.DB_FILE, clock=lambda: 1000.0)
+    coordinator = EnrollmentRepairCoordinator(
+        store,
+        registry_loader=lambda: list(main.monitor.registry),
+        token_reader=lambda: FLEET_TOKEN,
+        settings_reader=lambda: {
+            "role": "controller",
+            "site_id": "site-a",
+            "site_name": "Site A",
+            "controller_id": "controller-a",
+        },
+        clock=lambda: 1000.0,
+    )
+    app.state.enrollment_repair_coordinator = coordinator
+    ticket = "T" * 43
+    batch = store.create_or_adopt_batch(["mac-a"])
+    request_id = batch["requests"][0]["request_id"]
+    store.claim_next_dispatch()
+    store.issue_ticket(
+        request_id,
+        target=TargetIdentity(
+            "mac-a", "100.64.0.10", "100.64.0.10", "http://100.64.0.20:47873",
+        ),
+        controller=ControllerIdentity(
+            "controller", "site-a", "Site A", "controller-a",
+        ),
+        fleet_token_digest=hashlib.sha256(FLEET_TOKEN.encode()).hexdigest(),
+        ticket_digest=hashlib.sha256(ticket.encode()).hexdigest(),
+        redemption_expires_at=1120.0,
+    )
+    store.mark_dispatched(request_id)
+    return store, coordinator, request_id, ticket
+
+
+def _redemption_body(request_id, ticket, *, expires=1120.0, machine="mac-a"):
+    return {
+        "schema": "studiohub.enrollment-repair-redemption",
+        "schema_version": 1,
+        "request_id": request_id,
+        "target_machine_id": machine,
+        "ticket": ticket,
+        "redemption_expires_at": expires,
+        "observed_identity": {
+            "role": "standalone", "site_id": "old-site",
+            "site_name": "Old Site", "controller_id": "old-controller",
+            "parent_controller_url": None,
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("case", "host", "machine", "expected_status", "expected_body_code",
+     "expected_evidence_code"),
+    [
+        ("source", "100.64.0.11", "mac-a", 403, "source_host_mismatch",
+         "source_host_mismatch"),
+        ("registry", "100.64.0.10", "mac-gone", 403, "source_host_mismatch",
+         "machine_missing"),
+        ("store", "100.64.0.10", "mac-a", 409, "redemption_expiry_mismatch",
+         "redemption_expiry_mismatch"),
+    ],
+)
+def test_a_refused_redemption_records_why_without_changing_the_answer(
+    app, case, host, machine, expected_status, expected_body_code,
+    expected_evidence_code,
+):
+    """The Agent only sees a code; the Controller must keep the reason.
+
+    Before this, a Controller that refused a redemption recorded nothing at
+    all, so an unredeemed repair expired as `never_applied` with no reason
+    anyone could read.
+    """
+    store, _coordinator, request_id, ticket = _issued_repair_request(app)
+    body = _redemption_body(
+        request_id, ticket, machine=machine,
+        expires=999.0 if case == "store" else 1120.0,
+    )
+    before = store.request(request_id)
+
+    response = TestClient(app, client=(host, 50000)).post(
+        "/api/hub/enrollment-repair-tickets/redeem",
+        headers={"X-Hub-Token": FLEET_TOKEN},
+        json=body,
+    )
+
+    assert response.status_code == expected_status
+    assert response.json() == {"detail": {"code": expected_body_code}}
+    after = store.request(request_id)
+    refusals = after["evidence"]["redemption_refusals"]
+    assert refusals == [{
+        "at": 1000.0,
+        "code": expected_evidence_code,
+        "status": expected_status,
+        "source": host,
+        "target_machine": machine,
+    }]
+    # Evidence only: nothing about what the request may still do moves.
+    assert after["state"] == before["state"]
+    assert after["error_code"] == before["error_code"]
+    assert after["updated_at"] == before["updated_at"]
+    assert ticket.encode() not in store.path.read_bytes()
+    assert FLEET_TOKEN.encode() not in store.path.read_bytes()
+
+
+def test_repeated_refusals_keep_only_the_last_five_and_owner_reads_them(app):
+    store, _coordinator, request_id, ticket = _issued_repair_request(app)
+    body = _redemption_body(request_id, ticket, expires=999.0)
+    client = TestClient(app, client=("100.64.0.10", 50000))
+
+    for _ in range(7):
+        assert client.post(
+            "/api/hub/enrollment-repair-tickets/redeem",
+            headers={"X-Hub-Token": FLEET_TOKEN},
+            json=body,
+        ).status_code == 409
+
+    refusals = store.request(request_id)["evidence"]["redemption_refusals"]
+    assert len(refusals) == 5
+    assert {row["code"] for row in refusals} == {"redemption_expiry_mismatch"}
+
+    owner = TestClient(app, client=("127.0.0.1", 50000)).get(
+        f"/api/hub/enrollment-repairs/{store.request(request_id)['batch_id']}",
+    )
+    assert owner.status_code == 200
+    shown = owner.json()["requests"][0]["evidence"]["redemption_refusals"]
+    assert len(shown) == 5
+    assert FLEET_TOKEN not in owner.text
+
+
+def test_a_refusal_for_an_unknown_request_is_dropped_without_changing_the_answer(app):
+    store, _coordinator, _request_id, ticket = _issued_repair_request(app)
+    unknown = "request-that-does-not-exist-0001"
+
+    response = TestClient(app, client=("100.64.0.10", 50000)).post(
+        "/api/hub/enrollment-repair-tickets/redeem",
+        headers={"X-Hub-Token": FLEET_TOKEN},
+        json=_redemption_body(unknown, ticket),
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": {"code": "request_not_found"}}
+    assert store.request(unknown) is None
+
+
+def test_a_fleet_token_refusal_is_answered_before_the_route_and_left_to_the_agent(app):
+    """Auth refusals never reach the route, so the Agent's journal is the record.
+
+    `/enrollment-repair-tickets/redeem` is a strict fleet service path, so a
+    bad token is answered by the auth middleware and the Controller never sees
+    the request to attach evidence to.  That class of refusal is recovered from
+    the other side instead: the Agent writes the status and code it was given
+    into its journal as `callback_error`, and the Controller adopts it as
+    `agent_callback_error` when it reads the Agent's status.  This test pins
+    that split so nobody reads the route's refusal log as covering everything.
+    """
+    store, _coordinator, request_id, ticket = _issued_repair_request(app)
+    before = store.request(request_id)
+
+    response = TestClient(app, client=("100.64.0.10", 50000)).post(
+        "/api/hub/enrollment-repair-tickets/redeem",
+        headers={"X-Hub-Token": "N" * len(FLEET_TOKEN)},
+        json=_redemption_body(request_id, ticket),
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": {"code": "fleet_token_mismatch"}}
+    after = store.request(request_id)
+    assert after["evidence"] is None
+    assert after["state"] == before["state"]
+    assert after["updated_at"] == before["updated_at"]

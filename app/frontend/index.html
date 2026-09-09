@@ -1248,6 +1248,11 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.21.2", date: "2026-09-09", items: [
+    "<b>A repair that ends \"never applied\" now tells you why.</b> When a Mac takes on a repair and then cannot report back, both sides keep the reason. The Mac records what happened to its call home &mdash; refused, timed out, connection lost, wrong address &mdash; and keeps that reason even after the two-minute window closes, instead of throwing it away. Studio Hub records the reason whenever it turns a call home away. The repair row now shows both: \"Redemption refused: &hellip; (HTTP 403) from &hellip;\" and \"Agent callback failed: &hellip;\".",
+    "Nothing that already worked changes. The answer a Mac gets is exactly the same, the reason is kept as evidence only and never moves a repair forward or back, only the last five refusals are stored, and no ticket, token or password can appear in any of it.",
+    "Why: on 9 Sep one Mac accepted a repair, never used its ticket, and two minutes later the record simply read \"never applied\" with nothing else. Five other Macs had been repaired minutes earlier, the clocks agreed and the credentials matched, and there was no way to find out what had gone wrong.",
+  ]},
   { v: "2.21.1", date: "2026-09-09", items: [
     "<b>A Mac whose repair was refused can be repaired again.</b> When a repair was refused before the Mac ever used its one-time repair ticket, that row sat in \"needs review\" forever and blocked every later repair of the same Mac — the Repair eligible Macs list simply stopped offering it, and starting a new repair was rejected. Once the ticket's two-minute window has passed, that row now becomes an ordinary retryable one and the Mac is offered again.",
     "Nothing that actually happened is thrown away: a Mac that really did use its ticket still waits for its result, a repair still running is untouched, and a finished repair is never rewritten. The usual eligibility checks still decide whether the retry may go ahead.",
@@ -6808,7 +6813,31 @@ function repairCopy(request, eligibility) {
   };
   const [resolvedState, text] = failures[code] || [state, repairUiState(state, eligibility).text];
   const prior = priorRepairNote(request);
-  return { state: resolvedState, ...repairUiState(resolvedState, eligibility), text: prior ? `${text} ${prior}` : text, evidence: resolvedState === "needs_review" ? code : "" };
+  const refused = repairRefusalNote(request);
+  return { state: resolvedState, ...repairUiState(resolvedState, eligibility), text: [text, prior, refused].filter(Boolean).join(" "), evidence: resolvedState === "needs_review" ? code : "" };
+}
+function repairRefusalTime(value) {
+  const stamp = Number(value);
+  return Number.isFinite(stamp) && stamp > 0 ? new Date(stamp * 1000).toLocaleTimeString() : "";
+}
+function repairRefusalNote(request) {
+  const evidence = request?.evidence;
+  if (!evidence || typeof evidence !== "object") return "";
+  const notes = [];
+  const refusals = Array.isArray(evidence.redemption_refusals) ? evidence.redemption_refusals : [];
+  const last = refusals[refusals.length - 1];
+  if (last && typeof last === "object") {
+    const status = Number(last.status);
+    const when = repairRefusalTime(last.at);
+    notes.push(`Redemption refused: ${last.code || "unknown"}${Number.isFinite(status) && status > 0 ? ` (HTTP ${status})` : ""}${last.source ? ` from ${last.source}` : ""}${when ? ` at ${when}` : ""}.`);
+  }
+  const failed = evidence.agent_callback_error;
+  if (failed && typeof failed === "object") {
+    const status = Number(failed.status);
+    const what = failed.code || (Number.isFinite(status) && status > 0 ? `HTTP ${status}` : "");
+    notes.push(`Agent callback failed: ${[failed.kind, what, failed.detail].filter(Boolean).join(" ")}.`);
+  }
+  return notes.join(" ");
 }
 function priorRepairNote(request) {
   const evidence = request?.evidence;
