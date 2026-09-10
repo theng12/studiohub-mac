@@ -286,6 +286,59 @@ def test_supply_keeps_machine_states_hardware_and_reasons_distinct(
     assert evidence["lowmem"]["hardware_profile"]["memory_gb"] == 8
 
 
+@pytest.mark.parametrize("audit_order", [
+    ("conditional", "passed-a", "passed-b"),
+    ("passed-a", "conditional", "passed-b"),
+])
+def test_passed_audit_variant_excludes_conditional_peer_supply(
+        monitor, monkeypatch, audit_order):
+    """A newer exact-contract audit must not inherit an older peer's supply."""
+    monitor.registry = [{
+        "id": f"voice@{machine}", "title": "Voice Studio",
+        "modality": "voice", "machine": machine,
+        "host": "127.0.0.1", "port": 47871,
+    } for machine in audit_order]
+    monitor.status = {
+        f"voice@{machine}": {
+            "status": "up",
+            "health": {"memory": {"total_gb": 8 if machine == "conditional" else 16}},
+        }
+        for machine in audit_order
+    }
+    monkeypatch.setattr(broker, "busy_studios", lambda: set())
+    monkeypatch.setattr(broker, "busy_machines", lambda: set())
+    monkeypatch.setattr(broker, "machine_protection_snapshot", lambda: {})
+
+    for machine in audit_order:
+        passed = machine.startswith("passed-")
+        model = _model(
+            "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
+            operation="voice.tts",
+            approved=passed,
+            status="passed" if passed else "conditional",
+        )
+        model["min_unified_memory_gb"] = 16 if passed else 8
+        model["genstudio_candidate"].update({
+            "audit_id": "audit-passed" if passed else "audit-conditional",
+            "audited_at": "2026-09-10T00:00:00Z" if passed else "2026-08-03T00:00:00Z",
+            "hardware": {"min_unified_memory_gb": 16 if passed else 8},
+        })
+        monitor._catalog_cache[f"voice@{machine}"] = (
+            time.time(), {"models": [model]},
+        )
+
+    rows = monitor.candidate_models()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["audit_id"] == "audit-passed"
+    assert row["audit_status"] == "passed"
+    assert row["candidate_for_genstudio"] is True
+    assert {machine["machine_id"] for machine in row["machines"]} == {
+        "passed-a", "passed-b",
+    }
+    assert row["supply"]["eligible_physical_slots_total"] == 2
+
+
 @pytest.mark.asyncio
 async def test_failed_refresh_retains_last_good_catalog(monitor, monkeypatch):
     studio = next(row for row in monitor.registry if row["id"] == "image")
