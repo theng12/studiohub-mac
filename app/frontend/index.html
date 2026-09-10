@@ -1248,6 +1248,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.21.4", date: "2026-09-10", items: [
+    "<b>A local model's passed check now stays attached to the Macs that passed it.</b> During a staged update, an older conditional check could be listed first and make the newer passed check look conditional, while also showing older Macs as part of the new supply. Studio Hub now picks the passed check consistently and shows only the Macs that reported it.",
+    "This does not approve or enable a model by itself. A model still needs the normal GenStudio approval, and a Mac on an older check stays out of the new model's supply.",
+  ]},
   { v: "2.21.3", date: "2026-09-09", items: [
     "<b>A Mac that was repaired once can be repaired again for real.</b> Studio Hub used to turn away a Mac\u2019s call home the moment it saw that the same Mac had ever finished a repair before &mdash; even a repair from days earlier. So a Mac whose identity drifted a second time could be offered a new repair, accept it, and then be refused at the last step, every time. The refusal now applies only inside the repair that is actually running.",
     "The protection it was there for is untouched: within one repair, a second ticket still cannot be used after the Mac has already finished, and that answer is unchanged. No identity, ticket, password or deadline check is relaxed.",

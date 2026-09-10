@@ -41,6 +41,40 @@ _ACTIVITY_BATCH_ITEM_FIELDS = (
 )
 
 
+def _candidate_variant_identity(candidate: dict) -> str:
+    """Return the audit-owned variant behind one exact contract key."""
+    return json.dumps({
+        "audit_id": candidate.get("audit_id"),
+        "audit_status": candidate.get("audit_status"),
+        "candidate_for_genstudio": candidate.get("candidate_for_genstudio"),
+        "audited_at": candidate.get("audited_at"),
+        "adapter": candidate.get("adapter"),
+        "controls": candidate.get("controls"),
+        "input_limits": candidate.get("input_limits"),
+        "output_limits": candidate.get("output_limits"),
+        "capacity": {"max_concurrency": (candidate.get("capacity") or {}).get(
+            "max_concurrency",
+        )},
+        "hardware": candidate.get("hardware"),
+    }, sort_keys=True, separators=(",", ":"))
+
+
+def _candidate_variant_priority(
+        candidate: dict,
+) -> tuple[bool, bool, bool, str, str, str]:
+    """Prefer a deliberate passing audit, independently of worker order."""
+    status = str(candidate.get("audit_status") or "").lower()
+    approved = candidate.get("candidate_for_genstudio") is True
+    return (
+        status == "passed" and approved,
+        status == "passed",
+        approved,
+        str(candidate.get("audited_at") or ""),
+        str(candidate.get("audit_id") or ""),
+        _candidate_variant_identity(candidate),
+    )
+
+
 def _activity_value(value):
     """Keep the poll handoff scalar-only; params and prompts stay on the loop."""
     return value if value is None or isinstance(value, (str, int, float, bool)) else None
@@ -954,6 +988,27 @@ class StudioMonitor:
                     )):
                 busy_studios.add(studio_id)
                 busy_machines.add(studio.get("machine", "local"))
+
+        # A contract key deliberately does not contain an audit identifier: a
+        # later audit of the same immutable runtime and contract is the same
+        # thing GenStudio may approve.  Several workers can therefore report
+        # distinct audit variants for one key during a rollout.  Pick the
+        # passed, deliberate variant before assembling its supply, then keep
+        # observations strictly with that variant.  Letting the first cached
+        # worker donate metadata and every worker donate capacity would turn a
+        # newer passed 16 GB audit into an apparent approval of older
+        # conditional 8 GB workers.
+        selected_variants: dict[str, dict] = {}
+        for model in aggregate.get("models") or []:
+            candidate = model_exposure.candidate_summary(model)
+            if candidate is None:
+                continue
+            for operation in candidate["approved_operations"]:
+                key = model_exposure.candidate_key(candidate, operation)
+                selected = selected_variants.get(key)
+                if (selected is None or _candidate_variant_priority(candidate)
+                        > _candidate_variant_priority(selected)):
+                    selected_variants[key] = candidate
         grouped: dict[str, dict] = {}
 
         for model in aggregate.get("models") or []:
@@ -1050,6 +1105,9 @@ class StudioMonitor:
 
             for operation in candidate["approved_operations"]:
                 key = model_exposure.candidate_key(candidate, operation)
+                selected = selected_variants[key]
+                if _candidate_variant_identity(candidate) != _candidate_variant_identity(selected):
+                    continue
                 row = grouped.setdefault(key, {
                     "candidate_key": key,
                     "internal_model_id": candidate["internal_model_id"],

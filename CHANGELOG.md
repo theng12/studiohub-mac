@@ -10,6 +10,22 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.21.4] — 2026-09-10
+
+### Fixed — a passed local-model audit keeps only its own worker supply
+
+- A controller can receive an older conditional audit and a newer passed audit
+  for the same immutable model revision and contract while workers update at
+  different times. The aggregate previously kept whichever audit happened to
+  arrive first, then attached every matching worker to it. A passed 16 GB
+  candidate could therefore appear conditional, or include an 8 GB worker that
+  belonged only to the older audit.
+- Studio Hub now selects a deliberate passed audit deterministically for that
+  exact contract and includes observations only from workers that reported the
+  same audit variant. It does not change the contract key, authorize a model,
+  or make an older worker eligible. Existing homogeneous candidate supply is
+  unchanged.
+
 ## [2.21.3] — 2026-09-09
 
 ### Fixed — a Mac repaired once can now redeem a later repair ticket
