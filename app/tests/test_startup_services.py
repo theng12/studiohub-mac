@@ -161,6 +161,87 @@ def test_voice_restart_runs_only_the_trusted_installed_service(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_remote_terminal_voice_recovery_adopts_exact_worker_job_without_cancellation(reset, monkeypatch):
+    submitted = broker.submit_batch({
+        "modality": "voice", "model": "local/voice", "items": [{"text": "recover"}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="uncertain", studio="voice@remote", studio_job_id="voice-job-1")
+    studio = {"id": "voice@remote", "modality": "voice", "machine": "remote-mac",
+              "host": "100.64.0.2", "port": 47870}
+    calls = []
+
+    class Response:
+        status_code = 200
+        def json(self):
+            return {"job": {"id": "voice-job-1", "state": "done", "error": None}}
+
+    class Client:
+        async def get(self, url, **_kwargs):
+            calls.append(("get", url))
+            return Response()
+
+    async def record(_client, _batch, _item, _studio, job, _body, _started, *, recovery):
+        calls.append(("adopt", job["id"], recovery))
+        item["state"] = "done"
+
+    async def finish(_client, _batch):
+        calls.append(("finish",))
+
+    async def signal(*_args, **_kwargs):
+        calls.append(("cancel",))
+        return True
+
+    monkeypatch.setattr(broker, "_record_worker_success", record)
+    monkeypatch.setattr(broker, "_maybe_finish", finish)
+    monkeypatch.setattr(broker, "_signal_worker_cancel", signal)
+
+    result = await main._recover_voice_item(batch, item, studio, False, Client())
+
+    assert result["ok"] is True and result["forced"] is False and result["state"] == "done"
+    assert calls == [
+        ("get", "http://100.64.0.2:47873/studio/voice/api/generate/jobs/voice-job-1"),
+        ("adopt", "voice-job-1", True), ("finish",),
+    ]
+    assert item["recovery"]["phase"] == "reconciled"
+    assert broker.in_maintenance("voice@remote") is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["active", "unknown"])
+async def test_remote_nonterminal_voice_recovery_stays_manual_without_cancellation(reset, monkeypatch, state):
+    submitted = broker.submit_batch({
+        "modality": "voice", "model": "local/voice", "items": [{"text": "recover"}],
+    })
+    batch = broker.batches[submitted["batch_id"]]
+    item = batch["items"][0]
+    item.update(state="uncertain", studio="voice@remote", studio_job_id="voice-job-1")
+    studio = {"id": "voice@remote", "modality": "voice", "machine": "remote-mac",
+              "host": "100.64.0.2", "port": 47870}
+    events = []
+
+    async def reconciliation(*_args, **_kwargs):
+        events.append("reconcile")
+        return state
+
+    async def signal(*_args, **_kwargs):
+        events.append("cancel")
+        return True
+
+    monkeypatch.setattr(main, "_reconcile_voice_recovery_job", reconciliation)
+    monkeypatch.setattr(broker, "_signal_worker_cancel", signal)
+
+    result = await main._recover_voice_item(batch, item, studio, False, object())
+
+    assert result["ok"] is False and result["forced"] is False
+    assert item["state"] == "uncertain"
+    assert item["recovery"]["phase"] == "manual_action_required"
+    assert events == ["reconcile"]
+    assert broker.in_maintenance("voice@remote") is False
+
+
+@pytest.mark.asyncio
 async def test_voice_recovery_drains_exact_job_without_restarting_service(reset, monkeypatch):
     submitted = broker.submit_batch({
         "modality": "voice", "model": "local/voice", "items": [{"text": "recover"}],
