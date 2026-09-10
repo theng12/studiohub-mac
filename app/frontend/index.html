@@ -1248,6 +1248,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.21.5", date: "2026-09-11", items: [
+    "<b>Verified completed Voice jobs from another Mac can now finish safely in the controller.</b> Studio Hub records the original result before any maintenance work continues.",
+    "An active or unknown remote Voice job still stays protected: Studio Hub will not cancel or restart another Mac's Voice service.",
+  ] },
   { v: "2.21.4", date: "2026-09-10", items: [
     "<b>A local model's passed check now stays attached to the Macs that passed it.</b> During a staged update, an older conditional check could be listed first and make the newer passed check look conditional, while also showing older Macs as part of the new supply. Studio Hub now picks the passed check consistently and shows only the Macs that reported it.",
     "This does not approve or enable a model by itself. A model still needs the normal GenStudio approval, and a Mac on an older check stays out of the new model's supply.",

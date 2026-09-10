@@ -2516,8 +2516,14 @@ async def _other_active_voice_jobs(
 async def _recover_voice_item(
     batch: dict, item: dict, studio: dict, force: bool, client: httpx.AsyncClient,
 ) -> dict:
-    """Drain, cancel, and reconcile one Voice job; force permits its exact service restart."""
+    """Reconcile a final Voice job; only local work may be cancelled or restarted."""
     if studio.get("machine", "local") != "local":
+        # A controller can authenticate an exact remote worker-job read through
+        # the peer Hub. Adopt only a verified terminal result; active, unknown,
+        # malformed, or mismatched remote work stays outside local recovery.
+        state = await _reconcile_voice_recovery_job(client, batch, item, studio)
+        if state in {"done", "error", "cancelled"}:
+            return {"ok": True, "forced": False, "state": state, "recovery": item["recovery"]}
         _save_voice_recovery(batch, item, "manual_action_required", "This Voice job belongs to another Mac and needs recovery on that Mac.")
         return {"ok": False, "forced": False, "recovery": item["recovery"]}
 

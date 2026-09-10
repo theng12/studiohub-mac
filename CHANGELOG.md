@@ -10,6 +10,13 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.21.5] — 2026-09-11
+
+### Fixed — controllers adopt verified terminal remote Voice jobs
+
+- A controller could prove that an exact accepted Voice Studio job on another Mac had already completed, but its recovery action refused the remote worker before that terminal result reached the existing reconciliation path. The durable Hub batch stayed uncertain and unnecessarily blocked safe controller maintenance.
+- Recovery now adopts an exact verified `done`, `error`, or `cancelled` result through the existing authenticated peer path before the local-machine boundary. Remote jobs that are active, unknown, malformed, or mismatched remain manual: the controller never cancels or restarts a remote Voice service.
+
 ## [2.21.4] — 2026-09-10
 
 ### Fixed — a passed local-model audit keeps only its own worker supply
