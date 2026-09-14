@@ -1248,6 +1248,10 @@ let LIVE_RELEASE_NOTES = null;
 
 // ── What's New (embedded fallback; live details come from CHANGELOG.md) ──
 const RELEASE_NOTES = [
+  { v: "2.21.6", date: "2026-09-14", items: [
+    "<b>SSD setup now recognizes the verified Pinokio 8.2.0 installer.</b> The manifest no longer asks for the old 8.0.40 file.",
+    "The SSD guide explains stocking Khmer TTS, OmniVoice, and VoxCPM2 8-bit from complete local downloads. The existing 8 GB restore selection and model memory requirements stay unchanged.",
+  ] },
   { v: "2.21.5", date: "2026-09-11", items: [
     "<b>Verified completed Voice jobs from another Mac can now finish safely in the controller.</b> Studio Hub records the original result before any maintenance work continues.",
     "An active or unknown remote Voice job still stays protected: Studio Hub will not cancel or restart another Mac's Voice service.",

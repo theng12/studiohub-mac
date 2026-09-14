@@ -75,6 +75,18 @@ allowlist: Qwen3-TTS 0.6B Base, its required
 generator are skipped. The tool preserves complete SSD packages not visible
 on today's source Mac and protects conflicting local fleet voices.
 
+Khmer TTS (`khmerttsopensource/khmer-tts`) and OmniVoice
+(`mlx-community/OmniVoice-bfloat16`) use the supported cache layout and are
+included when complete on the source Mac. VoxCPM2 8-bit
+(`mlx-community/VoxCPM2-8bit`) follows the same path after its Voice Studio
+download finishes. Stocking a package does not add it to the normal 8 GB
+restore allowlist above. VoxCPM2 8-bit retains its 16 GB minimum; copying a
+model is not evidence of safe generation on a busy or smaller Mac.
+
+Stage 2 still installs the current Studio code and declared dependencies using
+the network. The model stock avoids weight downloads; this kit is not a fully
+offline dependency bundle. Refresh the release inventory after stocking models.
+
 ## Folder-name compatibility
 
 New checkouts use `imagestudio-mac`, `voicestudio-mac`, and `studiohub-mac`.

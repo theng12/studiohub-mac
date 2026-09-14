@@ -10,6 +10,13 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.21.6] — 2026-09-14
+
+### Fixed — SSD installer inventory and model stocking guidance
+
+- Pin the SSD installer manifest to the existing official Pinokio 8.2.0 Apple Silicon DMG and its verified release checksum, fixing refresh and setup failures caused by the retired 8.0.40 filename.
+- Clarify how Khmer TTS, OmniVoice, and VoxCPM2 8-bit join the SSD through complete local downloads. Correct the quick guide to include Kokoro in the existing 8 GB restore selection; restore defaults and RAM requirements remain unchanged.
+
 ## [2.21.5] — 2026-09-11
 
 ### Fixed — controllers adopt verified terminal remote Voice jobs
