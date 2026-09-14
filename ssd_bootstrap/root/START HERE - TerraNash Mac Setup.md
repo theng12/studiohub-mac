@@ -1,7 +1,7 @@
 # TerraNash New-Mac Setup — Start Here
 
 Status: implemented and offline-verified on the SSD.
-Last reviewed: 2026-08-28 (Asia/Phnom_Penh)
+Last reviewed: 2026-09-14 (Asia/Phnom_Penh)
 
 This document is the durable owner handoff for the TerraNash fleet SSD. The
 canonical scripts, tests, manifest, and documentation live in Studio Hub's
@@ -250,10 +250,10 @@ fixture verification.
 
 ## Current software context
 
-Installer assets observed and pinned on 2026-08-19:
+Installer assets verified for the SSD refresh on 2026-09-14:
 
-- Pinokio 8.0.40 — `Pinokio-8.0.40-arm64.dmg` — SHA-256
-  `3c0f55f769efc2c02e5d0b8bc24e2ee7b0be54d42e6404663887e0cf8d3df3fd`.
+- Pinokio 8.2.0 — `Pinokio-8.2.0-arm64.dmg` — SHA-256
+  `41f5a20d98331ca7395a179b808c04be5e4493f62f405ed0d132336271168388`.
 - Yam Display 2.4.7 — `YamDisplay-2.4.7.dmg` — SHA-256
   `15ad34e950f078b66834f0f3ebc1ade53fcbb2f9ab6cfa51f720ba040dabbd46`.
 - Latest 0.11 — `Latest-0.11.dmg` — SHA-256
