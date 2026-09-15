@@ -1806,6 +1806,12 @@ def test_verified_voice_service_rejects_lookalike_launchd_plist(tmp_path, monkey
     monkeypatch.setattr(startup_services, "_launchd_loaded", lambda _label: True)
 
     assert startup_services.verified_voice_service()["installed"] is True
+    outside = tmp_path / "outside-voice"
+    app_dir.rename(outside)
+    app_dir.symlink_to(outside, target_is_directory=True)
+    assert startup_services.verified_voice_service() is None
+    app_dir.unlink()
+    outside.rename(app_dir)
     plist(spec["server_label"], "other-script.sh")
     assert startup_services.verified_voice_service() is None
 

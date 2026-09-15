@@ -36,7 +36,7 @@ from . import (artifact_metadata, cloud_guard, execution_assets,
 from .memory_control import FleetMemoryControl, SUPPORTED_MODALITIES
 from .peers import studio_request
 from .monitor import is_cached
-from .registry import base_url, machine_enabled, studio_enabled
+from .registry import DATA_DIR, base_url, machine_enabled, studio_enabled
 from .resources import host_stats
 from . import memory_admission
 
@@ -534,6 +534,122 @@ def _mark_machine_success(studio: dict) -> None:
         _machine_protection.pop(machine, None)
 
 
+# Model failures are independent of transport health. Persist blocked models so
+# a healthy HTTP response or Hub restart cannot feed broken weights more work.
+MODEL_PROTECTION_FILE = DATA_DIR / "model_protection.json"
+_model_protection: dict[tuple[str, str], dict] = {}
+_model_protection_lock = threading.RLock()
+MODEL_FAILURE_WINDOW_S = 300.0
+MODEL_FAILURE_THRESHOLD = 3
+
+
+def _load_model_protection() -> None:
+    try:
+        rows = json.loads(MODEL_PROTECTION_FILE.read_text())
+        for row in rows:
+            if isinstance(row, dict) and isinstance(row.get("studio"), str) and isinstance(row.get("model"), str):
+                _model_protection[(row["studio"], row["model"])] = row
+    except (OSError, ValueError, TypeError):
+        pass
+
+
+def _save_model_protection() -> None:
+    temporary = MODEL_PROTECTION_FILE.with_suffix(".tmp")
+    temporary.write_text(json.dumps(list(_model_protection.values()), indent=2) + "\n")
+    temporary.chmod(0o600)
+    temporary.replace(MODEL_PROTECTION_FILE)
+
+
+def model_protection_snapshot() -> list[dict]:
+    with _model_protection_lock:
+        return [{**row, "reason": _sanitize_public_error(row.get("reason", ""))}
+                for row in _model_protection.values() if row.get("blocked")]
+
+
+def _model_file_failure(message: str, code: str | None) -> bool:
+    return code == "MODEL_FILES_UNAVAILABLE" or (
+        "load_safetensors" in message.lower() and "failed to open" in message.lower()
+    )
+
+
+def _mark_model_failure(studio: dict, model: str, revision: str | None,
+                        code: str, reason: str) -> None:
+    now = time.time()
+    key = (studio["id"], model)
+    with _model_protection_lock:
+        previous = _model_protection.get(key) or {}
+        was_blocked = bool(previous.get("blocked"))
+        window_started = previous.get("window_started_at", now)
+        recent = 0 <= now - float(window_started) < MODEL_FAILURE_WINDOW_S
+        same_revision = previous.get("revision") == revision
+        failures = int(previous.get("failures") or 0) + 1 if recent and same_revision else 1
+        blocked = was_blocked or code == "MODEL_FILES_UNAVAILABLE" or failures >= MODEL_FAILURE_THRESHOLD
+        _model_protection[key] = {
+            "studio": studio["id"], "model": model, "revision": revision,
+            "reason": _sanitize_public_error(reason), "error_code": code,
+            "failures": failures, "last_failure_at": now,
+            "window_started_at": window_started if recent and same_revision else now,
+            "blocked": blocked, "blocked_at": previous.get("blocked_at") or (now if blocked else None),
+        }
+        _save_model_protection()
+    if blocked and not was_blocked:
+        from . import alerts
+        alerts.emit("model_paused", f"{studio['id']}: {model} paused after model failures",
+                    {"studio": studio["id"], "model": model, "reason": _sanitize_public_error(reason)})
+
+
+def _model_block_note(studio: dict, model: str, entry: dict) -> str | None:
+    readiness = entry.get("readiness")
+    readiness = readiness if isinstance(readiness, dict) else {}
+    if readiness.get("ready") is False:
+        return str(readiness.get("reason") or "Required model files or dependencies are unavailable")
+    if entry.get("execution_ready") is False:
+        return "Model dependencies or execution requirements are not ready"
+    with _model_protection_lock:
+        row = _model_protection.get((studio["id"], model)) or {}
+        if row.get("blocked"):
+            return str(row.get("reason") or "Model paused; repair and recheck readiness")
+    return None
+
+
+async def recheck_model_protection(studio_id: str, model: str) -> dict:
+    studio = next((s for s in _monitor().registry if s["id"] == studio_id), None)
+    if studio is None:
+        raise ValueError("The Studio is no longer registered")
+    with _model_protection_lock:
+        previous = dict(_model_protection.get((studio_id, model)) or {})
+    url, headers = studio_request(studio, "/api/catalog")
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers, timeout=15.0)
+            response.raise_for_status()
+            entry = next((m for m in response.json().get("models", [])
+                          if m.get("repo") == model or model in (m.get("aliases") or [])), None)
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
+        raise ValueError("Fresh model readiness could not be verified") from exc
+    readiness = entry.get("readiness") if entry else None
+    # Voice already reports per-engine dependencies and companion cache state.
+    # Those facts can reopen an engine-error circuit, but cannot prove that a
+    # previously unreadable model file has been repaired.
+    if (not isinstance(readiness, dict) and entry
+            and previous.get("error_code") != "MODEL_FILES_UNAVAILABLE"
+            and entry.get("runtime_ready") is True and entry.get("available") is True
+            and isinstance(entry.get("cache"), dict) and entry["cache"].get("state") == "cached"):
+        readiness = {"ready": True, "checks": "runtime_dependencies_and_companion_cache"}
+    if not isinstance(readiness, dict) or readiness.get("ready") is not True or entry.get("execution_ready") is False:
+        raise ValueError("Model readiness is not verified; repair its files/dependencies or update this Studio first")
+    with _model_protection_lock:
+        if (_model_protection.get((studio_id, model)) or {}) != previous:
+            raise ValueError("A new failure arrived during the readiness check; recheck again")
+        _model_protection.pop((studio_id, model), None)
+        _save_model_protection()
+    _wakeup.set()
+    return {"ok": True, "studio": studio_id, "model": model, "readiness": readiness}
+
+
+_load_model_protection()
+
+
 def _is_capacity_failure(message: str) -> bool:
     value = message.lower()
     return any(token in value for token in (
@@ -543,6 +659,8 @@ def _is_capacity_failure(message: str) -> bool:
 
 
 def _is_transport_failure(exc: BaseException, message: str) -> bool:
+    if getattr(exc, "model_unavailable", False):
+        return False
     if isinstance(exc, (httpx.TransportError, httpx.TimeoutException)):
         return True
     if getattr(exc, "status_code", None) in {502, 503, 504}:
@@ -1499,12 +1617,13 @@ async def _record_worker_success(client: httpx.AsyncClient, b: dict, item: dict,
 
 
 async def _recover_worker_job(client, b: dict, item: dict, studio: dict,
-                              body: dict, t_start: float) -> bool:
+                              body: dict, t_start: float) -> bool | dict:
     """Reconcile a worker job after a transport failure.
 
     A generation request is not safely retryable once the worker has accepted
     it. Keep the Hub lease while reconnecting and poll the original job for a
-    bounded window. Return True only after adopting a completed result.
+    bounded window. Return True after adopting success, the exact terminal job
+    for failure classification, or False when its outcome remains unknown.
     """
     job_id = item.get("studio_job_id")
     if not job_id or b.get("cancelled"):
@@ -1522,6 +1641,8 @@ async def _recover_worker_job(client, b: dict, item: dict, studio: dict,
             if jr.status_code >= 400:
                 return False  # 404/4xx means the worker no longer has the job
             job = jr.json().get("job") or {}
+            if not isinstance(job, dict) or job.get("id") != job_id:
+                return False
             if _voice_recovery_owns(item):
                 return False
             _persist_worker_execution_started_at(b, item, job)
@@ -1537,7 +1658,7 @@ async def _recover_worker_job(client, b: dict, item: dict, studio: dict,
                     return False
                 _mark_machine_success(studio)
                 return True
-            return False  # the original job genuinely failed or was cancelled
+            return job if state in ("error", "cancelled") else False
         except Exception:
             # Tailscale/Wi-Fi and a busy worker can briefly drop the HTTP
             # connection. Back off while retaining the same worker lease.
@@ -1804,6 +1925,10 @@ async def _dispatch_loop():
                             "revision assigned by GenStudio"
                         )
                         continue
+                    protection_note = _model_block_note(studio, b["model"], entry)
+                    if protection_note:
+                        b["governor_note"] = f"{studio['id']}: {protection_note}"
+                        continue
                     if not entry.get("is_cloud") and not is_cached(entry):
                         b["governor_note"] = (
                             f"'{b['model']}' not downloaded on {studio['id']} "
@@ -1875,15 +2000,36 @@ def _worker_http_error(response) -> RuntimeError:
         detail = response.text or "worker request failed"
     error = RuntimeError(f"HTTP {response.status_code}: {detail}")
     error.status_code = response.status_code
-    error.retryable = (response.status_code in {408, 425, 429}
+    error.error_code = detail.get("error_code") or detail.get("code") if isinstance(detail, dict) else None
+    error.model_unavailable = _model_file_failure(str(detail), error.error_code)
+    error.retryable = (error.model_unavailable or response.status_code in {408, 425, 429}
                        or response.status_code >= 500)
     return error
 
 
-def _worker_terminal_error(message: str) -> RuntimeError:
+def _worker_terminal_error(message: str, code: str | None = None) -> RuntimeError:
     error = RuntimeError(message)
-    error.retryable = True
+    error.model_unavailable = _model_file_failure(message, code)
+    error.worker_terminal = True
+    error.retryable = True  # another healthy worker may handle this item
     return error
+
+
+def _classify_worker_failure(batch: dict, item: dict, studio: dict,
+                             job: dict, started_at: float) -> RuntimeError:
+    _record_worker_failure(item, studio, job, started_at)
+    message = str(job.get("error") or f"studio job {job.get('state')}")
+    code = job.get("error_code") or "WORKER_TERMINAL_ERROR"
+    if job.get("state") != "cancelled" and not _is_capacity_failure(message):
+        missing_files = _model_file_failure(message, code)
+        # Input and capacity errors are not evidence that every future request
+        # to this model will fail. Reconciled errors use this same classifier.
+        if missing_files or (message.startswith("RuntimeError:") and "ValueError:" not in message):
+            code = "MODEL_FILES_UNAVAILABLE" if missing_files else code
+            _mark_model_failure(studio, batch["model"], job.get("model_revision"), code, message)
+            if missing_files:
+                item["error_code"] = code
+    return _worker_terminal_error(message, code)
 
 
 def _record_worker_progress(item: dict, progress) -> None:
@@ -2211,7 +2357,12 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
                 )
                 return
         if r.status_code >= 400:
-            raise _worker_http_error(r)
+            rejection = _worker_http_error(r)
+            if rejection.model_unavailable:
+                item["error_code"] = "MODEL_FILES_UNAVAILABLE"
+                _mark_model_failure(studio, b["model"], None,
+                                    "MODEL_FILES_UNAVAILABLE", str(rejection))
+            raise rejection
         job = r.json()["job"]
         _persist_worker_execution_started_at(b, item, job)
         _record_worker_identity(item, studio, job)
@@ -2275,10 +2426,7 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
                 item["chunk_total"] = j.get("chunk_total")
                 continue
             if j.get("error") or state in ("error", "cancelled"):
-                _record_worker_failure(item, studio, j, t_start)
-                raise _worker_terminal_error(
-                    j.get("error") or f"studio job {state}"
-                )
+                raise _classify_worker_failure(b, item, studio, j, t_start)
             # terminal + no error = success
             await _record_worker_success(client, b, item, studio, j, body, t_start)
             if _voice_recovery_owns(item):
@@ -2296,9 +2444,12 @@ async def _run_item(client: httpx.AsyncClient, b: dict, item: dict, studio: dict
             item["state"] = "cancelled"
             item["error"] = "Cancelled by user"
             return
-        recovered = await _recover_worker_job(client, b, item, studio, body, t_start)
-        if _voice_recovery_owns(item) or recovered:
+        recovered = (False if getattr(e, "worker_terminal", False)
+                     else await _recover_worker_job(client, b, item, studio, body, t_start))
+        if _voice_recovery_owns(item) or recovered is True:
             return
+        if isinstance(recovered, dict):
+            e = _classify_worker_failure(b, item, studio, recovered, t_start)
         message = str(e) or type(e).__name__
         if (b.get("modality") == "voice" and item.get("studio_job_id")
                 and _is_transport_failure(e, message)):

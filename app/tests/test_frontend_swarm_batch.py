@@ -131,7 +131,9 @@ def test_voice_uncertainty_stays_visible_with_explicit_recovery_actions():
     assert '/voice-recovery' in source
     assert 'i.state === "uncertain"' in source
     assert 'Restart Voice service' in source
-    assert 'Stop and reconcile' in source
+    assert 'function voiceRecoveryActions(batchId, item, modality)' in source
+    assert 'Recheck result' in source
+    assert 'const remote = String(item.studio || "").includes("@");' in source
     assert '(b.cancel_requested || 0)' in source
     assert 'b.uncertain' in source
     assert 'const status = $("#voice-job-action-status");' in source

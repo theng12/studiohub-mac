@@ -39,6 +39,7 @@ from . import (activity, alerts, artifact_metadata, auth, broadcast, broker, cap
                voice_qualification)
 from .auto_update import UpdateError
 from .auto_update_config import create_updater
+from .automatic_recovery import AutomaticRecoveryState
 from .fleet_auto_updates import FleetAutoUpdates, TERMINAL_ITEM_STATES, managed_failure_code
 from .auth import is_loopback, is_tailscale, load_token, make_middleware
 from .control import control_studio
@@ -60,8 +61,15 @@ FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
 PROCESS_TITLE_APPLIED = apply_process_title()
 VOICE_RECOVERY_GRACE_S = 5.0
 VOICE_RECOVERY_HEALTH_TIMEOUT_S = 30.0
+AUTO_RECOVERY_SCAN_S = 15.0
+AUTO_RECOVERY_CANCEL_GRACE_S = 30.0
+AUTO_RECONCILE_PER_PASS = 1
 _voice_recovery_guard = threading.Lock()
 _voice_recovery_inflight: set[tuple[str, str]] = set()
+_automatic_reconcile_task: asyncio.Task | None = None
+_automatic_local_recovery_task: asyncio.Task | None = None
+_automatic_reconcile_cursor = 0
+automatic_recovery = AutomaticRecoveryState(DATA_DIR / "automatic_job_recovery.json")
 
 
 class UpdateRequest(BaseModel):
@@ -99,6 +107,11 @@ class HubRestartBody(BaseModel):
 
 class VoiceRecoveryBody(BaseModel):
     force: bool = False
+
+
+class ModelProtectionRecheckBody(BaseModel):
+    studio: str = Field(min_length=1, max_length=120)
+    model: str = Field(min_length=1, max_length=500)
 
 
 class ReleaseActivationBody(BaseModel):
@@ -558,6 +571,7 @@ async def lifespan(app: FastAPI):
     voices_start_attempted = False
     storage_start_attempted = False
     baselines_start_attempted = False
+    recovery_start_attempted = False
     repair_coordinator = None
     primary_error: BaseException | None = None
     try:
@@ -616,6 +630,8 @@ async def lifespan(app: FastAPI):
         if restored:
             print(f"[hub] resumed {restored} unfinished batch(es) from hub.db")
         broker.start_dispatcher()
+        recovery_start_attempted = True
+        _start_automatic_recovery()
         transcription_restored = transcription_jobs.restore_batches()
         if transcription_restored:
             print(f"[hub] resumed {transcription_restored} transcription batch(es) from hub.db")
@@ -666,6 +682,7 @@ async def lifespan(app: FastAPI):
         await stop(voices_start_attempted, shared_voices.stop)
         await stop(chat_start_attempted, chat_jobs.stop)
         await stop(transcription_start_attempted, transcription_jobs.stop)
+        await stop(recovery_start_attempted, _stop_automatic_recovery)
         await stop(monitor_start_attempted, monitor.stop)
         if cleanup_error is not None and primary_error is None:
             raise cleanup_error
@@ -2215,6 +2232,22 @@ def hub_broadcast_env(body: dict):
 
 
 # ── job broker / Swarm Batch ───────────────────────────────────────────────
+@app.get("/api/hub/recovery")
+def hub_recovery_status():
+    return {
+        "models": broker.model_protection_snapshot(),
+        "auto": automatic_recovery.snapshot(),
+    }
+
+
+@app.post("/api/hub/recovery/models/recheck")
+async def hub_recheck_recovery_model(body: ModelProtectionRecheckBody):
+    try:
+        return await broker.recheck_model_protection(body.studio, body.model)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @app.post("/api/hub/execution-assets/voice-references")
 async def hub_stage_voice_reference(
     audio: UploadFile = File(...),
@@ -2487,30 +2520,309 @@ async def _wait_voice_recovery_health(
 async def _other_active_voice_jobs(
     client: httpx.AsyncClient, studio: dict, original_job_id: str,
 ) -> bool | None:
-    """Return whether restart would interrupt another job; malformed evidence is unsafe."""
+    """Compatibility wrapper for the manual Voice recovery flow."""
+    return await _other_active_generation_jobs(client, studio, original_job_id)
+
+
+async def _read_exact_generation_job(
+    client: httpx.AsyncClient, studio: dict, job_id: str,
+) -> tuple[str, dict | None]:
+    """Read one authenticated worker job without inferring from list order."""
+    from .peers import studio_request
+
+    url, headers = studio_request(studio, f"/api/generate/jobs/{job_id}")
+    try:
+        response = await client.get(url, headers=headers, timeout=15.0)
+        if response.status_code == 404:
+            return "missing", None
+        payload = response.json() if response.status_code == 200 else None
+    except (httpx.HTTPError, TypeError, ValueError):
+        return "unknown", None
+    job = payload.get("job") if isinstance(payload, dict) else None
+    if not isinstance(job, dict) or str(job.get("id") or "") != job_id:
+        return "unknown", None
+    return str(job.get("state") or "unknown"), job
+
+
+async def _other_active_generation_jobs(
+    client: httpx.AsyncClient, studio: dict, original_job_id: str,
+) -> bool | None:
+    """Verify that no second generation would be interrupted by a restart."""
     from .peers import studio_request
 
     url, headers = studio_request(studio, "/api/generate/jobs")
     try:
         response = await client.get(url, headers=headers, timeout=15.0)
         payload = response.json() if response.status_code == 200 else None
-    except (httpx.HTTPError, ValueError):
+    except (httpx.HTTPError, TypeError, ValueError):
         return None
     jobs = payload.get("jobs") if isinstance(payload, dict) else None
-    known = {"queued", "running", "cancel_requested", "done", "error", "cancelled", "uncertain"}
+    active_states = {"queued", "running", "cancel_requested"}
+    terminal_states = {"done", "error", "cancelled", "uncertain"}
     if not isinstance(jobs, list):
         return None
     for job in jobs:
-        if not isinstance(job, dict) or not isinstance(job.get("id"), str) or not job["id"]:
+        if (not isinstance(job, dict) or not isinstance(job.get("id"), str)
+                or not job["id"] or job.get("state") not in active_states | terminal_states):
             return None
-        if job.get("state") not in known:
+        if job["id"] != original_job_id and job["state"] in active_states:
+            return True
+        if job["id"] != original_job_id and job["state"] == "uncertain":
             return None
-        if job["id"] != original_job_id:
-            if job["state"] == "uncertain":
-                return None
-            if job["state"] in {"queued", "running", "cancel_requested"}:
-                return True
     return False
+
+
+async def _wait_for_exact_job_exit(
+    client: httpx.AsyncClient, studio: dict, job_id: str, timeout_s: float,
+) -> bool:
+    deadline = time.monotonic() + max(0.0, timeout_s)
+    while True:
+        state, _job = await _read_exact_generation_job(client, studio, job_id)
+        if state in {"done", "error", "cancelled"}:
+            other_active = await _other_active_generation_jobs(client, studio, job_id)
+            return other_active is False
+        if state == "unknown" or time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+
+
+async def _automatic_reconcile_batches(client: httpx.AsyncClient) -> int:
+    """Adopt terminal results for bounded exact-ID Voice uncertainty only."""
+    global _automatic_reconcile_cursor
+    studios = {row.get("id"): row for row in list(monitor.registry)}
+    reconciled = 0
+    candidates = []
+    for batch in broker.batches.values():
+        if batch.get("modality") != "voice":
+            continue
+        for item in batch.get("items", []):
+            if (item.get("state") == "uncertain" and item.get("studio")
+                    and item.get("studio_job_id")):
+                candidates.append((batch, item))
+    if candidates:
+        total = len(candidates)
+        start = _automatic_reconcile_cursor % total
+        candidates = (candidates[start:] + candidates[:start])[:AUTO_RECONCILE_PER_PASS]
+        _automatic_reconcile_cursor = (start + len(candidates)) % total
+
+    async def reconcile_one(batch: dict, item: dict) -> int:
+        studio = studios.get(item["studio"])
+        if studio is None:
+            return 0
+        keys = {("item", f"{batch['id']}:{item.get('index')}")}
+        service_key = ("service", str(item["studio"]))
+        with _voice_recovery_guard:
+            if service_key in _voice_recovery_inflight or _voice_recovery_inflight.intersection(keys):
+                return 0
+            _voice_recovery_inflight.update(keys)
+        try:
+            state = await _reconcile_voice_recovery_job(client, batch, item, studio)
+            return int(state in {"done", "error", "cancelled"})
+        finally:
+            with _voice_recovery_guard:
+                _voice_recovery_inflight.difference_update(keys)
+    for batch, item in candidates:
+        reconciled += await reconcile_one(batch, item)
+    return reconciled
+
+
+async def _worker_allows_exact_cancel(
+    client: httpx.AsyncClient, studio: dict, job_id: str,
+) -> bool:
+    """Require fresh worker evidence for the one job before cancellation."""
+    from .peers import studio_request
+
+    activity_url, activity_headers = studio_request(studio, "/api/fleet/activity")
+    downloads_url, downloads_headers = studio_request(studio, "/api/downloads")
+    try:
+        activity_response, downloads_response = await asyncio.gather(
+            client.get(activity_url, headers=activity_headers, timeout=15.0),
+            client.get(downloads_url, headers=downloads_headers, timeout=15.0),
+        )
+        activity_payload = activity_response.json() if activity_response.status_code == 200 else None
+        downloads_payload = downloads_response.json() if downloads_response.status_code == 200 else None
+    except (httpx.HTTPError, TypeError, ValueError):
+        return False
+    snapshot = activity.validate_snapshot(
+        activity_payload, expected_studio=studio.get("modality"),
+    )
+    active = snapshot.get("active") if snapshot else None
+    if (not isinstance(active, dict) or str(active.get("id") or "") != job_id
+            or active.get("state") != "running"
+            or (studio.get("modality") == "voice" and active.get("operation") != "speech")):
+        return False
+    downloads = downloads_payload.get("jobs") if isinstance(downloads_payload, dict) else None
+    known_download_states = {"queued", "running", "paused", "cancelling", "done", "error", "cancelled"}
+    if not isinstance(downloads, list):
+        return False
+    for job in downloads:
+        if not isinstance(job, dict) or job.get("state") not in known_download_states:
+            return False
+        if job.get("state") in {"queued", "running", "paused", "cancelling"}:
+            return False
+    return True
+
+
+async def _automatic_local_recovery(
+    studio: dict, active: dict, client: httpx.AsyncClient, *, now: float | None = None,
+) -> bool:
+    """Cancel one continuously observed exact local hang and verify its exit."""
+    now = float(time.time() if now is None else now)
+    studio_id = str(studio.get("id") or "")
+    modality = str(studio.get("modality") or "")
+    job_id = str(active.get("id") or "")
+    exact_state, exact = await _read_exact_generation_job(client, studio, job_id)
+    if exact_state != "running" or exact is None:
+        return False
+    model = str(exact.get("model") or (exact.get("params") or {}).get("repo") or active.get("model") or "")
+    exact["model"] = model
+    decision = automatic_recovery.observe(studio_id, modality, exact, now=now)
+    if not decision["eligible"]:
+        return False
+
+    keys = {("direct-job", f"{studio_id}:{job_id}"), ("service", studio_id)}
+    with _voice_recovery_guard:
+        if _voice_recovery_inflight.intersection(keys):
+            return False
+        _voice_recovery_inflight.update(keys)
+    prior_maintenance = broker.in_maintenance(studio_id)
+    keep_maintenance = prior_maintenance
+    broker.set_maintenance(studio_id, True)
+    try:
+        if not await _worker_allows_exact_cancel(client, studio, job_id):
+            automatic_recovery.mark(
+                studio_id, job_id, "manual_action_required",
+                "Fresh worker activity or download isolation could not be verified; the job was not cancelled.",
+                now=now,
+            )
+            return False
+        other_active = await _other_active_generation_jobs(client, studio, job_id)
+        if other_active is not False:
+            automatic_recovery.mark(
+                studio_id, job_id, "manual_action_required",
+                "Another active job exists or exact job activity could not be verified.", now=now,
+            )
+            return False
+        confirm_state, confirm = await _read_exact_generation_job(client, studio, job_id)
+        if confirm_state != "running" or confirm is None:
+            return False
+        confirm["model"] = model
+        confirmed = automatic_recovery.observe(studio_id, modality, confirm, now=now)
+        if not confirmed["eligible"]:
+            return False
+
+        from .peers import studio_request
+        cancel_url, headers = studio_request(studio, f"/api/generate/jobs/{job_id}")
+        automatic_recovery.mark(
+            studio_id, job_id, "cancel_requested",
+            "Requesting cancellation for the exact continuously stalled worker job.", now=now,
+        )
+        cancel_outcome = "unknown"
+        try:
+            response = await client.delete(cancel_url, headers=headers, timeout=15.0)
+            cancel_outcome = "accepted" if response.status_code < 400 else "rejected"
+        except httpx.HTTPError:
+            pass
+        if cancel_outcome in {"accepted", "unknown"}:
+            keep_maintenance = True
+        if cancel_outcome == "accepted" and AUTO_RECOVERY_CANCEL_GRACE_S:
+            await asyncio.sleep(AUTO_RECOVERY_CANCEL_GRACE_S)
+        if await _wait_for_exact_job_exit(client, studio, job_id, 0):
+            keep_maintenance = prior_maintenance
+            automatic_recovery.mark(
+                studio_id, job_id, "exit_confirmed",
+                "The exact job exited after cancellation; GenStudio may decide whether to retry.",
+            )
+            return True
+        automatic_recovery.mark(
+            studio_id, job_id, "manual_action_required",
+            "Cancellation was accepted but exact terminal state is still unknown; the Studio remains drained."
+            if cancel_outcome == "accepted" else
+            "The cancellation outcome is unknown; the Studio remains drained."
+            if cancel_outcome == "unknown" else
+            "The exact worker job rejected cancellation; use manual recovery.",
+        )
+        return False
+    finally:
+        if not keep_maintenance:
+            broker.set_maintenance(studio_id, False)
+        with _voice_recovery_guard:
+            _voice_recovery_inflight.difference_update(keys)
+
+
+async def _automatic_local_recovery_pass(client: httpx.AsyncClient) -> dict:
+    if control_plane.load_settings().get("role") != "agent":
+        return {"local_jobs_checked": 0}
+    now = time.time()
+    checked = 0
+    for studio in list(monitor.registry)[:100]:
+        if (studio.get("machine", "local") != "local"
+                or studio.get("modality") not in {"image", "voice"}):
+            continue
+        status = monitor.status.get(studio.get("id")) or {}
+        snapshot = activity.validate_snapshot(
+            status.get("activity"), expected_studio=studio.get("modality"),
+        )
+        received_at = status.get("activity_received_at")
+        active = snapshot.get("active") if snapshot else None
+        if (broker.in_maintenance(str(studio.get("id") or ""))
+                or studio.get("id") in broker.busy_studios()
+                or status.get("status") != "up"
+                or status.get("activity_support") != "available"
+                or isinstance(received_at, bool)
+                or not isinstance(received_at, (int, float))
+                or not 0 <= now - received_at <= activity.ACTIVE_FRESH_S
+                or not isinstance(active, dict) or active.get("state") != "running"
+                or active.get("origin") != "api"
+                or (studio.get("modality") == "voice" and active.get("operation") != "speech")):
+            continue
+        checked += 1
+        await _automatic_local_recovery(studio, active, client, now=now)
+    return {"local_jobs_checked": checked}
+
+
+async def _automatic_reconcile_loop() -> None:
+    while True:
+        try:
+            async with httpx.AsyncClient() as client:
+                await _automatic_reconcile_batches(client)
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            _hub_log.exception("automatic exact-job reconciliation pass failed")
+        await asyncio.sleep(AUTO_RECOVERY_SCAN_S)
+
+
+async def _automatic_local_recovery_loop() -> None:
+    while True:
+        try:
+            async with httpx.AsyncClient() as client:
+                await _automatic_local_recovery_pass(client)
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            _hub_log.exception("automatic local exact-job recovery pass failed")
+        await asyncio.sleep(AUTO_RECOVERY_SCAN_S)
+
+
+def _start_automatic_recovery() -> None:
+    global _automatic_reconcile_task, _automatic_local_recovery_task
+    if _automatic_reconcile_task is None or _automatic_reconcile_task.done():
+        _automatic_reconcile_task = asyncio.create_task(_automatic_reconcile_loop())
+    if _automatic_local_recovery_task is None or _automatic_local_recovery_task.done():
+        _automatic_local_recovery_task = asyncio.create_task(_automatic_local_recovery_loop())
+
+
+async def _stop_automatic_recovery() -> None:
+    global _automatic_reconcile_task, _automatic_local_recovery_task
+    tasks = [task for task in (_automatic_reconcile_task, _automatic_local_recovery_task)
+             if task is not None]
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    _automatic_reconcile_task = None
+    _automatic_local_recovery_task = None
 
 
 async def _recover_voice_item(

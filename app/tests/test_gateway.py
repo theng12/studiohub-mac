@@ -6,6 +6,7 @@ from starlette.requests import ClientDisconnect, Request
 from starlette.testclient import TestClient
 
 from backend import gateway
+from backend import broker
 
 
 SAFE_FLEET_JOB_HEADERS = {
@@ -122,6 +123,26 @@ def test_gateway_contains_studio_cookies_and_browser_credentials(
 
 def test_gateway_unknown_studio_404(authed):
     assert authed.get("/studio/nope/api/x").status_code == 404
+
+
+@pytest.mark.parametrize("path", [
+    "/studio/image/api/generate/txt2img",
+    "/studio/voice/api/generate/txt2speech",
+    "/studio/voice/api/transcribe",
+    "/studio/voice/api/downloads",
+])
+def test_gateway_maintenance_fences_new_heavy_worker_posts(
+    app, token, monkeypatch, path,
+):
+    fc = FakeClient(resp=FakeResp())
+    monkeypatch.setattr(gateway, "_client", fc)
+    studio_id = path.split("/")[2]
+    broker.set_maintenance(studio_id, True)
+
+    response = _authed(app, token).post(path, json={})
+
+    assert response.status_code == 409
+    assert fc.captured == {}
 
 
 def test_gateway_unreachable_502(app, token, monkeypatch):
