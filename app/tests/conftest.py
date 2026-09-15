@@ -39,7 +39,7 @@ def _reset_state():
     for f in (ledger.DB_FILE, reg.REGISTRY_FILE, reg.LABELS_FILE, reg.FLAGS_FILE,
               peers.FLEET_TOKEN_FILE, peers.SHARED_STUDIO_TOKEN_FILE,
               auth.TOKEN_FILE, auth.PASSWORD_FILE, auth.SESSIONS_FILE,
-              metrics.STATE_FILE, job_storage.SETTINGS_FILE,
+              metrics.STATE_FILE, broker.MODEL_PROTECTION_FILE, job_storage.SETTINGS_FILE,
               fleet_storage.SETTINGS_FILE,
               hardware_profiles.CUSTOM_PROFILES_FILE,
               hardware_profiles.MACHINE_PROFILES_FILE,
@@ -49,6 +49,7 @@ def _reset_state():
               broadcast.DOWNLOADS_FILE,
               main.monitor.catalog_state_path,
               main.model_baselines.state_path,
+              main.automatic_recovery.path,
               execution_identity.DB_FILE,
               fleet_ops._STATE_FILE, control_plane.SETTINGS_FILE,
               release_reconciliation.STATE_FILE, release_reconciliation.LOCK_FILE,
@@ -73,6 +74,7 @@ def _reset_state():
     broker._maintenance.clear()
     broker._external_machine_leases.clear()
     broker._machine_protection.clear()
+    broker._model_protection.clear()
     broker._handoff_state.clear()
     broker._reserved["gb"] = 0.0
     transcription_jobs.reset_for_tests()
@@ -107,6 +109,7 @@ def _reset_state():
     metrics.watchdog.clear()
     metrics._last_sample = 0.0
     main._transcription_busy.clear()
+    main._automatic_reconcile_cursor = 0
     control_plane.reset_for_tests()
     enrollment.reset_for_tests()
     enrollment_repair_store.reset_for_tests()
@@ -125,6 +128,7 @@ def _reset_state():
     main.model_baselines.last_reconciled_at = None
     main.model_baselines.targets.clear()
     main.model_baselines._lock = None
+    main.automatic_recovery = type(main.automatic_recovery)(main.automatic_recovery.path)
     # monitor: reload default registry, mark everything unknown (no network)
     monitor.reload_registry()
     monitor.status = {s["id"]: {"status": "unknown", "last_seen": None,

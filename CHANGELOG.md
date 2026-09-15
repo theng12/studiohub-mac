@@ -10,6 +10,16 @@ Versioning follows [Semantic Versioning](https://semver.org/) with this project-
 
 ## Unreleased
 
+## [2.22.0] — 2026-09-15
+
+### Added — bounded job recovery and model failure protection
+
+- Pause dispatch to a specific Studio/model immediately after a required model-file failure, or after repeated engine failures. Persist the pause across Hub restarts and keep other models and healthy workers available; a successful HTTP health check cannot clear it.
+- Add Jobs recovery controls showing the affected model, reason, and a fresh readiness recheck. A recheck cannot erase a failure that arrived while it was running.
+- Periodically reconcile the exact original uncertain Voice job, adopting verified terminal results without submitting another generation.
+- Add bounded local Image/Voice cancellation recovery using continuously observed stalled progress, exact-job checks, and competing-work protection. A missing or uncertain job never counts as a verified stop. Whole-service restarts remain an explicit operator action because current Studios cannot fence new direct UI/API work during a restart.
+- Keep model/dependency readiness separate from web-service health. Upgraded Image Studios report required shard readability before dispatch; legacy catalogs do not count as verified file readiness.
+
 ## [2.21.6] — 2026-09-14
 
 ### Fixed — SSD installer inventory and model stocking guidance

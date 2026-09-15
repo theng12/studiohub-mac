@@ -202,10 +202,13 @@ def verified_voice_service() -> dict | None:
     if not (service.get("installed") and service.get("server_loaded")
             and service.get("watchdog_loaded")):
         return None
-    app_dir = _app_dir("voice")
-    if app_dir is None:
+    try:
+        app_dirs = _validated_app_dirs("voice")
+    except (OSError, ValueError):
         return None
-    root = app_dir.resolve()
+    if len(app_dirs) != 1:
+        return None
+    root = app_dirs[0].resolve()
     spec = SERVICE_SPECS["voice"]
     expected = {
         spec["server_label"]: root / "voicestudio-serve.sh",
@@ -377,7 +380,11 @@ def restart_voice_service() -> dict:
     before = verified_voice_service()
     if before is None:
         raise ValueError("Voice Studio's exact managed startup service is not installed.")
-    app_dir = _app_dir("voice")
+    try:
+        app_dirs = _validated_app_dirs("voice")
+    except (OSError, ValueError) as exc:
+        raise ValueError("Trusted Voice Studio restart service is unavailable.") from exc
+    app_dir = app_dirs[0] if len(app_dirs) == 1 else None
     script = (_safe_service_script(app_dir, "restart_service.sh")
               if app_dir is not None else None)
     if app_dir is None or script is None:

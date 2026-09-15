@@ -81,6 +81,23 @@ def _monitor():
     return monitor
 
 
+def _maintenance_blocks_post(studio_id: str, path: str, method: str) -> bool:
+    """Fence new worker work while a Hub-owned drain/recovery is active."""
+    if method != "POST":
+        return False
+    parts = path.strip("/").split("/")
+    starts_generation = (
+        len(parts) >= 3 and parts[:2] == ["api", "generate"]
+        and parts[2] not in {"availability", "jobs"}
+    )
+    starts_heavy_work = starts_generation or parts == ["api", "transcribe"] \
+        or parts == ["api", "downloads"]
+    if not starts_heavy_work:
+        return False
+    from . import broker  # late import: main owns broker monitor wiring
+    return broker.in_maintenance(studio_id)
+
+
 @router.api_route(
     "/studio/{studio_id}/{path:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
@@ -91,6 +108,11 @@ async def proxy(studio_id: str, path: str, request: Request):
     )
     if studio is None:
         return Response(f"unknown studio: {studio_id}", status_code=404)
+    if _maintenance_blocks_post(studio_id, path, request.method):
+        return Response(
+            f"studio '{studio_id}' is drained for maintenance",
+            status_code=409,
+        )
 
     upstream, upstream_auth = studio_request(studio, f"/{path}")
     headers = {

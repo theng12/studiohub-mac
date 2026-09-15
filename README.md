@@ -406,7 +406,7 @@ Base URL: `http://localhost:47873` (or your machine's LAN/Tailscale address).
 | `POST /api/hub/execution-assets/voice-references` | Temporarily stage one checksum-bound GenStudio customer voice reference for a site attempt |
 | `DELETE /api/hub/execution-assets/voice-references/{asset_id}` | Remove a staged private reference early; automatic expiry remains the fallback |
 | `GET /api/hub/jobs` · `GET /api/hub/jobs/{batch}` · `DELETE /api/hub/jobs/{batch}` | Track / cancel batches; terminal history remains visible across Hub restarts |
-| `POST /api/hub/jobs/{batch}/items/{index}/voice-recovery` | Reconcile one uncertain local Voice job. `{"force": true}` is the explicit operator choice to request cancellation, restart the verified local Voice service, wait for health, and reconcile the original worker job—never submit a replacement job. |
+| `POST /api/hub/jobs/{batch}/items/{index}/voice-recovery` | Reconcile one uncertain Voice job against its exact original worker, including authenticated remote terminal results. `{"force": true}` is the explicit operator choice to request cancellation, restart the verified local Voice service, wait for health, and reconcile the original worker job—never submit a replacement job. |
 | `POST /api/hub/jobs/clear` · `POST /api/hub/jobs/{batch}/clear` | Clear terminal generation history and Hub-owned ledger/files only; remote worker output is never removed |
 | `GET /api/hub/assets` · `POST /api/hub/assets/scan` | Asset ledger (query: `q`, `modality`, `studio`, `batch_id`) |
 | `POST /api/hub/assets/upload` | Upload a reference image once → `{asset_id}` (for img2img continuity) |
@@ -481,6 +481,34 @@ or internal route during migration:
    Image and other historic in-flight items keep their existing retry path;
    accepted Voice items become durable `uncertain` records and must be
    reconciled against their original worker job before any operator action.
+
+### Model pauses and job recovery
+
+The Jobs recovery panel shows model-specific pauses and local recovery status.
+Required model-file failures pause that Studio/model immediately; three engine
+failures within five minutes also pause it. The pause survives Hub restarts and
+is independent of HTTP health, so healthy models on the same Mac remain eligible.
+Repair the affected download or runtime, then use **Recheck readiness**. File
+failures require an upgraded Studio that explicitly verifies file readiness;
+legacy `cached` badges are insufficient. Existing Voice runtime and companion
+checks can recheck engine failures, but do not prove a missing-file repair.
+
+Hub periodically checks uncertain Voice items against their original worker job
+and adopts verified terminal results. It never submits a replacement generation
+as part of reconciliation. Remote job cancellation and forced service restart
+remain under the worker machine's own authority. Agent Hubs can cancel one
+exact API job after continuously observing an hour without Image progress or
+two hours without Voice progress, with explicit step/chunk evidence from the
+worker. Jobs lacking that evidence remain manual. Hub downtime and gaps in observation restart
+that window. Recovery checks for competing work and requires a verified terminal
+state; missing or uncertain outcomes remain visible for manual action. Recovery
+never resubmits a generation. Whole-service restarts remain explicit operator
+actions until Studios support blocking all new direct UI/API work during recovery.
+
+| API | Behavior |
+| --- | --- |
+| `GET /api/hub/recovery` | Model pauses and automatic recovery status; uses existing Hub authentication. |
+| `POST /api/hub/recovery/models/recheck` | Body `{"studio":"image@machine-id","model":"owner/model"}`; fetches fresh readiness and clears only that model's pause. Returns 409 if readiness is unverified or a new failure arrived during the check. |
 
 ### Corrupt ledger recovery
 

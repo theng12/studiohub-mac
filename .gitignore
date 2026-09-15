@@ -72,3 +72,9 @@ controller_settings.json.repair.lock
 fleet_downloads.json
 auto_update/
 .venv/
+
+model_protection.json
+model_protection.tmp
+.planning/
+automatic_job_recovery.json
+automatic_job_recovery.json.tmp

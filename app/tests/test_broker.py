@@ -581,7 +581,7 @@ async def test_recovery_records_terminal_worker_execution_start_on_failure(reset
         batch, item, studio, {}, 0.0,
     )
 
-    assert recovered is False
+    assert recovered["id"] == "worker-1" and recovered["state"] == "error"
     assert item["execution_started_at"] == 9.5
 
 
