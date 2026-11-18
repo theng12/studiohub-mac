@@ -1,5 +1,9 @@
 # Studio Hub KH
 
+> **Legacy.** This is the Pinokio-era generation of Hub Studio KH. The current app is
+> **Hub Studio KH**, a native macOS app installed from
+> [kh-releases](https://github.com/theng12/kh-releases).
+
 Production control plane for **Image Studio (47868)** and **Voice Studio
 (47870)**, with Studio Hub itself on **47873**. Studio Hub ignores legacy Music,
 Chat, Video, and Render registrations, including rows saved by older releases.
